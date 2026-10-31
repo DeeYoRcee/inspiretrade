@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup } from "firebase/auth";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signInWithRedirect } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,11 @@ export default function AuthPage() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error: any) {
+      if (error?.code === "auth/popup-blocked") {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+      if (error?.code === "auth/popup-closed-by-user") return;
       toast({
         title: "Google Sign-In Failed",
         description: error.message || "Could not sign in with Google",
