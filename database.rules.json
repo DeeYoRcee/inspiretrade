@@ -1,0 +1,104 @@
+{
+  "rules": {
+    "trades": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "screenshots": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "siteStats": {
+      "users": {
+        "$uid": {
+          ".read": "auth !== null",
+          ".write": "$uid === auth.uid"
+        }
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth !== null",
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "privatePublicProfileSettings": {
+      "$uid": {
+        ".read": "auth !== null && auth.uid === $uid",
+        ".write": "auth !== null && auth.uid === $uid"
+      }
+    },
+    "publicProfiles": {
+      "$usernameKey": {
+        ".read": true,
+        ".write": "auth !== null && ((!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid && root.child('usernames').child($usernameKey).val() === auth.uid) || (data.child('uid').val() === auth.uid && (!newData.exists() || (newData.child('uid').val() === auth.uid && root.child('usernames').child($usernameKey).val() === auth.uid))))",
+        ".validate": "newData.hasChildren(['uid', 'username', 'usernameKey', 'displayName', 'updatedAt']) && newData.child('usernameKey').val() === $usernameKey",
+        "uid": {
+          ".validate": "newData.isString() && newData.val() === auth.uid"
+        },
+        "username": {
+          ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 20"
+        },
+        "usernameKey": {
+          ".validate": "newData.isString() && newData.val() === $usernameKey"
+        },
+        "displayName": {
+          ".validate": "newData.isString() && newData.val().length <= 80"
+        },
+        "updatedAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "statistics": {
+          ".validate": "newData.hasChildren(['netPnl', 'totalTrades', 'maxDrawdown'])",
+          "netPnl": { ".validate": "newData.isNumber()" },
+          "totalTrades": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "profitFactor": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "maxDrawdown": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "$other": { ".validate": false }
+        },
+        "winRate": {
+          ".validate": "newData.hasChildren(['rate', 'wins', 'total'])",
+          "rate": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "wins": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "total": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "$other": { ".validate": false }
+        },
+        "strategy": {
+          ".validate": "newData.isString() && newData.val().length <= 1200"
+        },
+        "notes": {
+          ".validate": "newData.isString() && newData.val().length <= 2000"
+        },
+        "history": {
+          ".validate": "newData.numChildren() <= 10",
+          "$tradeId": {
+            ".validate": "newData.hasChildren(['assetName', 'type', 'timestamp', 'profit'])",
+            "id": { ".validate": "newData.isString() && newData.val().length <= 80" },
+            "assetName": { ".validate": "newData.isString() && newData.val().length <= 80" },
+            "type": { ".validate": "newData.val() === 'BUY' || newData.val() === 'SELL'" },
+            "timestamp": { ".validate": "newData.isNumber()" },
+            "profit": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "usernames": {
+      ".read": "auth !== null",
+      "$username": {
+        ".write": "auth !== null && ((newData.exists() && newData.val() === auth.uid && (!data.exists() || data.val() === auth.uid)) || (!newData.exists() && data.val() === auth.uid))"
+      }
+    },
+    "instrumentCatalog": {
+      ".read": "auth !== null",
+      ".write": false
+    }
+  }
+}
