@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://freetradejournal.gt.tc/sitemap.xml

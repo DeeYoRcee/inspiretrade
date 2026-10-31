@@ -1,0 +1,139 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', sans-serif;
+    --font-display: 'Outfit', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    /* Dark Theme (default) */
+    --background: 240 10% 4%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 6%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 6%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 240 5% 15%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 5% 15%;
+    --muted-foreground: 240 5% 65%;
+
+    --accent: 240 5% 15%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 348 83% 47%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 98%;
+
+    --border: 240 5% 15%;
+    --input: 240 5% 15%;
+    --ring: 240 5% 30%;
+
+    --radius: 0.75rem;
+  }
+
+  .light {
+    --background: 210 20% 98%;
+    --foreground: 240 10% 8%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 8%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 8%;
+
+    --primary: 222 47% 20%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 210 20% 92%;
+    --secondary-foreground: 240 10% 8%;
+
+    --muted: 210 20% 92%;
+    --muted-foreground: 240 5% 45%;
+
+    --accent: 210 20% 88%;
+    --accent-foreground: 240 10% 8%;
+
+    --destructive: 348 83% 47%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 142 71% 35%;
+    --success-foreground: 0 0% 98%;
+
+    --border: 214 20% 85%;
+    --input: 214 20% 85%;
+    --ring: 222 47% 40%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-primary/30;
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(circle at 50% 0%, hsl(240 5% 15% / 0.5) 0%, transparent 50%),
+      linear-gradient(to bottom, transparent, hsl(var(--background)));
+    background-attachment: fixed;
+  }
+
+  .light body,
+  .light {
+    background-image:
+      radial-gradient(circle at 50% 0%, hsl(210 20% 88% / 0.6) 0%, transparent 50%),
+      linear-gradient(to bottom, transparent, hsl(var(--background)));
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    @apply tracking-tight;
+  }
+
+  .font-number {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-card/60 backdrop-blur-xl border border-border/50 shadow-2xl;
+  }
+
+  .light .glass-panel {
+    @apply bg-card/90 shadow-lg;
+  }
+
+  .hover-glow {
+    @apply transition-all duration-300;
+  }
+
+  .hover-glow:hover {
+    box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.3);
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-br from-foreground to-foreground/50;
+  }
+
+  .social-badge {
+    @apply fixed bottom-6 left-6 z-[60] flex flex-col gap-3;
+  }
+
+  .social-badge-item {
+    @apply flex items-center gap-3 px-4 py-2 rounded-full glass-panel border border-border/50 shadow-lg hover-glow animate-in fade-in slide-in-from-left-4 duration-500 transition-all;
+  }
+}
