@@ -37,6 +37,7 @@ function PremiumSuccessHandler() {
 }
 
 function AppLayout({ children }: { children: ReactNode }) {
+  const { t } = useLanguage();
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />
@@ -45,7 +46,7 @@ function AppLayout({ children }: { children: ReactNode }) {
         <div className="container mx-auto px-4 text-center">
           <div className="flex flex-col items-center gap-3">
             <p className="text-sm text-muted-foreground uppercase tracking-widest font-medium">
-              For advertising & inquiries
+              {t("footerInquiries")}
             </p>
             <a
               href="https://t.me/fck_ed"
