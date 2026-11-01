@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Home, Globe2 } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Chrome as Home, Globe as Globe2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,11 +22,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTrades } from "@/hooks/use-trades";
-import { useUserProfile } from "@/hooks/use-premium";
+import { useUserProfile, usePremiumStatus } from "@/hooks/use-premium";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 export function Navbar() {
   const { logout, user } = useAuth();
@@ -37,6 +46,7 @@ export function Navbar() {
   const [settingsView, setSettingsView] = useState<"main" | "language">("main");
   const { data: trades } = useTrades();
   const { data: profile } = useUserProfile();
+  const { data: isPremium = false } = usePremiumStatus();
   const [location, navigate] = useLocation();
 
   const exportPDF = () => {
@@ -49,8 +59,8 @@ export function Navbar() {
     const rows = trades.slice(0, 100).map(t => `
       <tr>
         <td>${format(new Date(t.timestamp), "MM/dd/yy")}</td>
-        <td>${t.assetName}</td>
-        <td>${t.type}</td>
+        <td>${escapeHtml(t.assetName)}</td>
+        <td>${escapeHtml(t.type)}</td>
         <td>$${t.entryPrice.toFixed(2)}</td>
         <td>$${t.exitPrice.toFixed(2)}</td>
         <td style="color:${t.profit >= 0 ? '#16a34a' : '#dc2626'};font-weight:bold">
@@ -74,7 +84,7 @@ export function Navbar() {
       @media print{button{display:none}}
     </style></head><body>
     <h1>📊 Trade Journal Report</h1>
-    <div class="meta">Generated: ${format(new Date(), "PPP")} &nbsp;·&nbsp; ${user?.email || ""}</div>
+    <div class="meta">Generated: ${format(new Date(), "PPP")} &nbsp;·&nbsp; ${escapeHtml(user?.email || "")}</div>
     <div class="summary">
       <div class="card"><div class="lbl">Total Trades</div><div class="val">${trades.length}</div></div>
       <div class="card"><div class="lbl">Win Rate</div><div class="val">${winRate}%</div></div>
@@ -119,7 +129,7 @@ export function Navbar() {
         <UsernameDialog
           open={showUsername}
           currentUsername={profile?.username}
-          isPremium={profile?.isPremium}
+          isPremium={isPremium}
           onClose={() => setShowUsername(false)}
         />
       )}
@@ -133,7 +143,7 @@ export function Navbar() {
           {user && (
             <div className="flex items-center gap-1 sm:gap-2">
               {/* Premium badge */}
-              {profile?.isPremium && (
+              {isPremium && (
                 <div className="hidden sm:flex items-center gap-1 bg-primary/10 border border-primary/20 rounded-full px-2.5 py-1 text-xs font-semibold text-primary">
                   <Crown className="w-3 h-3" />
                   Premium
@@ -261,7 +271,7 @@ export function Navbar() {
                   <DropdownMenuItem onClick={() => setShowUsername(true)} className="gap-2 cursor-pointer">
                      <AtSign className="w-4 h-4" /> {t("usernameSettings")}
                   </DropdownMenuItem>
-                  {!profile?.isPremium && (
+                  {!isPremium && (
                     <DropdownMenuItem
                       onClick={() => navigate("/premium")}
                       className="gap-2 cursor-pointer text-primary"

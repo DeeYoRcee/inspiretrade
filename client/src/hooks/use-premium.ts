@@ -28,6 +28,27 @@ export function useUserProfile() {
   });
 }
 
+export function usePremiumStatus() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["premiumStatus", user?.uid],
+    queryFn: async (): Promise<boolean> => {
+      if (!user) return false;
+      const res = await fetch("/api/whop/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firebaseUid: user.uid }),
+      });
+      if (!res.ok) throw new Error("Premium status request failed");
+      const data = await res.json();
+      return data?.isPremium === true;
+    },
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+}
+
 export function useLeaderboard(period: string = "allTime") {
   return useQuery({
     queryKey: ["leaderboard", period],
@@ -65,7 +86,7 @@ export function useLeaderboard(period: string = "allTime") {
         .sort((a, b) => parseFloat(b.winRate) - parseFloat(a.winRate))
         .slice(0, 10);
     },
-    refetchInterval: 30000,
+    refetchInterval: 60000,
   });
 }
 

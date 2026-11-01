@@ -16,7 +16,7 @@ export function WinRateChart({ category = "ALL" }: { category?: string }) {
     const now = new Date();
     if (period === "all") return base;
     if (period === "daily") return base.filter(t => isWithinInterval(new Date(t.timestamp), { start: startOfDay(now), end: endOfDay(now) }));
-    if (period === "weekly") return base.filter(t => isWithinInterval(new Date(t.timestamp), { start: startOfWeek(now), end: endOfWeek(now) }));
+    if (period === "weekly") return base.filter(t => isWithinInterval(new Date(t.timestamp), { start: startOfWeek(now, { weekStartsOn: 1 }), end: endOfWeek(now, { weekStartsOn: 1 }) }));
     if (period === "monthly") return base.filter(t => isWithinInterval(new Date(t.timestamp), { start: startOfMonth(now), end: endOfMonth(now) }));
     return base;
   }, [allTrades, category, period]);
@@ -70,12 +70,6 @@ export function WinRateChart({ category = "ALL" }: { category?: string }) {
                   strokeLinecap="round"
                 />
               )}
-              <text
-                x="50" y="50"
-                textAnchor="middle" dominantBaseline="middle"
-                className="rotate-90"
-                style={{ transform: "rotate(90deg) translate(0, -100px)", fontSize: "18px", fontWeight: "bold", fill: "hsl(var(--foreground))" }}
-              />
             </svg>
             <div className="relative -mt-28 flex items-center justify-center h-28">
               <span className="text-xl font-bold font-number text-foreground">{winRate.toFixed(0)}%</span>

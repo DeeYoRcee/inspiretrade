@@ -130,7 +130,7 @@
   }
 
   .social-badge {
-    @apply fixed bottom-6 left-6 z-[60] flex flex-col gap-3;
+    @apply hidden md:flex fixed bottom-6 left-6 z-[60] flex-col gap-3;
   }
 
   .social-badge-item {

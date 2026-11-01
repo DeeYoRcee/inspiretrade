@@ -4,7 +4,9 @@ export default async function handler(req: any, res: any) {
   if (req.method !== "POST") return res.status(405).json({ isPremium: false });
   try {
     const { firebaseUid } = req.body as { firebaseUid: string };
-    if (!firebaseUid) return res.status(400).json({ isPremium: false });
+    if (typeof firebaseUid !== "string" || !firebaseUid || firebaseUid.length > 128) {
+      return res.status(400).json({ isPremium: false });
+    }
 
     const whop = getWhop();
     const memberships = await (whop as any).memberships

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCircle2, Clock3 } from "lucide-react";
+import { ArrowRight, CircleCheck as CheckCircle2, Clock3 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useLanguage } from "@/lib/language-context";
 import { cn } from "@/lib/utils";
@@ -26,8 +26,8 @@ const SESSION_DEFINITIONS: SessionDefinition[] = [
     key: "london",
     startMinutes: 8 * 60,
     endMinutes: 17 * 60,
-    color: "text-violet-400",
-    barColor: "bg-violet-400",
+    color: "text-sky-400",
+    barColor: "bg-sky-400",
   },
   {
     key: "newYork",

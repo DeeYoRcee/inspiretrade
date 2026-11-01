@@ -14,8 +14,8 @@
     },
     "siteStats": {
       "users": {
+        ".read": "auth !== null",
         "$uid": {
-          ".read": "auth !== null",
           ".write": "$uid === auth.uid"
         }
       }
@@ -23,7 +23,18 @@
     "users": {
       "$uid": {
         ".read": "auth !== null",
-        ".write": "$uid === auth.uid"
+        ".write": "$uid === auth.uid",
+        "profile": {
+          "isPremium": {
+            ".validate": "newData.isBoolean() && (newData.val() === false || newData.val() === data.val())"
+          },
+          "premiumPlan": {
+            ".validate": "newData.val() === data.val() || !newData.exists()"
+          },
+          "premiumSince": {
+            ".validate": "newData.val() === data.val() || !newData.exists()"
+          }
+        }
       }
     },
     "privatePublicProfileSettings": {

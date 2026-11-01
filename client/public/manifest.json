@@ -1,11 +1,10 @@
 {
-  "name": "Trading Journal",
+  "name": "Trade Journal",
   "short_name": "Trade Journal",
   "description": "Professional trading journal for tracking forex and crypto trades with daily analytics",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait-primary",
   "background_color": "#0a0a0f",
   "theme_color": "#0a0a0f",
   "icons": [
@@ -19,17 +18,8 @@
       "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ],
-  "categories": ["finance", "productivity"],
-  "shortcuts": [
-    {
-      "name": "Log New Trade",
-      "short_name": "New Trade",
-      "description": "Quickly log a new trading entry",
-      "url": "/?action=new-trade",
-      "icons": [{ "src": "/logo.png", "sizes": "96x96", "type": "image/png" }]
-    }
-  ]
+  "categories": ["finance", "productivity"]
 }

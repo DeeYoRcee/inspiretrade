@@ -61,8 +61,8 @@ export default function Dashboard() {
 
   const weeklyTrades = filteredTrades.filter(t =>
     isWithinInterval(new Date(t.timestamp), {
-      start: startOfWeek(new Date()),
-      end: endOfWeek(new Date())
+      start: startOfWeek(new Date(), { weekStartsOn: 1 }),
+      end: endOfWeek(new Date(), { weekStartsOn: 1 })
     })
   );
 

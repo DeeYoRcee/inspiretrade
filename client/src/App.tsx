@@ -1,11 +1,12 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 import { ThemeProvider } from "@/lib/theme-context";
-import { LanguageProvider } from "@/lib/language-context";
+import { LanguageProvider, useLanguage } from "@/lib/language-context";
 import { Navbar } from "@/components/layout/Navbar";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
@@ -20,14 +21,17 @@ import { Activity, Send } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 function PremiumSuccessHandler() {
-  const [location, navigate] = useLocation();
   const { user } = useAuth();
+  const { toast } = useToast();
+  const { t } = useLanguage();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (location.includes("premium=success") && user) {
-      navigate("/");
-    }
-  }, [location, user]);
+    if (!user || !window.location.search.includes("premium=success")) return;
+    window.history.replaceState(null, "", "/");
+    queryClient.invalidateQueries({ queryKey: ["premiumStatus", user.uid] });
+    toast({ title: t("premiumThanks") });
+  }, [user]);
 
   return null;
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Crown, Check, Zap, Star, Shield, TrendingUp, Loader2, X } from "lucide-react";
+import { ArrowLeft, Crown, Check, Zap, Star, Shield, TrendingUp, Loader as Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -58,13 +58,12 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
     }
     setLoading(planKey);
     try {
-      const origin = window.location.origin;
       const res = await fetch("/api/whop/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           planKey,
-          redirectUrl: `${origin}/?premium=success`,
+          firebaseUid: user.uid,
         }),
       });
       const data = await res.json();
@@ -130,7 +129,7 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
             <Card className={cn(
               "glass-panel relative overflow-hidden transition-all cursor-pointer",
               plan.highlight
-                ? "border-primary ring-2 ring-primary/40 scale-105 shadow-[0_0_30px_rgba(var(--primary)/0.2)]"
+                ? "border-primary ring-2 ring-primary/40 scale-105 shadow-[0_0_30px_hsl(var(--primary)/0.2)]"
                 : "border-border/50 hover:border-primary/40"
             )}>
               {plan.badgeKey && (
