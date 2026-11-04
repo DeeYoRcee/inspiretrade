@@ -22,6 +22,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       root.classList.add("dark");
     }
     localStorage.setItem("tj-theme", theme);
+
+    const metaTags = document.querySelectorAll('meta[name="theme-color"]');
+    metaTags.forEach((meta) => {
+      meta.setAttribute("content", theme === "light" ? "#f6f8fa" : "#0a0a0f");
+    });
   }, [theme]);
 
   const toggleTheme = () => setTheme(t => t === "dark" ? "light" : "dark");

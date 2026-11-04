@@ -171,7 +171,7 @@ export function Navbar() {
                 <span className="hidden sm:inline">{t("macroPulse")}</span>
               </Button>
 
-              {location === "/news" && (
+              {(location === "/news" || location === "/public-profile") && (
                 <Button
                   variant="outline"
                   size="sm"
