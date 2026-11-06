@@ -1,4 +1,4 @@
-import { COMPANY_ID, getWhop } from "./_shared";
+import { COMPANY_ID } from "./_shared";
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") return res.status(405).json({ isPremium: false });
@@ -8,6 +8,12 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ isPremium: false });
     }
 
+    const apiKey = process.env.WHOP_API_KEY;
+    if (!apiKey) {
+      return res.status(200).json({ isPremium: false });
+    }
+
+    const { getWhop } = await import("./_shared");
     const whop = getWhop();
     const memberships = await (whop as any).memberships
       .list({

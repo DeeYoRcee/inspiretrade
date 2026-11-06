@@ -1,4 +1,4 @@
-import { PLANS, getWhop } from "./_shared";
+import { PLANS } from "./_shared";
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -10,9 +10,20 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Sign in before purchasing." });
     }
 
+    const apiKey = process.env.WHOP_API_KEY;
+
+    // Without an API key we can't create a checkout configuration with metadata,
+    // but Whop's hosted checkout page works without one.
+    if (!apiKey) {
+      return res.status(200).json({
+        checkoutUrl: `https://whop.com/checkout/${plan.id}`,
+      });
+    }
+
     const host = req.headers["x-forwarded-host"] || req.headers.host;
     const redirectUrl = host ? `https://${host}/?premium=success` : undefined;
 
+    const { getWhop } = await import("./_shared");
     const whop = getWhop();
     const config = await (whop as any).checkoutConfigurations.create({
       plan_id: plan.id,

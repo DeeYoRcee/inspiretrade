@@ -49,7 +49,7 @@ function AppLayout({ children }: { children: ReactNode }) {
               {t("footerInquiries")}
             </p>
             <a
-              href="https://t.me/fck_ed"
+              href="https://t.me/fyck7"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-[#0088cc]/10 text-[#0088cc] border border-[#0088cc]/20 hover:bg-[#0088cc]/20 transition-all font-semibold"
