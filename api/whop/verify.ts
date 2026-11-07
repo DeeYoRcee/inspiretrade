@@ -1,32 +1,30 @@
-import { COMPANY_ID } from "./_shared";
+import { COMPANY_ID, getWhop } from "./_shared";
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") return res.status(405).json({ isPremium: false });
+
   try {
-    const { firebaseUid } = req.body as { firebaseUid: string };
+    const { firebaseUid } = req.body as { firebaseUid?: string };
     if (typeof firebaseUid !== "string" || !firebaseUid || firebaseUid.length > 128) {
       return res.status(400).json({ isPremium: false });
     }
 
-    const apiKey = process.env.WHOP_API_KEY;
-    if (!apiKey) {
+    if (!process.env.WHOP_API_KEY) {
       return res.status(200).json({ isPremium: false });
     }
 
-    const { getWhop } = await import("./_shared");
     const whop = getWhop();
-    const memberships = await (whop as any).memberships
-      .list({
-        company_id: COMPANY_ID,
-        product_id: "prod_cUlL0SOCTM3S7",
-        valid: true,
-        metadata: JSON.stringify({ firebaseUid }),
-      })
-      .catch(() => ({ data: [] }));
+    const memberships = await (whop as any).memberships.list({
+      company_id: COMPANY_ID,
+      product_id: "prod_cUlL0SOCTM3S7",
+      valid: true,
+      metadata: JSON.stringify({ firebaseUid }),
+    });
 
     const isPremium = Array.isArray(memberships?.data) && memberships.data.length > 0;
-    res.status(200).json({ isPremium });
-  } catch {
-    res.status(200).json({ isPremium: false });
+    return res.status(200).json({ isPremium });
+  } catch (error) {
+    console.error("Whop membership verification failed:", error);
+    return res.status(500).json({ isPremium: false, error: "Premium holatini tekshirib bo‘lmadi." });
   }
 }
