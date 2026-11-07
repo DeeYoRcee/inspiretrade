@@ -18,14 +18,14 @@ export default async function handler(req: any, res: any) {
   };
   const plan = planKey ? (PLANS as Record<string, { id: string }>)[planKey] : undefined;
 
-  if (!plan) return res.status(400).json({ error: "Invalid premium plan." });
+  if (!plan) return res.status(400).json({ error: "Tarif noto‘g‘ri tanlangan." });
   if (typeof firebaseUid !== "string" || !firebaseUid || firebaseUid.length > 128) {
-    return res.status(400).json({ error: "Sign in before purchasing." });
+    return res.status(400).json({ error: "Avval akkauntingizga kiring." });
   }
 
   const apiKey = process.env.WHOP_API_KEY;
   if (!apiKey) {
-    return res.status(503).json({ error: "Whop payments are not configured. Please contact the site owner." });
+    return res.status(503).json({ error: "Whop sozlanmagan. Sayt egasi Vercel sozlamalarini tekshirishi kerak." });
   }
 
   try {
@@ -45,14 +45,29 @@ export default async function handler(req: any, res: any) {
 
     if (!checkout?.purchase_url) {
       console.error("Whop checkout response did not contain purchase_url");
-      return res.status(502).json({ error: "Whop did not return a checkout link. Check the plan and account in Whop." });
+      return res.status(502).json({ error: "Whop checkout havolasi qaytmadi. Tarif va kompaniya ID sini tekshiring." });
     }
 
     return res.status(200).json({ checkoutUrl: checkout.purchase_url });
-  } catch (error) {
+  } catch (error: any) {
+    const status = error?.statusCode || error?.status;
+    const rawMessage = typeof error?.message === "string" ? error.message : "";
     console.error("Whop checkout creation failed:", error);
+
+    if (status === 401 || status === 403 || /forbidden|not authorized|permission/i.test(rawMessage)) {
+      return res.status(502).json({
+        error: "Whop API kalitida ruxsat yetarli emas. Whop'da checkout_configuration:create hamda plan:basic:read ruxsatlarini yoqing; Vercel'dagi WHOP_COMPANY_ID va API kalit bir xil akkauntniki ekanini tekshiring.",
+      });
+    }
+
+    if (status === 404) {
+      return res.status(502).json({
+        error: "Whop kompaniya yoki tarif ID si topilmadi. WHOP_COMPANY_ID va tarif ID larini tekshiring.",
+      });
+    }
+
     return res.status(502).json({
-      error: "Checkout yaratilmadi. Vercel Runtime Logs'da Whop API xatosini tekshiring.",
+      error: "Whop checkout yaratilmadi. Vercel Runtime Logs'dagi eng yangi xato ma'lumotini tekshiring.",
     });
   }
 }
