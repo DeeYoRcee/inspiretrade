@@ -60,20 +60,30 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
     try {
       const res = await fetch("/api/whop/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          planKey,
-          firebaseUid: user.uid,
-        }),
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ planKey, firebaseUid: user.uid }),
       });
-      const data = await res.json();
-      if (data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
-      } else {
+      const responseText = await res.text();
+      let data: { checkoutUrl?: string; error?: string };
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        const detail = responseText.trim().slice(0, 180);
+        throw new Error(
+          `Checkout API returned a non-JSON response (HTTP ${res.status}). ${detail || "Check the Vercel function logs."}`,
+        );
+      }
+
+      if (!res.ok) {
+        throw new Error(data.error || `Checkout failed (HTTP ${res.status}).`);
+      }
+      if (!data.checkoutUrl) {
         throw new Error(data.error || t("checkoutUnavailable"));
       }
-    } catch (e: any) {
-      toast({ title: t("error"), description: e.message, variant: "destructive" });
+      window.location.assign(data.checkoutUrl);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : t("checkoutUnavailable");
+      toast({ title: t("error"), description: message, variant: "destructive" });
     } finally {
       setLoading(null);
     }
@@ -109,15 +119,10 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
           <Crown className="w-4 h-4 text-primary" />
           <span className="text-sm font-semibold text-primary">Trade Journal Premium</span>
         </div>
-          <h1 className="text-4xl font-display font-bold mb-3">
-           {t("becomeProfessional")}
-        </h1>
-        <p className="text-muted-foreground max-w-md mx-auto">
-           {t("premiumDescription")}
-        </p>
+        <h1 className="text-4xl font-display font-bold mb-3">{t("becomeProfessional")}</h1>
+        <p className="text-muted-foreground max-w-md mx-auto">{t("premiumDescription")}</p>
       </motion.div>
 
-      {/* Plans */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl mb-10">
         {PLANS.map((plan, i) => (
           <motion.div
@@ -134,26 +139,24 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
             )}>
               {plan.badgeKey && (
                 <div className="absolute top-0 inset-x-0 bg-primary text-primary-foreground text-xs font-bold py-1 text-center">
-                   {t(plan.badgeKey as Parameters<typeof t>[0])}
+                  {t(plan.badgeKey as Parameters<typeof t>[0])}
                 </div>
               )}
               <CardContent className={cn("p-6", plan.badgeKey && "pt-8")}>
-                 <h3 className="text-lg font-display font-bold mb-1">{t(plan.labelKey as Parameters<typeof t>[0])}</h3>
+                <h3 className="text-lg font-display font-bold mb-1">{t(plan.labelKey as Parameters<typeof t>[0])}</h3>
                 <div className="flex items-baseline gap-1 mb-1">
                   <span className="text-3xl font-bold font-number">{plan.price}</span>
-                   {plan.periodKey && <span className="text-muted-foreground text-sm">{t(plan.periodKey as Parameters<typeof t>[0])}</span>}
+                  {plan.periodKey && <span className="text-muted-foreground text-sm">{t(plan.periodKey as Parameters<typeof t>[0])}</span>}
                 </div>
-                 <p className="text-xs text-muted-foreground mb-5">{t(plan.descKey as Parameters<typeof t>[0])}</p>
+                <p className="text-xs text-muted-foreground mb-5">{t(plan.descKey as Parameters<typeof t>[0])}</p>
                 <Button
                   className={cn("w-full gap-2", plan.highlight && "bg-primary hover:bg-primary/90")}
                   variant={plan.highlight ? "default" : "outline"}
                   onClick={() => handleCheckout(plan.key)}
                   disabled={!!loading}
                 >
-                  {loading === plan.key
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <Crown className="w-4 h-4" />}
-                   {t("purchase")}
+                  {loading === plan.key ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crown className="w-4 h-4" />}
+                  {t("purchase")}
                 </Button>
               </CardContent>
             </Card>
@@ -161,15 +164,14 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
         ))}
       </div>
 
-      {/* Features */}
       <Card className="glass-panel border-border/40 w-full max-w-md">
         <CardContent className="p-6">
-           <h3 className="font-display font-semibold mb-4 text-center">{t("premiumFeatures")}</h3>
+          <h3 className="font-display font-semibold mb-4 text-center">{t("premiumFeatures")}</h3>
           <ul className="space-y-3">
             {FEATURES.map((f, i) => (
               <li key={i} className="flex items-center gap-3 text-sm">
                 <span className="text-primary">{f.icon}</span>
-                 <span>{t(f.textKey as Parameters<typeof t>[0])}</span>
+                <span>{t(f.textKey as Parameters<typeof t>[0])}</span>
                 <Check className="w-4 h-4 text-success ml-auto" />
               </li>
             ))}
