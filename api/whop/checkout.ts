@@ -1,4 +1,4 @@
-import { COMPANY_ID, PLANS } from "./_shared";
+import { COMPANY_ID, PLANS, getWhop } from "./_shared";
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
@@ -20,15 +20,12 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { getWhop } = await import("./_shared");
     const whop = getWhop();
     const appUrl = process.env.APP_URL;
     const redirectUrl = appUrl?.startsWith("https://")
       ? `${appUrl.replace(/\/$/, "")}/?premium=success`
       : undefined;
 
-    // Whop's current API expects the business account and the existing plan
-    // under account_id and variant_id (not plan_id).
     const checkout = await (whop as any).checkoutConfigurations.create({
       account_id: COMPANY_ID,
       variant_id: plan.id,
@@ -38,14 +35,14 @@ export default async function handler(req: any, res: any) {
     });
 
     if (!checkout?.purchase_url) {
-      throw new Error("Whop did not return a checkout URL. Check the account and plan configuration.");
+      throw new Error("Whop did not return a checkout URL");
     }
 
     return res.status(200).json({ checkoutUrl: checkout.purchase_url });
   } catch (error) {
     console.error("Whop checkout creation failed:", error);
     return res.status(502).json({
-      error: "Could not create the Whop checkout. Check the Whop API key, account ID, plan IDs, and API-key permissions in Vercel.",
+      error: "Checkout yaratilmadi. Vercel loglarida Whop API xatosini tekshiring.",
     });
   }
 }
