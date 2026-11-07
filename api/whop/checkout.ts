@@ -1,4 +1,11 @@
-import { COMPANY_ID, PLANS, getWhop } from "./_shared";
+import Whop from "@whop/sdk";
+
+const COMPANY_ID = process.env.WHOP_COMPANY_ID || "biz_lYc5Z0SFSvie4m";
+const PLANS = {
+  monthly: { id: "plan_uAJSe5gvChYEy", price: 3.99, label: "Monthly", period: "/ mo" },
+  yearly: { id: "plan_s3vO6JEWy2ruA", price: 24.99, label: "Yearly", period: "/ yr" },
+  lifetime: { id: "plan_OloGrVT1gLT5y", price: 109.99, label: "Lifetime", period: "" },
+};
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
@@ -15,12 +22,14 @@ export default async function handler(req: any, res: any) {
   if (typeof firebaseUid !== "string" || !firebaseUid || firebaseUid.length > 128) {
     return res.status(400).json({ error: "Sign in before purchasing." });
   }
-  if (!process.env.WHOP_API_KEY) {
+
+  const apiKey = process.env.WHOP_API_KEY;
+  if (!apiKey) {
     return res.status(503).json({ error: "Whop payments are not configured. Please contact the site owner." });
   }
 
   try {
-    const whop = getWhop();
+    const whop = new Whop({ apiKey });
     const appUrl = process.env.APP_URL;
     const redirectUrl = appUrl?.startsWith("https://")
       ? `${appUrl.replace(/\/$/, "")}/?premium=success`
@@ -35,14 +44,15 @@ export default async function handler(req: any, res: any) {
     });
 
     if (!checkout?.purchase_url) {
-      throw new Error("Whop did not return a checkout URL");
+      console.error("Whop checkout response did not contain purchase_url");
+      return res.status(502).json({ error: "Whop did not return a checkout link. Check the plan and account in Whop." });
     }
 
     return res.status(200).json({ checkoutUrl: checkout.purchase_url });
   } catch (error) {
     console.error("Whop checkout creation failed:", error);
     return res.status(502).json({
-      error: "Checkout yaratilmadi. Vercel loglarida Whop API xatosini tekshiring.",
+      error: "Checkout yaratilmadi. Vercel Runtime Logs'da Whop API xatosini tekshiring.",
     });
   }
 }
