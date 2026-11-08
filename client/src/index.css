@@ -1,6 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', sans-serif;
+    --font-display: 'Outfit', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    color-scheme: dark;
+    --background: 240 10% 4%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 7%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 8%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 240 5% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 5% 15%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 5% 17%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 348 83% 47%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 98%;
+    --border: 240 5% 18%;
+    --input: 240 5% 18%;
+    --ring: 240 5% 35%;
+    --radius: 0.75rem;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --background: 210 25% 97%;
+    --foreground: 225 18% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 225 18% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 225 18% 12%;
+    --primary: 222 47% 25%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 20% 91%;
+    --secondary-foreground: 225 18% 12%;
+    --muted: 210 20% 92%;
+    --muted-foreground: 220 8% 42%;
+    --accent: 210 20% 88%;
+    --accent-foreground: 225 18% 12%;
+    --destructive: 348 75% 44%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 65% 34%;
+    --success-foreground: 0 0% 100%;
+    --border: 214 20% 84%;
+    --input: 214 20% 84%;
+    --ring: 222 47% 45%;
+  }
+
+  :root[data-theme="glass"] {
+    --background: 225 8% 11%;
+    --foreground: 0 0% 96%;
+    --card: 225 7% 19%;
+    --card-foreground: 0 0% 97%;
+    --popover: 225 8% 16%;
+    --popover-foreground: 0 0% 97%;
+    --primary: 0 0% 92%;
+    --primary-foreground: 225 8% 12%;
+    --secondary: 225 6% 23%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 225 6% 23%;
+    --muted-foreground: 220 5% 70%;
+    --accent: 225 6% 26%;
+    --accent-foreground: 0 0% 96%;
+    --border: 0 0% 100% / 0.12;
+    --input: 0 0% 100% / 0.15;
+    --ring: 0 0% 80%;
+  }
+
+  :root[data-theme="ocean"] {
+    --background: 210 45% 7%;
+    --foreground: 205 35% 96%;
+    --card: 211 35% 11%;
+    --card-foreground: 205 35% 96%;
+    --popover: 211 35% 12%;
+    --popover-foreground: 205 35% 96%;
+    --primary: 190 85% 58%;
+    --primary-foreground: 213 45% 9%;
+    --secondary: 211 27% 18%;
+    --secondary-foreground: 205 35% 96%;
+    --muted: 211 27% 18%;
+    --muted-foreground: 205 15% 68%;
+    --accent: 198 30% 21%;
+    --accent-foreground: 205 35% 96%;
+    --border: 205 25% 25%;
+    --input: 205 25% 25%;
+    --ring: 190 85% 58%;
+  }
+
+  :root[data-theme="forest"] {
+    --background: 145 22% 7%;
+    --foreground: 140 20% 96%;
+    --card: 145 19% 11%;
+    --card-foreground: 140 20% 96%;
+    --popover: 145 19% 12%;
+    --popover-foreground: 140 20% 96%;
+    --primary: 145 58% 55%;
+    --primary-foreground: 150 35% 8%;
+    --secondary: 145 15% 18%;
+    --secondary-foreground: 140 20% 96%;
+    --muted: 145 15% 18%;
+    --muted-foreground: 140 10% 67%;
+    --accent: 145 20% 22%;
+    --accent-foreground: 140 20% 96%;
+    --border: 145 14% 25%;
+    --input: 145 14% 25%;
+    --ring: 145 58% 55%;
+  }
+
+  :root[data-theme="sunset"] {
+    --background: 270 24% 8%;
+    --foreground: 280 20% 97%;
+    --card: 270 20% 12%;
+    --card-foreground: 280 20% 97%;
+    --popover: 270 20% 13%;
+    --popover-foreground: 280 20% 97%;
+    --primary: 285 78% 72%;
+    --primary-foreground: 270 30% 10%;
+    --secondary: 270 17% 20%;
+    --secondary-foreground: 280 20% 97%;
+    --muted: 270 17% 20%;
+    --muted-foreground: 275 12% 70%;
+    --accent: 285 20% 24%;
+    --accent-foreground: 280 20% 97%;
+    --border: 275 15% 27%;
+    --input: 275 15% 27%;
+    --ring: 285 78% 72%;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  * { @apply border-border; scrollbar-color: hsl(var(--muted)) hsl(var(--background)); scrollbar-width: thin; }
+  html { min-width: 320px; width: 100%; overflow-x: clip; }
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-primary/30;
+    min-width: 320px;
+    width: 100%;
+    min-height: 100vh;
+    min-height: 100svh;
+    margin: 0;
+    overflow-x: clip;
+    font-family: var(--font-sans);
+    background-image: radial-gradient(circle at 50% 0%, hsl(var(--primary) / 0.07) 0%, transparent 48%), linear-gradient(to bottom, transparent, hsl(var(--background)));
+    background-attachment: fixed;
+    transition: background-color 220ms ease, color 220ms ease;
+  }
+  #root { min-height: 100vh; min-height: 100svh; width: 100%; overflow-x: clip; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: hsl(var(--background)); }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--muted)); border-radius: 9999px; border: 2px solid hsl(var(--background)); }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+  h1, h2, h3, h4, h5, h6 { font-family: var(--font-display); @apply tracking-tight; }
+  .font-number { font-family: var(--font-mono); }
+}
+
+@layer utilities {
+  .glass-panel { @apply bg-card/60 backdrop-blur-xl border border-border/50 shadow-2xl; }
+  .light .glass-panel { @apply bg-card/90 shadow-lg; }
+  .hover-glow { @apply transition-all duration-300; }
+  .hover-glow:hover { box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.3); }
+  .text-gradient { @apply bg-clip-text text-transparent bg-gradient-to-br from-foreground to-foreground/50; }
+  .social-badge { @apply hidden md:flex fixed bottom-6 left-6 z-[60] flex-col gap-3; }
+  .social-badge-item { @apply flex items-center gap-3 px-4 py-2 rounded-full glass-panel border border-border/50 shadow-lg hover-glow animate-in fade-in slide-in-from-left-4 duration-500 transition-all; }
+}
+
+:root[data-theme="glass"] .glass-panel,
+:root[data-theme="glass"] header {
+  background-color: hsl(var(--card) / 0.52);
+  border-color: hsl(0 0% 100% / 0.12);
+  backdrop-filter: blur(24px) saturate(135%);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+}
+
+@media (max-width: 640px) {
+  html, body, #root { max-width: 100%; }
+  #dashboard-root { padding-left: 0.75rem; padding-right: 0.75rem; padding-top: 1rem; }
+  #dashboard-root .glass-panel { min-width: 0; }
+  #dashboard-root [role="tablist"] { max-width: 100%; overflow-x: auto; }
+  #dashboard-root [role="tablist"] button { flex: 0 0 auto; }
+  #dashboard-root table { min-width: 680px; }
+  #dashboard-root .rdp { max-width: 100%; }
+  .container { max-width: 100%; }
+}
 
 .calendar-widget-frame { height: clamp(560px, 72svh, 900px); }
 .calendar-widget-frame > iframe { display: block; width: 100% !important; height: 100% !important; max-width: 100% !important; border: 0; }
-@media (max-width: 640px) {
-  .calendar-widget-frame { height: max(580px, 72svh); }
-}
+@media (max-width: 640px) { .calendar-widget-frame { height: max(580px, 72svh); } }
