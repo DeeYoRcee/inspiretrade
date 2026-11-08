@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Chrome as Home, Globe as Globe2, LayoutDashboard, Activity } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,39 +63,12 @@ export function Navbar() {
         <td>${escapeHtml(t.type)}</td>
         <td>$${t.entryPrice.toFixed(2)}</td>
         <td>$${t.exitPrice.toFixed(2)}</td>
-        <td style="color:${t.profit >= 0 ? '#16a34a' : '#dc2626'};font-weight:bold">
-          ${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}
-        </td>
+        <td style="color:${t.profit >= 0 ? '#16a34a' : '#dc2626'};font-weight:bold">${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}</td>
       </tr>`).join('');
 
-    const html = `<!DOCTYPE html><html><head><title>Trade Journal Report</title>
-    <style>
-      body{font-family:Arial,sans-serif;padding:24px;color:#111}
-      h1{font-size:22px;margin-bottom:4px}
-      .meta{color:#555;font-size:13px;margin-bottom:16px}
-      .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
-      .card{background:#f4f4f5;border-radius:8px;padding:12px}
-      .card .val{font-size:22px;font-weight:bold;margin:4px 0}
-      .card .lbl{font-size:11px;color:#666;text-transform:uppercase}
-      table{width:100%;border-collapse:collapse;font-size:12px}
-      th{background:#18181b;color:#fff;padding:8px 6px;text-align:left}
-      td{padding:6px;border-bottom:1px solid #e4e4e7}
-      tr:hover td{background:#fafafa}
-      @media print{button{display:none}}
-    </style></head><body>
-    <h1>📊 Trade Journal Report</h1>
-    <div class="meta">Generated: ${format(new Date(), "PPP")} &nbsp;·&nbsp; ${escapeHtml(user?.email || "")}</div>
-    <div class="summary">
-      <div class="card"><div class="lbl">Total Trades</div><div class="val">${trades.length}</div></div>
-      <div class="card"><div class="lbl">Win Rate</div><div class="val">${winRate}%</div></div>
-      <div class="card"><div class="lbl">Wins</div><div class="val" style="color:#16a34a">${wins}</div></div>
-      <div class="card"><div class="lbl">Net PnL</div><div class="val" style="color:${totalPnL >= 0 ? '#16a34a' : '#dc2626'}">${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}</div></div>
-    </div>
-    <table><thead><tr><th>Date</th><th>Asset</th><th>Type</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-    <script>window.onload=()=>{window.print();window.close()}</script>
-    </body></html>`;
-
+    const html = `<!DOCTYPE html><html><head><title>Trade Journal Report</title><style>
+      body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:22px;margin-bottom:4px}.meta{color:#555;font-size:13px;margin-bottom:16px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}.card{background:#f4f4f5;border-radius:8px;padding:12px}.card .val{font-size:22px;font-weight:bold;margin:4px 0}.card .lbl{font-size:11px;color:#666;text-transform:uppercase}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#18181b;color:#fff;padding:8px 6px;text-align:left}td{padding:6px;border-bottom:1px solid #e4e4e7}tr:hover td{background:#fafafa}@media print{button{display:none}}
+    </style></head><body><h1>📊 Trade Journal Report</h1><div class="meta">Generated: ${format(new Date(), "PPP")} &nbsp;·&nbsp; ${escapeHtml(user?.email || "")}</div><div class="summary"><div class="card"><div class="lbl">Total Trades</div><div class="val">${trades.length}</div></div><div class="card"><div class="lbl">Win Rate</div><div class="val">${winRate}%</div></div><div class="card"><div class="lbl">Wins</div><div class="val" style="color:#16a34a">${wins}</div></div><div class="card"><div class="lbl">Net PnL</div><div class="val" style="color:${totalPnL >= 0 ? '#16a34a' : '#dc2626'}">${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}</div></div></div><table><thead><tr><th>Date</th><th>Asset</th><th>Type</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>{window.print();window.close()}</script></body></html>`;
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
   };
@@ -103,23 +76,13 @@ export function Navbar() {
   const navItems = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/prop-firm", label: "Prop", icon: Activity },
-    { href: "/news", label: t("macroPulse"), icon: CalendarDays },
     { href: "/public-profile", label: "Profile", icon: Globe2 },
   ];
 
   return (
     <>
       <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
-        <AlertDialogContent className="glass-panel border-border/60">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 font-display"><AlertTriangle className="w-5 h-5 text-destructive" />{t("logoutTitle")}</AlertDialogTitle>
-            <AlertDialogDescription className="text-muted-foreground">{t("logoutDescription")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-xl">{t("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={logout} className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("yesLogout")}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
+        <AlertDialogContent className="glass-panel border-border/60"><AlertDialogHeader><AlertDialogTitle className="flex items-center gap-2 font-display"><AlertTriangle className="w-5 h-5 text-destructive" />{t("logoutTitle")}</AlertDialogTitle><AlertDialogDescription className="text-muted-foreground">{t("logoutDescription")}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel className="rounded-xl">{t("cancel")}</AlertDialogCancel><AlertDialogAction onClick={logout} className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("yesLogout")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
       </AlertDialog>
 
       {user && <UsernameDialog open={showUsername} currentUsername={profile?.username} isPremium={isPremium} onClose={() => setShowUsername(false)} />}
@@ -139,6 +102,8 @@ export function Navbar() {
           {user && <div className="flex items-center gap-1 sm:gap-2">
             {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary sm:flex"><Crown className="w-3 h-3" />Premium</div>}
             {profile?.username && <span className="hidden text-sm text-muted-foreground md:block">@{profile.username}</span>}
+            <Button variant={location === "/news" ? "secondary" : "ghost"} size="sm" onClick={() => navigate("/news")} title={t("macroPulse")} className={cn("rounded-full gap-1.5", location === "/news" ? "text-primary" : "text-muted-foreground hover:text-foreground")}><CalendarDays className="h-4 w-4" /><span className="hidden sm:inline">{t("macroPulse")}</span></Button>
+            {(location === "/news" || location === "/public-profile") && <Button variant="outline" size="sm" onClick={() => navigate("/")} title={t("backToDashboard")} aria-label={t("backToDashboard")} className="rounded-full gap-1.5"><Home className="h-4 w-4" /><span className="hidden sm:inline">{t("backToDashboard")}</span></Button>}
             <Button variant="ghost" size="icon" onClick={exportPDF} title={t("exportPdf")} className="rounded-full text-muted-foreground hover:text-foreground"><FileDown className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" onClick={toggleTheme} title={t("toggleTheme")} className="rounded-full text-muted-foreground hover:text-foreground">{theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}</Button>
 
@@ -154,8 +119,8 @@ export function Navbar() {
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" className="rounded-full ml-1 gap-1.5"><span className="hidden sm:inline">{t("account")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48">
-                <div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator />
+              <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate("/public-profile")} className="gap-2 cursor-pointer"><Globe2 className="w-4 h-4" />{t("publicProfile")}</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setShowUsername(true)} className="gap-2 cursor-pointer"><AtSign className="w-4 h-4" />{t("usernameSettings")}</DropdownMenuItem>
                 {!isPremium && <DropdownMenuItem onClick={() => navigate("/premium")} className="gap-2 cursor-pointer text-primary"><Crown className="w-4 h-4" />{t("getPremium")}</DropdownMenuItem>}
                 <DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShowConfirm(true)} className="gap-2 cursor-pointer text-destructive focus:text-destructive"><LogOut className="w-4 h-4" />{t("logout")}</DropdownMenuItem>
