@@ -1,6 +1,5 @@
-import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Crown, Check, Zap, Star, Shield, TrendingUp, Loader as Loader2, X } from "lucide-react";
+import { ArrowLeft, Crown, Check, Zap, Star, Shield, TrendingUp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -49,44 +48,18 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const { t } = useLanguage();
-  const [loading, setLoading] = useState<string | null>(null);
 
-  const handleCheckout = async (planKey: string) => {
+  const handleCheckout = () => {
     if (!user) {
       toast({ title: t("signInFirst"), variant: "destructive" });
       return;
     }
-    setLoading(planKey);
-    try {
-      const res = await fetch("/api/whop/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ planKey, firebaseUid: user.uid }),
-      });
-      const responseText = await res.text();
-      let data: { checkoutUrl?: string; error?: string };
-      try {
-        data = JSON.parse(responseText);
-      } catch {
-        const detail = responseText.trim().slice(0, 180);
-        throw new Error(
-          `Checkout API returned a non-JSON response (HTTP ${res.status}). ${detail || "Check the Vercel function logs."}`,
-        );
-      }
 
-      if (!res.ok) {
-        throw new Error(data.error || `Checkout failed (HTTP ${res.status}).`);
-      }
-      if (!data.checkoutUrl) {
-        throw new Error(data.error || t("checkoutUnavailable"));
-      }
-      window.location.assign(data.checkoutUrl);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : t("checkoutUnavailable");
-      toast({ title: t("error"), description: message, variant: "destructive" });
-    } finally {
-      setLoading(null);
-    }
+    toast({
+      title: "Premium checkout is temporarily unavailable",
+      description: "We're working to restore payments. Please check back soon.",
+      variant: "destructive",
+    });
   };
 
   return (
@@ -105,6 +78,7 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
         <button
           onClick={onClose}
           className="absolute top-6 right-6 p-2 rounded-full hover:bg-secondary transition-colors text-muted-foreground"
+          aria-label="Close"
         >
           <X className="w-5 h-5" />
         </button>
@@ -123,6 +97,14 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
         <p className="text-muted-foreground max-w-md mx-auto">{t("premiumDescription")}</p>
       </motion.div>
 
+      <div
+        role="status"
+        className="w-full max-w-3xl mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-center text-sm"
+      >
+        <p className="font-semibold">Premium purchases are temporarily unavailable.</p>
+        <p className="mt-1 text-muted-foreground">We're working to restore payments. Please check back soon.</p>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl mb-10">
         {PLANS.map((plan, i) => (
           <motion.div
@@ -132,7 +114,7 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
             transition={{ delay: i * 0.1 }}
           >
             <Card className={cn(
-              "glass-panel relative overflow-hidden transition-all cursor-pointer",
+              "glass-panel relative overflow-hidden transition-all",
               plan.highlight
                 ? "border-primary ring-2 ring-primary/40 scale-105 shadow-[0_0_30px_hsl(var(--primary)/0.2)]"
                 : "border-border/50 hover:border-primary/40"
@@ -152,11 +134,10 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
                 <Button
                   className={cn("w-full gap-2", plan.highlight && "bg-primary hover:bg-primary/90")}
                   variant={plan.highlight ? "default" : "outline"}
-                  onClick={() => handleCheckout(plan.key)}
-                  disabled={!!loading}
+                  onClick={handleCheckout}
                 >
-                  {loading === plan.key ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crown className="w-4 h-4" />}
-                  {t("purchase")}
+                  <Crown className="w-4 h-4" />
+                  Temporarily unavailable
                 </Button>
               </CardContent>
             </Card>
