@@ -103,6 +103,7 @@ export function Navbar() {
   const navItems = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/prop-firm", label: "Prop", icon: Activity },
+    { href: "/news", label: t("macroPulse"), icon: CalendarDays },
     { href: "/public-profile", label: "Profile", icon: Globe2 },
   ];
 
@@ -138,7 +139,6 @@ export function Navbar() {
           {user && <div className="flex items-center gap-1 sm:gap-2">
             {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary sm:flex"><Crown className="w-3 h-3" />Premium</div>}
             {profile?.username && <span className="hidden text-sm text-muted-foreground md:block">@{profile.username}</span>}
-            <Button variant={location === "/news" ? "secondary" : "ghost"} size="sm" onClick={() => navigate("/news")} title={t("macroPulse")} className={cn("rounded-full gap-1.5", location === "/news" ? "text-primary" : "text-muted-foreground hover:text-foreground")}><CalendarDays className="h-4 w-4" /><span className="hidden sm:inline">{t("macroPulse")}</span></Button>
             <Button variant="ghost" size="icon" onClick={exportPDF} title={t("exportPdf")} className="rounded-full text-muted-foreground hover:text-foreground"><FileDown className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" onClick={toggleTheme} title={t("toggleTheme")} className="rounded-full text-muted-foreground hover:text-foreground">{theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}</Button>
 
