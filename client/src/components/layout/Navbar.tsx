@@ -62,9 +62,10 @@ export function Navbar() {
       {user && <UsernameDialog open={showUsername} currentUsername={profile?.username} isPremium={isPremium} onClose={() => setShowUsername(false)} />}
 
       <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 backdrop-blur-md">
-        <div className="container mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-4 md:min-h-16 md:flex-nowrap">
+        <div className="container mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4 md:min-h-16 md:flex-nowrap">
           <button onClick={() => navigate("/")} aria-label="Trade Journal home" className="order-1 flex h-10 shrink-0 items-center"><img src="/logo.png" alt="Trade Journal" className="h-9 w-auto max-w-[130px] object-contain sm:h-10" /></button>
-          {user && <nav aria-label="Main navigation" className="order-3 -mx-3 flex w-[calc(100%+1.5rem)] min-w-0 items-center gap-1 overflow-x-auto border-t border-border/40 px-3 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:order-2 md:mx-0 md:w-auto md:flex-1 md:justify-center md:overflow-visible md:border-0 md:px-0 md:pt-0">
+
+          {user && <nav aria-label="Main navigation" className="order-3 -mx-3 flex w-[calc(100%+1.5rem)] min-w-0 items-center overflow-x-auto border-t border-border/40 px-3 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:order-2 md:mx-auto md:w-auto md:max-w-full md:justify-center md:overflow-visible md:border md:border-border/60 md:bg-card/60 md:p-1 md:pt-1 md:rounded-full">
             {navItems.map(({ href, label, icon: Icon }) => {
               const active = href === "/" ? location === "/" : location.startsWith(href);
               return <Button key={href} variant={active ? "secondary" : "ghost"} size="sm" onClick={() => navigate(href)} aria-current={active ? "page" : undefined} className={cn("h-9 shrink-0 gap-1.5 rounded-full px-3 text-xs sm:text-sm", active && "text-emerald-500")}><Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span></Button>;
@@ -78,29 +79,17 @@ export function Navbar() {
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" aria-label="Theme tanlash" title={`Theme: ${THEME_LABELS[theme]}`} className="h-9 gap-1.5 rounded-full px-3"><Palette className="h-4 w-4" /><span className="text-xs sm:text-sm">Theme</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-56 border-border/60">
-                {THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("mr-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}</DropdownMenuItem>)}
-              </DropdownMenuContent>
+              <DropdownMenuContent align="end" className="glass-panel w-56 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("mr-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
 
             <DropdownMenu onOpenChange={(open) => !open && setSettingsView("main")}>
               <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" aria-label={t("settings")} className="h-9 gap-1.5 rounded-full px-3"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">
-                {settingsView === "main" ? <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("language"); }} className="cursor-pointer gap-2">{t("language")}<ChevronRight className="ml-auto h-4 w-4" /></DropdownMenuItem> : <>
-                  <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("main"); }} className="cursor-pointer gap-2"><ChevronLeft className="h-4 w-4" />{t("settings")}</DropdownMenuItem><DropdownMenuSeparator />
-                  {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer", language === code && "bg-primary/10 text-primary")}>{LANGUAGE_LABELS[code]}</DropdownMenuItem>)}
-                </>}
-              </DropdownMenuContent>
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">{settingsView === "main" ? <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("language"); }} className="cursor-pointer gap-2">{t("language")}<ChevronRight className="ml-auto h-4 w-4" /></DropdownMenuItem> : <><DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("main"); }} className="cursor-pointer gap-2"><ChevronLeft className="h-4 w-4" />{t("settings")}</DropdownMenuItem><DropdownMenuSeparator />{(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer", language === code && "bg-primary/10 text-primary")}>{LANGUAGE_LABELS[code]}</DropdownMenuItem>)}</>}</DropdownMenuContent>
             </DropdownMenu>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" aria-label={t("account")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-3"><UserRound className="h-4 w-4 md:hidden" /><span className="hidden md:inline">{t("account")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setShowUsername(true)} className="cursor-pointer gap-2"><AtSign className="h-4 w-4" />{t("usernameSettings")}</DropdownMenuItem>
-                {!isPremium && <DropdownMenuItem onClick={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}
-                <DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem>
-              </DropdownMenuContent>
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator /><DropdownMenuItem onClick={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem><DropdownMenuItem onClick={() => setShowUsername(true)} className="cursor-pointer gap-2"><AtSign className="h-4 w-4" />{t("usernameSettings")}</DropdownMenuItem>{!isPremium && <DropdownMenuItem onClick={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem></DropdownMenuContent>
             </DropdownMenu>
           </div>}
         </div>
