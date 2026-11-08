@@ -75,7 +75,6 @@
     --accent-foreground: 0 0% 98%;
     --destructive: 348 83% 58%;
     --success: 142 71% 50%;
-    /* Keep HSL channels only; Tailwind adds its own alpha when using border/input utilities. */
     --border: 0 0% 100%;
     --input: 0 0% 100%;
     --ring: 0 0% 85%;
@@ -160,7 +159,8 @@
     background-attachment: fixed;
     transition: background-color 220ms ease, color 220ms ease;
   }
-  #root { min-height: 100vh; min-height: 100svh; width: 100%; overflow-x: clip; }
+  /* Do not clip sticky descendants: the site header must stay visible while scrolling. */
+  #root { min-height: 100vh; min-height: 100svh; width: 100%; overflow-x: visible; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: hsl(var(--background)); }
   ::-webkit-scrollbar-thumb { background: hsl(var(--muted)); border-radius: 9999px; border: 2px solid hsl(var(--background)); }
@@ -179,50 +179,46 @@
   .social-badge-item { @apply flex items-center gap-3 px-4 py-2 rounded-full glass-panel border border-border/50 shadow-lg hover-glow animate-in fade-in slide-in-from-left-4 duration-500 transition-all; }
 }
 
-/* Stable contrast for the grouped navigation in every theme. */
+/* Keep the navigation bar pinned and legible after changing themes at any scroll position. */
+header.sticky {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1000 !important;
+  flex-shrink: 0;
+  align-self: stretch;
+  isolation: isolate;
+}
+
 header nav[aria-label="Main navigation"] {
   isolation: isolate;
   border-color: hsl(var(--border) / 0.9) !important;
   background-color: hsl(var(--card) / 0.88) !important;
   box-shadow: 0 8px 28px hsl(0 0% 0% / 0.16), inset 0 1px hsl(0 0% 100% / 0.04);
 }
-
-header nav[aria-label="Main navigation"] > button {
-  color: hsl(var(--foreground)) !important;
-}
-
+header nav[aria-label="Main navigation"] > button { color: hsl(var(--foreground)) !important; }
 header nav[aria-label="Main navigation"] > button[aria-current="page"] {
   background-color: hsl(var(--primary) / 0.16) !important;
   color: hsl(var(--primary)) !important;
   box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.48);
 }
+header nav[aria-label="Main navigation"] > button:not([aria-current="page"]):hover { background-color: hsl(var(--foreground) / 0.08) !important; }
 
-header nav[aria-label="Main navigation"] > button:not([aria-current="page"]):hover {
-  background-color: hsl(var(--foreground) / 0.08) !important;
-}
-
-/* iOS-inspired Glass material: translucent, blurred and saturated while preserving contrast. */
 :root[data-theme="glass"] body {
   background-color: hsl(225 20% 13%);
-  background-image:
-    radial-gradient(ellipse at 18% 12%, hsl(205 70% 66% / 0.2), transparent 42%),
-    radial-gradient(ellipse at 82% 32%, hsl(275 58% 70% / 0.16), transparent 44%),
-    radial-gradient(ellipse at 45% 88%, hsl(190 45% 55% / 0.12), transparent 46%),
-    linear-gradient(135deg, hsl(225 20% 13%), hsl(240 14% 18%));
+  background-image: radial-gradient(ellipse at 18% 12%, hsl(205 70% 66% / 0.2), transparent 42%), radial-gradient(ellipse at 82% 32%, hsl(275 58% 70% / 0.16), transparent 44%), radial-gradient(ellipse at 45% 88%, hsl(190 45% 55% / 0.12), transparent 46%), linear-gradient(135deg, hsl(225 20% 13%), hsl(240 14% 18%));
 }
-
 :root[data-theme="glass"] .glass-panel,
-:root[data-theme="glass"] header,
-:root[data-theme="glass"] header nav[aria-label="Main navigation"] {
+:root[data-theme="glass"] header {
   background-color: hsl(var(--card) / 0.42) !important;
   border-color: hsl(0 0% 100% / 0.2) !important;
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   box-shadow: 0 10px 32px hsl(225 30% 3% / 0.2), inset 0 1px hsl(0 0% 100% / 0.12);
 }
+:root[data-theme="glass"] header nav[aria-label="Main navigation"] { background-color: hsl(var(--card) / 0.78) !important; }
 
 @media (max-width: 640px) {
-  html, body, #root { max-width: 100%; }
+  html, body { max-width: 100%; }
   #dashboard-root { padding-left: 0.75rem; padding-right: 0.75rem; padding-top: 1rem; }
   #dashboard-root .glass-panel { min-width: 0; }
   #dashboard-root [role="tablist"] { max-width: 100%; overflow-x: auto; }
