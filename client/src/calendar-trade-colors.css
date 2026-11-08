@@ -1,0 +1,36 @@
+/* Calendar trade-result outlines: keep the PnL fill transparent and show the result on the cell edge. */
+:root,
+:root[data-theme="dark"] {
+  --calendar-profit: 142 71% 45%;
+}
+
+:root[data-theme="light"] {
+  --calendar-profit: 142 65% 34%;
+}
+
+:root[data-theme="glass"],
+:root[data-theme="ocean"],
+:root[data-theme="forest"],
+:root[data-theme="sunset"] {
+  --calendar-profit: var(--primary);
+}
+
+#dashboard-root [class*="border-success/80"] {
+  border-color: hsl(var(--calendar-profit)) !important;
+  box-shadow: none !important;
+}
+
+#dashboard-root [class*="border-destructive/80"] {
+  border-color: #ef4444 !important;
+  box-shadow: none !important;
+}
+
+/* The weekly view renders PnL as a direct span in each day button. */
+#dashboard-root button[class*="border-success/80"] > span:not(.absolute) {
+  color: hsl(var(--calendar-profit)) !important;
+}
+
+/* Monthly calendar day cells render their PnL in the second direct span. */
+#dashboard-root .rdp [class*="border-success/80"] > span:nth-child(2) {
+  color: hsl(var(--calendar-profit)) !important;
+}

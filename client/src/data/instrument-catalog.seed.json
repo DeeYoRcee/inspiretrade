@@ -35,6 +35,7 @@
   { "symbol": "USDZAR", "name": "US Dollar / South African Rand", "category": "FOREX", "enabled": true, "sortOrder": 340 },
   { "symbol": "USDTRY", "name": "US Dollar / Turkish Lira", "category": "FOREX", "enabled": true, "sortOrder": 350 },
   { "symbol": "USDMXN", "name": "US Dollar / Mexican Peso", "category": "FOREX", "enabled": true, "sortOrder": 360 },
+  { "symbol": "NAS100", "name": "NASDAQ 100 Index", "category": "FOREX", "enabled": true, "sortOrder": 370 },
   { "symbol": "BTCUSDT", "name": "Bitcoin / Tether", "category": "CRYPTO", "enabled": true, "sortOrder": 390 },
   { "symbol": "BTCUSD", "name": "Bitcoin / US Dollar", "category": "CRYPTO", "enabled": true, "sortOrder": 400 },
   { "symbol": "ETHUSDT", "name": "Ethereum / Tether", "category": "CRYPTO", "enabled": true, "sortOrder": 405 },
