@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,27 +50,15 @@ export function Navbar() {
   const [location, navigate] = useLocation();
 
   const exportPDF = () => {
-    if (!trades || trades.length === 0) return;
-
-    const totalPnL = trades.reduce((acc, t) => acc + t.profit, 0);
-    const wins = trades.filter(t => t.profit > 0).length;
-    const winRate = trades.length > 0 ? ((wins / trades.length) * 100).toFixed(1) : "0";
-
-    const rows = trades.slice(0, 100).map(t => `
-      <tr>
-        <td>${format(new Date(t.timestamp), "MM/dd/yy")}</td>
-        <td>${escapeHtml(t.assetName)}</td>
-        <td>${escapeHtml(t.type)}</td>
-        <td>$${t.entryPrice.toFixed(2)}</td>
-        <td>$${t.exitPrice.toFixed(2)}</td>
-        <td style="color:${t.profit >= 0 ? '#16a34a' : '#dc2626'};font-weight:bold">${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}</td>
-      </tr>`).join('');
-
-    const html = `<!DOCTYPE html><html><head><title>Trade Journal Report</title><style>
-      body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:22px;margin-bottom:4px}.meta{color:#555;font-size:13px;margin-bottom:16px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}.card{background:#f4f4f5;border-radius:8px;padding:12px}.card .val{font-size:22px;font-weight:bold;margin:4px 0}.card .lbl{font-size:11px;color:#666;text-transform:uppercase}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#18181b;color:#fff;padding:8px 6px;text-align:left}td{padding:6px;border-bottom:1px solid #e4e4e7}tr:hover td{background:#fafafa}@media print{button{display:none}}
-    </style></head><body><h1>📊 Trade Journal Report</h1><div class="meta">Generated: ${format(new Date(), "PPP")} &nbsp;·&nbsp; ${escapeHtml(user?.email || "")}</div><div class="summary"><div class="card"><div class="lbl">Total Trades</div><div class="val">${trades.length}</div></div><div class="card"><div class="lbl">Win Rate</div><div class="val">${winRate}%</div></div><div class="card"><div class="lbl">Wins</div><div class="val" style="color:#16a34a">${wins}</div></div><div class="card"><div class="lbl">Net PnL</div><div class="val" style="color:${totalPnL >= 0 ? '#16a34a' : '#dc2626'}">${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}</div></div></div><table><thead><tr><th>Date</th><th>Asset</th><th>Type</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>{window.print();window.close()}</script></body></html>`;
-    const win = window.open('', '_blank');
-    if (win) { win.document.write(html); win.document.close(); }
+    if (!trades?.length) return;
+    const totalPnL = trades.reduce((acc, trade) => acc + trade.profit, 0);
+    const wins = trades.filter((trade) => trade.profit > 0).length;
+    const winRate = ((wins / trades.length) * 100).toFixed(1);
+    const rows = trades.slice(0, 100).map((trade) => `
+      <tr><td>${format(new Date(trade.timestamp), "MM/dd/yy")}</td><td>${escapeHtml(trade.assetName)}</td><td>${escapeHtml(trade.type)}</td><td>$${trade.entryPrice.toFixed(2)}</td><td>$${trade.exitPrice.toFixed(2)}</td><td>$${trade.profit.toFixed(2)}</td></tr>`).join("");
+    const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Trade Journal Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}th{background:#18181b;color:white}@media(max-width:600px){body{padding:12px}table{font-size:10px}th,td{padding:5px}}</style></head><body><h1>Trade Journal Report</h1><p>Generated: ${format(new Date(), "PPP")} · ${escapeHtml(user?.email || "")}</p><p>Total trades: ${trades.length} · Win rate: ${winRate}% · Wins: ${wins} · Net PnL: $${totalPnL.toFixed(2)}</p><div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Asset</th><th>Type</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead><tbody>${rows}</tbody></table></div><script>window.onload=()=>window.print()</script></body></html>`;
+    const printWindow = window.open("", "_blank");
+    if (printWindow) { printWindow.document.write(html); printWindow.document.close(); }
   };
 
   const navItems = [
@@ -83,53 +71,66 @@ export function Navbar() {
   return (
     <>
       <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
-        <AlertDialogContent className="glass-panel border-border/60"><AlertDialogHeader><AlertDialogTitle className="flex items-center gap-2 font-display"><AlertTriangle className="w-5 h-5 text-destructive" />{t("logoutTitle")}</AlertDialogTitle><AlertDialogDescription className="text-muted-foreground">{t("logoutDescription")}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel className="rounded-xl">{t("cancel")}</AlertDialogCancel><AlertDialogAction onClick={logout} className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("yesLogout")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+        <AlertDialogContent className="glass-panel border-border/60">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 font-display"><AlertTriangle className="h-5 w-5 text-destructive" />{t("logoutTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">{t("logoutDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={logout} className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("yesLogout")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
       </AlertDialog>
 
       {user && <UsernameDialog open={showUsername} currentUsername={profile?.username} isPremium={isPremium} onClose={() => setShowUsername(false)} />}
 
-      <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/90 backdrop-blur-md">
-        <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-2 px-4 py-2">
-          <div className="flex items-center gap-3">
-            <button onClick={() => navigate("/")} aria-label="Trade Journal home" className="flex items-center"><img src="/logo.png" alt="Trade Journal" className="h-10 w-auto object-contain" /></button>
-            {user && <nav aria-label="Main navigation" className="flex items-center gap-1 rounded-full border border-border/60 bg-card/60 p-1">
-              {navItems.map(({ href, label, icon: Icon }) => {
-                const active = href === "/" ? location === "/" : location.startsWith(href);
-                return <Button key={href} variant={active ? "secondary" : "ghost"} size="sm" onClick={() => navigate(href)} aria-current={active ? "page" : undefined} className={cn("rounded-full gap-1.5", active && "text-emerald-500")}><Icon className="h-4 w-4" /><span>{label}</span></Button>;
-              })}
-            </nav>}
-          </div>
+      <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 backdrop-blur-md">
+        <div className="container mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-4 md:min-h-16 md:flex-nowrap">
+          <button onClick={() => navigate("/")} aria-label="Trade Journal home" className="order-1 flex h-10 shrink-0 items-center">
+            <img src="/logo.png" alt="Trade Journal" className="h-9 w-auto max-w-[130px] object-contain sm:h-10" />
+          </button>
 
-          {user && <div className="flex items-center gap-1 sm:gap-2">
-            {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary sm:flex"><Crown className="w-3 h-3" />Premium</div>}
-            {profile?.username && <span className="hidden text-sm text-muted-foreground md:block">@{profile.username}</span>}
-            <Button variant="ghost" size="icon" onClick={exportPDF} title={t("exportPdf")} className="rounded-full text-muted-foreground hover:text-foreground"><FileDown className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" onClick={toggleTheme} title={t("toggleTheme")} className="rounded-full text-muted-foreground hover:text-foreground">{theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}</Button>
+          {user && <nav aria-label="Main navigation" className="order-3 -mx-3 flex w-[calc(100%+1.5rem)] min-w-0 items-center gap-1 overflow-x-auto border-t border-border/40 px-3 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:order-2 md:mx-0 md:w-auto md:flex-1 md:justify-center md:overflow-visible md:border-0 md:px-0 md:pt-0">
+            {navItems.map(({ href, label, icon: Icon }) => {
+              const active = href === "/" ? location === "/" : location.startsWith(href);
+              return <Button key={href} variant={active ? "secondary" : "ghost"} size="sm" onClick={() => navigate(href)} aria-current={active ? "page" : undefined} className={cn("h-9 shrink-0 gap-1.5 rounded-full px-3 text-xs sm:text-sm", active && "text-emerald-500")}>
+                <Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span>
+              </Button>;
+            })}
+          </nav>}
+
+          {user && <div className="order-2 ml-auto flex shrink-0 items-center gap-1 sm:gap-2 md:order-3">
+            {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary lg:flex"><Crown className="h-3 w-3" />Premium</div>}
+            {profile?.username && <span className="hidden max-w-28 truncate text-sm text-muted-foreground lg:block">@{profile.username}</span>}
+            <Button variant="ghost" size="icon" onClick={exportPDF} title={t("exportPdf")} aria-label={t("exportPdf")} className="h-9 w-9 rounded-full text-muted-foreground"><FileDown className="h-4 w-4" /></Button>
+            <Button variant="ghost" size="icon" onClick={toggleTheme} title={t("toggleTheme")} aria-label={t("toggleTheme")} className="h-9 w-9 rounded-full text-muted-foreground">{theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</Button>
 
             <DropdownMenu onOpenChange={(open) => !open && setSettingsView("main")}>
-              <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" className="rounded-full ml-1 gap-1.5"><Settings className="w-3.5 h-3.5" /><span className="hidden sm:inline">{t("settings")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48">
-                {settingsView === "main" ? <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("language"); }} className="cursor-pointer gap-2">{t("language")}<ChevronRight className="ml-auto w-4 h-4" /></DropdownMenuItem> : <>
-                  <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("main"); }} className="cursor-pointer gap-2"><ChevronLeft className="w-4 h-4" />{t("settings")}</DropdownMenuItem><DropdownMenuSeparator />
+              <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" aria-label={t("settings")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-3"><Settings className="h-4 w-4" /><span className="hidden md:inline">{t("settings")}</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">
+                {settingsView === "main" ? <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("language"); }} className="cursor-pointer gap-2">{t("language")}<ChevronRight className="ml-auto h-4 w-4" /></DropdownMenuItem> : <>
+                  <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("main"); }} className="cursor-pointer gap-2"><ChevronLeft className="h-4 w-4" />{t("settings")}</DropdownMenuItem><DropdownMenuSeparator />
                   {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer", language === code && "bg-primary/10 text-primary")}>{LANGUAGE_LABELS[code]}</DropdownMenuItem>)}
                 </>}
               </DropdownMenuContent>
             </DropdownMenu>
 
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" className="rounded-full ml-1 gap-1.5"><span className="hidden sm:inline">{t("account")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate("/public-profile")} className="gap-2 cursor-pointer"><Globe2 className="w-4 h-4" />{t("publicProfile")}</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setShowUsername(true)} className="gap-2 cursor-pointer"><AtSign className="w-4 h-4" />{t("usernameSettings")}</DropdownMenuItem>
-                {!isPremium && <DropdownMenuItem onClick={() => navigate("/premium")} className="gap-2 cursor-pointer text-primary"><Crown className="w-4 h-4" />{t("getPremium")}</DropdownMenuItem>}
-                <DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShowConfirm(true)} className="gap-2 cursor-pointer text-destructive focus:text-destructive"><LogOut className="w-4 h-4" />{t("logout")}</DropdownMenuItem>
+              <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" aria-label={t("account")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-3"><UserRound className="h-4 w-4 md:hidden" /><span className="hidden md:inline">{t("account")}</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">
+                <div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowUsername(true)} className="cursor-pointer gap-2"><AtSign className="h-4 w-4" />{t("usernameSettings")}</DropdownMenuItem>
+                {!isPremium && <DropdownMenuItem onClick={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}
+                <DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>}
         </div>
       </header>
 
-      {user && <div className="social-badge"><a href="https://t.me/DeeYoRcee_Inspire" target="_blank" rel="noreferrer" className="social-badge-item text-[#0088cc]"><Send className="w-5 h-5" /><span className="text-sm font-bold text-foreground">Telegram</span></a><a href="https://instagram.com/DeeYoRcee_Inspire" target="_blank" rel="noreferrer" className="social-badge-item text-[#E1306C]"><Instagram className="w-5 h-5" /><span className="text-sm font-bold text-foreground">Instagram</span></a></div>}
+      {user && <div className="social-badge"><a href="https://t.me/DeeYoRcee_Inspire" target="_blank" rel="noreferrer" className="social-badge-item text-[#0088cc]"><Send className="h-5 w-5" /><span className="text-sm font-bold text-foreground">Telegram</span></a><a href="https://instagram.com/DeeYoRcee_Inspire" target="_blank" rel="noreferrer" className="social-badge-item text-[#E1306C]"><Instagram className="h-5 w-5" /><span className="text-sm font-bold text-foreground">Instagram</span></a></div>}
     </>
   );
 }
