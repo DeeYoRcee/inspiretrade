@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation, Link } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -18,7 +18,7 @@ import PublicProfileSettingsPage from "@/pages/PublicProfileSettings";
 import PropFirmPage from "@/pages/PropFirmPage";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { UsernamePrompt } from "@/components/UsernamePrompt";
-import { Activity, ArrowUpRight, Send } from "lucide-react";
+import { Activity, Send } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 function PremiumSuccessHandler() {
@@ -42,15 +42,6 @@ function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />
-      <div className="border-b border-border/40 bg-card/30">
-        <div className="container mx-auto flex h-11 items-center px-4">
-          <Link href="/prop-firm" className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-emerald-500 transition-colors hover:bg-emerald-500/10">
-            <Activity className="h-4 w-4" />
-            Prop Firm Hub
-            <ArrowUpRight className="h-3.5 w-3.5 opacity-60" />
-          </Link>
-        </div>
-      </div>
       <main className="flex-1">{children}</main>
       <footer className="py-8 border-t border-border/50 bg-card/30 backdrop-blur-sm">
         <div className="container mx-auto px-4 text-center">
