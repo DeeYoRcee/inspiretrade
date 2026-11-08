@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, useLocation, Link } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -15,9 +15,10 @@ import PremiumPage from "@/pages/PremiumPage";
 import NewsPage from "@/pages/NewsPage";
 import PublicProfilePage from "@/pages/PublicProfilePage";
 import PublicProfileSettingsPage from "@/pages/PublicProfileSettings";
+import PropFirmPage from "@/pages/PropFirmPage";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { UsernamePrompt } from "@/components/UsernamePrompt";
-import { Activity, Send } from "lucide-react";
+import { Activity, ArrowUpRight, Send } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 function PremiumSuccessHandler() {
@@ -41,19 +42,21 @@ function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />
+      <div className="border-b border-border/40 bg-card/30">
+        <div className="container mx-auto flex h-11 items-center px-4">
+          <Link href="/prop-firm" className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-emerald-500 transition-colors hover:bg-emerald-500/10">
+            <Activity className="h-4 w-4" />
+            Prop Firm Hub
+            <ArrowUpRight className="h-3.5 w-3.5 opacity-60" />
+          </Link>
+        </div>
+      </div>
       <main className="flex-1">{children}</main>
       <footer className="py-8 border-t border-border/50 bg-card/30 backdrop-blur-sm">
         <div className="container mx-auto px-4 text-center">
           <div className="flex flex-col items-center gap-3">
-            <p className="text-sm text-muted-foreground uppercase tracking-widest font-medium">
-              {t("footerInquiries")}
-            </p>
-            <a
-              href="https://t.me/fyck7"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-[#0088cc]/10 text-[#0088cc] border border-[#0088cc]/20 hover:bg-[#0088cc]/20 transition-all font-semibold"
-            >
+            <p className="text-sm text-muted-foreground uppercase tracking-widest font-medium">{t("footerInquiries")}</p>
+            <a href="https://t.me/fyck7" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-[#0088cc]/10 text-[#0088cc] border border-[#0088cc]/20 hover:bg-[#0088cc]/20 transition-all font-semibold">
               <Send className="w-4 h-4" />
               Telegram
             </a>
@@ -67,22 +70,14 @@ function AppLayout({ children }: { children: ReactNode }) {
 }
 
 function LoadingScreen() {
-  return (
-    <div className="min-h-screen flex items-center justify-center">
-      <Activity className="w-8 h-8 text-primary animate-pulse" />
-    </div>
-  );
+  return <div className="min-h-screen flex items-center justify-center"><Activity className="w-8 h-8 text-primary animate-pulse" /></div>;
 }
 
 function DashboardPage() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
   if (!user) return <AuthPage />;
-  return (
-    <AppLayout>
-      <Dashboard />
-    </AppLayout>
-  );
+  return <AppLayout><Dashboard /></AppLayout>;
 }
 
 function PremiumRoute() {
@@ -90,34 +85,28 @@ function PremiumRoute() {
   const [, navigate] = useLocation();
   if (loading) return <LoadingScreen />;
   if (!user) return <AuthPage />;
-  return (
-    <div className="min-h-screen flex flex-col">
-      <Navbar />
-      <PremiumPage onClose={() => navigate("/")} />
-    </div>
-  );
+  return <div className="min-h-screen flex flex-col"><Navbar /><PremiumPage onClose={() => navigate("/")} /></div>;
 }
 
 function NewsRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
   if (!user) return <AuthPage />;
-  return (
-    <AppLayout>
-      <NewsPage />
-    </AppLayout>
-  );
+  return <AppLayout><NewsPage /></AppLayout>;
 }
 
 function PublicProfileSettingsRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
   if (!user) return <AuthPage />;
-  return (
-    <AppLayout>
-      <PublicProfileSettingsPage />
-    </AppLayout>
-  );
+  return <AppLayout><PublicProfileSettingsPage /></AppLayout>;
+}
+
+function PropFirmRoute({ params }: { params: { challengeId?: string } }) {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><PropFirmPage params={params} /></AppLayout>;
 }
 
 function PublicProfileRoute({ params }: { params: { handle: string } }) {
@@ -132,6 +121,8 @@ function Router() {
       <Route path="/premium" component={PremiumRoute} />
       <Route path="/news" component={NewsRoute} />
       <Route path="/public-profile" component={PublicProfileSettingsRoute} />
+      <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
+      <Route path="/prop-firm" component={PropFirmRoute} />
       <Route path="/:handle" component={PublicProfileRoute} />
       <Route component={NotFound} />
     </Switch>
