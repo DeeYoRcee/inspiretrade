@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Chrome as Home, Globe as Globe2 } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Sun, Moon, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Chrome as Home, Globe as Globe2, LayoutDashboard, Activity } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,7 +33,7 @@ function escapeHtml(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+    .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
 
@@ -100,221 +100,73 @@ export function Navbar() {
     if (win) { win.document.write(html); win.document.close(); }
   };
 
+  const navItems = [
+    { href: "/", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/prop-firm", label: "Prop Firm", icon: Activity },
+  ];
+
   return (
     <>
       <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
         <AlertDialogContent className="glass-panel border-border/60">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 font-display">
-              <AlertTriangle className="w-5 h-5 text-destructive" />
-              {t("logoutTitle")}
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-muted-foreground">
-              {t("logoutDescription")}
-            </AlertDialogDescription>
+            <AlertDialogTitle className="flex items-center gap-2 font-display"><AlertTriangle className="w-5 h-5 text-destructive" />{t("logoutTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">{t("logoutDescription")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="rounded-xl">{t("cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={logout}
-              className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {t("yesLogout")}
-            </AlertDialogAction>
+            <AlertDialogAction onClick={logout} className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("yesLogout")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {user && (
-        <UsernameDialog
-          open={showUsername}
-          currentUsername={profile?.username}
-          isPremium={isPremium}
-          onClose={() => setShowUsername(false)}
-        />
-      )}
+      {user && <UsernameDialog open={showUsername} currentUsername={profile?.username} isPremium={isPremium} onClose={() => setShowUsername(false)} />}
 
-      <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/80 backdrop-blur-md">
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Trade Journal" className="h-10 w-auto object-contain" />
+      <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/90 backdrop-blur-md">
+        <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-2 px-4 py-2">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate("/")} aria-label="Trade Journal home" className="flex items-center"><img src="/logo.png" alt="Trade Journal" className="h-10 w-auto object-contain" /></button>
+            {user && <nav aria-label="Main navigation" className="flex items-center gap-1 rounded-full border border-border/60 bg-card/60 p-1">
+              {navItems.map(({ href, label, icon: Icon }) => {
+                const active = href === "/" ? location === "/" : location.startsWith(href);
+                return <Button key={href} variant={active ? "secondary" : "ghost"} size="sm" onClick={() => navigate(href)} aria-current={active ? "page" : undefined} className={cn("rounded-full gap-1.5", active && "text-emerald-500")}><Icon className="h-4 w-4" /><span>{label}</span></Button>;
+              })}
+            </nav>}
           </div>
 
-          {user && (
-            <div className="flex items-center gap-1 sm:gap-2">
-              {/* Premium badge */}
-              {isPremium && (
-                <div className="hidden sm:flex items-center gap-1 bg-primary/10 border border-primary/20 rounded-full px-2.5 py-1 text-xs font-semibold text-primary">
-                  <Crown className="w-3 h-3" />
-                  Premium
-                </div>
-              )}
+          {user && <div className="flex items-center gap-1 sm:gap-2">
+            {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary sm:flex"><Crown className="w-3 h-3" />Premium</div>}
+            {profile?.username && <span className="hidden text-sm text-muted-foreground md:block">@{profile.username}</span>}
+            <Button variant={location === "/news" ? "secondary" : "ghost"} size="sm" onClick={() => navigate("/news")} title={t("macroPulse")} className={cn("rounded-full gap-1.5", location === "/news" ? "text-primary" : "text-muted-foreground hover:text-foreground")}><CalendarDays className="h-4 w-4" /><span className="hidden sm:inline">{t("macroPulse")}</span></Button>
+            {(location === "/news" || location === "/public-profile" || location.startsWith("/prop-firm")) && <Button variant="outline" size="sm" onClick={() => navigate("/")} title={t("backToDashboard")} aria-label={t("backToDashboard")} className="rounded-full gap-1.5"><Home className="h-4 w-4" /><span className="hidden sm:inline">{t("backToDashboard")}</span></Button>}
+            <Button variant="ghost" size="icon" onClick={exportPDF} title={t("exportPdf")} className="rounded-full text-muted-foreground hover:text-foreground"><FileDown className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" onClick={toggleTheme} title={t("toggleTheme")} className="rounded-full text-muted-foreground hover:text-foreground">{theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}</Button>
 
-              {/* Username display */}
-              {profile?.username && (
-                <span className="hidden md:block text-sm text-muted-foreground">
-                  @{profile.username}
-                </span>
-              )}
+            <DropdownMenu onOpenChange={(open) => !open && setSettingsView("main")}>
+              <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" className="rounded-full ml-1 gap-1.5"><Settings className="w-3.5 h-3.5" /><span className="hidden sm:inline">{t("settings")}</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48">
+                {settingsView === "main" ? <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("language"); }} className="cursor-pointer gap-2">{t("language")}<ChevronRight className="ml-auto w-4 h-4" /></DropdownMenuItem> : <>
+                  <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("main"); }} className="cursor-pointer gap-2"><ChevronLeft className="w-4 h-4" />{t("settings")}</DropdownMenuItem><DropdownMenuSeparator />
+                  {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer", language === code && "bg-primary/10 text-primary")}>{LANGUAGE_LABELS[code]}</DropdownMenuItem>)}
+                </>}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-              <Button
-                variant={location === "/news" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => navigate("/news")}
-                title={t("macroPulse")}
-                className={cn(
-                  "rounded-full gap-1.5",
-                  location === "/news" ? "text-primary" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <CalendarDays className="h-4 w-4" />
-                <span className="hidden sm:inline">{t("macroPulse")}</span>
-              </Button>
-
-              {(location === "/news" || location === "/public-profile") && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigate("/")}
-                  title={t("backToDashboard")}
-                  aria-label={t("backToDashboard")}
-                  className="rounded-full gap-1.5"
-                >
-                  <Home className="h-4 w-4" />
-                  <span className="hidden sm:inline">{t("backToDashboard")}</span>
-                </Button>
-              )}
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={exportPDF}
-                title={t("exportPdf")}
-                className="rounded-full text-muted-foreground hover:text-foreground"
-              >
-                <FileDown className="w-4 h-4" />
-              </Button>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleTheme}
-                title={t("toggleTheme")}
-                className="rounded-full text-muted-foreground hover:text-foreground"
-              >
-                {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              </Button>
-
-              {/* Settings menu */}
-              <DropdownMenu onOpenChange={(open) => !open && setSettingsView("main")}>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="secondary" size="sm" className="rounded-full ml-1 gap-1.5">
-                    <Settings className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">{t("settings")}</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48">
-                  {settingsView === "main" ? (
-                    <DropdownMenuItem
-                      onSelect={(event) => {
-                        event.preventDefault();
-                        setSettingsView("language");
-                      }}
-                      className="cursor-pointer gap-2"
-                    >
-                      {t("language")}
-                      <ChevronRight className="ml-auto w-4 h-4" />
-                    </DropdownMenuItem>
-                  ) : (
-                    <>
-                      <DropdownMenuItem
-                        onSelect={(event) => {
-                          event.preventDefault();
-                          setSettingsView("main");
-                        }}
-                        className="cursor-pointer gap-2"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        {t("settings")}
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => (
-                        <DropdownMenuItem
-                          key={code}
-                          onSelect={() => setLanguage(code)}
-                          className={cn(
-                            "cursor-pointer",
-                            language === code && "bg-primary/10 text-primary"
-                          )}
-                        >
-                          {LANGUAGE_LABELS[code]}
-                        </DropdownMenuItem>
-                      ))}
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              {/* Account menu */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="secondary" size="sm" className="rounded-full ml-1 gap-1.5">
-                    <span className="hidden sm:inline">{t("account")}</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48">
-                   <div className="px-3 py-2 text-xs text-muted-foreground truncate">{user.email}</div>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => navigate("/public-profile")} className="gap-2 cursor-pointer">
-                    <Globe2 className="w-4 h-4" /> {t("publicProfile")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setShowUsername(true)} className="gap-2 cursor-pointer">
-                     <AtSign className="w-4 h-4" /> {t("usernameSettings")}
-                  </DropdownMenuItem>
-                  {!isPremium && (
-                    <DropdownMenuItem
-                      onClick={() => navigate("/premium")}
-                      className="gap-2 cursor-pointer text-primary"
-                    >
-                       <Crown className="w-4 h-4" /> {t("getPremium")}
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => setShowConfirm(true)}
-                    className="gap-2 cursor-pointer text-destructive focus:text-destructive"
-                  >
-                     <LogOut className="w-4 h-4" /> {t("logout")}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="secondary" size="sm" className="rounded-full ml-1 gap-1.5"><span className="hidden sm:inline">{t("account")}</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="glass-panel border-border/60 w-48">
+                <div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate("/public-profile")} className="gap-2 cursor-pointer"><Globe2 className="w-4 h-4" />{t("publicProfile")}</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowUsername(true)} className="gap-2 cursor-pointer"><AtSign className="w-4 h-4" />{t("usernameSettings")}</DropdownMenuItem>
+                {!isPremium && <DropdownMenuItem onClick={() => navigate("/premium")} className="gap-2 cursor-pointer text-primary"><Crown className="w-4 h-4" />{t("getPremium")}</DropdownMenuItem>}
+                <DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShowConfirm(true)} className="gap-2 cursor-pointer text-destructive focus:text-destructive"><LogOut className="w-4 h-4" />{t("logout")}</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>}
         </div>
       </header>
 
-      {user && (
-        <div className="social-badge">
-          <a
-            href="https://t.me/DeeYoRcee_Inspire"
-            target="_blank"
-            rel="noreferrer"
-            className="social-badge-item text-[#0088cc]"
-          >
-            <Send className="w-5 h-5" />
-            <span className="text-sm font-bold text-foreground">Telegram</span>
-          </a>
-          <a
-            href="https://instagram.com/DeeYoRcee_Inspire"
-            target="_blank"
-            rel="noreferrer"
-            className="social-badge-item text-[#E1306C]"
-          >
-            <Instagram className="w-5 h-5" />
-            <span className="text-sm font-bold text-foreground">Instagram</span>
-          </a>
-        </div>
-      )}
+      {user && <div className="social-badge"><a href="https://t.me/DeeYoRcee_Inspire" target="_blank" rel="noreferrer" className="social-badge-item text-[#0088cc]"><Send className="w-5 h-5" /><span className="text-sm font-bold text-foreground">Telegram</span></a><a href="https://instagram.com/DeeYoRcee_Inspire" target="_blank" rel="noreferrer" className="social-badge-item text-[#E1306C]"><Instagram className="w-5 h-5" /><span className="text-sm font-bold text-foreground">Instagram</span></a></div>}
     </>
   );
 }
