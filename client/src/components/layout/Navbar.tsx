@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, FileDown, Crown, AtSign, Settings, ChevronLeft, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, FileDown, Crown, AtSign, Settings, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useTrades } from "@/hooks/use-trades";
@@ -12,15 +12,6 @@ import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-
-const THEME_NAMES: Record<Theme, string> = {
-  dark: "Dark",
-  light: "Light",
-  glass: "Glass",
-  ocean: "Ocean",
-  forest: "Forest",
-  sunset: "Sunset",
-};
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
@@ -32,7 +23,6 @@ export function Navbar() {
   const { language, setLanguage, t } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
   const [showUsername, setShowUsername] = useState(false);
-  const [settingsView, setSettingsView] = useState<"main" | "language">("main");
   const { data: trades } = useTrades();
   const { data: profile } = useUserProfile();
   const { data: isPremium = false } = usePremiumStatus();
@@ -40,7 +30,7 @@ export function Navbar() {
 
   const exportPDF = () => {
     if (!trades?.length) return;
-    const totalPnL = trades.reduce((acc, trade) => acc + trade.profit, 0);
+    const totalPnL = trades.reduce((sum, trade) => sum + trade.profit, 0);
     const wins = trades.filter((trade) => trade.profit > 0).length;
     const winRate = ((wins / trades.length) * 100).toFixed(1);
     const rows = trades.slice(0, 100).map((trade) => `<tr><td>${format(new Date(trade.timestamp), "MM/dd/yy")}</td><td>${escapeHtml(trade.assetName)}</td><td>${escapeHtml(trade.type)}</td><td>$${trade.entryPrice.toFixed(2)}</td><td>$${trade.exitPrice.toFixed(2)}</td><td>$${trade.profit.toFixed(2)}</td></tr>`).join("");
@@ -67,17 +57,15 @@ export function Navbar() {
           <AlertDialogFooter><AlertDialogCancel className="rounded-xl">{t("cancel")}</AlertDialogCancel><AlertDialogAction onClick={logout} className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("yesLogout")}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
       {user && <UsernameDialog open={showUsername} currentUsername={profile?.username} isPremium={isPremium} onClose={() => setShowUsername(false)} />}
 
-      <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 backdrop-blur-md">
+      <header className="sticky top-0 z-50 w-full shrink-0 border-b border-border/50 bg-background/95 backdrop-blur-md">
         <div className="container mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4 md:min-h-16 md:flex-nowrap">
           <button onClick={() => navigate("/")} aria-label="Trade Journal home" className="order-1 flex h-10 shrink-0 items-center"><img src="/logo.png" alt="Trade Journal" className="h-9 w-auto max-w-[130px] object-contain sm:h-10" /></button>
-
-          {user && <nav aria-label="Main navigation" className="order-3 -mx-3 flex w-[calc(100%+1.5rem)] min-w-0 items-center overflow-x-auto border-t border-border/40 px-3 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:order-2 md:mx-auto md:w-auto md:max-w-full md:justify-center md:overflow-visible md:rounded-full md:border md:border-border/60 md:bg-card/60 md:p-1 md:pt-1">
+          {user && <nav aria-label="Main navigation" className="order-3 -mx-3 flex w-[calc(100%+1.5rem)] min-w-0 items-center overflow-x-auto rounded-none border-t border-border/40 bg-card/60 px-3 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:order-2 md:mx-auto md:w-auto md:max-w-full md:justify-center md:overflow-visible md:rounded-full md:border md:border-border/60 md:p-1 md:pt-1">
             {navItems.map(({ href, label, icon: Icon }) => {
               const active = href === "/" ? location === "/" : location.startsWith(href);
-              return <Button key={href} variant={active ? "secondary" : "ghost"} size="sm" onClick={() => navigate(href)} aria-current={active ? "page" : undefined} className={cn("h-9 shrink-0 gap-1.5 rounded-full px-3 text-xs sm:text-sm", active && "text-emerald-500")}><Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span></Button>;
+              return <Button key={href} variant={active ? "secondary" : "ghost"} size="sm" onClick={() => navigate(href)} aria-current={active ? "page" : undefined} className={cn("h-9 shrink-0 gap-1.5 rounded-full px-3 text-xs sm:text-sm", active && "text-primary")}><Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span></Button>;
             })}
           </nav>}
 
@@ -86,19 +74,19 @@ export function Navbar() {
             {profile?.username && <span className="hidden max-w-28 truncate px-2 text-sm text-muted-foreground lg:block">@{profile.username}</span>}
             <Button variant="ghost" size="icon" onClick={exportPDF} title={t("exportPdf")} aria-label={t("exportPdf")} className="h-9 w-9 rounded-full text-muted-foreground"><FileDown className="h-4 w-4" /></Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Theme" title={`Theme: ${THEME_NAMES[theme]}`} className="h-9 gap-1.5 rounded-full px-2.5"><Palette className="h-4 w-4" /><span className="text-xs sm:text-sm">Theme</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("mr-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_NAMES[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Theme" title={`Theme: ${THEME_LABELS[theme]}`} className="h-9 gap-1.5 rounded-full px-2.5"><Palette className="h-4 w-4" /><span className="text-xs sm:text-sm">Theme</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("mr-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu onOpenChange={(open) => !open && setSettingsView("main")}>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("settings")} className="h-9 gap-1.5 rounded-full px-2.5"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">{settingsView === "main" ? <DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("language"); }} className="cursor-pointer gap-2">{t("language")}<ChevronRight className="ml-auto h-4 w-4" /></DropdownMenuItem> : <><DropdownMenuItem onSelect={(event) => { event.preventDefault(); setSettingsView("main"); }} className="cursor-pointer gap-2"><ChevronLeft className="h-4 w-4" />{t("settings")}</DropdownMenuItem><DropdownMenuSeparator />{(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer", language === code && "bg-primary/10 text-primary")}>{LANGUAGE_LABELS[code]}</DropdownMenuItem>)}</>}</DropdownMenuContent>
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">{(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer", language === code && "bg-primary/10 text-primary")}>{LANGUAGE_LABELS[code]}</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("account")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-2.5"><UserRound className="h-4 w-4 md:hidden" /><span className="hidden md:inline">{t("account")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator /><DropdownMenuItem onClick={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem><DropdownMenuItem onClick={() => setShowUsername(true)} className="cursor-pointer gap-2"><AtSign className="h-4 w-4" />{t("usernameSettings")}</DropdownMenuItem>{!isPremium && <DropdownMenuItem onClick={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onClick={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem></DropdownMenuContent>
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => setShowUsername(true)} className="cursor-pointer gap-2"><AtSign className="h-4 w-4" />{t("usernameSettings")}</DropdownMenuItem>{!isPremium && <DropdownMenuItem onSelect={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem></DropdownMenuContent>
             </DropdownMenu>
           </div>}
         </div>
