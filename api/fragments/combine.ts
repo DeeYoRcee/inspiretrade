@@ -5,7 +5,7 @@
  */
 import crypto from "crypto";
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../_lib/firebase";
-import { FRAGMENTS } from "../../shared/fragments";
+import { FRAGMENTS } from "../_lib/fragments";
 
 function makeReference(): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

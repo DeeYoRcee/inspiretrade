@@ -5,7 +5,7 @@
  * the user's economy node, so a claim can only succeed once per local day.
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, localDate, previousDate, logLedger } from "../_lib/firebase";
-import { DAILY_COINS, STREAK_BONUS_EVERY, STREAK_BONUS_COINS, STREAK_BONUS_CASES } from "../../shared/fragments";
+import { DAILY_COINS, STREAK_BONUS_EVERY, STREAK_BONUS_COINS, STREAK_BONUS_CASES } from "../_lib/fragments";
 
 export default handle(async (req, res) => {
   assertPost(req);

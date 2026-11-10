@@ -4,7 +4,7 @@
  * inventory immediately and is only returned on cancel.
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../_lib/firebase";
-import { getFragment, MAX_ACTIVE_LISTINGS, MIN_LISTING_PRICE, MAX_LISTING_PRICE } from "../../shared/fragments";
+import { getFragment, MAX_ACTIVE_LISTINGS, MIN_LISTING_PRICE, MAX_LISTING_PRICE } from "../_lib/fragments";
 
 export default handle(async (req, res) => {
   assertPost(req);
