@@ -4,7 +4,10 @@
  * so the server can write to paths that are locked for clients in
  * database.rules.json (economy, inventory, market, ledger, claims).
  */
-import admin from "firebase-admin";
+// Use namespace import + default fallback for max compatibility across
+// Node ESM/CJS runtimes (Vercel runs Node 26 with strict ESM interop).
+import * as adminNamespace from "firebase-admin";
+const admin: any = (adminNamespace as any).default ?? adminNamespace;
 
 export class HttpError extends Error {
   status: number;
@@ -16,7 +19,7 @@ export class HttpError extends Error {
   }
 }
 
-let app: admin.app.App | null = null;
+let app: any = null;
 
 function getServiceAccount():
   | { projectId: string; clientEmail: string; privateKey: string }
@@ -51,7 +54,7 @@ function getServiceAccount():
   return null;
 }
 
-function ensureApp(): admin.app.App {
+function ensureApp(): any {
   if (app) return app;
   const account = getServiceAccount();
   if (!account) {
@@ -95,7 +98,7 @@ export async function requireUser(req: any): Promise<AuthedUser> {
   return { uid: decoded.uid, email: decoded.email, name: decoded.name };
 }
 
-export function rtdb(): admin.database.Database {
+export function rtdb(): any {
   ensureApp();
   return admin.database();
 }
