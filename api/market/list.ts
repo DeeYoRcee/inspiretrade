@@ -3,8 +3,8 @@
  * Creates a market listing. The fragment is escrowed: it leaves the seller's
  * inventory immediately and is only returned on cancel.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
-import { getFragment, MAX_ACTIVE_LISTINGS, MIN_LISTING_PRICE, MAX_LISTING_PRICE } from "../lib/fragments";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../_firebase";
+import { getFragment, MAX_ACTIVE_LISTINGS, MIN_LISTING_PRICE, MAX_LISTING_PRICE } from "../_fragments";
 
 export default handle(async (req, res) => {
   assertPost(req);

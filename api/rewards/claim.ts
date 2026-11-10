@@ -4,8 +4,8 @@
  * The whole check-and-grant runs inside a single RTDB transaction keyed on
  * the user's economy node, so a claim can only succeed once per local day.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, localDate, previousDate, logLedger } from "../lib/firebase";
-import { DAILY_COINS, STREAK_BONUS_EVERY, STREAK_BONUS_COINS, STREAK_BONUS_CASES } from "../lib/fragments";
+import { handle, requireUser, assertPost, rtdb, HttpError, localDate, previousDate, logLedger } from "../_firebase";
+import { DAILY_COINS, STREAK_BONUS_EVERY, STREAK_BONUS_COINS, STREAK_BONUS_CASES } from "../_fragments";
 
 export default handle(async (req, res) => {
   assertPost(req);

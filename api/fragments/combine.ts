@@ -4,8 +4,8 @@
  * transaction over the user's inventory) and creates a prop-account claim.
  */
 import crypto from "crypto";
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
-import { FRAGMENTS } from "../lib/fragments";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../_firebase";
+import { FRAGMENTS } from "../_fragments";
 
 function makeReference(): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
