@@ -6,8 +6,8 @@
  *   3) credit seller (price minus 10% fee), deliver fragment to buyer
  * All state changes are logged to /ledger.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../firebase-helper";
-import { MARKET_FEE_PERCENT } from "../fragments-helper";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
+import { MARKET_FEE_PERCENT } from "../lib/fragments";
 
 export default handle(async (req, res) => {
   assertPost(req);

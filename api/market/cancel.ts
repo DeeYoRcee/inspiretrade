@@ -2,7 +2,7 @@
  * POST /api/market/cancel   { listingId }
  * Cancels the caller's own active listing and returns the escrowed fragment.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../firebase-helper";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
 
 export default handle(async (req, res) => {
   assertPost(req);
