@@ -2,9 +2,11 @@
   "name": "inspiretrade",
   "version": "1.0.0",
   "license": "MIT",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:api": "node scripts/build-api.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
