@@ -4,8 +4,8 @@
  * The client only animates the reveal — the outcome is decided here.
  */
 import crypto from "crypto";
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../_lib/firebase";
-import { FRAGMENTS, TOTAL_DROP_WEIGHT, getFragment } from "../_lib/fragments";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
+import { FRAGMENTS, TOTAL_DROP_WEIGHT, getFragment } from "../lib/fragments";
 
 export function rollFragment() {
   let roll = crypto.randomInt(TOTAL_DROP_WEIGHT * 100) / 100; // 0 .. 99.99

@@ -1,6 +1,6 @@
-// Test: does _lib/_test trivial import work?
-import { TEST_CONST } from "./_lib/_test";
+// Test: does lib/fragments import work?
+import { FRAGMENTS } from "./lib/fragments";
 
 export default function handler(_req: any, res: any) {
-  res.status(200).json({ ok: true, test: TEST_CONST });
+  res.status(200).json({ ok: true, fragmentsCount: FRAGMENTS.length });
 }
