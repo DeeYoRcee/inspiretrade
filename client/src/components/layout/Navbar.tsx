@@ -3,11 +3,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, FileDown, Crown, AtSign, Settings, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, FileDown, Crown, AtSign, Settings, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useTrades } from "@/hooks/use-trades";
 import { useUserProfile, usePremiumStatus } from "@/hooks/use-premium";
+import { useEconomy } from "@/hooks/use-economy";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
@@ -26,6 +27,7 @@ export function Navbar() {
   const { data: trades } = useTrades();
   const { data: profile } = useUserProfile();
   const { data: isPremium = false } = usePremiumStatus();
+  const { data: economy } = useEconomy();
   const [location, navigate] = useLocation();
 
   const exportPDF = () => {
@@ -42,6 +44,8 @@ export function Navbar() {
   const navItems = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/prop-firm", label: "Prop", icon: Activity },
+    { href: "/rewards", label: t("rewards"), icon: Gift },
+    { href: "/market", label: t("market"), icon: Store },
     { href: "/news", label: t("macroPulse"), icon: CalendarDays },
     { href: "/public-profile", label: "Profile", icon: Globe2 },
   ];
@@ -70,6 +74,13 @@ export function Navbar() {
           </nav>}
 
           {user && <div className="order-2 ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-card/60 p-1 sm:gap-1 md:order-3">
+            {economy && (
+              <button onClick={() => navigate("/rewards")} className="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold text-amber-400 transition-colors hover:bg-amber-400/10 sm:text-sm" aria-label={t("inspireBalance")}>
+                <Coins className="h-4 w-4" />
+                <span className="font-number">{economy.coins}</span>
+                <span className="hidden sm:inline">INSP</span>
+              </button>
+            )}
             {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary lg:flex"><Crown className="h-3 w-3" />Premium</div>}
             {profile?.username && <span className="hidden max-w-28 truncate px-2 text-sm text-muted-foreground lg:block">@{profile.username}</span>}
             <Button variant="ghost" size="icon" onClick={exportPDF} title={t("exportPdf")} aria-label={t("exportPdf")} className="h-9 w-9 rounded-full text-muted-foreground"><FileDown className="h-4 w-4" /></Button>

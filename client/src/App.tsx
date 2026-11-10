@@ -16,6 +16,8 @@ import NewsPage from "@/pages/NewsPage";
 import PublicProfilePage from "@/pages/PublicProfilePage";
 import PublicProfileSettingsPage from "@/pages/PublicProfileSettings";
 import PropFirmPage from "@/pages/PropFirmPage";
+import RewardsPage from "@/pages/RewardsPage";
+import MarketPage from "@/pages/MarketPage";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { UsernamePrompt } from "@/components/UsernamePrompt";
 import { Activity, Send } from "lucide-react";
@@ -100,6 +102,20 @@ function PropFirmRoute({ params }: { params: { challengeId?: string } }) {
   return <AppLayout><PropFirmPage params={params} /></AppLayout>;
 }
 
+function RewardsRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><RewardsPage /></AppLayout>;
+}
+
+function MarketRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><MarketPage /></AppLayout>;
+}
+
 function PublicProfileRoute({ params }: { params: { handle: string } }) {
   if (!params.handle.startsWith("@")) return <NotFound />;
   return <PublicProfilePage username={params.handle.slice(1)} />;
@@ -114,6 +130,8 @@ function Router() {
       <Route path="/public-profile" component={PublicProfileSettingsRoute} />
       <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
       <Route path="/prop-firm" component={PropFirmRoute} />
+      <Route path="/rewards" component={RewardsRoute} />
+      <Route path="/market" component={MarketRoute} />
       <Route path="/:handle" component={PublicProfileRoute} />
       <Route component={NotFound} />
     </Switch>

@@ -107,3 +107,10 @@ header nav[aria-label="Main navigation"] > button:not([aria-current="page"]):hov
 .calendar-widget-frame { height: clamp(560px, 72svh, 900px); }
 .calendar-widget-frame > iframe { display: block; width: 100% !important; height: 100% !important; max-width: 100% !important; border: 0; }
 @media (max-width: 640px) { .calendar-widget-frame { height: max(580px, 72svh); } }
+
+/* CS2-style case opening reel */
+.case-reel {
+  mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  will-change: transform;
+}
