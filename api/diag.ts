@@ -1,6 +1,8 @@
 /**
  * Temporary diagnostics endpoint. Safe to call. Remove after fix is verified.
  */
+import { FRAGMENTS, DAILY_COINS } from "../shared/fragments";
+
 export default async function handler(_req: any, res: any) {
   const out: any = { ts: new Date().toISOString(), node: process.version, cwd: process.cwd() };
 
@@ -55,5 +57,6 @@ export default async function handler(_req: any, res: any) {
     out.afterInit = { ok: false, error: String(e?.message || e) };
   }
 
+  out.sharedImport = { ok: true, fragments: FRAGMENTS.length, dailyCoins: DAILY_COINS };
   res.status(200).json(out);
 }
