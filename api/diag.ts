@@ -1,11 +1,14 @@
-// Test: only firebase-admin (was working earlier)
-import * as adminNamespace from "firebase-admin";
-const admin: any = (adminNamespace as any).default ?? adminNamespace;
+// Test: import _firebase and _fragments together (like economy APIs do)
+import { handle, requireUser, assertPost, rtdb, HttpError } from "./_firebase";
+import { FRAGMENTS } from "./_fragments";
 
-export default function handler(_req: any, res: any) {
+export default handle(async (req: any, res: any) => {
+  assertPost(req);
   res.status(200).json({
     ok: true,
-    adminHasAuth: typeof admin.auth,
-    adminHasDatabase: typeof admin.database,
+    fragmentsCount: FRAGMENTS.length,
+    handleWorks: typeof handle === "function",
+    requireUserWorks: typeof requireUser === "function",
+    rtdbWorks: typeof rtdb === "function",
   });
-}
+});
