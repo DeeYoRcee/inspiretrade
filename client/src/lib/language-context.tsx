@@ -370,6 +370,11 @@ const translations: Record<Language, Record<string, string>> = {
     certTotalTrades: "Total Trades",
     certBestDay: "Best Day",
     certificateNote: "Print → Save as PDF produces the official file. Verified by InspireTrade.",
+    certCalendar: "Reward calendar",
+    certCalendarSubtitle: "Download your monthly reward calendar as a certificate-style PDF",
+    calendarDownload: "Calendar PDF",
+    certClaimedDays: "{n} days claimed this month",
+    calendarLegend: "claimed day",
   },
   ru: {
     language: "Язык", settings: "Настройки", account: "Аккаунт", english: "Английский", russian: "Русский", uzbek: "Узбекский", arabic: "Арабский",
@@ -520,6 +525,11 @@ const translations: Record<Language, Record<string, string>> = {
     certTotalTrades: "Всего сделок",
     certBestDay: "Лучший день",
     certificateNote: "Печать → «Сохранить как PDF» создаст официальный файл. Подтверждено InspireTrade.",
+    certCalendar: "Календарь наград",
+    certCalendarSubtitle: "Скачайте месячный календарь наград в виде PDF-сертификата",
+    calendarDownload: "Календарь PDF",
+    certClaimedDays: "{n} дней получено за месяц",
+    calendarLegend: "полученный день",
   },
   uz: {
     language: "Til", settings: "Sozlamalar", account: "Hisob", english: "Inglizcha", russian: "Ruscha", uzbek: "O‘zbekcha", arabic: "Arabcha",
@@ -683,6 +693,11 @@ const translations: Record<Language, Record<string, string>> = {
     certTotalTrades: "Jami savdolar",
     certBestDay: "Eng yaxshi kun",
     certificateNote: "Print → «Save as PDF» — rasmiy fayl tayyor. InspireTrade tomonidan tasdiqlangan.",
+    certCalendar: "Reward kalendari",
+    certCalendarSubtitle: "Oylik reward kalendaringizni sertifikat uslubidagi PDF qilib yuklab oling",
+    calendarDownload: "Kalendar PDF",
+    certClaimedDays: "Bu oyda {n} kun olindi",
+    calendarLegend: "olingan kun",
   },
   ar: {
     language: "اللغة", settings: "الإعدادات", account: "الحساب", english: "الإنجليزية", russian: "الروسية", uzbek: "الأوزبكية", arabic: "العربية",
@@ -826,6 +841,11 @@ const translations: Record<Language, Record<string, string>> = {
     certTotalTrades: "إجمالي الصفقات",
     certBestDay: "أفضل يوم",
     certificateNote: "طباعة → حفظ كـ PDF لإنشاء الملف الرسمي. موثّق من InspireTrade.",
+    certCalendar: "تقويم المكافآت",
+    certCalendarSubtitle: "حمّل تقويم المكافآت الشهري كملف PDF بتصميم شهادة",
+    calendarDownload: "تقويم PDF",
+    certClaimedDays: "{n} أيام تم الاستلام هذا الشهر",
+    calendarLegend: "يوم مستلم",
   },
 };
 
