@@ -67,7 +67,7 @@ export function GlobalChat() {
           .sort((a, b) => (a.at || 0) - (b.at || 0));
         setMessages(list);
       },
-      (err) => {
+      (err: any) => {
         // rules not published yet / permission denied — show empty state
         console.warn("chat read failed", err?.code || err?.message);
         setMessages([]);

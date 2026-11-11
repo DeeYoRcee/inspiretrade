@@ -81,7 +81,7 @@ export function DailyRewardDialog() {
           if (!o) dismiss();
         }}
       >
-        <DialogContent className="glass-panel max-w-sm border-primary/30 overflow-hidden text-center" showCloseButton={false}>
+        <DialogContent className="glass-panel max-w-sm border-primary/30 overflow-hidden text-center">
           <button
             onClick={dismiss}
             aria-label={t("later")}

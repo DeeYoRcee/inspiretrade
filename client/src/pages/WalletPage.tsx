@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
+import { auth } from "@/lib/firebase";
 import { useEconomy } from "@/hooks/use-economy";
 import { ref, get } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -75,13 +76,13 @@ export default function WalletPage() {
 
   const openHistory = async () => {
     try {
-      const snap = await get(ref(db, `withdrawals`));
-      const data = (snap.val() || {}) as Record<string, Record<string, any>>;
-      const list: WithdrawRequest[] = [];
-      for (const [uid, requests] of Object.entries(data)) {
-        for (const [id, request] of Object.entries(requests || {})) list.push({ ...request, uid, id });
-      }
-      list.sort((a, b) => (b.at || 0) - (a.at || 0));
+      if (!auth.currentUser) return setHistory([]);
+      // Only read OWN withdrawal requests (rules: withdrawals/$uid readable by owner).
+      const snap = await get(ref(db, `withdrawals/${auth.currentUser.uid}`));
+      const data = (snap.val() || {}) as Record<string, any>;
+      const list: WithdrawRequest[] = Object.entries(data)
+        .map(([id, request]) => ({ ...request, uid: auth.currentUser!.uid, id }))
+        .sort((a, b) => (b.at || 0) - (a.at || 0));
       setHistory(list);
     } catch {
       setHistory([]);

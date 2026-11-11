@@ -147,7 +147,7 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   ), [size, type, maxPrice, minSplit]);
 
   if (params?.challengeId) {
-    return challenge ? <ChallengeDetails challenge={challenge} onBack={() => navigate("/prop-firm")} /> : <div className="mx-auto max-w-4xl p-8"><p>Example challenge not found.</p><Button variant="link" onClick={() => navigate("/prop-firm")}>Back to Prop Firm</Button></div>;
+    return challenge ? <ChallengeDetails challenge={challenge} onBack={() => navigate("/prop-firm")} /> : <div className="mx-auto max-w-4xl p-8"><p>Example challenge not found.</p><Button variant="ghost" onClick={() => navigate("/prop-firm")}>Back to Prop Firm</Button></div>;
   }
 
   const tabs = [
