@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CircleCheck as CheckCircle2, Clock3 } from "lucide-react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useLanguage } from "@/lib/language-context";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +65,11 @@ function formatCountdown(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+/**
+ * Compact forex session tracker — one thin card with a row per session:
+ * name · hours · slim progress bar · percent. Kept intentionally small so it
+ * does not push the dashboard content below the fold.
+ */
 export function SessionTracker() {
   const { t } = useLanguage();
   const [now, setNow] = useState(() => new Date());
@@ -117,108 +121,78 @@ export function SessionTracker() {
       : t("sessionWaiting");
 
   return (
-    <Card className="mb-8 overflow-hidden border-primary/20 bg-gradient-to-br from-card via-card to-primary/5 shadow-lg">
-      <CardHeader className="border-b border-border/40 px-5 py-4 sm:px-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-primary">
-              <Clock3 className="h-5 w-5" />
-              <span className="text-sm font-semibold uppercase tracking-wider">
-                {t("sessionTracker")}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">{t("sessionUtc")}</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
-              </span>
-              {trackerStatus}
-            </span>
-            <span className="rounded-md bg-secondary/70 px-2 py-1 font-mono text-xs text-muted-foreground">
-              UTC {utcTime}
-            </span>
-          </div>
-        </div>
-      </CardHeader>
+    <div className="mb-6 rounded-xl border border-primary/20 bg-gradient-to-r from-card via-card to-primary/5 px-3 py-2.5 sm:px-4">
+      {/* Compact header: title · status · UTC clock */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="flex items-center gap-1.5 text-primary">
+          <Clock3 className="h-3.5 w-3.5" />
+          <span className="text-[11px] font-semibold uppercase tracking-wider">
+            {t("sessionTracker")}
+          </span>
+        </span>
+        <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+          </span>
+          {trackerStatus}
+        </span>
+        <span className="ml-auto rounded bg-secondary/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+          UTC {utcTime}
+        </span>
+      </div>
 
-      <CardContent className="px-5 py-5 sm:px-6">
-        <div className="grid gap-3 md:grid-cols-3">
-          {sessions.map((session) => (
-            <div
-              key={session.key}
+      {/* One slim row per session */}
+      <div className="mt-2 space-y-1.5">
+        {sessions.map((session) => (
+          <div key={session.key} className="flex items-center gap-2 sm:gap-3">
+            <span
               className={cn(
-                "rounded-xl border bg-background/35 p-4 transition-all",
-                session.isActive
-                  ? "border-primary/50 shadow-[0_0_24px_rgba(99,102,241,0.12)]"
-                  : "border-border/50",
+                "w-16 shrink-0 truncate text-[11px] font-semibold sm:w-20 sm:text-xs",
+                session.color,
+                session.isActive && "drop-shadow-[0_0_6px_currentColor]",
               )}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className={cn("text-base font-semibold", session.color)}>
-                    {sessionLabel(session.key)}
-                  </p>
-                  <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-                    {formatClock(session.startMinutes)}–{formatClock(session.endMinutes)} UTC
-                  </p>
-                </div>
-                {session.isComplete ? (
-                  <CheckCircle2 className="h-4 w-4 text-success" />
-                ) : (
-                  <span
-                    className={cn(
-                      "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                      session.isActive
-                        ? "bg-primary/15 text-primary"
-                        : "bg-secondary text-muted-foreground",
-                    )}
-                  >
-                    {session.isActive ? t("sessionActive") : t("sessionWaiting")}
-                  </span>
-                )}
-              </div>
-
-              <div className="mt-4 flex items-end justify-between gap-3">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
-                  <div
-                    className={cn("h-full rounded-full transition-[width] duration-700", session.barColor)}
-                    style={{ width: `${session.progress}%` }}
-                  />
-                </div>
-                <span className="min-w-12 text-right font-mono text-sm font-semibold">
-                  {Math.round(session.progress)}%
+              {session.isActive ? sessionLabel(session.key) : session.isComplete ? (
+                <span className="inline-flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3 text-success" />
+                  {sessionLabel(session.key)}
                 </span>
-              </div>
-              <p className="mt-2 text-[11px] text-muted-foreground">{t("sessionProgress")}</p>
-            </div>
-          ))}
-        </div>
+              ) : (
+                sessionLabel(session.key)
+              )}
+            </span>
+            <span className="hidden w-24 shrink-0 font-mono text-[10px] text-muted-foreground sm:block">
+              {formatClock(session.startMinutes)}–{formatClock(session.endMinutes)}
+            </span>
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+              <span
+                className={cn("block h-full rounded-full transition-[width] duration-700", session.barColor)}
+                style={{ width: `${session.progress}%` }}
+              />
+            </span>
+            <span className="w-9 shrink-0 text-right font-mono text-[11px] font-semibold">
+              {Math.round(session.progress)}%
+            </span>
+          </div>
+        ))}
+      </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/40 bg-secondary/30 px-3 py-2.5 text-sm">
-          <span className="text-muted-foreground">
-            {allSessionsComplete ? t("allSessionsComplete") : t("nextSession")}
-          </span>
-          <span className="flex items-center gap-2 font-medium">
-            {!allSessionsComplete && (
-              <>
-                <span className="text-primary">{sessionLabel(nextSession.key)}</span>
-                <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                <span className="font-mono text-xs text-muted-foreground">
-                  {t("sessionStartsIn")} {formatCountdown(Math.max(0, Math.floor(secondsUntilNext)))}
-                </span>
-              </>
-            )}
-            {allSessionsComplete && (
-              <span className="font-mono text-xs text-success">
-                {t("sessionComplete")}
-              </span>
-            )}
-          </span>
-        </div>
-      </CardContent>
-    </Card>
+      {/* Next session countdown */}
+      <div className="mt-1.5 flex items-center justify-end gap-1.5 text-[11px] text-muted-foreground">
+        {allSessionsComplete ? (
+          <span className="font-mono text-success">{t("sessionComplete")}</span>
+        ) : (
+          <>
+            <span>{t("nextSession")}</span>
+            <span className="text-primary">{sessionLabel(nextSession.key)}</span>
+            <ArrowRight className="h-3 w-3" />
+            <span className="font-mono">
+              {t("sessionStartsIn")} {formatCountdown(Math.max(0, Math.floor(secondsUntilNext)))}
+            </span>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

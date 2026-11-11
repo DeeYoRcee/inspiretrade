@@ -17,6 +17,7 @@ import PublicProfilePage from "@/pages/PublicProfilePage";
 import PublicProfileSettingsPage from "@/pages/PublicProfileSettings";
 import PropFirmPage from "@/pages/PropFirmPage";
 import RewardsPage from "@/pages/RewardsPage";
+import ProfilePage from "@/pages/ProfilePage";
 import MarketPage from "@/pages/MarketPage";
 import InventoryPage from "@/pages/InventoryPage";
 import WalletPage from "@/pages/WalletPage";
@@ -118,6 +119,13 @@ function RewardsRoute() {
   return <AppLayout><RewardsPage /></AppLayout>;
 }
 
+function ProfileRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><ProfilePage /></AppLayout>;
+}
+
 function MarketRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
@@ -178,6 +186,7 @@ function Router() {
       <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
       <Route path="/prop-firm" component={PropFirmRoute} />
       <Route path="/rewards" component={RewardsRoute} />
+      <Route path="/profile" component={ProfileRoute} />
       <Route path="/market" component={MarketRoute} />
       <Route path="/inventory" component={InventoryRoute} />
       <Route path="/wallet" component={WalletRoute} />
