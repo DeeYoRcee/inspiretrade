@@ -18,8 +18,15 @@ import PublicProfileSettingsPage from "@/pages/PublicProfileSettings";
 import PropFirmPage from "@/pages/PropFirmPage";
 import RewardsPage from "@/pages/RewardsPage";
 import MarketPage from "@/pages/MarketPage";
+import InventoryPage from "@/pages/InventoryPage";
+import WalletPage from "@/pages/WalletPage";
+import AdminPage from "@/pages/AdminPage";
+import CertificatePage from "@/pages/CertificatePage";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { UsernamePrompt } from "@/components/UsernamePrompt";
+import { DailyRewardDialog } from "@/components/rewards/DailyRewardDialog";
+import { GlobalChat } from "@/components/chat/GlobalChat";
+import { useIsAdmin } from "@/hooks/use-admin";
 import { Activity, Send } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
@@ -58,6 +65,8 @@ function AppLayout({ children }: { children: ReactNode }) {
       </footer>
       <UsernamePrompt />
       <PremiumSuccessHandler />
+      <DailyRewardDialog />
+      <GlobalChat />
     </div>
   );
 }
@@ -116,6 +125,44 @@ function MarketRoute() {
   return <AppLayout><MarketPage /></AppLayout>;
 }
 
+function InventoryRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><InventoryPage /></AppLayout>;
+}
+
+function WalletRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><WalletPage /></AppLayout>;
+}
+
+function AdminRoute() {
+  const { user, loading } = useAuth();
+  const isAdmin = useIsAdmin();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  if (!isAdmin) return <AdminRedirect />;
+  return <AppLayout><AdminPage /></AppLayout>;
+}
+
+function AdminRedirect() {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    navigate("/");
+  }, [navigate]);
+  return <LoadingScreen />;
+}
+
+function CertificateRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><CertificatePage /></AppLayout>;
+}
+
 function PublicProfileRoute({ params }: { params: { handle: string } }) {
   if (!params.handle.startsWith("@")) return <NotFound />;
   return <PublicProfilePage username={params.handle.slice(1)} />;
@@ -132,6 +179,10 @@ function Router() {
       <Route path="/prop-firm" component={PropFirmRoute} />
       <Route path="/rewards" component={RewardsRoute} />
       <Route path="/market" component={MarketRoute} />
+      <Route path="/inventory" component={InventoryRoute} />
+      <Route path="/wallet" component={WalletRoute} />
+      <Route path="/admin" component={AdminRoute} />
+      <Route path="/certificate" component={CertificateRoute} />
       <Route path="/:handle" component={PublicProfileRoute} />
       <Route component={NotFound} />
     </Switch>

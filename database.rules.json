@@ -133,6 +133,45 @@
         ".write": false
       }
     },
+    "chat": {
+      "global": {
+        ".read": "auth !== null",
+        "$messageId": {
+          ".write": "auth !== null && !data.exists() && newData.child('uid').val() === auth.uid",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'at'])",
+          "uid": {
+            ".validate": "newData.isString() && newData.val() === auth.uid"
+          },
+          "name": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 60"
+          },
+          "username": {
+            ".validate": "newData.isString() && newData.val().length <= 20"
+          },
+          "text": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 300"
+          },
+          "at": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "withdrawals": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": false
+      }
+    },
+    "admins": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": false
+      }
+    },
     "ledger": {
       ".read": false,
       ".write": false

@@ -98,6 +98,28 @@ export async function requireUser(req: any): Promise<AuthedUser> {
   return { uid: decoded.uid, email: decoded.email, name: decoded.name };
 }
 
+/**
+ * Owner / admin guard. A caller is an admin when their verified Firebase
+ * email is listed in the ADMIN_EMAILS env var (comma-separated) OR an
+ * `admins/{uid} === true` flag exists in the database.
+ */
+export async function requireAdmin(req: any): Promise<AuthedUser> {
+  const user = await requireUser(req);
+  const emails = String(process.env.ADMIN_EMAILS || "")
+    .toLowerCase()
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let flagged = false;
+  try {
+    flagged = (await rtdb().ref(`admins/${user.uid}`).once("value")).val() === true;
+  } catch {}
+  if (!emails.includes(String(user.email || "").toLowerCase()) && !flagged) {
+    throw new HttpError(403, "FORBIDDEN", "Owner access required");
+  }
+  return user;
+}
+
 export function rtdb(): any {
   ensureApp();
   return admin.database();

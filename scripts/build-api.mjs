@@ -22,6 +22,10 @@ const entries = [
   ["api/_src/market/buy.ts", "api/market/buy.js"],
   ["api/_src/market/cancel.ts", "api/market/cancel.js"],
   ["api/_src/fragments/combine.ts", "api/fragments/combine.js"],
+  ["api/_src/admin/gift.ts", "api/admin/gift.js"],
+  ["api/_src/admin/withdrawals.ts", "api/admin/withdrawals.js"],
+  ["api/_src/admin/chat-delete.ts", "api/admin/chat-delete.js"],
+  ["api/_src/wallet/withdraw.ts", "api/wallet/withdraw.js"],
   ["api/_src/diag.ts", "api/diag.js"],
 ];
 
