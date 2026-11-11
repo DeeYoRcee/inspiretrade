@@ -9,6 +9,8 @@ export interface UserProfile {
   isPremium: boolean;
   premiumPlan?: string;
   premiumSince?: number;
+  /** Small data-URL avatar uploaded from the profile page (RTDB stores it fine). */
+  avatar?: string;
 }
 
 export function useUserProfile() {

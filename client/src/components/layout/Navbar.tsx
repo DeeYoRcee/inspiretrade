@@ -3,13 +3,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, AtSign, Settings, ChevronRight, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, Package, Wallet, ShieldCheck, Award, User as UserIcon } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, Package, Wallet, ShieldCheck, Award, User as UserIcon } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { useUserProfile, usePremiumStatus } from "@/hooks/use-premium";
+import { usePremiumStatus } from "@/hooks/use-premium";
 import { useEconomy } from "@/hooks/use-economy";
 import { useIsAdmin } from "@/hooks/use-admin";
-import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -18,8 +17,6 @@ export function Navbar() {
   const { theme, setTheme } = useTheme();
   const { language, setLanguage, t } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
-  const [showUsername, setShowUsername] = useState(false);
-  const { data: profile } = useUserProfile();
   const { data: isPremium = false } = usePremiumStatus();
   const { data: economy } = useEconomy();
   const isAdmin = useIsAdmin();
@@ -46,7 +43,6 @@ export function Navbar() {
           <AlertDialogFooter><AlertDialogCancel className="rounded-xl">{t("cancel")}</AlertDialogCancel><AlertDialogAction onClick={logout} className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("yesLogout")}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {user && <UsernameDialog open={showUsername} currentUsername={profile?.username} isPremium={isPremium} onClose={() => setShowUsername(false)} />}
 
       <header className="sticky top-0 z-50 w-full shrink-0 border-b border-border/50 bg-background/95 backdrop-blur-md">
         <div className="container mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4 md:min-h-16 md:flex-nowrap">
@@ -66,14 +62,9 @@ export function Navbar() {
                   <span className="font-number">{economy.coins}</span>
                   <span className="hidden sm:inline">INSP</span>
                 </button>
-                <button onClick={() => navigate("/inventory")} className="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold text-primary transition-colors hover:bg-primary/10 sm:text-sm" aria-label={t("casesTitle")}>
-                  <Package className="h-4 w-4" />
-                  <span className="font-number">{economy.cases}</span>
-                </button>
               </>
             )}
             {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary lg:flex"><Crown className="h-3 w-3" />Premium</div>}
-            {profile?.username && <span className="hidden max-w-28 truncate px-2 text-sm text-muted-foreground lg:block">@{profile.username}</span>}
 
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Theme" title={`Theme: ${THEME_LABELS[theme]}`} className="h-9 gap-1.5 rounded-full px-2.5"><Palette className="h-4 w-4" /><span className="text-xs sm:text-sm">Theme</span></Button></DropdownMenuTrigger>
@@ -87,7 +78,7 @@ export function Navbar() {
 
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("account")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-2.5"><UserRound className="h-4 w-4 md:hidden" /><span className="hidden md:inline">{t("account")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => navigate("/profile")} className="cursor-pointer gap-2"><UserIcon className="h-4 w-4" />{t("profile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/certificate")} className="cursor-pointer gap-2"><Award className="h-4 w-4" />{t("certificate")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/wallet")} className="cursor-pointer gap-2"><Wallet className="h-4 w-4" />{t("wallet")}</DropdownMenuItem>{isAdmin && <DropdownMenuItem onSelect={() => navigate("/admin")} className="cursor-pointer gap-2 text-emerald-400"><ShieldCheck className="h-4 w-4" />{t("adminPanel")}</DropdownMenuItem>}<DropdownMenuItem onSelect={() => setShowUsername(true)} className="cursor-pointer gap-2"><AtSign className="h-4 w-4" />{t("usernameSettings")}</DropdownMenuItem>{!isPremium && <DropdownMenuItem onSelect={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem></DropdownMenuContent>
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => navigate("/profile")} className="cursor-pointer gap-2"><UserIcon className="h-4 w-4" />{t("profile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/certificate")} className="cursor-pointer gap-2"><Award className="h-4 w-4" />{t("certificate")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/wallet")} className="cursor-pointer gap-2"><Wallet className="h-4 w-4" />{t("wallet")}</DropdownMenuItem>{isAdmin && <DropdownMenuItem onSelect={() => navigate("/admin")} className="cursor-pointer gap-2 text-emerald-400"><ShieldCheck className="h-4 w-4" />{t("adminPanel")}</DropdownMenuItem>}{!isPremium && <DropdownMenuItem onSelect={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem></DropdownMenuContent>
             </DropdownMenu>
           </div>}
         </div>
