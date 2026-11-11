@@ -94,19 +94,63 @@ function handle(fn) {
 var diag_default = handle(async (req, res) => {
   const user = await requireUser(req);
   const db = rtdb();
-  const [ecoSnap, invSnap, claimsSnap] = await Promise.all([
+  const [ecoSnap, invSnap] = await Promise.all([
     db.ref(`economy/${user.uid}`).get(),
-    db.ref(`inventory/${user.uid}`).get(),
-    db.ref(`claims/${user.uid}`).limitToLast(5).get()
+    db.ref(`inventory/${user.uid}`).get()
   ]);
+  const probes = {};
+  try {
+    const r = await db.ref("__diag/tx1").transaction((c) => (c || 0) + 1);
+    probes.scratchValue = { committed: r.committed, val: r.snapshot.val() };
+  } catch (e) {
+    probes.scratchValue = { error: String(e?.message || e) };
+  }
+  try {
+    const r = await db.ref("__diag/tx2").transaction((c) => {
+      const v = c || 0;
+      if (v < 1) return void 0;
+      return v;
+    });
+    probes.scratchAbortCold = { committed: r.committed, val: r.snapshot.val() };
+  } catch (e) {
+    probes.scratchAbortCold = { error: String(e?.message || e) };
+  }
+  try {
+    await db.ref("__diag/tx3").set(1);
+    const r = await db.ref("__diag/tx3").transaction(
+      (c) => {
+        const v = c || 0;
+        if (v < 1) return void 0;
+        return v - 1;
+      },
+      void 0,
+      false
+    );
+    probes.scratchAbortALF = { committed: r.committed, val: r.snapshot.val() };
+  } catch (e) {
+    probes.scratchAbortALF = { error: String(e?.message || e) };
+  }
+  try {
+    const r = await db.ref(`economy/${user.uid}/cases`).transaction(
+      (c) => {
+        const v = c || 0;
+        if (v < 1) return void 0;
+        return v;
+      },
+      void 0,
+      false
+    );
+    probes.economyCasesRO = { committed: r.committed, val: r.snapshot.val() };
+  } catch (e) {
+    probes.economyCasesRO = { error: String(e?.message || e) };
+  }
   res.status(200).json({
     uid: user.uid,
+    sdkVersion: globalThis.process?.env?.npm_package_version || null,
     economy: ecoSnap.val(),
-    economyExists: ecoSnap.exists(),
     inventory: invSnap.val(),
-    inventoryExists: invSnap.exists(),
-    claims: claimsSnap.val(),
-    envDbUrlSet: !!process.env.FIREBASE_DATABASE_URL
+    envDbUrlSet: !!process.env.FIREBASE_DATABASE_URL,
+    probes
   });
 });
 export {
