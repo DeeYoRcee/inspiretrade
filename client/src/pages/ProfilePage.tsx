@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
-  Award, Camera, Copy, Crown, Globe2, Loader2, Pencil,
+  Award, Camera, Copy, Crown, Globe2, Loader2, Pencil, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -182,6 +182,20 @@ export default function ProfilePage() {
     try {
       const dataUrl = await fileToAvatarDataUrl(file);
       await saveUserProfile(user.uid, { avatar: dataUrl });
+      queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
+      toast({ title: t("profileSaved") });
+    } catch {
+      toast({ title: t("error"), variant: "destructive" });
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
+  const onAvatarRemove = async () => {
+    if (!user || avatarBusy) return;
+    setAvatarBusy(true);
+    try {
+      await saveUserProfile(user.uid, { avatar: null });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
       toast({ title: t("profileSaved") });
     } catch {
@@ -411,6 +425,17 @@ export default function ProfilePage() {
               }}
             />
             <span className="text-xs text-muted-foreground">{t("profileChangePhoto")}</span>
+            {avatarSrc && (
+              <button
+                type="button"
+                onClick={onAvatarRemove}
+                disabled={avatarBusy}
+                className="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+              >
+                {avatarBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                {t("profileRemovePhoto")}
+              </button>
+            )}
 
             {/* Bio */}
             <div className="w-full space-y-1.5">

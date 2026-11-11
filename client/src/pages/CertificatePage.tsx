@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
-import { Award, CalendarDays, ChevronLeft, ChevronRight, Gem, Printer } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Award, CalendarDays, ChevronLeft, ChevronRight, FileDown, Gem, ImageDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useUserProfile } from "@/hooks/use-premium";
 import { useTrades } from "@/hooks/use-trades";
@@ -18,27 +19,31 @@ function tashkentDate(ts: number): string {
   return new Date(ts).toLocaleDateString("sv-SE", { timeZone: "Asia/Tashkent" });
 }
 
+type DownloadMode = "cert" | "calendar";
+type DownloadFormat = "pdf" | "png";
+
 /**
  * Prop-firm style achievement certificate (A4 landscape) rendered from the
- * user's real journal stats + a monthly reward-calendar certificate.
- * "Download PDF" opens the browser print dialog — "Save as PDF" produces the
- * file (no server roundtrip, pixel-exact output). Only the chosen block is
- * printed: the other one is hidden for the print run.
+ * user's real journal stats + a monthly performance/reward calendar.
+ * "PDF" captures the card with html-to-image and wraps it in a single-page
+ * A4-landscape jsPDF document; "PNG" downloads the capture directly. Both run
+ * fully client-side (lazy-loaded chunks) — no printing, no server roundtrip.
  */
 export default function CertificatePage() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { toast } = useToast();
   const { data: profile } = useUserProfile();
   const { data: trades } = useTrades();
   const { data: economy } = useEconomy();
   const { data: claims } = useClaims();
 
-  // "cert" prints the achievement certificate, "calendar" prints the monthly
-  // reward calendar. While printing, the non-selected block is hidden.
-  const [printMode, setPrintMode] = useState<"cert" | "calendar" | null>(null);
   const now = new Date();
   const [calYear, setCalYear] = useState(now.getFullYear());
   const [calMonth, setCalMonth] = useState(now.getMonth()); // 0-11
+  const [busy, setBusy] = useState<string | null>(null);
+  const certRef = useRef<HTMLDivElement>(null);
+  const calendarRef = useRef<HTMLDivElement>(null);
 
   const stats = useMemo(() => {
     const list = trades || [];
@@ -72,6 +77,16 @@ export default function CertificatePage() {
     return set;
   }, [claims, calYear, calMonth]);
 
+  // Real journal PnL per day for the selected month (Tashkent timezone).
+  const tradePnlByDay = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const trade of trades || []) {
+      const [y, m, d] = tashkentDate(trade.timestamp).split("-").map(Number);
+      if (y === calYear && m - 1 === calMonth) map[d] = (map[d] || 0) + trade.profit;
+    }
+    return map;
+  }, [trades, calYear, calMonth]);
+
   const calendarCells = useMemo(() => {
     const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
     // Monday-first weekday index (0 = Monday).
@@ -97,13 +112,32 @@ export default function CertificatePage() {
 
   const issued = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 
-  const print = (mode: "cert" | "calendar") => {
-    setPrintMode(mode);
-    // Give React one frame to swap the print classes before the dialog opens.
-    setTimeout(() => {
-      window.print();
-      setPrintMode(null);
-    }, 120);
+  const download = async (mode: DownloadMode, format: DownloadFormat) => {
+    const el = mode === "cert" ? certRef.current : calendarRef.current;
+    if (!el || busy) return;
+    setBusy(`${mode}-${format}`);
+    try {
+      const [{ toPng }, { jsPDF }] = await Promise.all([
+        import("html-to-image"),
+        import("jspdf"),
+      ]);
+      const dataUrl = await toPng(el, { pixelRatio: 2, cacheBust: true });
+      const base = mode === "cert" ? `InspireTrade-Certificate-${certId}` : `InspireTrade-Calendar-${certId}-C`;
+      if (format === "png") {
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        a.download = `${base}.png`;
+        a.click();
+      } else {
+        const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+        pdf.addImage(dataUrl, "PNG", 0, 0, 297, 210);
+        pdf.save(`${base}.pdf`);
+      }
+    } catch {
+      toast({ title: t("error"), description: t("certificateNote"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
   };
 
   const shiftMonth = (delta: number) => {
@@ -112,22 +146,19 @@ export default function CertificatePage() {
     setCalMonth(d.getMonth());
   };
 
+  const downloadButton = (mode: DownloadMode, format: DownloadFormat, label: string, variant: "default" | "outline" = "default") => {
+    const key = `${mode}-${format}`;
+    return (
+      <Button size="lg" variant={variant} disabled={!!busy} onClick={() => download(mode, format)} className="rounded-xl font-semibold">
+        {busy === key ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : format === "pdf" ? <FileDown className="mr-2 h-5 w-5" /> : <ImageDown className="mr-2 h-5 w-5" />}
+        {label}
+      </Button>
+    );
+  };
+
   return (
     <div className="container mx-auto max-w-5xl space-y-4 p-4 sm:px-6">
-      <style>{`
-        @media print {
-          body * { visibility: hidden !important; }
-          .certificate-print-area, .certificate-print-area * { visibility: visible !important; }
-          .certificate-print-area {
-            position: fixed !important; inset: 0 !important; margin: 0 !important;
-            width: 100vw !important; max-width: none !important; padding: 0 !important;
-          }
-          .certificate-no-print { display: none !important; }
-          @page { size: A4 landscape; margin: 0; }
-        }
-      `}</style>
-
-      <div className="certificate-no-print flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight sm:text-3xl">
             <Award className="h-6 w-6 text-amber-400" />
@@ -136,19 +167,13 @@ export default function CertificatePage() {
           <p className="text-sm text-muted-foreground">{t("certificateSubtitle")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button size="lg" onClick={() => print("cert")} className="rounded-xl font-semibold">
-            <Printer className="mr-2 h-5 w-5" />
-            {t("certificateDownload")}
-          </Button>
-          <Button size="lg" variant="outline" onClick={() => print("calendar")} className="rounded-xl font-semibold">
-            <CalendarDays className="mr-2 h-5 w-5" />
-            {t("calendarDownload")}
-          </Button>
+          {downloadButton("cert", "pdf", t("certificateDownload"))}
+          {downloadButton("cert", "png", "PNG", "outline")}
         </div>
       </div>
 
       {/* ============ A4 landscape achievement certificate ============ */}
-      <div className={printMode === "calendar" ? "certificate-no-print" : "certificate-print-area flex justify-center"}>
+      <div ref={certRef} className="flex justify-center">
         <div
           className="relative flex aspect-[297/210] w-full max-w-[1000px] flex-col justify-between overflow-hidden rounded-sm p-1"
           style={{
@@ -222,8 +247,7 @@ export default function CertificatePage() {
                       DeeYoRcee_Inspire
                     </p>
                     <div className="mx-auto h-px w-40" style={{ background: "linear-gradient(90deg, transparent, #d4af37, transparent)" }} />
-                    <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-white/80">DeeYoRcee_Inspire</p>
-                    <p className="text-[9px] uppercase tracking-[0.25em] text-white/50">CEO &amp; Founder · InspireTrade</p>
+                    <p className="mt-1 text-[9px] uppercase tracking-[0.25em] text-white/50">CEO &amp; Founder · InspireTrade</p>
                   </div>
                 </div>
               </div>
@@ -232,104 +256,131 @@ export default function CertificatePage() {
         </div>
       </div>
 
-      {/* ============ A4 landscape reward calendar certificate ============ */}
-      <div className={printMode === "calendar" ? "certificate-print-area flex justify-center" : "certificate-no-print"}>
-        {/* month switcher (never printed) */}
-        <div className="mb-3 flex items-center justify-center gap-2">
-          <Button variant="outline" size="sm" className="rounded-full" onClick={() => shiftMonth(-1)} aria-label="Previous month">
+      {/* ============ A4 landscape performance / reward calendar ============ */}
+      <div>
+        <div className="mb-3 flex flex-wrap items-center justify-center gap-2">
+          <Button variant="outline" size="sm" className="rounded-full" onClick={() => shiftMonth(-1)} aria-label="Previous month" disabled={!!busy}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="min-w-44 text-center text-sm font-semibold">
             {MONTHS_EN[calMonth]} {calYear}
           </span>
-          <Button variant="outline" size="sm" className="rounded-full" onClick={() => shiftMonth(1)} aria-label="Next month">
+          <Button variant="outline" size="sm" className="rounded-full" onClick={() => shiftMonth(1)} aria-label="Next month" disabled={!!busy}>
             <ChevronRight className="h-4 w-4" />
           </Button>
+          <div className="ml-2 flex flex-wrap gap-2">
+            <Button size="sm" disabled={!!busy} onClick={() => download("calendar", "pdf")} className="rounded-xl font-semibold">
+              {busy === "calendar-pdf" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+              {t("calendarDownload")}
+            </Button>
+            <Button size="sm" variant="outline" disabled={!!busy} onClick={() => download("calendar", "png")} className="rounded-xl font-semibold">
+              {busy === "calendar-png" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ImageDown className="mr-2 h-4 w-4" />}
+              PNG
+            </Button>
+          </div>
         </div>
 
-        <div
-          className="relative flex aspect-[297/210] w-full max-w-[1000px] flex-col justify-between overflow-hidden rounded-sm p-1"
-          style={{ background: "linear-gradient(135deg, #0a0a0a 0%, #141414 55%, #1a1408 100%)" }}
-        >
-          <div className="absolute inset-0 rounded-sm" style={{ padding: "6px", background: "linear-gradient(120deg, #d4af37, #f5e08a 30%, #a8842a 60%, #f5e08a 85%, #d4af37)" }}>
-            <div className="flex h-full w-full flex-col justify-between p-[26px]" style={{ background: "linear-gradient(135deg, #0a0a0a 0%, #141414 55%, #1a1408 100%)" }}>
-              {/* header */}
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <img src="/logo.png" alt="InspireTrade" className="h-11 w-auto object-contain" />
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#f5e08a]">Calendar ID</p>
-                  <p className="font-mono text-sm font-bold text-[#f5e08a]">{certId}-C</p>
-                </div>
-              </div>
-
-              {/* title + weekday grid */}
-              <div className="mx-auto w-full max-w-3xl">
-                <div className="text-center">
-                  <p className="text-[11px] uppercase tracking-[0.45em] text-[#f5e08a]/80">InspireTrade Daily Rewards</p>
-                  <h2
-                    className="mt-1 text-3xl font-black uppercase tracking-[0.14em] text-transparent"
-                    style={{
-                      background: "linear-gradient(120deg, #d4af37, #f9ec9f 40%, #d4af37 70%, #f5e08a)",
-                      WebkitBackgroundClip: "text",
-                      backgroundClip: "text",
-                    }}
-                  >
-                    {MONTHS_EN[calMonth]} {calYear}
-                  </h2>
+        <div ref={calendarRef} className="flex justify-center">
+          <div
+            className="relative flex aspect-[297/210] w-full max-w-[1000px] flex-col justify-between overflow-hidden rounded-sm p-1"
+            style={{ background: "linear-gradient(135deg, #0a0a0a 0%, #141414 55%, #1a1408 100%)" }}
+          >
+            <div className="absolute inset-0 rounded-sm" style={{ padding: "6px", background: "linear-gradient(120deg, #d4af37, #f5e08a 30%, #a8842a 60%, #f5e08a 85%, #d4af37)" }}>
+              <div className="flex h-full w-full flex-col justify-between p-[26px]" style={{ background: "linear-gradient(135deg, #0a0a0a 0%, #141414 55%, #1a1408 100%)" }}>
+                {/* header */}
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <img src="/logo.png" alt="InspireTrade" className="h-11 w-auto object-contain" />
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-[#f5e08a]">Calendar ID</p>
+                    <p className="font-mono text-sm font-bold text-[#f5e08a]">{certId}-C</p>
+                  </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-7 gap-1.5">
-                  {WEEKDAYS.map((day) => (
-                    <div key={day} className="py-1 text-center text-[10px] font-bold uppercase tracking-widest text-[#f5e08a]/70">
-                      {day}
-                    </div>
-                  ))}
-                  {calendarCells.map((day, index) =>
-                    day === null ? (
-                      <div key={`empty-${index}`} className="aspect-square rounded-md border border-transparent" />
-                    ) : (
-                      <div
-                        key={`day-${day}`}
-                        className={
-                          claimedDays.has(day)
-                            ? "relative flex aspect-square items-center justify-center rounded-md font-mono text-sm font-bold text-black"
-                            : "relative flex aspect-square items-center justify-center rounded-md border border-[#d4af37]/15 bg-[#d4af37]/5 font-mono text-sm text-white/45"
-                        }
-                        style={
-                          claimedDays.has(day)
-                            ? { background: "linear-gradient(135deg, #d4af37, #f5e08a)" }
-                            : undefined
-                        }
-                      >
+                {/* title + weekday grid */}
+                <div className="mx-auto w-full max-w-3xl">
+                  <div className="text-center">
+                    <p className="text-[11px] uppercase tracking-[0.45em] text-[#f5e08a]/80">InspireTrade Performance Calendar</p>
+                    <h2
+                      className="mt-1 text-3xl font-black uppercase tracking-[0.14em] text-transparent"
+                      style={{
+                        background: "linear-gradient(120deg, #d4af37, #f9ec9f 40%, #d4af37 70%, #f5e08a)",
+                        WebkitBackgroundClip: "text",
+                        backgroundClip: "text",
+                      }}
+                    >
+                      {MONTHS_EN[calMonth]} {calYear}
+                    </h2>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-7 gap-1.5">
+                    {WEEKDAYS.map((day) => (
+                      <div key={day} className="py-0.5 text-center text-[10px] font-bold uppercase tracking-widest text-[#f5e08a]/70">
                         {day}
-                        {claimedDays.has(day) && <Gem className="absolute right-1 top-1 h-2.5 w-2.5 text-black/60" />}
                       </div>
-                    ),
-                  )}
-                </div>
-              </div>
+                    ))}
+                    {calendarCells.map((day, index) => {
+                      if (day === null) return <div key={`empty-${index}`} className="rounded-md border border-transparent" />;
+                      const pnl = tradePnlByDay[day];
+                      const claimed = claimedDays.has(day);
+                      const profit = pnl !== undefined && pnl > 0;
+                      const loss = pnl !== undefined && pnl < 0;
+                      const color = profit ? "#4ade80" : loss ? "#f87171" : "#f5e08a";
+                      return (
+                        <div
+                          key={`day-${day}`}
+                          className="relative flex flex-col items-center justify-center rounded-md border font-mono"
+                          style={
+                            pnl !== undefined
+                              ? {
+                                  borderColor: `${color}55`,
+                                  background: profit ? "rgba(74,222,128,0.10)" : loss ? "rgba(248,113,113,0.10)" : "rgba(212,175,55,0.10)",
+                                }
+                              : claimed
+                                ? { background: "linear-gradient(135deg, #d4af37, #f5e08a)", borderColor: "transparent" }
+                                : { borderColor: "rgba(212,175,55,0.15)", background: "rgba(212,175,55,0.05)" }
+                          }
+                        >
+                          <span className={pnl !== undefined ? "text-[9px] leading-none text-white/55" : claimed ? "text-sm font-bold leading-none text-black" : "text-sm leading-none text-white/45"} style={{ marginTop: pnl !== undefined ? "0" : undefined }}>
+                            {day}
+                          </span>
+                          {pnl !== undefined && (
+                            <span className="mt-1 text-[10px] font-bold leading-none sm:text-xs" style={{ color }}>
+                              {pnl > 0 ? "+" : ""}{pnl.toFixed(0)}$
+                            </span>
+                          )}
+                          {claimed && <Gem className="absolute right-1 top-1 h-2.5 w-2.5" style={{ color: pnl !== undefined ? "#f5e08a" : "rgba(0,0,0,0.55)" }} />}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-              {/* footer: name + CEO signature */}
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-white/50">{t("certificatePresentedTo")}</p>
-                  <p className="text-lg font-bold text-white">{name}</p>
-                  <p className="mt-1 text-[11px] text-[#f5e08a]">
-                    {t("certClaimedDays").replace("{n}", String(claimedDays.size))} · {t("calendarLegend")}
-                  </p>
+                  {/* legend */}
+                  <div className="mt-2 flex items-center justify-center gap-4 text-[9px] uppercase tracking-widest text-white/45">
+                    <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "rgba(74,222,128,0.25)", border: "1px solid rgba(74,222,128,0.6)" }} />Profit</span>
+                    <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "rgba(248,113,113,0.25)", border: "1px solid rgba(248,113,113,0.6)" }} />Loss</span>
+                    <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "linear-gradient(135deg, #d4af37, #f5e08a)" }} />{t("calendarLegend")}</span>
+                  </div>
                 </div>
-                <div className="text-center">
-                  <p
-                    className="text-xl italic text-[#f5e08a]"
-                    style={{ fontFamily: "'Brush Script MT', 'Segoe Script', cursive" }}
-                  >
-                    DeeYoRcee_Inspire
-                  </p>
-                  <div className="mx-auto h-px w-40" style={{ background: "linear-gradient(90deg, transparent, #d4af37, transparent)" }} />
-                  <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-white/80">CEO: DeeYoRcee_Inspire</p>
-                  <p className="text-[9px] uppercase tracking-[0.25em] text-white/50">CEO &amp; Founder · InspireTrade</p>
+
+                {/* footer: name + CEO signature */}
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-white/50">{t("certificatePresentedTo")}</p>
+                    <p className="text-lg font-bold text-white">{name}</p>
+                    <p className="mt-1 text-[11px] text-[#f5e08a]">{t("certClaimedDays").replace("{n}", String(claimedDays.size))}</p>
+                  </div>
+                  <div className="text-center">
+                    <p
+                      className="text-xl italic text-[#f5e08a]"
+                      style={{ fontFamily: "'Brush Script MT', 'Segoe Script', cursive" }}
+                    >
+                      DeeYoRcee_Inspire
+                    </p>
+                    <div className="mx-auto h-px w-40" style={{ background: "linear-gradient(90deg, transparent, #d4af37, transparent)" }} />
+                    <p className="mt-1 text-[9px] uppercase tracking-[0.25em] text-white/50">CEO &amp; Founder · InspireTrade</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -337,8 +388,8 @@ export default function CertificatePage() {
         </div>
       </div>
 
-      <p className="certificate-no-print text-center text-xs text-muted-foreground">{t("certificateNote")}</p>
-      <p className="certificate-no-print text-center text-xs text-muted-foreground">{t("certCalendarSubtitle")}</p>
+      <p className="text-center text-xs text-muted-foreground">{t("certificateNote")}</p>
+      <p className="text-center text-xs text-muted-foreground">{t("certCalendarSubtitle")}</p>
     </div>
   );
 }
