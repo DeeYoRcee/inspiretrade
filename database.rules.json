@@ -85,7 +85,6 @@
           ".validate": "newData.isString() && newData.val().length <= 2000"
         },
         "history": {
-          ".validate": "newData.numChildren() <= 10",
           "$tradeId": {
             ".validate": "newData.hasChildren(['assetName', 'type', 'timestamp', 'profit'])",
             "id": { ".validate": "newData.isString() && newData.val().length <= 80" },
