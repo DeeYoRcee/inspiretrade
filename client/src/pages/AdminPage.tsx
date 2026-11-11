@@ -52,7 +52,7 @@ export default function AdminPage() {
       const trimmed = target.trim();
       if (trimmed.includes("@")) payload.username = trimmed.replace("@", "").toLowerCase();
       else payload.uid = trimmed;
-      return authedFetch("/api/admin/gift", payload);
+      return authedFetch("/api/admin?action=gift", payload);
     },
     onSuccess: () => {
       toast({ title: t("giftSent"), description: `@${target.replace("@", "")}` });
@@ -67,7 +67,7 @@ export default function AdminPage() {
   const loadWithdrawals = async () => {
     setLoadingList(true);
     try {
-      const res = await authedFetch("/api/admin/withdrawals");
+      const res = await authedFetch("/api/admin?action=withdrawals");
       setWithdrawals(res.withdrawals || []);
     } catch (error: any) {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
@@ -83,7 +83,7 @@ export default function AdminPage() {
 
   const actMutation = useMutation({
     mutationFn: async ({ uid, id, action }: { uid: string; id: string; action: string }) =>
-      authedFetch("/api/admin/withdrawals", { uid, id, action }),
+      authedFetch("/api/admin?action=withdrawals", { uid, id, action }),
     onSuccess: () => {
       toast({ title: t("withdrawProcessed") });
       loadWithdrawals();

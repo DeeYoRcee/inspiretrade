@@ -100,79 +100,87 @@ async function logLedger(entry) {
   }
 }
 
-// shared/fragments.ts
-var FRAGMENTS = [
-  { id: "discipline", name: "Discipline", icon: "ShieldCheck", rarity: "common", dropPercent: 20 },
-  { id: "patience", name: "Patience", icon: "Hourglass", rarity: "common", dropPercent: 20 },
-  { id: "risk-management", name: "Risk Management", icon: "Scale", rarity: "rare", dropPercent: 14 },
-  { id: "backtesting", name: "Backtesting", icon: "FlaskConical", rarity: "rare", dropPercent: 14 },
-  { id: "trading-plan", name: "Trading Plan", icon: "ClipboardList", rarity: "epic", dropPercent: 9 },
-  { id: "psychology", name: "Psychology", icon: "Brain", rarity: "epic", dropPercent: 9 },
-  { id: "consistency", name: "Consistency", icon: "Repeat", rarity: "covert", dropPercent: 5 },
-  { id: "execution", name: "Execution", icon: "Crosshair", rarity: "covert", dropPercent: 5 },
-  { id: "master-trader", name: "Master Trader", icon: "Crown", rarity: "mythic", dropPercent: 2 }
-];
-var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
-var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
-var MARKET_FEE_PERCENT = 10;
-
-// api/_src/market/buy.ts
-var buy_default = handle(async (req, res) => {
+// api/_src/wallet/withdraw.ts
+var MIN_WITHDRAW = 5;
+var METHODS = {
+  crypto: "Crypto (USDT TRC20)",
+  telegram: "Telegram gift / stars",
+  other: "Other (agree with owner)"
+};
+var withdraw_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
-  const { listingId } = req.body || {};
-  if (!listingId || typeof listingId !== "string") throw new HttpError(400, "BAD_LISTING", "listingId required");
-  const db = rtdb();
-  const now = Date.now();
-  const tx = await db.ref(`market/${listingId}`).transaction((current) => {
-    if (!current) return void 0;
-    if (current.status !== "active") return void 0;
-    if (current.sellerUid === user.uid) return void 0;
-    return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
+  const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+  const amount = Math.floor(Number(body.amount) || 0);
+  const method = String(body.method || "");
+  const details = String(body.details || "").trim().slice(0, 200);
+  if (!METHODS[method]) {
+    throw new HttpError(400, "INVALID_METHOD", "Choose a withdrawal method");
+  }
+  if (amount < MIN_WITHDRAW) {
+    throw new HttpError(400, "AMOUNT_TOO_SMALL", `Minimum withdrawal is ${MIN_WITHDRAW} INSP`);
+  }
+  if (!details) {
+    throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
+  }
+  const tx = await rtdb().ref(`economy/${user.uid}`).transaction((current) => {
+    const eco = current || { coins: 0, cases: 0, streak: 0 };
+    if ((eco.coins || 0) < amount) return void 0;
+    return { ...eco, coins: (eco.coins || 0) - amount, updatedAt: Date.now() };
   });
   if (!tx.committed) {
-    const current = tx.snapshot.val();
-    if (current && current.sellerUid === user.uid) {
-      throw new HttpError(400, "OWN_LISTING", "You can't buy your own listing");
-    }
-    throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
+    throw new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance");
   }
-  const listing = tx.snapshot.val();
-  const payTx = await db.ref(`economy/${user.uid}/coins`).transaction((current) => {
-    const coins = current || 0;
-    if (coins < listing.price) return void 0;
-    return coins - listing.price;
-  });
-  if (!payTx.committed) {
-    await db.ref(`market/${listingId}`).transaction((current) => {
-      if (current && current.status === "sold" && current.buyerUid === user.uid) {
-        return { ...current, status: "active", buyerUid: null, soldAt: null };
-      }
-      return current;
-    });
-    throw new HttpError(400, "INSUFFICIENT_COINS", "Not enough INSP coins");
-  }
-  const sellerReceives = Math.floor(listing.price * (1 - MARKET_FEE_PERCENT / 100));
-  const fee = listing.price - sellerReceives;
-  await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c) => (c || 0) + sellerReceives);
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
-  await logLedger({
-    type: "market_buy",
-    buyerUid: user.uid,
-    sellerUid: listing.sellerUid,
-    listingId,
-    fragmentId: listing.fragmentId,
-    price: listing.price,
-    fee,
-    sellerReceives
-  });
-  res.status(200).json({
-    ok: true,
-    listing: tx.snapshot.val(),
-    coinsLeft: payTx.snapshot.val()
-  });
+  const requestRef = rtdb().ref(`withdrawals/${user.uid}`).push();
+  const request = {
+    id: requestRef.key,
+    uid: user.uid,
+    amount,
+    method,
+    methodLabel: METHODS[method],
+    details,
+    status: "pending",
+    at: Date.now()
+  };
+  await requestRef.set(request);
+  await logLedger({ type: "withdraw_request", uid: user.uid, amount, method });
+  res.status(200).json({ ok: true, request });
 });
+function safeParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+// api/_src/wallet/index.ts
+function safeParse2(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function getAction(req) {
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    const q = url.searchParams.get("action");
+    if (q) return String(q);
+  } catch {
+  }
+  const body = typeof req.body === "string" ? safeParse2(req.body) : req.body;
+  return String(body?.action || "withdraw");
+}
+async function handler(req, res) {
+  const action = getAction(req);
+  switch (action) {
+    case "withdraw":
+      return withdraw_default(req, res);
+    default:
+      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown wallet action (use ?action=withdraw)" });
+  }
+}
 export {
-  buy_default as default
+  handler as default
 };

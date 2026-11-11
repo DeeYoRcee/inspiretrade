@@ -114,6 +114,7 @@ var FRAGMENTS = [
 ];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var MARKET_FEE_PERCENT = 10;
 var MAX_ACTIVE_LISTINGS = 20;
 var MIN_LISTING_PRICE = 1;
 var MAX_LISTING_PRICE = 1e6;
@@ -169,6 +170,116 @@ var list_default = handle(async (req, res) => {
   await logLedger({ type: "market_list", uid: user.uid, listingId: listingRef.key, fragmentId: fragment.id, price: parsedPrice });
   res.status(200).json({ ok: true, listing });
 });
+
+// api/_src/market/buy.ts
+var buy_default = handle(async (req, res) => {
+  assertPost(req);
+  const user = await requireUser(req);
+  const { listingId } = req.body || {};
+  if (!listingId || typeof listingId !== "string") throw new HttpError(400, "BAD_LISTING", "listingId required");
+  const db = rtdb();
+  const now = Date.now();
+  const tx = await db.ref(`market/${listingId}`).transaction((current) => {
+    if (!current) return void 0;
+    if (current.status !== "active") return void 0;
+    if (current.sellerUid === user.uid) return void 0;
+    return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
+  });
+  if (!tx.committed) {
+    const current = tx.snapshot.val();
+    if (current && current.sellerUid === user.uid) {
+      throw new HttpError(400, "OWN_LISTING", "You can't buy your own listing");
+    }
+    throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
+  }
+  const listing = tx.snapshot.val();
+  const payTx = await db.ref(`economy/${user.uid}/coins`).transaction((current) => {
+    const coins = current || 0;
+    if (coins < listing.price) return void 0;
+    return coins - listing.price;
+  });
+  if (!payTx.committed) {
+    await db.ref(`market/${listingId}`).transaction((current) => {
+      if (current && current.status === "sold" && current.buyerUid === user.uid) {
+        return { ...current, status: "active", buyerUid: null, soldAt: null };
+      }
+      return current;
+    });
+    throw new HttpError(400, "INSUFFICIENT_COINS", "Not enough INSP coins");
+  }
+  const sellerReceives = Math.floor(listing.price * (1 - MARKET_FEE_PERCENT / 100));
+  const fee = listing.price - sellerReceives;
+  await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c) => (c || 0) + sellerReceives);
+  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
+  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  await logLedger({
+    type: "market_buy",
+    buyerUid: user.uid,
+    sellerUid: listing.sellerUid,
+    listingId,
+    fragmentId: listing.fragmentId,
+    price: listing.price,
+    fee,
+    sellerReceives
+  });
+  res.status(200).json({
+    ok: true,
+    listing: tx.snapshot.val(),
+    coinsLeft: payTx.snapshot.val()
+  });
+});
+
+// api/_src/market/cancel.ts
+var cancel_default = handle(async (req, res) => {
+  assertPost(req);
+  const user = await requireUser(req);
+  const { listingId } = req.body || {};
+  if (!listingId || typeof listingId !== "string") throw new HttpError(400, "BAD_LISTING", "listingId required");
+  const db = rtdb();
+  const now = Date.now();
+  const tx = await db.ref(`market/${listingId}`).transaction((current) => {
+    if (!current || current.status !== "active" || current.sellerUid !== user.uid) return void 0;
+    return { ...current, status: "canceled", canceledAt: now };
+  });
+  if (!tx.committed) throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
+  const listing = tx.snapshot.val();
+  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
+  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  await logLedger({ type: "market_cancel", uid: user.uid, listingId, fragmentId: listing.fragmentId });
+  res.status(200).json({ ok: true });
+});
+
+// api/_src/market/index.ts
+function safeParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function getAction(req) {
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    const q = url.searchParams.get("action");
+    if (q) return String(q);
+  } catch {
+  }
+  const body = typeof req.body === "string" ? safeParse(req.body) : req.body;
+  return String(body?.action || "");
+}
+async function handler(req, res) {
+  const action = getAction(req);
+  switch (action) {
+    case "list":
+      return list_default(req, res);
+    case "buy":
+      return buy_default(req, res);
+    case "cancel":
+      return cancel_default(req, res);
+    default:
+      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown market action (use ?action=list|buy|cancel)" });
+  }
+}
 export {
-  list_default as default
+  handler as default
 };

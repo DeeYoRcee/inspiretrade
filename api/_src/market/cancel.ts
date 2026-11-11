@@ -1,5 +1,5 @@
 /**
- * POST /api/market/cancel   { listingId }
+ * POST /api/market?action=cancel   { listingId }
  * Cancels the caller's own active listing and returns the escrowed fragment.
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";

@@ -1,5 +1,5 @@
 /**
- * POST /api/market/list   { fragmentId, price }
+ * POST /api/market?action=list   { fragmentId, price }
  * Creates a market listing. The fragment is escrowed: it leaves the seller's
  * inventory immediately and is only returned on cancel.
  */

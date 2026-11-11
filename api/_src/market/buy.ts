@@ -1,5 +1,5 @@
 /**
- * POST /api/market/buy   { listingId }
+ * POST /api/market?action=buy   { listingId }
  * Buys an active listing:
  *   1) atomically reserve the listing (status -> sold)
  *   2) atomically deduct buyer coins (revert listing if insufficient)

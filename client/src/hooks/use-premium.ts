@@ -34,7 +34,7 @@ export function usePremiumStatus() {
     queryKey: ["premiumStatus", user?.uid],
     queryFn: async (): Promise<boolean> => {
       if (!user) return false;
-      const res = await fetch("/api/whop/verify", {
+      const res = await fetch("/api/whop?action=verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ firebaseUid: user.uid }),

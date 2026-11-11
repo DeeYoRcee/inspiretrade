@@ -36,7 +36,7 @@ export default function MarketPage() {
   const listMutation = useMutation({
     mutationFn: async () => {
       const price = Number(sellPrice);
-      return authedFetch("/api/market/list", { fragmentId: sellFragmentId, price });
+      return authedFetch("/api/market?action=list", { fragmentId: sellFragmentId, price });
     },
     onSuccess: () => {
       toast({ title: t("listingCreated") });
@@ -50,7 +50,7 @@ export default function MarketPage() {
   });
 
   const cancelMutation = useMutation({
-    mutationFn: async (listingId: string) => authedFetch("/api/market/cancel", { listingId }),
+    mutationFn: async (listingId: string) => authedFetch("/api/market?action=cancel", { listingId }),
     onSuccess: () => {
       toast({ title: t("listingCanceled") });
       invalidate();
@@ -61,7 +61,7 @@ export default function MarketPage() {
   });
 
   const buyMutation = useMutation({
-    mutationFn: async (listingId: string) => authedFetch("/api/market/buy", { listingId }),
+    mutationFn: async (listingId: string) => authedFetch("/api/market?action=buy", { listingId }),
     onSuccess: () => {
       toast({ title: t("purchaseSuccess") });
       invalidate();

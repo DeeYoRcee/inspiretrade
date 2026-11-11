@@ -54,7 +54,7 @@ export default function WalletPage() {
 
   const withdrawMutation = useMutation({
     mutationFn: async () => {
-      const res = await authedFetch("/api/wallet/withdraw", {
+      const res = await authedFetch("/api/wallet?action=withdraw", {
         amount: Number(amount),
         method,
         details: details.trim(),

@@ -110,7 +110,7 @@ export function GlobalChat() {
 
   const deleteMessage = async (messageId: string) => {
     try {
-      await authedFetch("/api/admin/chat-delete", { messageId });
+      await authedFetch("/api/admin?action=chat-delete", { messageId });
       await remove(ref(db, `chat/global/${messageId}`));
     } catch {
       // not admin / network — ignore

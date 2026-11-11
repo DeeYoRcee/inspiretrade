@@ -164,6 +164,115 @@ function safeParse(raw) {
     return {};
   }
 }
+
+// api/_src/admin/withdrawals.ts
+var withdrawals_default = handle(async (req, res) => {
+  const admin2 = await requireAdmin(req);
+  const db = rtdb();
+  if (req.method === "GET") {
+    const snap = await db.ref("withdrawals").once("value");
+    const all = snap.val() || {};
+    const list = [];
+    for (const [uid, requests] of Object.entries(all)) {
+      for (const [id2, request] of Object.entries(requests || {})) {
+        list.push({ ...request, uid, id: id2 });
+      }
+    }
+    list.sort((a, b) => (b.at || 0) - (a.at || 0));
+    return res.status(200).json({ ok: true, withdrawals: list.slice(0, 100) });
+  }
+  const body = typeof req.body === "string" ? safeParse2(req.body) : req.body || {};
+  const targetUid = String(body.uid || "");
+  const id = String(body.id || "");
+  const action = String(body.action || "");
+  if (!targetUid || !id || !["paid", "rejected"].includes(action)) {
+    throw new HttpError(400, "INVALID_REQUEST", "Provide uid, id and action (paid|rejected)");
+  }
+  const requestRef = db.ref(`withdrawals/${targetUid}/${id}`);
+  const current = (await requestRef.once("value")).val();
+  if (!current) throw new HttpError(404, "NOT_FOUND", "Withdrawal request not found");
+  if (current.status !== "pending") {
+    throw new HttpError(409, "ALREADY_PROCESSED", `Request is already ${current.status}`);
+  }
+  if (action === "rejected") {
+    await db.ref(`economy/${targetUid}`).transaction((eco) => ({
+      ...eco || { coins: 0, cases: 0 },
+      coins: (eco?.coins || 0) + (current.amount || 0),
+      updatedAt: Date.now()
+    }));
+  }
+  await requestRef.update({
+    status: action,
+    processedAt: Date.now(),
+    processedBy: admin2.email || admin2.uid
+  });
+  await logLedger({
+    type: action === "paid" ? "withdraw_paid" : "withdraw_rejected",
+    target: targetUid,
+    amount: current.amount,
+    by: admin2.email || admin2.uid
+  });
+  res.status(200).json({ ok: true, status: action });
+});
+function safeParse2(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+// api/_src/admin/chat-delete.ts
+var chat_delete_default = handle(async (req, res) => {
+  assertPost(req);
+  await requireAdmin(req);
+  const body = typeof req.body === "string" ? safeParse3(req.body) : req.body || {};
+  const messageId = String(body.messageId || "").trim();
+  if (!messageId || !/^[A-Za-z0-9_-]{1,64}$/.test(messageId)) {
+    throw new HttpError(400, "INVALID_ID", "Provide a valid messageId");
+  }
+  await rtdb().ref(`chat/global/${messageId}`).remove();
+  res.status(200).json({ ok: true });
+});
+function safeParse3(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+// api/_src/admin/index.ts
+function safeParse4(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function getAction(req) {
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    const q = url.searchParams.get("action");
+    if (q) return String(q);
+  } catch {
+  }
+  const body = typeof req.body === "string" ? safeParse4(req.body) : req.body;
+  return String(body?.action || "");
+}
+async function handler(req, res) {
+  const action = getAction(req);
+  switch (action) {
+    case "gift":
+      return gift_default(req, res);
+    case "withdrawals":
+      return withdrawals_default(req, res);
+    case "chat-delete":
+      return chat_delete_default(req, res);
+    default:
+      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|chat-delete)" });
+  }
+}
 export {
-  gift_default as default
+  handler as default
 };

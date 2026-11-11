@@ -1,5 +1,5 @@
 /**
- * POST /api/admin/gift   (owner only)
+ * POST /api/admin?action=gift   (owner only)
  * Body: { uid?: string, username?: string, coins?: number, cases?: number, note?: string }
  * Grants INSP coins and/or cases to a user. Owner-facing tool for deposits
  * processed manually (Telegram payments) and gifts.

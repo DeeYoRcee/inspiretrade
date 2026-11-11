@@ -1,5 +1,5 @@
 /**
- * POST /api/admin/chat-delete   (owner only)
+ * POST /api/admin?action=chat-delete   (owner only)
  * Body: { messageId }
  * Removes a message from the global chat (moderation).
  */

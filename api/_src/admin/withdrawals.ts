@@ -1,5 +1,5 @@
 /**
- * /api/admin/withdrawals   (owner only)
+ * /api/admin?action=withdrawals   (owner only)
  * GET  — list every withdrawal request (newest first, max 100).
  * POST — act on one request: { uid, id, action: "paid" | "rejected" }.
  *        "rejected" refunds the coins back to the user's balance.

@@ -15,18 +15,18 @@ import { build } from "esbuild";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
 
+// Vercel Hobby allows max 12 Serverless Functions per deployment.
+// Related endpoints are merged into one dispatcher each (action query param):
+// market (list|buy|cancel), admin (gift|withdrawals|chat-delete),
+// wallet (withdraw), whop (plans|checkout|verify).
 const entries = [
   ["api/_src/rewards/claim.ts", "api/rewards/claim.js"],
   ["api/_src/cases/open.ts", "api/cases/open.js"],
-  ["api/_src/market/list.ts", "api/market/list.js"],
-  ["api/_src/market/buy.ts", "api/market/buy.js"],
-  ["api/_src/market/cancel.ts", "api/market/cancel.js"],
+  ["api/_src/market/index.ts", "api/market.js"],
   ["api/_src/fragments/combine.ts", "api/fragments/combine.js"],
-  ["api/_src/admin/gift.ts", "api/admin/gift.js"],
-  ["api/_src/admin/withdrawals.ts", "api/admin/withdrawals.js"],
-  ["api/_src/admin/chat-delete.ts", "api/admin/chat-delete.js"],
-  ["api/_src/wallet/withdraw.ts", "api/wallet/withdraw.js"],
-  ["api/_src/diag.ts", "api/diag.js"],
+  ["api/_src/admin/index.ts", "api/admin.js"],
+  ["api/_src/wallet/index.ts", "api/wallet.js"],
+  ["api/_src/whop/index.ts", "api/whop.js"],
 ];
 
 for (const [inPath, outPath] of entries) {

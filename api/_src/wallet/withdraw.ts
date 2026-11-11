@@ -1,9 +1,9 @@
 /**
- * POST /api/wallet/withdraw
+ * POST /api/wallet?action=withdraw
  * Body: { amount: number, method: "crypto"|"telegram"|"other", details: string }
  * Atomically reserves INSP from the user's balance and stores a pending
  * withdrawal request. The owner processes it manually and marks it paid or
- * rejected (rejected = coins refunded) via /api/admin/withdrawals.
+ * rejected (rejected = coins refunded) via /api/admin?action=withdrawals.
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
 
