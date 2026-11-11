@@ -1,8 +1,8 @@
 import { motion } from "framer-motion";
-import { Lock, Crown, Building2, CheckCircle2 } from "lucide-react";
+import { Building2, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/lib/language-context";
-import { FRAGMENTS } from "@shared/fragments";
+import { FRAGMENTS, RARITY_META } from "@shared/fragments";
 import { cn } from "@/lib/utils";
 import type { Inventory } from "@/hooks/use-economy";
 
@@ -12,11 +12,97 @@ interface PropPuzzleProps {
   completing: boolean;
 }
 
+// ---- jigsaw geometry (svg units; board is 3×3 pieces of 100×100) ----------
+const S = 100; // piece size
+const NECK = 13; // half width of the knob neck
+const HEAD = 20; // half width of the knob head
+const KNOB = 22; // how far a knob sticks out of an edge
+
+type Pt = [number, number];
+type Seg = { c1: Pt; c2: Pt; to: Pt } | { to: Pt };
+
+/** Horizontal edge traversed left→right; dir 1 = knob up, -1 = knob down. */
+function hEdge(x0: number, x1: number, y: number, dir: 1 | -1): Seg[] {
+  const xm = (x0 + x1) / 2;
+  const k = (v: number) => y - dir * v;
+  return [
+    { to: [xm - NECK, y] },
+    { c1: [xm - NECK - 4, k(4)], c2: [xm - HEAD, k(9)], to: [xm - HEAD, k(14)] },
+    { c1: [xm - HEAD, k(19)], c2: [xm - HEAD + 7, k(KNOB)], to: [xm, k(KNOB)] },
+    { c1: [xm + HEAD - 7, k(KNOB)], c2: [xm + HEAD, k(19)], to: [xm + HEAD, k(14)] },
+    { c1: [xm + HEAD, k(9)], c2: [xm + NECK + 4, k(4)], to: [xm + NECK, y] },
+    { to: [x1, y] },
+  ];
+}
+
+/** Vertical edge traversed top→bottom; dir 1 = knob left, -1 = knob right. */
+function vEdge(y0: number, y1: number, x: number, dir: 1 | -1): Seg[] {
+  const ym = (y0 + y1) / 2;
+  const k = (v: number) => x - dir * v;
+  return [
+    { to: [x, ym - NECK] },
+    { c1: [k(4), ym - NECK - 4], c2: [k(9), ym - HEAD], to: [k(14), ym - HEAD] },
+    { c1: [k(19), ym - HEAD], c2: [k(KNOB), ym - HEAD + 7], to: [k(KNOB), ym] },
+    { c1: [k(KNOB), ym + HEAD - 7], c2: [k(19), ym + HEAD], to: [k(14), ym + HEAD] },
+    { c1: [k(9), ym + HEAD], c2: [k(4), ym + NECK + 4], to: [x, ym + NECK] },
+    { to: [x, y1] },
+  ];
+}
+
+/** Reverse a traversed edge (same curve, opposite direction). */
+function reverse(segs: Seg[], start: Pt): Seg[] {
+  const pts: Pt[] = [start, ...segs.map((s) => s.to)];
+  const out: Seg[] = [];
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const s = segs[i];
+    out.push("c1" in s ? { c1: s.c2, c2: s.c1, to: pts[i] } : { to: pts[i] });
+  }
+  return out;
+}
+
+function toPath(start: Pt, segs: Seg[]): string {
+  let d = `M ${start[0]} ${start[1]}`;
+  for (const s of segs) {
+    d +=
+      "c1" in s
+        ? ` C ${s.c1[0]} ${s.c1[1]} ${s.c2[0]} ${s.c2[1]} ${s.to[0]} ${s.to[1]}`
+        : ` L ${s.to[0]} ${s.to[1]}`;
+  }
+  return `${d} Z`;
+}
+
+// Horizontal knobs always point up (out of the lower piece) so a piece label
+// never collides with a notch; vertical knobs alternate for an organic look.
+const vDir = (r: number, c: number): 1 | -1 => ((r * 5 + c * 3) % 2 === 0 ? 1 : -1);
+
+/** Closed outline of the jigsaw piece at grid position (r, c). */
+function piecePath(r: number, c: number): string {
+  const x = c * S;
+  const y = r * S;
+  const TL: Pt = [x, y];
+  const TR: Pt = [x + S, y];
+  const BR: Pt = [x + S, y + S];
+  const BL: Pt = [x, y + S];
+  const segs: Seg[] = [];
+  // top (TL → TR): knob up = out of this piece
+  for (const s of r === 0 ? [{ to: TR } as Seg] : hEdge(x, x + S, y, 1)) segs.push(s);
+  // right (TR → BR)
+  for (const s of c === 2 ? [{ to: BR } as Seg] : vEdge(y, y + S, x + S, vDir(r, c + 1))) segs.push(s);
+  // bottom (BR → BL): reversed edge shared with the piece below
+  for (const s of r === 2 ? [{ to: BL } as Seg] : reverse(hEdge(x, x + S, y + S, 1), BL)) segs.push(s);
+  // left (BL → TL): reversed edge shared with the piece on the left
+  for (const s of c === 0 ? [{ to: TL } as Seg] : reverse(vEdge(y, y + S, x, vDir(r, c)), TL)) segs.push(s);
+  return toPath(TL, segs);
+}
+
+// Precompute all 9 outlines once (pure geometry, no state).
+const PIECE_PATHS = Array.from({ length: 9 }, (_, i) => piecePath(Math.floor(i / 3), i % 3));
+
 /**
- * 9-piece puzzle of a $5,000 prop account. Each of the 9 fragment types
- * unlocks one tile; the tile shows its slice of the account card (account
- * size, logo quadrant, stat lines). When all 9 are unlocked the user can
- * claim the prop account (burns one of each fragment server-side).
+ * 9-piece jigsaw of a $5,000 prop account. Each of the 9 fragment types
+ * ("5k$ 1" … "5k$ 9") unlocks one interlocking piece; collected pieces carry
+ * their slice of the account card. When all 9 are unlocked the puzzle is
+ * assembled and the prop account can be claimed (burns one of each fragment).
  */
 export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProps) {
   const { t } = useLanguage();
@@ -25,15 +111,15 @@ export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProp
   const complete = unlockedCount === FRAGMENTS.length;
 
   const tileFaces = [
-    { top: "ACCOUNT", main: "$5,000", sub: "InspireTrade" },
-    { top: "PROFIT", main: "TARGET", sub: "+$3,000" },
-    { top: "MAX LOSS", main: "$150", sub: "daily" },
-    { top: "PHASE", main: "01", sub: "evaluation" },
-    { top: "TRADES", main: "UNLTD", sub: "min 5 days" },
-    { top: "SPLIT", main: "80/20", sub: "profit share" },
-    { top: "LEVERAGE", main: "1:100", sub: "forex · metals" },
-    { top: "DRAWDOWN", main: "6%", sub: "max total" },
-    { top: "STATUS", main: "FUNDED", sub: "payout weekly" },
+    { main: "$5,000", sub: "account" },
+    { main: "+$3,000", sub: "profit target" },
+    { main: "$150", sub: "max loss · daily" },
+    { main: "01", sub: "evaluation phase" },
+    { main: "UNLTD", sub: "trades · min 5 days" },
+    { main: "80/20", sub: "profit split" },
+    { main: "1:100", sub: "leverage" },
+    { main: "6%", sub: "max drawdown" },
+    { main: "FUNDED", sub: "weekly payouts" },
   ];
 
   return (
@@ -58,47 +144,123 @@ export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProp
         </span>
       </div>
 
-      {/* 3×3 puzzle grid — each tile is a slice of the prop account card */}
-      <div className="mx-auto grid w-full max-w-[420px] grid-cols-3 gap-1.5">
-        {FRAGMENTS.map((fragment, i) => {
-          const isOpen = unlocked[i];
-          const face = tileFaces[i];
-          return (
-            <motion.div
-              key={fragment.id}
-              layout
-              whileHover={{ scale: isOpen ? 1.02 : 1 }}
-              className={cn(
-                "relative flex aspect-square flex-col items-center justify-center overflow-hidden rounded-xl border text-center",
-                isOpen
-                  ? "border-amber-500/40 bg-gradient-to-br from-amber-500/25 via-amber-500/10 to-primary/10"
-                  : "border-border/50 bg-card/40",
-              )}
-            >
-              {isOpen ? (
-                <motion.div initial={{ opacity: 0, rotateY: 90 }} animate={{ opacity: 1, rotateY: 0 }} transition={{ duration: 0.45 }} className="flex flex-col items-center gap-0.5 p-1">
-                  <span className="text-[9px] font-bold uppercase tracking-widest text-amber-500/80">{face.top}</span>
-                  <span className="text-sm font-black leading-none text-foreground sm:text-base">{face.main}</span>
-                  <span className="text-[9px] text-muted-foreground">{face.sub}</span>
-                  <CheckCircle2 className="mt-0.5 h-3 w-3 text-emerald-400" />
-                </motion.div>
-              ) : (
-                <div className="flex flex-col items-center gap-1 text-muted-foreground/60">
-                  <Lock className="h-4 w-4" />
-                  <span className="text-[10px] font-bold">{i + 1}</span>
-                </div>
-              )}
-              {/* rarity corner dot */}
-              <span
-                className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full"
-                style={{
-                  backgroundColor: isOpen ? undefined : "#6663",
-                  boxShadow: isOpen ? `0 0 6px ${rarityDot(fragment.id)}` : undefined,
-                }}
-              />
-            </motion.div>
-          );
-        })}
+      {/* 3×3 interlocking jigsaw — each unlocked piece is gold and shows its
+          slice of the prop account card */}
+      <div className="relative">
+        {complete && (
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-[2rem]"
+            style={{ background: "radial-gradient(ellipse at center, rgba(245,158,11,0.30), transparent 65%)" }}
+            animate={{ opacity: [0.35, 0.95, 0.35] }}
+            transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+          />
+        )}
+        <svg viewBox="-4 -4 308 308" className="relative mx-auto block w-full max-w-[420px]">
+          <defs>
+            <linearGradient id="pz-open" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.36" />
+              <stop offset="52%" stopColor="#f59e0b" stopOpacity="0.10" />
+              <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.24" />
+            </linearGradient>
+          </defs>
+
+          {FRAGMENTS.map((fragment, i) => {
+            const r = Math.floor(i / 3);
+            const c = i % 3;
+            const isOpen = unlocked[i];
+            const face = tileFaces[i];
+            const meta = RARITY_META[fragment.rarity];
+            const cx = c * S + S / 2;
+            const cy = r * S + S / 2;
+            return (
+              <g key={fragment.id}>
+                <path
+                  d={PIECE_PATHS[i]}
+                  style={{
+                    fill: isOpen ? "url(#pz-open)" : "hsl(var(--card) / 0.45)",
+                    stroke: complete
+                      ? "rgba(245,158,11,0.30)"
+                      : isOpen
+                        ? "rgba(245,158,11,0.55)"
+                        : "hsl(var(--border))",
+                    strokeWidth: complete ? 1 : 1.6,
+                    strokeDasharray: isOpen || complete ? undefined : "5 4",
+                    transition: "fill 0.4s ease, stroke 0.4s ease",
+                  }}
+                />
+                {isOpen ? (
+                  <g style={{ pointerEvents: "none" }}>
+                    <text
+                      x={cx}
+                      y={cy - 20}
+                      textAnchor="middle"
+                      fontSize="12.5"
+                      fontWeight={800}
+                      style={{ fill: "#fbbf24", letterSpacing: "0.05em" }}
+                    >
+                      {fragment.name}
+                    </text>
+                    <text
+                      x={cx}
+                      y={cy + 1}
+                      textAnchor="middle"
+                      fontSize="16"
+                      fontWeight={800}
+                      style={{ fill: "hsl(var(--foreground))" }}
+                    >
+                      {face.main}
+                    </text>
+                    <text
+                      x={cx}
+                      y={cy + 14}
+                      textAnchor="middle"
+                      fontSize="7.5"
+                      fontWeight={600}
+                      style={{
+                        fill: "hsl(var(--muted-foreground))",
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {face.sub}
+                    </text>
+                  </g>
+                ) : (
+                  <g style={{ pointerEvents: "none" }}>
+                    <g
+                      style={{
+                        fill: "none",
+                        stroke: "hsl(var(--muted-foreground) / 0.75)",
+                        strokeWidth: 1.8,
+                      }}
+                    >
+                      <rect x={cx - 7.5} y={cy - 3} width={15} height={11.5} rx={2.5} />
+                      <path d={`M ${cx - 4} ${cy - 3} v -2.5 a 4 4 0 0 1 8 0 v 2.5`} />
+                    </g>
+                    <text
+                      x={cx}
+                      y={cy + 19}
+                      textAnchor="middle"
+                      fontSize="11"
+                      fontWeight={700}
+                      style={{ fill: "hsl(var(--muted-foreground) / 0.8)" }}
+                    >
+                      {fragment.name}
+                    </text>
+                  </g>
+                )}
+                {/* rarity dot */}
+                <circle
+                  cx={cx + 30}
+                  cy={cy - 30}
+                  r={3.2}
+                  style={{ fill: isOpen ? meta.color : "hsl(var(--muted-foreground) / 0.4)" }}
+                />
+              </g>
+            );
+          })}
+        </svg>
       </div>
 
       <div className="flex flex-col items-center gap-2">
@@ -121,18 +283,4 @@ export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProp
       </div>
     </div>
   );
-}
-
-/** Mythic (9th piece) gets the gold glow, covert red, epic purple, rare blue, common gray. */
-function rarityDot(fragmentId: string): string {
-  const fragment = FRAGMENTS.find((f) => f.id === fragmentId);
-  if (!fragment) return "#999";
-  const colors: Record<string, string> = {
-    common: "#b0c3d9",
-    rare: "#4b69ff",
-    epic: "#8847ff",
-    covert: "#eb4b4b",
-    mythic: "#ffd700",
-  };
-  return colors[fragment.rarity] || "#999";
 }

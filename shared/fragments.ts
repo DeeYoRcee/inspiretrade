@@ -32,17 +32,22 @@ export const RARITY_META: Record<
  * The 9 pieces of a prop account. Collect one of each to claim.
  * Drop weights are CS2-style: reds are rare, gold is the rarest.
  * Sum of dropPercent must equal exactly 100.
+ *
+ * Naming: pieces are named after the prop account they build —
+ * a $5,000 account case drops "5k$ 1" … "5k$ 9" (piece numbers).
+ * NOTE: `id` values are stored in RTDB and market listings — never rename them.
  */
+export const PROP_ACCOUNT_LABEL = "5k$"; // matches the $5,000 prop account
 export const FRAGMENTS: FragmentDef[] = [
-  { id: "discipline",     name: "Discipline",      icon: "ShieldCheck",   rarity: "common",  dropPercent: 20 },
-  { id: "patience",       name: "Patience",        icon: "Hourglass",     rarity: "common",  dropPercent: 20 },
-  { id: "risk-management",name: "Risk Management", icon: "Scale",         rarity: "rare",    dropPercent: 14 },
-  { id: "backtesting",    name: "Backtesting",     icon: "FlaskConical",  rarity: "rare",    dropPercent: 14 },
-  { id: "trading-plan",   name: "Trading Plan",    icon: "ClipboardList", rarity: "epic",    dropPercent: 9 },
-  { id: "psychology",     name: "Psychology",      icon: "Brain",         rarity: "epic",    dropPercent: 9 },
-  { id: "consistency",    name: "Consistency",     icon: "Repeat",        rarity: "covert",  dropPercent: 5 },
-  { id: "execution",      name: "Execution",       icon: "Crosshair",     rarity: "covert",  dropPercent: 5 },
-  { id: "master-trader",  name: "Master Trader",   icon: "Crown",         rarity: "mythic",  dropPercent: 2 },
+  { id: "discipline",     name: "5k$ 1", icon: "ShieldCheck",   rarity: "common",  dropPercent: 20 },
+  { id: "patience",       name: "5k$ 2", icon: "Hourglass",     rarity: "common",  dropPercent: 20 },
+  { id: "risk-management",name: "5k$ 3", icon: "Scale",         rarity: "rare",    dropPercent: 14 },
+  { id: "backtesting",    name: "5k$ 4", icon: "FlaskConical",  rarity: "rare",    dropPercent: 14 },
+  { id: "trading-plan",   name: "5k$ 5", icon: "ClipboardList", rarity: "epic",    dropPercent: 9 },
+  { id: "psychology",     name: "5k$ 6", icon: "Brain",         rarity: "epic",    dropPercent: 9 },
+  { id: "consistency",    name: "5k$ 7", icon: "Repeat",        rarity: "covert",  dropPercent: 5 },
+  { id: "execution",      name: "5k$ 8", icon: "Crosshair",     rarity: "covert",  dropPercent: 5 },
+  { id: "master-trader",  name: "5k$ 9", icon: "Crown",         rarity: "mythic",  dropPercent: 2 },
 ];
 
 export const FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);

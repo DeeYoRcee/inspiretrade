@@ -11,6 +11,12 @@ const ICONS: Record<string, LucideIcon> = {
   Repeat, Crosshair, Crown,
 };
 
+/** Lucide icon by fragment `icon` name — shared with the case-opening reel. */
+export function FragmentIcon({ icon, className }: { icon: string; className?: string }) {
+  const Icon = ICONS[icon] || Crown;
+  return <Icon className={className} />;
+}
+
 export function rarityStyle(rarity: Rarity) {
   const meta = RARITY_META[rarity];
   return {
