@@ -96,7 +96,7 @@ export function CaseOpeningDialog({ open, result, onClose }: CaseOpeningDialogPr
               animate={{ opacity: 1 }}
               exit={{ opacity: 0, scale: 0.97 }}
               transition={{ duration: 0.25 }}
-              className="flex flex-col items-center gap-4"
+              className="flex w-full min-w-0 flex-col items-center gap-4"
             >
               {/* the case */}
               <div className="relative flex h-40 items-end justify-center">
@@ -141,7 +141,7 @@ export function CaseOpeningDialog({ open, result, onClose }: CaseOpeningDialogPr
                   initial={{ opacity: 0, y: -28 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.35, ease: "easeOut" }}
-                  className="w-full"
+                  className="w-full min-w-0"
                 >
                   <div className="relative">
                     <div
