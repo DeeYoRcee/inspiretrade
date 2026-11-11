@@ -27,6 +27,7 @@ const entries = [
   ["api/_src/admin/index.ts", "api/admin.js"],
   ["api/_src/wallet/index.ts", "api/wallet.js"],
   ["api/_src/whop/index.ts", "api/whop.js"],
+  ["api/_src/diag.ts", "api/diag.js"],
 ];
 
 for (const [inPath, outPath] of entries) {
