@@ -22,14 +22,21 @@ export default handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
 
+  const casesRef = db.ref(`economy/${user.uid}/cases`);
+  // Warm the RTDB cache first: on a fresh function instance a transaction's
+  // first speculative run uses the local cache (null). Returning `undefined`
+  // there aborts WITHOUT ever consulting the server (firebase-admin gotcha),
+  // so a user with cases on the server got NO_CASES. Fetching first makes the
+  // abort decision based on real server state; optimistic concurrency still
+  // protects against races.
+  await casesRef.get();
+
   // Atomically consume one case (abort if none left).
-  const tx = await db
-    .ref(`economy/${user.uid}/cases`)
-    .transaction((current: any) => {
-      const cases = current || 0;
-      if (cases < 1) return undefined;
-      return cases - 1;
-    });
+  const tx = await casesRef.transaction((current: any) => {
+    const cases = current || 0;
+    if (cases < 1) return undefined;
+    return cases - 1;
+  });
   if (!tx.committed) throw new HttpError(400, "NO_CASES", "You have no cases to open");
 
   const fragment = rollFragment();

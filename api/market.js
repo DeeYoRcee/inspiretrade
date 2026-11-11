@@ -135,7 +135,9 @@ var list_default = handle(async (req, res) => {
   }
   const db = rtdb();
   const now = Date.now();
-  const tx = await db.ref(`inventory/${user.uid}/${fragment.id}/count`).transaction((current) => {
+  const countRef = db.ref(`inventory/${user.uid}/${fragment.id}/count`);
+  await countRef.get();
+  const tx = await countRef.transaction((current) => {
     const count = current || 0;
     if (count < 1) return void 0;
     return count - 1;
@@ -179,7 +181,9 @@ var buy_default = handle(async (req, res) => {
   if (!listingId || typeof listingId !== "string") throw new HttpError(400, "BAD_LISTING", "listingId required");
   const db = rtdb();
   const now = Date.now();
-  const tx = await db.ref(`market/${listingId}`).transaction((current) => {
+  const listingRef = db.ref(`market/${listingId}`);
+  await listingRef.get();
+  const tx = await listingRef.transaction((current) => {
     if (!current) return void 0;
     if (current.status !== "active") return void 0;
     if (current.sellerUid === user.uid) return void 0;
@@ -193,7 +197,9 @@ var buy_default = handle(async (req, res) => {
     throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
   }
   const listing = tx.snapshot.val();
-  const payTx = await db.ref(`economy/${user.uid}/coins`).transaction((current) => {
+  const coinsRef = db.ref(`economy/${user.uid}/coins`);
+  await coinsRef.get();
+  const payTx = await coinsRef.transaction((current) => {
     const coins = current || 0;
     if (coins < listing.price) return void 0;
     return coins - listing.price;
@@ -237,7 +243,9 @@ var cancel_default = handle(async (req, res) => {
   if (!listingId || typeof listingId !== "string") throw new HttpError(400, "BAD_LISTING", "listingId required");
   const db = rtdb();
   const now = Date.now();
-  const tx = await db.ref(`market/${listingId}`).transaction((current) => {
+  const listingRef = db.ref(`market/${listingId}`);
+  await listingRef.get();
+  const tx = await listingRef.transaction((current) => {
     if (!current || current.status !== "active" || current.sellerUid !== user.uid) return void 0;
     return { ...current, status: "canceled", canceledAt: now };
   });

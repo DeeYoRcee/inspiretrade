@@ -23,9 +23,12 @@ export default handle(async (req, res) => {
   const now = Date.now();
 
   // Escrow: atomically take the fragment out of the seller's inventory.
-  const tx = await db
-    .ref(`inventory/${user.uid}/${fragment.id}/count`)
-    .transaction((current: any) => {
+  // (Warm the cache first — an `undefined`-aborting transaction on a fresh
+  // function instance otherwise aborts on the locally-null value without
+  // consulting the server. See cases/open.ts.)
+  const countRef = db.ref(`inventory/${user.uid}/${fragment.id}/count`);
+  await countRef.get();
+  const tx = await countRef.transaction((current: any) => {
       const count = current || 0;
       if (count < 1) return undefined;
       return count - 1;

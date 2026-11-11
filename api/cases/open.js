@@ -132,7 +132,9 @@ var open_default = handle(async (req, res) => {
   const user = await requireUser(req);
   const db = rtdb();
   const now = Date.now();
-  const tx = await db.ref(`economy/${user.uid}/cases`).transaction((current) => {
+  const casesRef = db.ref(`economy/${user.uid}/cases`);
+  await casesRef.get();
+  const tx = await casesRef.transaction((current) => {
     const cases = current || 0;
     if (cases < 1) return void 0;
     return cases - 1;

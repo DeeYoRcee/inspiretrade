@@ -130,7 +130,9 @@ var combine_default = handle(async (req, res) => {
   const user = await requireUser(req);
   const db = rtdb();
   const now = Date.now();
-  const tx = await db.ref(`inventory/${user.uid}`).transaction((current) => {
+  const invRef = db.ref(`inventory/${user.uid}`);
+  await invRef.get();
+  const tx = await invRef.transaction((current) => {
     const inventory = current || {};
     for (const fragment of FRAGMENTS) {
       if (!((inventory[fragment.id] || {}).count >= 1)) return void 0;

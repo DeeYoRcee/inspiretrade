@@ -13,7 +13,10 @@ export default handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
 
-  const tx = await db.ref(`market/${listingId}`).transaction((current: any) => {
+  // (Warm the cache first — see cases/open.ts.)
+  const listingRef = db.ref(`market/${listingId}`);
+  await listingRef.get();
+  const tx = await listingRef.transaction((current: any) => {
     if (!current || current.status !== "active" || current.sellerUid !== user.uid) return undefined;
     return { ...current, status: "canceled", canceledAt: now };
   });

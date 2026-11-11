@@ -18,8 +18,12 @@ export default handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
 
-  // 1) Reserve the listing.
-  const tx = await db.ref(`market/${listingId}`).transaction((current: any) => {
+  // 1) Reserve the listing. (Warm the cache first — an `undefined`-aborting
+  // transaction on a fresh instance would otherwise abort on the locally-null
+  // value without consulting the server. See cases/open.ts.)
+  const listingRef = db.ref(`market/${listingId}`);
+  await listingRef.get();
+  const tx = await listingRef.transaction((current: any) => {
     if (!current) return undefined;
     if (current.status !== "active") return undefined;
     if (current.sellerUid === user.uid) return undefined; // can't buy own listing
@@ -35,9 +39,9 @@ export default handle(async (req, res) => {
   const listing = tx.snapshot.val();
 
   // 2) Deduct buyer coins (abort + revert if insufficient).
-  const payTx = await db
-    .ref(`economy/${user.uid}/coins`)
-    .transaction((current: any) => {
+  const coinsRef = db.ref(`economy/${user.uid}/coins`);
+  await coinsRef.get();
+  const payTx = await coinsRef.transaction((current: any) => {
       const coins = current || 0;
       if (coins < listing.price) return undefined;
       return coins - listing.price;

@@ -123,7 +123,9 @@ var withdraw_default = handle(async (req, res) => {
   if (!details) {
     throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
   }
-  const tx = await rtdb().ref(`economy/${user.uid}`).transaction((current) => {
+  const ecoRef = rtdb().ref(`economy/${user.uid}`);
+  await ecoRef.get();
+  const tx = await ecoRef.transaction((current) => {
     const eco = current || { coins: 0, cases: 0, streak: 0 };
     if ((eco.coins || 0) < amount) return void 0;
     return { ...eco, coins: (eco.coins || 0) - amount, updatedAt: Date.now() };

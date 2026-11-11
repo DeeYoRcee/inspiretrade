@@ -33,14 +33,17 @@ export default handle(async (req, res) => {
     throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
   }
 
-  // Atomic balance check + reservation.
-  const tx = await rtdb()
-    .ref(`economy/${user.uid}`)
-    .transaction((current: any) => {
-      const eco = current || { coins: 0, cases: 0, streak: 0 };
-      if ((eco.coins || 0) < amount) return undefined; // abort: insufficient
-      return { ...eco, coins: (eco.coins || 0) - amount, updatedAt: Date.now() };
-    });
+  // Atomic balance check + reservation. (Warm the cache first — an
+  // `undefined`-aborting transaction on a fresh function instance would
+  // otherwise abort on the locally-null value without consulting the server.
+  // See cases/open.ts.)
+  const ecoRef = rtdb().ref(`economy/${user.uid}`);
+  await ecoRef.get();
+  const tx = await ecoRef.transaction((current: any) => {
+    const eco = current || { coins: 0, cases: 0, streak: 0 };
+    if ((eco.coins || 0) < amount) return undefined; // abort: insufficient
+    return { ...eco, coins: (eco.coins || 0) - amount, updatedAt: Date.now() };
+  });
   if (!tx.committed) {
     throw new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance");
   }
