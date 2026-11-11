@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, useLocation, useRoute } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -29,7 +29,7 @@ import { DailyRewardDialog } from "@/components/rewards/DailyRewardDialog";
 import { GlobalChat } from "@/components/chat/GlobalChat";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { Activity, Send } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 function PremiumSuccessHandler() {
   const { user } = useAuth();
@@ -47,23 +47,29 @@ function PremiumSuccessHandler() {
   return null;
 }
 
-function AppLayout({ children }: { children: ReactNode }) {
+function AppFooter() {
   const { t } = useLanguage();
+  return (
+    <footer className="py-8 border-t border-border/50 bg-card/30 backdrop-blur-sm">
+      <div className="container mx-auto px-4 text-center">
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-sm text-muted-foreground uppercase tracking-widest font-medium">{t("footerInquiries")}</p>
+          <a href="https://t.me/fyck7" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-[#0088cc]/10 text-[#0088cc] border border-[#0088cc]/20 hover:bg-[#0088cc]/20 transition-all font-semibold">
+            <Send className="w-4 h-4" />
+            Telegram
+          </a>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />
       <main className="flex-1">{children}</main>
-      <footer className="py-8 border-t border-border/50 bg-card/30 backdrop-blur-sm">
-        <div className="container mx-auto px-4 text-center">
-          <div className="flex flex-col items-center gap-3">
-            <p className="text-sm text-muted-foreground uppercase tracking-widest font-medium">{t("footerInquiries")}</p>
-            <a href="https://t.me/fyck7" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-[#0088cc]/10 text-[#0088cc] border border-[#0088cc]/20 hover:bg-[#0088cc]/20 transition-all font-semibold">
-              <Send className="w-4 h-4" />
-              Telegram
-            </a>
-          </div>
-        </div>
-      </footer>
+      <AppFooter />
       <UsernamePrompt />
       <PremiumSuccessHandler />
       <DailyRewardDialog />
@@ -91,11 +97,37 @@ function PremiumRoute() {
   return <div className="min-h-screen flex flex-col"><Navbar /><PremiumPage onClose={() => navigate("/")} /></div>;
 }
 
-function NewsRoute() {
+function NullRoute() {
+  // The Economic Calendar lives in CalendarKeepAlive (below) so its iframe —
+  // and the widget's currency/importance filters — survive route changes.
+  return null;
+}
+
+function CalendarKeepAlive() {
   const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <AuthPage />;
-  return <AppLayout><NewsPage /></AppLayout>;
+  const [match] = useRoute("/news");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    if (match) setMounted(true);
+  }, [match]);
+
+  if (loading) return match ? <LoadingScreen /> : null;
+  if (!user) return match ? <AuthPage /> : null;
+  if (!mounted) return null;
+
+  return (
+    <div className={match ? "min-h-screen flex flex-col" : "contents"}>
+      {match && <Navbar />}
+      <main className="flex-1">
+        {/* display:none keeps the widget iframe alive while other pages are open */}
+        <div className={match ? "" : "hidden"}>
+          <NewsPage />
+        </div>
+      </main>
+      {match && <AppFooter />}
+    </div>
+  );
 }
 
 function PublicProfileSettingsRoute() {
@@ -178,23 +210,26 @@ function PublicProfileRoute({ params }: { params: { handle: string } }) {
 
 function Router() {
   return (
-    <Switch>
-      <Route path="/" component={DashboardPage} />
-      <Route path="/premium" component={PremiumRoute} />
-      <Route path="/news" component={NewsRoute} />
-      <Route path="/public-profile" component={PublicProfileSettingsRoute} />
-      <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
-      <Route path="/prop-firm" component={PropFirmRoute} />
-      <Route path="/rewards" component={RewardsRoute} />
-      <Route path="/profile" component={ProfileRoute} />
-      <Route path="/market" component={MarketRoute} />
-      <Route path="/inventory" component={InventoryRoute} />
-      <Route path="/wallet" component={WalletRoute} />
-      <Route path="/admin" component={AdminRoute} />
-      <Route path="/certificate" component={CertificateRoute} />
-      <Route path="/:handle" component={PublicProfileRoute} />
-      <Route component={NotFound} />
-    </Switch>
+    <>
+      <Switch>
+        <Route path="/" component={DashboardPage} />
+        <Route path="/premium" component={PremiumRoute} />
+        <Route path="/news" component={NullRoute} />
+        <Route path="/public-profile" component={PublicProfileSettingsRoute} />
+        <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
+        <Route path="/prop-firm" component={PropFirmRoute} />
+        <Route path="/rewards" component={RewardsRoute} />
+        <Route path="/profile" component={ProfileRoute} />
+        <Route path="/market" component={MarketRoute} />
+        <Route path="/inventory" component={InventoryRoute} />
+        <Route path="/wallet" component={WalletRoute} />
+        <Route path="/admin" component={AdminRoute} />
+        <Route path="/certificate" component={CertificateRoute} />
+        <Route path="/:handle" component={PublicProfileRoute} />
+        <Route component={NotFound} />
+      </Switch>
+      <CalendarKeepAlive />
+    </>
   );
 }
 

@@ -12,7 +12,7 @@
 :root[data-theme="ocean"],
 :root[data-theme="forest"],
 :root[data-theme="sunset"] {
-  --calendar-profit: var(--primary);
+  --calendar-profit: 142 71% 50%;
 }
 
 #dashboard-root [class*="border-success/80"] {
@@ -33,4 +33,11 @@
 /* Monthly calendar day cells render their PnL in the second direct span. */
 #dashboard-root .rdp [class*="border-success/80"] > span:nth-child(2) {
   color: hsl(var(--calendar-profit)) !important;
+}
+
+/* When a trade day is selected it sits on the primary fill: switch PnL to the
+   primary-foreground color so it stays readable in both light and dark themes. */
+#dashboard-root .rdp button[aria-selected="true"] [class*="border-success/80"] > span:nth-child(2),
+#dashboard-root .rdp button[aria-selected="true"] [class*="border-destructive/80"] > span:nth-child(2) {
+  color: hsl(var(--primary-foreground)) !important;
 }

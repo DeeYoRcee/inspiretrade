@@ -56,9 +56,9 @@ function DemoNotice() {
 
 function StatCard({ icon: Icon, label, value, note }: { icon: typeof Target; label: string; value: string; note: string }) {
   return (
-    <Card className="border-white/10 bg-white/[0.03]">
+    <Card className="border-border/60 bg-card/60">
       <CardContent className="p-4 sm:p-5">
-        <div className="mb-3 flex items-center justify-between text-sm text-muted-foreground"><span>{label}</span><Icon className="h-4 w-4 text-emerald-400" /></div>
+        <div className="mb-3 flex items-center justify-between text-sm text-muted-foreground"><span>{label}</span><Icon className="h-4 w-4 text-primary" /></div>
         <div className="text-2xl font-semibold tracking-tight">{value}</div>
         <div className="mt-1 text-xs text-muted-foreground">{note}</div>
       </CardContent>
@@ -68,16 +68,16 @@ function StatCard({ icon: Icon, label, value, note }: { icon: typeof Target; lab
 
 function ChallengeCard({ challenge, onDetails }: { challenge: Challenge; onDetails: () => void }) {
   return (
-    <Card className="group border-white/10 bg-[#101311] transition-colors hover:border-emerald-400/40">
+    <Card className="group border-border/60 bg-background/60 transition-colors hover:border-primary/40">
       <CardContent className="p-5">
         <div className="mb-4 flex items-start justify-between gap-2">
           <div>
-            <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-xs font-medium text-emerald-300">{challenge.type}</span>
+            <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{challenge.type}</span>
             <h3 className="mt-3 text-2xl font-semibold">{money(challenge.size)} <span className="text-sm font-normal text-muted-foreground">account</span></h3>
           </div>
           <div className="text-right"><p className="text-xs text-muted-foreground">Example price</p><p className="text-xl font-semibold">{money(challenge.price)}</p></div>
         </div>
-        <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-white/[0.03] p-3 text-sm">
+        <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-card/60 p-3 text-sm">
           <div><p className="text-xs text-muted-foreground">Phase 1 target</p><p className="mt-1 font-medium">{challenge.phaseOne ? `${challenge.phaseOne}%` : "—"}</p></div>
           <div><p className="text-xs text-muted-foreground">Phase 2 target</p><p className="mt-1 font-medium">{challenge.phaseTwo ? `${challenge.phaseTwo}%` : "Not applicable"}</p></div>
           <div><p className="text-xs text-muted-foreground">Daily drawdown</p><p className="mt-1 font-medium">{challenge.dailyDrawdown}%</p></div>
@@ -87,8 +87,8 @@ function ChallengeCard({ challenge, onDetails }: { challenge: Challenge; onDetai
         </div>
         <p className="mb-4 text-xs text-muted-foreground">Example terms only · {challenge.periodDays ? `${challenge.periodDays}-day trading period` : "No time limit shown"}</p>
         <div className="flex gap-2">
-          <Button variant="outline" className="flex-1 border-white/15" onClick={onDetails}>View example rules <ArrowRight className="h-4 w-4" /></Button>
-          <Button className="flex-1 bg-emerald-500 text-black hover:bg-emerald-400" disabled title="Purchases are not available yet"><LockKeyhole className="h-4 w-4" />Unavailable</Button>
+          <Button variant="outline" className="flex-1 border-border" onClick={onDetails}>View example rules <ArrowRight className="h-4 w-4" /></Button>
+          <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90" disabled title="Purchases are not available yet"><LockKeyhole className="h-4 w-4" />Unavailable</Button>
         </div>
       </CardContent>
     </Card>
@@ -115,8 +115,8 @@ function ChallengeDetails({ challenge, onBack }: { challenge: Challenge; onBack:
       <Button variant="ghost" onClick={onBack} className="mb-6 gap-2"><ArrowLeft className="h-4 w-4" />Back to challenges</Button>
       <DemoNotice />
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div><p className="mb-2 text-sm text-emerald-300">{challenge.type} · illustrative example</p><h1 className="text-3xl font-semibold sm:text-4xl">{money(challenge.size)} Challenge</h1><p className="mt-2 text-muted-foreground">Sample listing—not available for purchase.</p></div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] px-5 py-3"><p className="text-xs text-muted-foreground">Example price</p><p className="text-2xl font-semibold">{money(challenge.price)}</p></div>
+        <div><p className="mb-2 text-sm text-primary">{challenge.type} · illustrative example</p><h1 className="text-3xl font-semibold sm:text-4xl">{money(challenge.size)} Challenge</h1><p className="mt-2 text-muted-foreground">Sample listing—not available for purchase.</p></div>
+        <div className="rounded-xl border border-border/60 bg-card/60 px-5 py-3"><p className="text-xs text-muted-foreground">Example price</p><p className="text-2xl font-semibold">{money(challenge.price)}</p></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={Target} label="Phase 1 target" value={challenge.phaseOne ? `${challenge.phaseOne}%` : "—"} note={challenge.type === "Instant Funding" ? "Not applicable" : "Example only"} />
@@ -124,8 +124,8 @@ function ChallengeDetails({ challenge, onBack }: { challenge: Challenge; onBack:
         <StatCard icon={Gauge} label="Daily drawdown" value={`${challenge.dailyDrawdown}%`} note="Example only" />
         <StatCard icon={Shield} label="Maximum drawdown" value={`${challenge.maxDrawdown}%`} note="Example only" />
       </div>
-      <section className="mt-8"><h2 className="mb-4 text-xl font-semibold">Rules and policies</h2><div className="grid gap-3 md:grid-cols-2">{rules.map(([title, text]) => <Card key={title} className="border-white/10 bg-white/[0.03]"><CardContent className="p-5"><h3 className="mb-2 font-medium">{title}</h3><p className="text-sm leading-6 text-muted-foreground">{text}</p></CardContent></Card>)}</div></section>
-      <section className="mt-8"><h2 className="mb-4 text-xl font-semibold">Frequently asked questions</h2><div className="space-y-3">{faqs.map(([question, answer]) => <details key={question} className="group rounded-xl border border-white/10 bg-white/[0.03] p-4"><summary className="flex cursor-pointer list-none items-center justify-between font-medium">{question}<ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" /></summary><p className="mt-3 text-sm leading-6 text-muted-foreground">{answer}</p></details>)}</div></section>
+      <section className="mt-8"><h2 className="mb-4 text-xl font-semibold">Rules and policies</h2><div className="grid gap-3 md:grid-cols-2">{rules.map(([title, text]) => <Card key={title} className="border-border/60 bg-card/60"><CardContent className="p-5"><h3 className="mb-2 font-medium">{title}</h3><p className="text-sm leading-6 text-muted-foreground">{text}</p></CardContent></Card>)}</div></section>
+      <section className="mt-8"><h2 className="mb-4 text-xl font-semibold">Frequently asked questions</h2><div className="space-y-3">{faqs.map(([question, answer]) => <details key={question} className="group rounded-xl border border-border/60 bg-card/60 p-4"><summary className="flex cursor-pointer list-none items-center justify-between font-medium">{question}<ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" /></summary><p className="mt-3 text-sm leading-6 text-muted-foreground">{answer}</p></details>)}</div></section>
     </div>
   );
 }
@@ -157,11 +157,11 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   ];
 
   return (
-    <main className="min-h-screen bg-[#080a09] text-white">
+    <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
-          <div><p className="mb-2 flex items-center gap-2 text-sm font-medium text-emerald-300"><BarChart3 className="h-4 w-4" />PROP TRADING</p><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Prop Firm Hub</h1><p className="mt-2 text-muted-foreground">Explore challenge formats and keep your funded-trading journey organized.</p></div>
-          <Link href="/" className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm text-muted-foreground hover:text-white"><ArrowLeft className="h-4 w-4" />Trading journal</Link>
+          <div><p className="mb-2 flex items-center gap-2 text-sm font-medium text-primary"><BarChart3 className="h-4 w-4" />PROP TRADING</p><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Prop Firm Hub</h1><p className="mt-2 text-muted-foreground">Explore challenge formats and keep your funded-trading journey organized.</p></div>
+          <Link href="/" className="inline-flex items-center gap-2 rounded-lg border border-border/60 px-4 py-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Trading journal</Link>
         </div>
         <DemoNotice />
         <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -170,27 +170,27 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
           <StatCard icon={Target} label="Challenge formats" value="3" note="1-step, 2-step, instant" />
           <StatCard icon={CircleDollarSign} label="Example starting price" value="$29.50" note="Not an offer or live price" />
         </div>
-        <div className="mb-6 flex flex-wrap gap-2 border-b border-white/10 pb-3" role="tablist" aria-label="Prop Firm sections">
-          {tabs.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)} className={`rounded-lg px-4 py-2 text-sm transition-colors ${tab === item.id ? "bg-emerald-400/10 text-emerald-300" : "text-muted-foreground hover:bg-white/5 hover:text-white"}`}>{item.label}</button>)}
+        <div className="mb-6 flex flex-wrap gap-2 border-b border-border/60 pb-3" role="tablist" aria-label="Prop Firm sections">
+          {tabs.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)} className={`rounded-lg px-4 py-2 text-sm transition-colors ${tab === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}>{item.label}</button>)}
         </div>
 
         {tab === "marketplace" && <>
-          <div className="mb-5 grid gap-3 rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs text-muted-foreground">Account size<select value={size} onChange={(event) => setSize(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-white/10 bg-[#101311] px-3 text-sm text-white"><option value="all">All sizes</option>{ACCOUNT_SIZES.map((item) => <option key={item} value={item}>{money(item)}</option>)}</select></label>
-            <label className="text-xs text-muted-foreground">Challenge type<select value={type} onChange={(event) => setType(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-white/10 bg-[#101311] px-3 text-sm text-white"><option value="all">All types</option>{TYPES.map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label className="text-xs text-muted-foreground">Maximum example price<Input type="number" min="0" placeholder="Any price" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} className="mt-2 border-white/10 bg-[#101311]" /></label>
-            <label className="text-xs text-muted-foreground">Minimum example profit split<select value={minSplit} onChange={(event) => setMinSplit(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-white/10 bg-[#101311] px-3 text-sm text-white"><option value="all">Any split</option><option value="80">80%+</option><option value="90">90%+</option></select></label>
+          <div className="mb-5 grid gap-3 rounded-xl border border-border/60 bg-card/50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-xs text-muted-foreground">Account size<select value={size} onChange={(event) => setSize(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-border/60 bg-background/60 px-3 text-sm text-foreground"><option value="all">All sizes</option>{ACCOUNT_SIZES.map((item) => <option key={item} value={item}>{money(item)}</option>)}</select></label>
+            <label className="text-xs text-muted-foreground">Challenge type<select value={type} onChange={(event) => setType(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-border/60 bg-background/60 px-3 text-sm text-foreground"><option value="all">All types</option>{TYPES.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label className="text-xs text-muted-foreground">Maximum example price<Input type="number" min="0" placeholder="Any price" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} className="mt-2 border-border/60 bg-background/60" /></label>
+            <label className="text-xs text-muted-foreground">Minimum example profit split<select value={minSplit} onChange={(event) => setMinSplit(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-border/60 bg-background/60 px-3 text-sm text-foreground"><option value="all">Any split</option><option value="80">80%+</option><option value="90">90%+</option></select></label>
           </div>
           <p className="mb-4 text-sm text-muted-foreground">Showing {visibleChallenges.length} illustrative examples</p>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visibleChallenges.map((item) => <ChallengeCard key={item.id} challenge={item} onDetails={() => navigate(`/prop-firm/${item.id}`)} />)}</div>
-          {visibleChallenges.length === 0 && <div className="rounded-xl border border-white/10 p-10 text-center text-muted-foreground">No sample challenges match these filters.</div>}
+          {visibleChallenges.length === 0 && <div className="rounded-xl border border-border/60 p-10 text-center text-muted-foreground">No sample challenges match these filters.</div>}
         </>}
 
-        {tab === "accounts" && <Card className="border-white/10 bg-white/[0.025]"><CardContent className="mx-auto max-w-xl p-8 text-center sm:p-12"><Wallet className="mx-auto mb-4 h-10 w-10 text-emerald-300" /><h2 className="text-xl font-semibold">No purchased challenges</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{user ? "Your account has no verified Prop Firm purchases. This section will only show challenges after a real payment is verified securely." : "Sign in to see challenges connected to your account."}</p><p className="mt-4 inline-flex items-center gap-2 text-xs text-amber-300"><LockKeyhole className="h-4 w-4" />No demo purchases or payment confirmations are created.</p><Button className="mt-6 bg-emerald-500 text-black hover:bg-emerald-400" onClick={() => setTab("marketplace")}>Browse examples</Button></CardContent></Card>}
+        {tab === "accounts" && <Card className="border-border/60 bg-card/50"><CardContent className="mx-auto max-w-xl p-8 text-center sm:p-12"><Wallet className="mx-auto mb-4 h-10 w-10 text-primary" /><h2 className="text-xl font-semibold">No purchased challenges</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{user ? "Your account has no verified Prop Firm purchases. This section will only show challenges after a real payment is verified securely." : "Sign in to see challenges connected to your account."}</p><p className="mt-4 inline-flex items-center gap-2 text-xs text-amber-300"><LockKeyhole className="h-4 w-4" />No demo purchases or payment confirmations are created.</p><Button className="mt-6 bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => setTab("marketplace")}>Browse examples</Button></CardContent></Card>}
 
-        {tab === "admin" && <Card className="border-white/10 bg-white/[0.025]"><CardContent className="mx-auto max-w-xl p-8 text-center sm:p-12"><Shield className="mx-auto mb-4 h-10 w-10 text-emerald-300" /><h2 className="text-xl font-semibold">Admin controls are not configured</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">No admin identity or secure server-side admin authorization is configured in this project. For your security, this page does not allow changes to firms, prices, orders, or payouts.</p><p className="mt-4 text-xs text-muted-foreground">A button or hidden client-side page is not sufficient protection. Admin actions need verified server-side authorization.</p></CardContent></Card>}
+        {tab === "admin" && <Card className="border-border/60 bg-card/50"><CardContent className="mx-auto max-w-xl p-8 text-center sm:p-12"><Shield className="mx-auto mb-4 h-10 w-10 text-primary" /><h2 className="text-xl font-semibold">Admin controls are not configured</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">No admin identity or secure server-side admin authorization is configured in this project. For your security, this page does not allow changes to firms, prices, orders, or payouts.</p><p className="mt-4 text-xs text-muted-foreground">A button or hidden client-side page is not sufficient protection. Admin actions need verified server-side authorization.</p></CardContent></Card>}
 
-        <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/10 pt-5 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Periods are examples, not provider terms</span><span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" />Payment integration is not active</span><span className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5" />Existing journal and account stay separate</span></div>
+        <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/60 pt-5 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Periods are examples, not provider terms</span><span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" />Payment integration is not active</span><span className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5" />Existing journal and account stay separate</span></div>
       </div>
     </main>
   );

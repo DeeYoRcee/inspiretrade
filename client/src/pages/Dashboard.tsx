@@ -450,8 +450,8 @@ export default function Dashboard() {
                     },
                   }}
                   modifiersClassNames={{
-                    profit: "!bg-transparent !text-success font-bold",
-                    loss: "!bg-transparent !text-destructive font-bold",
+                    profit: "font-bold",
+                    loss: "font-bold",
                   }}
                   components={{
                     DayContent: ({ date }) => {
