@@ -22,6 +22,7 @@ const entries = [
   ["api/_src/market/buy.ts", "api/market/buy.js"],
   ["api/_src/market/cancel.ts", "api/market/cancel.js"],
   ["api/_src/fragments/combine.ts", "api/fragments/combine.js"],
+  ["api/_src/diag.ts", "api/diag.js"],
 ];
 
 for (const [inPath, outPath] of entries) {
