@@ -18,35 +18,37 @@ export default handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
 
-  // 1) Reserve the listing. (Warm the cache first — an `undefined`-aborting
-  // transaction on a fresh instance would otherwise abort on the locally-null
-  // value without consulting the server. See cases/open.ts.)
+  // 1) Reserve the listing.
+  // (The update fn NEVER returns undefined — firebase-admin 12 aborts those
+  // transactions instantly on a cold cache. Instead it no-ops by returning
+  // the current listing unchanged, and success is detected from the
+  // post-transaction snapshot. See decrementCounter in lib/firebase.ts.)
   const listingRef = db.ref(`market/${listingId}`);
-  await listingRef.get();
   const tx = await listingRef.transaction((current: any) => {
-    if (!current) return undefined;
-    if (current.status !== "active") return undefined;
-    if (current.sellerUid === user.uid) return undefined; // can't buy own listing
-    return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
-  }, undefined, false); // applyLocally=false: fetch server value first
-  if (!tx.committed) {
-    const current = tx.snapshot.val();
-    if (current && current.sellerUid === user.uid) {
+    if (current && current.status === "active" && current.sellerUid !== user.uid) {
+      return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
+    }
+    return current; // no-op: missing / sold / own listing
+  });
+  const reserved = tx.snapshot.val();
+  if (!tx.committed || !reserved || reserved.status !== "sold" || reserved.buyerUid !== user.uid) {
+    if (reserved && reserved.sellerUid === user.uid) {
       throw new HttpError(400, "OWN_LISTING", "You can't buy your own listing");
     }
     throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
   }
-  const listing = tx.snapshot.val();
+  const listing = reserved;
 
-  // 2) Deduct buyer coins (abort + revert if insufficient).
+  // 2) Deduct buyer coins (no-op + refund if insufficient).
   const coinsRef = db.ref(`economy/${user.uid}/coins`);
-  await coinsRef.get();
-  const payTx = await coinsRef.transaction((current: any) => {
-      const coins = current || 0;
-      if (coins < listing.price) return undefined;
-      return coins - listing.price;
-    }, undefined, false); // applyLocally=false: fetch server value first
-  if (!payTx.committed) {
+  const before = (await coinsRef.get()).val() || 0;
+  const payTx = await coinsRef.transaction((c: any) => {
+    const v = c || 0;
+    return v >= listing.price ? v - listing.price : v; // never undefined
+  });
+  const coinsAfter = payTx?.snapshot?.val?.() ?? 0;
+  if (!payTx?.committed || coinsAfter >= before) {
+    // Could not pay — revert the listing reservation.
     await db.ref(`market/${listingId}`).transaction((current: any) => {
       if (current && current.status === "sold" && current.buyerUid === user.uid) {
         return { ...current, status: "active", buyerUid: null, soldAt: null };
@@ -78,7 +80,7 @@ export default handle(async (req, res) => {
 
   res.status(200).json({
     ok: true,
-    listing: tx.snapshot.val(),
-    coinsLeft: payTx.snapshot.val(),
+    listing: reserved,
+    coinsLeft: coinsAfter,
   });
 });

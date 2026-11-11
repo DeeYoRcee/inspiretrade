@@ -92,6 +92,18 @@ function handle(fn) {
 function assertPost(req) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
+async function decrementCounter(ref, insufficientError) {
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c) => {
+    const v = c || 0;
+    return v >= 1 ? v - 1 : v;
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
 async function logLedger(entry) {
   try {
     await rtdb().ref("ledger").push({ ...entry, at: Date.now() });
@@ -136,13 +148,7 @@ var list_default = handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
   const countRef = db.ref(`inventory/${user.uid}/${fragment.id}/count`);
-  await countRef.get();
-  const tx = await countRef.transaction((current) => {
-    const count = current || 0;
-    if (count < 1) return void 0;
-    return count - 1;
-  }, void 0, false);
-  if (!tx.committed) throw new HttpError(400, "NO_FRAGMENT", "You don't own this fragment");
+  await decrementCounter(countRef, new HttpError(400, "NO_FRAGMENT", "You don't own this fragment"));
   const allListings = (await db.ref("market").get()).val() || {};
   const activeMine = Object.values(allListings).filter(
     (l) => l && l.sellerUid === user.uid && l.status === "active"
@@ -182,29 +188,28 @@ var buy_default = handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
   const listingRef = db.ref(`market/${listingId}`);
-  await listingRef.get();
   const tx = await listingRef.transaction((current) => {
-    if (!current) return void 0;
-    if (current.status !== "active") return void 0;
-    if (current.sellerUid === user.uid) return void 0;
-    return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
-  }, void 0, false);
-  if (!tx.committed) {
-    const current = tx.snapshot.val();
-    if (current && current.sellerUid === user.uid) {
+    if (current && current.status === "active" && current.sellerUid !== user.uid) {
+      return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
+    }
+    return current;
+  });
+  const reserved = tx.snapshot.val();
+  if (!tx.committed || !reserved || reserved.status !== "sold" || reserved.buyerUid !== user.uid) {
+    if (reserved && reserved.sellerUid === user.uid) {
       throw new HttpError(400, "OWN_LISTING", "You can't buy your own listing");
     }
     throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
   }
-  const listing = tx.snapshot.val();
+  const listing = reserved;
   const coinsRef = db.ref(`economy/${user.uid}/coins`);
-  await coinsRef.get();
-  const payTx = await coinsRef.transaction((current) => {
-    const coins = current || 0;
-    if (coins < listing.price) return void 0;
-    return coins - listing.price;
-  }, void 0, false);
-  if (!payTx.committed) {
+  const before = (await coinsRef.get()).val() || 0;
+  const payTx = await coinsRef.transaction((c) => {
+    const v = c || 0;
+    return v >= listing.price ? v - listing.price : v;
+  });
+  const coinsAfter = payTx?.snapshot?.val?.() ?? 0;
+  if (!payTx?.committed || coinsAfter >= before) {
     await db.ref(`market/${listingId}`).transaction((current) => {
       if (current && current.status === "sold" && current.buyerUid === user.uid) {
         return { ...current, status: "active", buyerUid: null, soldAt: null };
@@ -230,8 +235,8 @@ var buy_default = handle(async (req, res) => {
   });
   res.status(200).json({
     ok: true,
-    listing: tx.snapshot.val(),
-    coinsLeft: payTx.snapshot.val()
+    listing: reserved,
+    coinsLeft: coinsAfter
   });
 });
 
@@ -244,13 +249,16 @@ var cancel_default = handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
   const listingRef = db.ref(`market/${listingId}`);
-  await listingRef.get();
   const tx = await listingRef.transaction((current) => {
-    if (!current || current.status !== "active" || current.sellerUid !== user.uid) return void 0;
-    return { ...current, status: "canceled", canceledAt: now };
-  }, void 0, false);
-  if (!tx.committed) throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
+    if (current && current.status === "active" && current.sellerUid === user.uid) {
+      return { ...current, status: "canceled", canceledAt: now };
+    }
+    return current;
+  });
   const listing = tx.snapshot.val();
+  if (!tx.committed || !listing || listing.status !== "canceled") {
+    throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
+  }
   await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
   await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
   await logLedger({ type: "market_cancel", uid: user.uid, listingId, fragmentId: listing.fragmentId });

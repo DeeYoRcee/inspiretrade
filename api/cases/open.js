@@ -95,6 +95,18 @@ function handle(fn) {
 function assertPost(req) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
+async function decrementCounter(ref, insufficientError) {
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c) => {
+    const v = c || 0;
+    return v >= 1 ? v - 1 : v;
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
 async function logLedger(entry) {
   try {
     await rtdb().ref("ledger").push({ ...entry, at: Date.now() });
@@ -133,13 +145,7 @@ var open_default = handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
   const casesRef = db.ref(`economy/${user.uid}/cases`);
-  await casesRef.get();
-  const tx = await casesRef.transaction((current) => {
-    const cases = current || 0;
-    if (cases < 1) return void 0;
-    return cases - 1;
-  }, void 0, false);
-  if (!tx.committed) throw new HttpError(400, "NO_CASES", "You have no cases to open");
+  await decrementCounter(casesRef, new HttpError(400, "NO_CASES", "You have no cases to open"));
   const fragment = rollFragment();
   await db.ref(`inventory/${user.uid}/${fragment.id}/count`).transaction((current) => (current || 0) + 1);
   await db.ref(`inventory/${user.uid}/${fragment.id}/updatedAt`).set(now);

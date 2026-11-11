@@ -21,27 +21,30 @@ export default handle(async (req, res) => {
   const now = Date.now();
 
   // Single atomic transaction over the whole inventory: verify all 9 types
-  // are present, then burn one of each.
+  // are present, then burn one of each. The update fn NEVER returns undefined
+  // (firebase-admin 12 aborts those instantly on a cold cache — see
+  // decrementCounter in lib/firebase.ts). Insufficient inventory = no-op, and
+  // success is detected by comparing the post-transaction snapshot.
   const invRef = db.ref(`inventory/${user.uid}`);
-  // Warm the cache — see cases/open.ts for why this is required before a
-  // transaction that can abort with `undefined`.
-  await invRef.get();
-  const tx = await invRef.transaction((current: any) => {
-    const inventory = current || {};
-    for (const fragment of FRAGMENTS) {
-      if (!((inventory[fragment.id] || {}).count >= 1)) return undefined;
-    }
-    const next = JSON.parse(JSON.stringify(inventory));
+  const beforeSnap = (await invRef.get()).val() || {};
+  const burn = (inv: any) => {
+    const next = JSON.parse(JSON.stringify(inv));
     for (const fragment of FRAGMENTS) {
       next[fragment.id] = {
         ...(next[fragment.id] || {}),
-        count: (next[fragment.id].count || 0) - 1,
+        count: ((next[fragment.id] || {}).count || 0) - 1,
         updatedAt: now,
       };
     }
     return next;
-  }, undefined, false); // applyLocally=false: fetch server value first
-  if (!tx.committed) {
+  };
+  const hasAll = (inv: any) => FRAGMENTS.every((f) => ((inv || {})[f.id] || {}).count >= 1);
+  const tx = await invRef.transaction((current: any) => {
+    const inv = current || {};
+    return hasAll(inv) ? burn(inv) : inv; // no-op when incomplete
+  });
+  const after = tx?.snapshot?.val?.() || {};
+  if (!tx?.committed || JSON.stringify(after) === JSON.stringify(beforeSnap)) {
     throw new HttpError(400, "MISSING_FRAGMENTS", "You need at least one fragment of every type (9 total)");
   }
 

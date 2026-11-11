@@ -149,6 +149,36 @@ export function assertPost(req: any) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
 
+/**
+ * Atomically decrements a numeric counter by 1, or fails with `insufficientError`.
+ *
+ * IMPORTANT (firebase-admin 12 gotcha, proven in production): a transaction
+ * whose update function returns `undefined` aborts INSTANTLY on a fresh
+ * function instance — the first speculative run sees a locally-null cache and
+ * `applyLocally: false` does NOT force a server fetch (verified via probes:
+ * value-returning transactions commit fine, undefined-aborting ones never do,
+ * even when the server value is sufficient). Therefore the update fn below
+ * NEVER returns undefined: it no-ops (returns the current value) when the
+ * balance is insufficient, and success is detected by comparing the
+ * post-transaction snapshot against the pre-read value.
+ */
+export async function decrementCounter(
+  ref: any,
+  insufficientError: HttpError,
+): Promise<number> {
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c: any) => {
+    const v = c || 0;
+    return v >= 1 ? v - 1 : v; // never undefined
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    // Our decrement never applied — the counter hit 0 before we got it.
+    throw insufficientError;
+  }
+  return after;
+}
+
 /** Returns the calendar date (YYYY-MM-DD) in a fixed UTC offset, default UTC+5 (Tashkent). */
 export function localDate(offsetHours = 5, d = new Date()): string {
   return new Date(d.getTime() + offsetHours * 3600 * 1000).toISOString().slice(0, 10);

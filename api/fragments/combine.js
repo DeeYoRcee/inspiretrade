@@ -131,23 +131,25 @@ var combine_default = handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
   const invRef = db.ref(`inventory/${user.uid}`);
-  await invRef.get();
-  const tx = await invRef.transaction((current) => {
-    const inventory = current || {};
-    for (const fragment of FRAGMENTS) {
-      if (!((inventory[fragment.id] || {}).count >= 1)) return void 0;
-    }
-    const next = JSON.parse(JSON.stringify(inventory));
+  const beforeSnap = (await invRef.get()).val() || {};
+  const burn = (inv) => {
+    const next = JSON.parse(JSON.stringify(inv));
     for (const fragment of FRAGMENTS) {
       next[fragment.id] = {
         ...next[fragment.id] || {},
-        count: (next[fragment.id].count || 0) - 1,
+        count: ((next[fragment.id] || {}).count || 0) - 1,
         updatedAt: now
       };
     }
     return next;
-  }, void 0, false);
-  if (!tx.committed) {
+  };
+  const hasAll = (inv) => FRAGMENTS.every((f) => ((inv || {})[f.id] || {}).count >= 1);
+  const tx = await invRef.transaction((current) => {
+    const inv = current || {};
+    return hasAll(inv) ? burn(inv) : inv;
+  });
+  const after = tx?.snapshot?.val?.() || {};
+  if (!tx?.committed || JSON.stringify(after) === JSON.stringify(beforeSnap)) {
     throw new HttpError(400, "MISSING_FRAGMENTS", "You need at least one fragment of every type (9 total)");
   }
   const reference = makeReference();

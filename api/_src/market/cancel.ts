@@ -13,16 +13,19 @@ export default handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
 
-  // (Warm the cache first — see cases/open.ts.)
+  // (The update fn never returns undefined — see decrementCounter in
+  // lib/firebase.ts. Success is detected from the post-transaction snapshot.)
   const listingRef = db.ref(`market/${listingId}`);
-  await listingRef.get();
   const tx = await listingRef.transaction((current: any) => {
-    if (!current || current.status !== "active" || current.sellerUid !== user.uid) return undefined;
-    return { ...current, status: "canceled", canceledAt: now };
-  }, undefined, false); // applyLocally=false: fetch server value first
-  if (!tx.committed) throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
-
+    if (current && current.status === "active" && current.sellerUid === user.uid) {
+      return { ...current, status: "canceled", canceledAt: now };
+    }
+    return current; // no-op: not active or not ours
+  });
   const listing = tx.snapshot.val();
+  if (!tx.committed || !listing || listing.status !== "canceled") {
+    throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
+  }
   await db
     .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
     .transaction((c: any) => (c || 0) + 1);

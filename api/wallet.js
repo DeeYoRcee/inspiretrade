@@ -92,6 +92,18 @@ function handle(fn) {
 function assertPost(req) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
+async function decrementCounter(ref, insufficientError) {
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c) => {
+    const v = c || 0;
+    return v >= 1 ? v - 1 : v;
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
 async function logLedger(entry) {
   try {
     await rtdb().ref("ledger").push({ ...entry, at: Date.now() });
@@ -123,16 +135,8 @@ var withdraw_default = handle(async (req, res) => {
   if (!details) {
     throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
   }
-  const ecoRef = rtdb().ref(`economy/${user.uid}`);
-  await ecoRef.get();
-  const tx = await ecoRef.transaction((current) => {
-    const eco = current || { coins: 0, cases: 0, streak: 0 };
-    if ((eco.coins || 0) < amount) return void 0;
-    return { ...eco, coins: (eco.coins || 0) - amount, updatedAt: Date.now() };
-  }, void 0, false);
-  if (!tx.committed) {
-    throw new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance");
-  }
+  const coinsRef = rtdb().ref(`economy/${user.uid}/coins`);
+  await decrementCounter(coinsRef, new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance"));
   const requestRef = rtdb().ref(`withdrawals/${user.uid}`).push();
   const request = {
     id: requestRef.key,

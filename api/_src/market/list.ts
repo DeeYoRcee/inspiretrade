@@ -3,7 +3,7 @@
  * Creates a market listing. The fragment is escrowed: it leaves the seller's
  * inventory immediately and is only returned on cancel.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
 import { getFragment, MAX_ACTIVE_LISTINGS, MIN_LISTING_PRICE, MAX_LISTING_PRICE } from "../lib/fragments";
 
 export default handle(async (req, res) => {
@@ -23,17 +23,9 @@ export default handle(async (req, res) => {
   const now = Date.now();
 
   // Escrow: atomically take the fragment out of the seller's inventory.
-  // (Warm the cache first — an `undefined`-aborting transaction on a fresh
-  // function instance otherwise aborts on the locally-null value without
-  // consulting the server. See cases/open.ts.)
+  // (See decrementCounter — the update fn must never return undefined.)
   const countRef = db.ref(`inventory/${user.uid}/${fragment.id}/count`);
-  await countRef.get();
-  const tx = await countRef.transaction((current: any) => {
-      const count = current || 0;
-      if (count < 1) return undefined;
-      return count - 1;
-    }, undefined, false); // applyLocally=false: fetch server value first
-  if (!tx.committed) throw new HttpError(400, "NO_FRAGMENT", "You don't own this fragment");
+  await decrementCounter(countRef, new HttpError(400, "NO_FRAGMENT", "You don't own this fragment"));
 
   // Cap the number of active listings per user (refund escrow if exceeded).
   const allListings = (await db.ref("market").get()).val() || {};

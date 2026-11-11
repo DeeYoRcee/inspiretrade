@@ -5,7 +5,7 @@
  * withdrawal request. The owner processes it manually and marks it paid or
  * rejected (rejected = coins refunded) via /api/admin?action=withdrawals.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
 
 const MIN_WITHDRAW = 5; // INSP
 
@@ -33,20 +33,10 @@ export default handle(async (req, res) => {
     throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
   }
 
-  // Atomic balance check + reservation. (Warm the cache first — an
-  // `undefined`-aborting transaction on a fresh function instance would
-  // otherwise abort on the locally-null value without consulting the server.
-  // See cases/open.ts.)
-  const ecoRef = rtdb().ref(`economy/${user.uid}`);
-  await ecoRef.get();
-  const tx = await ecoRef.transaction((current: any) => {
-    const eco = current || { coins: 0, cases: 0, streak: 0 };
-    if ((eco.coins || 0) < amount) return undefined; // abort: insufficient
-    return { ...eco, coins: (eco.coins || 0) - amount, updatedAt: Date.now() };
-  }, undefined, false); // applyLocally=false: fetch server value first
-  if (!tx.committed) {
-    throw new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance");
-  }
+  // Atomically reserve the coins (see decrementCounter for why the transaction
+  // update fn must never return undefined — insufficient balance = no-op + throw).
+  const coinsRef = rtdb().ref(`economy/${user.uid}/coins`);
+  await decrementCounter(coinsRef, new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance"));
 
   const requestRef = rtdb().ref(`withdrawals/${user.uid}`).push();
   const request = {
