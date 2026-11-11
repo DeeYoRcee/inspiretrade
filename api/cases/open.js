@@ -138,7 +138,7 @@ var open_default = handle(async (req, res) => {
     const cases = current || 0;
     if (cases < 1) return void 0;
     return cases - 1;
-  });
+  }, void 0, false);
   if (!tx.committed) throw new HttpError(400, "NO_CASES", "You have no cases to open");
   const fragment = rollFragment();
   await db.ref(`inventory/${user.uid}/${fragment.id}/count`).transaction((current) => (current || 0) + 1);

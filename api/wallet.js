@@ -129,7 +129,7 @@ var withdraw_default = handle(async (req, res) => {
     const eco = current || { coins: 0, cases: 0, streak: 0 };
     if ((eco.coins || 0) < amount) return void 0;
     return { ...eco, coins: (eco.coins || 0) - amount, updatedAt: Date.now() };
-  });
+  }, void 0, false);
   if (!tx.committed) {
     throw new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance");
   }

@@ -146,7 +146,7 @@ var combine_default = handle(async (req, res) => {
       };
     }
     return next;
-  });
+  }, void 0, false);
   if (!tx.committed) {
     throw new HttpError(400, "MISSING_FRAGMENTS", "You need at least one fragment of every type (9 total)");
   }

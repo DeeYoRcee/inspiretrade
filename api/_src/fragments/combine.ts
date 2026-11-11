@@ -40,7 +40,7 @@ export default handle(async (req, res) => {
       };
     }
     return next;
-  });
+  }, undefined, false); // applyLocally=false: fetch server value first
   if (!tx.committed) {
     throw new HttpError(400, "MISSING_FRAGMENTS", "You need at least one fragment of every type (9 total)");
   }

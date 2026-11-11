@@ -141,7 +141,7 @@ var list_default = handle(async (req, res) => {
     const count = current || 0;
     if (count < 1) return void 0;
     return count - 1;
-  });
+  }, void 0, false);
   if (!tx.committed) throw new HttpError(400, "NO_FRAGMENT", "You don't own this fragment");
   const allListings = (await db.ref("market").get()).val() || {};
   const activeMine = Object.values(allListings).filter(
@@ -188,7 +188,7 @@ var buy_default = handle(async (req, res) => {
     if (current.status !== "active") return void 0;
     if (current.sellerUid === user.uid) return void 0;
     return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
-  });
+  }, void 0, false);
   if (!tx.committed) {
     const current = tx.snapshot.val();
     if (current && current.sellerUid === user.uid) {
@@ -203,7 +203,7 @@ var buy_default = handle(async (req, res) => {
     const coins = current || 0;
     if (coins < listing.price) return void 0;
     return coins - listing.price;
-  });
+  }, void 0, false);
   if (!payTx.committed) {
     await db.ref(`market/${listingId}`).transaction((current) => {
       if (current && current.status === "sold" && current.buyerUid === user.uid) {
@@ -248,7 +248,7 @@ var cancel_default = handle(async (req, res) => {
   const tx = await listingRef.transaction((current) => {
     if (!current || current.status !== "active" || current.sellerUid !== user.uid) return void 0;
     return { ...current, status: "canceled", canceledAt: now };
-  });
+  }, void 0, false);
   if (!tx.committed) throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
   const listing = tx.snapshot.val();
   await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);

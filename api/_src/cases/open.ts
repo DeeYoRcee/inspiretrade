@@ -36,7 +36,7 @@ export default handle(async (req, res) => {
     const cases = current || 0;
     if (cases < 1) return undefined;
     return cases - 1;
-  });
+  }, undefined, false); // applyLocally=false: fetch server value first
   if (!tx.committed) throw new HttpError(400, "NO_CASES", "You have no cases to open");
 
   const fragment = rollFragment();

@@ -28,7 +28,7 @@ export default handle(async (req, res) => {
     if (current.status !== "active") return undefined;
     if (current.sellerUid === user.uid) return undefined; // can't buy own listing
     return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
-  });
+  }, undefined, false); // applyLocally=false: fetch server value first
   if (!tx.committed) {
     const current = tx.snapshot.val();
     if (current && current.sellerUid === user.uid) {
@@ -45,7 +45,7 @@ export default handle(async (req, res) => {
       const coins = current || 0;
       if (coins < listing.price) return undefined;
       return coins - listing.price;
-    });
+    }, undefined, false); // applyLocally=false: fetch server value first
   if (!payTx.committed) {
     await db.ref(`market/${listingId}`).transaction((current: any) => {
       if (current && current.status === "sold" && current.buyerUid === user.uid) {

@@ -19,7 +19,7 @@ export default handle(async (req, res) => {
   const tx = await listingRef.transaction((current: any) => {
     if (!current || current.status !== "active" || current.sellerUid !== user.uid) return undefined;
     return { ...current, status: "canceled", canceledAt: now };
-  });
+  }, undefined, false); // applyLocally=false: fetch server value first
   if (!tx.committed) throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
 
   const listing = tx.snapshot.val();

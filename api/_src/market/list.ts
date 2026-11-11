@@ -32,7 +32,7 @@ export default handle(async (req, res) => {
       const count = current || 0;
       if (count < 1) return undefined;
       return count - 1;
-    });
+    }, undefined, false); // applyLocally=false: fetch server value first
   if (!tx.committed) throw new HttpError(400, "NO_FRAGMENT", "You don't own this fragment");
 
   // Cap the number of active listings per user (refund escrow if exceeded).
