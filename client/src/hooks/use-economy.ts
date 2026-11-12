@@ -2,17 +2,20 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ref, get } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "./use-auth";
-import { FRAGMENTS } from "@shared/fragments";
+import { ALL_FRAGMENTS } from "@shared/fragments";
 
 export interface Economy {
   coins: number;
+  /** Inspire Case count (5k$ fragments) — legacy field name kept for RTDB compat */
   cases: number;
+  /** Gold Case count (10k$ fragments) — the Day-7 streak reward */
+  goldCases: number;
   streak: number;
   lastClaimDate?: string;
   totalClaimed?: number;
 }
 
-export const EMPTY_ECONOMY: Economy = { coins: 0, cases: 0, streak: 0, totalClaimed: 0 };
+export const EMPTY_ECONOMY: Economy = { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };
 
 export function useEconomy() {
   const { user } = useAuth();
@@ -43,7 +46,7 @@ export function useInventory() {
       if (!snap.exists()) return EMPTY_INVENTORY;
       const data = snap.val() as Record<string, { count?: number }>;
       const inventory: Inventory = {};
-      for (const fragment of FRAGMENTS) {
+      for (const fragment of ALL_FRAGMENTS) {
         inventory[fragment.id] = data[fragment.id]?.count || 0;
       }
       return inventory;
@@ -57,6 +60,9 @@ export interface Claim {
   createdAt: number;
   reference: string;
   status: "pending" | "completed";
+  /** which fragment set built this claim: inspire = $5k account, gold = $10k */
+  set?: "inspire" | "gold";
+  accountSize?: number;
 }
 
 export function useClaims() {

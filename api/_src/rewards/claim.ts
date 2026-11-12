@@ -1,11 +1,12 @@
 /**
  * POST /api/rewards/claim
- * Grants the daily reward: +1 case, +1 INSP (streak bonus every 7th day).
+ * PUBG-style 7-day login cycle: days 1-6 grant an Inspire Case (5k$ fragments),
+ * day 7 grants the Gold Case (10k$ fragments). No INSP is granted.
  * The whole check-and-grant runs inside a single RTDB transaction keyed on
  * the user's economy node, so a claim can only succeed once per local day.
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, localDate, previousDate, logLedger } from "../lib/firebase";
-import { DAILY_COINS, STREAK_BONUS_EVERY, STREAK_BONUS_COINS, STREAK_BONUS_CASES } from "../lib/fragments";
+import { REWARD_CYCLE_DAYS, cycleDayOf, caseTypeForCycleDay, CASES } from "../lib/fragments";
 
 export default handle(async (req, res) => {
   assertPost(req);
@@ -16,14 +17,17 @@ export default handle(async (req, res) => {
   const result = await rtdb()
     .ref(`economy/${user.uid}`)
     .transaction((current: any) => {
-      const eco = current || { coins: 0, cases: 0, streak: 0, totalClaimed: 0 };
+      const eco = current || { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };
       if (eco.lastClaimDate === today) return undefined; // abort: already claimed
       const continued = eco.lastClaimDate === previousDate(today);
       const streak = continued ? (eco.streak || 0) + 1 : 1;
-      const bonus = streak % STREAK_BONUS_EVERY === 0;
+      const cycleDay = cycleDayOf(streak);
+      const caseType = caseTypeForCycleDay(cycleDay);
+      // coins stay untouched — daily rewards grant cases only
       return {
-        coins: (eco.coins || 0) + DAILY_COINS + (bonus ? STREAK_BONUS_COINS : 0),
-        cases: (eco.cases || 0) + 1 + (bonus ? STREAK_BONUS_CASES : 0),
+        coins: eco.coins || 0,
+        cases: (eco.cases || 0) + (caseType === "inspire" ? 1 : 0),
+        goldCases: (eco.goldCases || 0) + (caseType === "gold" ? 1 : 0),
         streak,
         lastClaimDate: today,
         totalClaimed: (eco.totalClaimed || 0) + 1,
@@ -36,7 +40,13 @@ export default handle(async (req, res) => {
   }
 
   const economy = result.snapshot.val();
-  await logLedger({ type: "daily_claim", uid: user.uid, streak: economy.streak, day: today });
+  const cycleDay = cycleDayOf(economy.streak);
+  const caseType = caseTypeForCycleDay(cycleDay);
+  await logLedger({ type: "daily_claim", uid: user.uid, streak: economy.streak, day: today, cycleDay, caseType });
 
-  res.status(200).json({ ok: true, economy });
+  res.status(200).json({
+    ok: true,
+    economy,
+    reward: { cycleDay, caseType, caseName: CASES[caseType].name },
+  });
 });

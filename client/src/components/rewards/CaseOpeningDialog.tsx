@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { FRAGMENTS, RARITY_META, type FragmentDef } from "@shared/fragments";
+import { CASES, RARITY_META, type CaseType, type FragmentDef } from "@shared/fragments";
 import { FragmentCard, FragmentIcon } from "./FragmentCard";
-import { Gem, Sparkles } from "lucide-react";
+import { Gem, Sparkles, Crown } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
+import { cn } from "@/lib/utils";
 
 const STEP = 120; // px per reel item (w-[112px] + 8px gap)
 const WINNER_INDEX = 46;
@@ -17,15 +18,35 @@ type Stage = "case" | "reel" | "result";
 interface CaseOpeningDialogProps {
   open: boolean;
   result: FragmentDef | null;
+  /** which case is being opened — decides the drop pool and the case skin */
+  caseType?: CaseType;
   onClose: () => void;
 }
 
-function pickFiller(): FragmentDef {
+function pickFiller(list: FragmentDef[]): FragmentDef {
   const roll = Math.random();
   const rarity = roll < 0.5 ? "common" : roll < 0.78 ? "rare" : roll < 0.91 ? "epic" : roll < 0.98 ? "covert" : "mythic";
-  const pool = FRAGMENTS.filter((f) => f.rarity === rarity);
-  return pool[Math.floor(Math.random() * pool.length)];
+  const pool = list.filter((f) => f.rarity === rarity);
+  return pool[Math.floor(Math.random() * pool.length)] || list[0];
 }
+
+/** Per-case skin: inspire = primary/blue, gold = amber with a crown. */
+const CASE_SKIN: Record<CaseType, { border: string; glow: string; iconTint: string; badge: string; lid: string }> = {
+  inspire: {
+    border: "border-primary/50",
+    glow: "hsl(var(--primary))",
+    iconTint: "text-primary",
+    badge: "text-primary/90",
+    lid: "border-primary/50 bg-gradient-to-b from-primary/40 to-primary/10",
+  },
+  gold: {
+    border: "border-amber-500/60",
+    glow: "rgba(245,158,11,0.75)",
+    iconTint: "text-amber-400",
+    badge: "text-amber-400/90",
+    lid: "border-amber-500/60 bg-gradient-to-b from-amber-400/50 to-amber-500/10",
+  },
+};
 
 /**
  * CS2-style case opening — pure presentation, the outcome is decided
@@ -33,18 +54,22 @@ function pickFiller(): FragmentDef {
  * dropped fragments appear below it and the reel scrolls past before
  * landing on the winner.
  */
-export function CaseOpeningDialog({ open, result, onClose }: CaseOpeningDialogProps) {
+export function CaseOpeningDialog({ open, result, caseType = "inspire", onClose }: CaseOpeningDialogProps) {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState<Stage>("case");
   const [offset, setOffset] = useState<number | null>(null);
 
+  const caseDef = CASES[caseType];
+  const skin = CASE_SKIN[caseType];
+  const isGold = caseType === "gold";
+
   const items = useMemo(() => {
     if (!open || !result) return [];
-    const fillers: FragmentDef[] = Array.from({ length: WINNER_INDEX + 12 }, () => pickFiller());
+    const fillers: FragmentDef[] = Array.from({ length: WINNER_INDEX + 12 }, () => pickFiller(caseDef.fragments));
     fillers[WINNER_INDEX] = result;
     return fillers;
-  }, [open, result]);
+  }, [open, result, caseDef]);
 
   // stage machine: case shakes → lid pops + reel drops in → winner reveal
   useEffect(() => {
@@ -106,7 +131,7 @@ export function CaseOpeningDialog({ open, result, onClose }: CaseOpeningDialogPr
                     animate={{ opacity: 0, scale: 2.6 }}
                     transition={{ duration: 0.7, ease: "easeOut" }}
                     className="absolute bottom-4 h-24 w-44 rounded-full"
-                    style={{ background: "radial-gradient(ellipse at center, rgba(245,158,11,0.55), transparent 65%)" }}
+                    style={{ background: `radial-gradient(ellipse at center, ${skin.glow.replace("hsl(var(--primary))", "hsl(var(--primary)/0.55)")}, transparent 65%)` }}
                   />
                 )}
                 <motion.div
@@ -122,15 +147,18 @@ export function CaseOpeningDialog({ open, result, onClose }: CaseOpeningDialogPr
                   <motion.div
                     animate={stage === "case" ? { y: 0, rotate: 0, opacity: 1 } : { y: -92, rotate: -14, opacity: 0 }}
                     transition={{ duration: 0.45, ease: "easeOut" }}
-                    className="z-20 -mb-1.5 flex h-10 w-40 items-end justify-center rounded-t-2xl border-2 border-b-0 border-amber-500/50 bg-gradient-to-b from-amber-400/50 to-amber-500/10"
-                    style={{ boxShadow: "0 0 26px -4px rgba(245,158,11,0.55)" }}
+                    className={cn("z-20 -mb-1.5 flex h-10 w-40 items-end justify-center rounded-t-2xl border-2 border-b-0", skin.lid)}
+                    style={{ boxShadow: `0 0 26px -4px ${skin.glow}` }}
                   >
-                    <div className="mb-1 h-2.5 w-12 rounded-t-full border-x-2 border-t-2 border-amber-500/50" />
+                    <div className={cn("mb-1 h-2.5 w-12 rounded-t-full border-x-2 border-t-2", isGold ? "border-amber-500/60" : "border-primary/50")} />
                   </motion.div>
                   {/* base */}
-                  <div className="flex h-24 w-44 flex-col items-center justify-center gap-1.5 rounded-b-2xl rounded-t-lg border-2 border-amber-500/50 bg-gradient-to-b from-amber-500/30 via-amber-600/10 to-transparent">
-                    <Gem className="h-8 w-8 text-amber-400" />
-                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400/90">Inspire Case</span>
+                  <div className={cn(
+                    "flex h-24 w-44 flex-col items-center justify-center gap-1.5 rounded-b-2xl rounded-t-lg border-2 bg-gradient-to-b to-transparent",
+                    isGold ? "border-amber-500/60 from-amber-500/30 via-amber-600/10" : "border-primary/50 from-primary/25 via-primary/10",
+                  )}>
+                    {isGold ? <Crown className="h-8 w-8 text-amber-400" /> : <Gem className={cn("h-8 w-8", skin.iconTint)} />}
+                    <span className={cn("text-[10px] font-black uppercase tracking-[0.3em]", skin.badge)}>{caseDef.name}</span>
                   </div>
                 </motion.div>
               </div>

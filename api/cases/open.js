@@ -117,40 +117,70 @@ async function logLedger(entry) {
 
 // shared/fragments.ts
 var FRAGMENTS = [
-  { id: "discipline", name: "Discipline", icon: "ShieldCheck", rarity: "common", dropPercent: 20 },
-  { id: "patience", name: "Patience", icon: "Hourglass", rarity: "common", dropPercent: 20 },
-  { id: "risk-management", name: "Risk Management", icon: "Scale", rarity: "rare", dropPercent: 14 },
-  { id: "backtesting", name: "Backtesting", icon: "FlaskConical", rarity: "rare", dropPercent: 14 },
-  { id: "trading-plan", name: "Trading Plan", icon: "ClipboardList", rarity: "epic", dropPercent: 9 },
-  { id: "psychology", name: "Psychology", icon: "Brain", rarity: "epic", dropPercent: 9 },
-  { id: "consistency", name: "Consistency", icon: "Repeat", rarity: "covert", dropPercent: 5 },
-  { id: "execution", name: "Execution", icon: "Crosshair", rarity: "covert", dropPercent: 5 },
-  { id: "master-trader", name: "Master Trader", icon: "Crown", rarity: "mythic", dropPercent: 2 }
+  { id: "discipline", name: "5k$ 1", icon: "ShieldCheck", rarity: "common", dropPercent: 20 },
+  { id: "patience", name: "5k$ 2", icon: "Hourglass", rarity: "common", dropPercent: 20 },
+  { id: "risk-management", name: "5k$ 3", icon: "Scale", rarity: "rare", dropPercent: 14 },
+  { id: "backtesting", name: "5k$ 4", icon: "FlaskConical", rarity: "rare", dropPercent: 14 },
+  { id: "trading-plan", name: "5k$ 5", icon: "ClipboardList", rarity: "epic", dropPercent: 9 },
+  { id: "psychology", name: "5k$ 6", icon: "Brain", rarity: "epic", dropPercent: 9 },
+  { id: "consistency", name: "5k$ 7", icon: "Repeat", rarity: "covert", dropPercent: 5 },
+  { id: "execution", name: "5k$ 8", icon: "Crosshair", rarity: "covert", dropPercent: 5 },
+  { id: "master-trader", name: "5k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 2 }
 ];
+var GOLD_FRAGMENTS = [
+  { id: "gold-1", name: "10k$ 1", icon: "Gem", rarity: "common", dropPercent: 20 },
+  { id: "gold-2", name: "10k$ 2", icon: "Zap", rarity: "common", dropPercent: 20 },
+  { id: "gold-3", name: "10k$ 3", icon: "Star", rarity: "rare", dropPercent: 14 },
+  { id: "gold-4", name: "10k$ 4", icon: "Target", rarity: "rare", dropPercent: 14 },
+  { id: "gold-5", name: "10k$ 5", icon: "Medal", rarity: "epic", dropPercent: 9 },
+  { id: "gold-6", name: "10k$ 6", icon: "Trophy", rarity: "epic", dropPercent: 9 },
+  { id: "gold-7", name: "10k$ 7", icon: "Rocket", rarity: "covert", dropPercent: 5 },
+  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 5 },
+  { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 2 }
+];
+var CASES = {
+  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
+  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS }
+};
+var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 
 // api/_src/cases/open.ts
-function rollFragment() {
-  let roll = crypto.randomInt(TOTAL_DROP_WEIGHT * 100) / 100;
-  for (const fragment of FRAGMENTS) {
+function rollFragment(list, totalWeight) {
+  let roll = crypto.randomInt(totalWeight * 100) / 100;
+  for (const fragment of list) {
     roll -= fragment.dropPercent;
     if (roll < 0) return fragment;
   }
-  return FRAGMENTS[0];
+  return list[0];
 }
 var open_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
   const db = rtdb();
   const now = Date.now();
-  const casesRef = db.ref(`economy/${user.uid}/cases`);
-  await decrementCounter(casesRef, new HttpError(400, "NO_CASES", "You have no cases to open"));
-  const fragment = rollFragment();
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const caseType = body.type === "gold" ? "gold" : "inspire";
+  const caseDef = CASES[caseType];
+  const counterRef = caseType === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : db.ref(`economy/${user.uid}/cases`);
+  await decrementCounter(
+    counterRef,
+    new HttpError(
+      400,
+      caseType === "gold" ? "NO_GOLD_CASES" : "NO_CASES",
+      caseType === "gold" ? "You have no Gold Cases to open" : "You have no cases to open"
+    )
+  );
+  const fragment = rollFragment(
+    caseDef.fragments,
+    caseType === "gold" ? TOTAL_DROP_WEIGHT_GOLD : TOTAL_DROP_WEIGHT
+  );
   await db.ref(`inventory/${user.uid}/${fragment.id}/count`).transaction((current) => (current || 0) + 1);
   await db.ref(`inventory/${user.uid}/${fragment.id}/updatedAt`).set(now);
-  await logLedger({ type: "case_open", uid: user.uid, fragmentId: fragment.id, rarity: fragment.rarity });
-  res.status(200).json({ ok: true, fragment });
+  await logLedger({ type: "case_open", uid: user.uid, caseType, fragmentId: fragment.id, rarity: fragment.rarity });
+  res.status(200).json({ ok: true, caseType, caseName: caseDef.name, fragment });
 });
 export {
   open_default as default,

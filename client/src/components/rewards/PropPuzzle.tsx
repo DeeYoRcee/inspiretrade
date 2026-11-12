@@ -2,12 +2,14 @@ import { motion } from "framer-motion";
 import { Building2, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/lib/language-context";
-import { FRAGMENTS, RARITY_META } from "@shared/fragments";
+import { CASES, RARITY_META, type CaseType } from "@shared/fragments";
 import { cn } from "@/lib/utils";
 import type { Inventory } from "@/hooks/use-economy";
 
 interface PropPuzzleProps {
   inventory: Inventory | undefined;
+  /** which prop account puzzle to render: inspire = $5,000, gold = $10,000 */
+  set: CaseType;
   onComplete: () => void;
   completing: boolean;
 }
@@ -98,19 +100,9 @@ function piecePath(r: number, c: number): string {
 // Precompute all 9 outlines once (pure geometry, no state).
 const PIECE_PATHS = Array.from({ length: 9 }, (_, i) => piecePath(Math.floor(i / 3), i % 3));
 
-/**
- * 9-piece jigsaw of a $5,000 prop account. Each of the 9 fragment types
- * ("5k$ 1" … "5k$ 9") unlocks one interlocking piece; collected pieces carry
- * their slice of the account card. When all 9 are unlocked the puzzle is
- * assembled and the prop account can be claimed (burns one of each fragment).
- */
-export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProps) {
-  const { t } = useLanguage();
-  const unlocked = FRAGMENTS.map((f) => (inventory?.[f.id] || 0) >= 1);
-  const unlockedCount = unlocked.filter(Boolean).length;
-  const complete = unlockedCount === FRAGMENTS.length;
-
-  const tileFaces = [
+// Puzzle tile faces per set — one slice of the prop account card per piece.
+const TILE_FACES: Record<CaseType, { main: string; sub: string }[]> = {
+  inspire: [
     { main: "$5,000", sub: "account" },
     { main: "+$3,000", sub: "profit target" },
     { main: "$150", sub: "max loss · daily" },
@@ -120,17 +112,48 @@ export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProp
     { main: "1:100", sub: "leverage" },
     { main: "6%", sub: "max drawdown" },
     { main: "FUNDED", sub: "weekly payouts" },
-  ];
+  ],
+  gold: [
+    { main: "$10,000", sub: "account" },
+    { main: "+$6,000", sub: "profit target" },
+    { main: "$300", sub: "max loss · daily" },
+    { main: "01", sub: "evaluation phase" },
+    { main: "UNLTD", sub: "trades · min 5 days" },
+    { main: "80/20", sub: "profit split" },
+    { main: "1:100", sub: "leverage" },
+    { main: "6%", sub: "max drawdown" },
+    { main: "FUNDED", sub: "weekly payouts" },
+  ],
+};
+
+/**
+ * 9-piece jigsaw of a prop account. Each of the 9 fragment types
+ * ("5k$ 1" … "5k$ 9" or "10k$ 1" … "10k$ 9") unlocks one interlocking
+ * piece; collected pieces carry their slice of the account card. When all
+ * 9 are unlocked the puzzle is assembled and the prop account can be
+ * claimed (burns one of each fragment).
+ */
+export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzleProps) {
+  const { t } = useLanguage();
+  const caseDef = CASES[set];
+  const isGold = set === "gold";
+  const fragmentList = caseDef.fragments;
+  const unlocked = fragmentList.map((f) => (inventory?.[f.id] || 0) >= 1);
+  const unlockedCount = unlocked.filter(Boolean).length;
+  const complete = unlockedCount === fragmentList.length;
+
+  const tileFaces = TILE_FACES[set];
+  const gradientId = `pz-open-${set}`;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="flex items-center gap-2 font-semibold">
-            <Building2 className="h-4 w-4 text-amber-400" />
-            {t("puzzleTitle")}
+          <h3 className={cn("flex items-center gap-2 font-semibold", isGold && "text-amber-400")}>
+            {isGold ? <Crown className="h-4 w-4 text-amber-400" /> : <Building2 className="h-4 w-4 text-amber-400" />}
+            {isGold ? t("goldPuzzleTitle") : t("puzzleTitle")}
           </h3>
-          <p className="text-xs text-muted-foreground">{t("puzzleSubtitle")}</p>
+          <p className="text-xs text-muted-foreground">{isGold ? t("goldPuzzleSubtitle") : t("puzzleSubtitle")}</p>
         </div>
         <span
           className={cn(
@@ -158,14 +181,14 @@ export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProp
         )}
         <svg viewBox="-4 -4 308 308" className="relative mx-auto block w-full max-w-[420px]">
           <defs>
-            <linearGradient id="pz-open" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.36" />
               <stop offset="52%" stopColor="#f59e0b" stopOpacity="0.10" />
               <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.24" />
             </linearGradient>
           </defs>
 
-          {FRAGMENTS.map((fragment, i) => {
+          {fragmentList.map((fragment, i) => {
             const r = Math.floor(i / 3);
             const c = i % 3;
             const isOpen = unlocked[i];
@@ -178,7 +201,7 @@ export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProp
                 <path
                   d={PIECE_PATHS[i]}
                   style={{
-                    fill: isOpen ? "url(#pz-open)" : "hsl(var(--card) / 0.45)",
+                    fill: isOpen ? `url(#${gradientId})` : "hsl(var(--card) / 0.45)",
                     stroke: complete
                       ? "rgba(245,158,11,0.30)"
                       : isOpen
@@ -273,7 +296,7 @@ export function PropPuzzle({ inventory, onComplete, completing }: PropPuzzleProp
               className="w-full max-w-md rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-bold text-black shadow-[0_0_24px_-4px_rgba(245,158,11,0.6)] hover:from-amber-400 hover:to-yellow-300"
             >
               <Crown className="mr-2 h-5 w-5" />
-              {completing ? t("combining") : t("claimPropAccount")}
+              {completing ? t("combining") : isGold ? t("claimGoldPropAccount") : t("claimPropAccount")}
             </Button>
             <p className="text-xs font-medium text-amber-400">{t("puzzleComplete")}</p>
           </>

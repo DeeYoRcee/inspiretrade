@@ -1,14 +1,16 @@
 import { useMemo } from "react";
 import {
   ShieldCheck, Hourglass, Scale, FlaskConical, ClipboardList, Brain,
-  Repeat, Crosshair, Crown, type LucideIcon,
+  Repeat, Crosshair, Crown, Gem, Zap, Star, Target, Medal, Trophy,
+  Rocket, Diamond, type LucideIcon,
 } from "lucide-react";
 import { getFragment, RARITY_META, type FragmentDef, type Rarity } from "@shared/fragments";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<string, LucideIcon> = {
   ShieldCheck, Hourglass, Scale, FlaskConical, ClipboardList, Brain,
-  Repeat, Crosshair, Crown,
+  Repeat, Crosshair, Crown, Gem, Zap, Star, Target, Medal, Trophy,
+  Rocket, Diamond,
 };
 
 /** Lucide icon by fragment `icon` name — shared with the case-opening reel. */

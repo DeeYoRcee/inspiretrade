@@ -105,36 +105,57 @@ async function logLedger(entry) {
 
 // shared/fragments.ts
 var FRAGMENTS = [
-  { id: "discipline", name: "Discipline", icon: "ShieldCheck", rarity: "common", dropPercent: 20 },
-  { id: "patience", name: "Patience", icon: "Hourglass", rarity: "common", dropPercent: 20 },
-  { id: "risk-management", name: "Risk Management", icon: "Scale", rarity: "rare", dropPercent: 14 },
-  { id: "backtesting", name: "Backtesting", icon: "FlaskConical", rarity: "rare", dropPercent: 14 },
-  { id: "trading-plan", name: "Trading Plan", icon: "ClipboardList", rarity: "epic", dropPercent: 9 },
-  { id: "psychology", name: "Psychology", icon: "Brain", rarity: "epic", dropPercent: 9 },
-  { id: "consistency", name: "Consistency", icon: "Repeat", rarity: "covert", dropPercent: 5 },
-  { id: "execution", name: "Execution", icon: "Crosshair", rarity: "covert", dropPercent: 5 },
-  { id: "master-trader", name: "Master Trader", icon: "Crown", rarity: "mythic", dropPercent: 2 }
+  { id: "discipline", name: "5k$ 1", icon: "ShieldCheck", rarity: "common", dropPercent: 20 },
+  { id: "patience", name: "5k$ 2", icon: "Hourglass", rarity: "common", dropPercent: 20 },
+  { id: "risk-management", name: "5k$ 3", icon: "Scale", rarity: "rare", dropPercent: 14 },
+  { id: "backtesting", name: "5k$ 4", icon: "FlaskConical", rarity: "rare", dropPercent: 14 },
+  { id: "trading-plan", name: "5k$ 5", icon: "ClipboardList", rarity: "epic", dropPercent: 9 },
+  { id: "psychology", name: "5k$ 6", icon: "Brain", rarity: "epic", dropPercent: 9 },
+  { id: "consistency", name: "5k$ 7", icon: "Repeat", rarity: "covert", dropPercent: 5 },
+  { id: "execution", name: "5k$ 8", icon: "Crosshair", rarity: "covert", dropPercent: 5 },
+  { id: "master-trader", name: "5k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 2 }
 ];
+var GOLD_FRAGMENTS = [
+  { id: "gold-1", name: "10k$ 1", icon: "Gem", rarity: "common", dropPercent: 20 },
+  { id: "gold-2", name: "10k$ 2", icon: "Zap", rarity: "common", dropPercent: 20 },
+  { id: "gold-3", name: "10k$ 3", icon: "Star", rarity: "rare", dropPercent: 14 },
+  { id: "gold-4", name: "10k$ 4", icon: "Target", rarity: "rare", dropPercent: 14 },
+  { id: "gold-5", name: "10k$ 5", icon: "Medal", rarity: "epic", dropPercent: 9 },
+  { id: "gold-6", name: "10k$ 6", icon: "Trophy", rarity: "epic", dropPercent: 9 },
+  { id: "gold-7", name: "10k$ 7", icon: "Rocket", rarity: "covert", dropPercent: 5 },
+  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 5 },
+  { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 2 }
+];
+var CASES = {
+  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
+  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS }
+};
+var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 
 // api/_src/fragments/combine.ts
-function makeReference() {
+function makeReference(prefix) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
   for (let i = 0; i < 6; i++) code += alphabet[crypto.randomInt(alphabet.length)];
-  return `INSP-${code}`;
+  return `${prefix}-${code}`;
 }
 var combine_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
   const db = rtdb();
   const now = Date.now();
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const set = body.set === "gold" ? "gold" : "inspire";
+  const caseDef = CASES[set];
+  const fragmentList = caseDef.fragments;
   const invRef = db.ref(`inventory/${user.uid}`);
   const beforeSnap = (await invRef.get()).val() || {};
   const burn = (inv) => {
     const next = JSON.parse(JSON.stringify(inv));
-    for (const fragment of FRAGMENTS) {
+    for (const fragment of fragmentList) {
       next[fragment.id] = {
         ...next[fragment.id] || {},
         count: ((next[fragment.id] || {}).count || 0) - 1,
@@ -143,7 +164,7 @@ var combine_default = handle(async (req, res) => {
     }
     return next;
   };
-  const hasAll = (inv) => FRAGMENTS.every((f) => ((inv || {})[f.id] || {}).count >= 1);
+  const hasAll = (inv) => fragmentList.every((f) => ((inv || {})[f.id] || {}).count >= 1);
   const tx = await invRef.transaction((current) => {
     const inv = current || {};
     return hasAll(inv) ? burn(inv) : inv;
@@ -152,17 +173,19 @@ var combine_default = handle(async (req, res) => {
   if (!tx?.committed || JSON.stringify(after) === JSON.stringify(beforeSnap)) {
     throw new HttpError(400, "MISSING_FRAGMENTS", "You need at least one fragment of every type (9 total)");
   }
-  const reference = makeReference();
+  const reference = makeReference(set === "gold" ? "GLD" : "INSP");
   const claimRef = db.ref(`claims/${user.uid}`).push();
   const claim = {
     id: claimRef.key,
     createdAt: now,
     reference,
     status: "pending",
-    fragments: Object.fromEntries(FRAGMENTS.map((f) => [f.id, true]))
+    set,
+    accountSize: caseDef.accountSize,
+    fragments: Object.fromEntries(fragmentList.map((f) => [f.id, true]))
   };
   await claimRef.set(claim);
-  await logLedger({ type: "combine", uid: user.uid, claimId: claimRef.key, reference });
+  await logLedger({ type: "combine", uid: user.uid, claimId: claimRef.key, reference, set });
   res.status(200).json({ ok: true, claim });
 });
 export {

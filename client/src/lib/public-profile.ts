@@ -16,6 +16,8 @@ export interface PublicProfileSettings {
   strategy: string;
   notes: string;
   publishedUsername: string | null;
+  /** Steam-style animated background id (see lib/profile-backgrounds). */
+  background: string | null;
 }
 
 export interface PublicProfileStats {
@@ -39,6 +41,8 @@ export interface PublicProfileSnapshot {
   usernameKey: string;
   displayName: string;
   updatedAt: number;
+  /** Steam-style animated background shown on the public page header. */
+  background?: string;
   statistics?: PublicProfileStats;
   winRate?: {
     rate: number;
@@ -63,6 +67,7 @@ export function createDefaultPublicProfileSettings(): PublicProfileSettings {
     strategy: "",
     notes: "",
     publishedUsername: null,
+    background: null,
   };
 }
 
@@ -88,6 +93,7 @@ export function normalizePublicProfileSettings(value: unknown): PublicProfileSet
     publishedUsername: typeof raw.publishedUsername === "string"
       ? raw.publishedUsername.toLowerCase()
       : null,
+    background: typeof raw.background === "string" && raw.background ? raw.background : null,
   };
 }
 
@@ -174,6 +180,12 @@ export function createPublicProfileSnapshot({
 
   if (settings.visibility.notes && settings.notes.trim()) {
     snapshot.notes = settings.notes.trim();
+  }
+
+  // The animated background is a purely visual choice — always shared while
+  // the profile is published.
+  if (settings.background) {
+    snapshot.background = settings.background;
   }
 
   return snapshot;

@@ -10,7 +10,9 @@ export interface UserProfile {
   premiumPlan?: string;
   premiumSince?: number;
   /** Small data-URL avatar uploaded from the profile page (RTDB stores it fine). */
-  avatar?: string;
+  avatar?: string | null;
+  /** Steam-style animated profile background — one of PROFILE_BACKGROUNDS ids. */
+  background?: string | null;
 }
 
 export function useUserProfile() {

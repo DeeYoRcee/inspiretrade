@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
+import { getProfileBackground } from "@/lib/profile-backgrounds";
 
 /**
  * Telegram-style compact profile: centered avatar card, a single stats line,
@@ -18,11 +19,30 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
 
   const stats = profile.statistics;
   const recent = [...(profile.history || [])].slice(0, 5);
+  const background = getProfileBackground(profile.background);
 
   return (
     <article className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-[0_24px_90px_rgba(0,0,0,.28)]">
-      {/* Telegram-like mini profile card */}
-      <header className="relative isolate overflow-hidden bg-gradient-to-b from-emerald-950 via-[#071712] to-slate-950 px-5 pb-7 pt-9 text-center text-white sm:px-8">
+      {/* Telegram-like mini profile card — Steam-style animated background */}
+      <header
+        className="relative isolate overflow-hidden bg-gradient-to-b from-emerald-950 via-[#071712] to-slate-950 px-5 pb-7 pt-9 text-center text-white sm:px-8"
+        style={background ? { background: background.tint } : undefined}
+      >
+        {background && (
+          <>
+            <video
+              src={background.src}
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="metadata"
+              aria-hidden
+              className="absolute inset-0 -z-10 h-full w-full object-cover opacity-55"
+            />
+            <div className="absolute inset-0 -z-10 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-slate-950/45" />
+          </>
+        )}
         <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full bg-emerald-400/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-40 left-[20%] h-72 w-96 rounded-full bg-cyan-300/[0.06] blur-3xl" />
 

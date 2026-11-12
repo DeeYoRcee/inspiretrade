@@ -14,7 +14,7 @@ import { authedFetch } from "@/lib/api";
 import { useEconomy, useInventory, useEconomyInvalidator } from "@/hooks/use-economy";
 import { useMarketListings, type MarketListing } from "@/hooks/use-market";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
-import { FRAGMENTS, getFragment, MARKET_FEE_PERCENT, MIN_LISTING_PRICE, MAX_LISTING_PRICE, sellerReceives } from "@shared/fragments";
+import { ALL_FRAGMENTS, getFragment, MARKET_FEE_PERCENT, MIN_LISTING_PRICE, MAX_LISTING_PRICE, sellerReceives } from "@shared/fragments";
 
 export default function MarketPage() {
   const { t } = useLanguage();
@@ -29,7 +29,7 @@ export default function MarketPage() {
   const [sellPrice, setSellPrice] = useState<string>("");
 
   const ownedSellable = useMemo(
-    () => FRAGMENTS.filter((f) => (inventory?.[f.id] || 0) >= 1),
+    () => ALL_FRAGMENTS.filter((f) => (inventory?.[f.id] || 0) >= 1),
     [inventory],
   );
 

@@ -2,8 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { ref } from "firebase/database";
 import {
-  Award, Camera, Copy, Crown, Globe2, Loader2, Pencil, Trash2,
+  Award, Camera, Clapperboard, Copy, Crown, Globe2, Loader2, Pencil, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -14,7 +15,9 @@ import { useEconomy } from "@/hooks/use-economy";
 import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
+import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createDefaultPublicProfileSettings } from "@/lib/public-profile";
+import { getProfileBackground } from "@/lib/profile-backgrounds";
 import { useLanguage } from "@/lib/language-context";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -122,6 +125,7 @@ export default function ProfilePage() {
   const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [bgPickerOpen, setBgPickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const displayName = user?.displayName || profile?.username || user?.email?.split("@")[0] || "Trader";
@@ -155,6 +159,7 @@ export default function ProfilePage() {
     ? `${window.location.origin}/@${publishedUsername}`
     : "";
   const bio = (settings?.strategy || "").trim();
+  const profileBackground = getProfileBackground(profile?.background);
 
   const copyLink = async () => {
     if (!publicUrl) return;
@@ -203,6 +208,35 @@ export default function ProfilePage() {
     } finally {
       setAvatarBusy(false);
     }
+  };
+
+  /** Persist the picked background into the private public-profile settings
+   *  and re-publish the public snapshot so visitors see it immediately. */
+  const publishBackgroundSettings = async (background: string | null) => {
+    const base = settings ?? createDefaultPublicProfileSettings();
+    const merged = { ...base, background };
+    if (merged.enabled && username) {
+      await savePublicProfile.mutateAsync({
+        username,
+        displayName: user?.displayName || username,
+        trades: trades ?? [],
+        settings: merged,
+      });
+    } else {
+      const { update } = await import("firebase/database");
+      const { db } = await import("@/lib/firebase");
+      await update(ref(db, "/"), {
+        [`privatePublicProfileSettings/${user!.uid}`]: { ...merged, updatedAt: Date.now() },
+      });
+      await queryClient.invalidateQueries({ queryKey: ["publicProfileSettings"] });
+    }
+  };
+
+  const onBackgroundSaved = (background: string | null) => {
+    if (!user) return;
+    queryClient.setQueryData(["userProfile", user.uid], (old: any) =>
+      old ? { ...old, background } : old);
+    queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
   };
 
   const saveBio = async () => {
@@ -266,17 +300,35 @@ export default function ProfilePage() {
 
   return (
     <div className="container mx-auto max-w-md space-y-4 px-4 py-6">
-      {/* Telegram-style banner */}
+      {/* Telegram-style banner — animated background like Steam */}
       <motion.section
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="relative overflow-hidden rounded-3xl border border-border/50 pb-6 pt-10 text-center"
+        className="relative isolate overflow-hidden rounded-3xl border border-border/50 pb-6 pt-10 text-center"
+        style={profileBackground ? { background: profileBackground.tint } : undefined}
       >
-        <div
-          className="absolute inset-0 opacity-20"
-          style={{ background: `linear-gradient(160deg, ${gradient[0]}, ${gradient[1]})` }}
-        />
+        {profileBackground && (
+          <>
+            <video
+              src={profileBackground.src}
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="metadata"
+              aria-hidden
+              className="absolute inset-0 -z-10 h-full w-full object-cover opacity-55"
+            />
+            <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background/80 via-background/20 to-background/40" />
+          </>
+        )}
+        {!profileBackground && (
+          <div
+            className="absolute inset-0 opacity-20"
+            style={{ background: `linear-gradient(160deg, ${gradient[0]}, ${gradient[1]})` }}
+          />
+        )}
         <Button
           size="sm"
           variant="ghost"
@@ -465,6 +517,24 @@ export default function ProfilePage() {
               </span>
             </button>
 
+            {/* Steam-style animated profile background */}
+            <button
+              type="button"
+              onClick={() => {
+                setEditOpen(false);
+                setBgPickerOpen(true);
+              }}
+              className="flex w-full items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2.5 text-left transition hover:bg-accent/40"
+            >
+              <span className="flex items-center gap-2 text-sm font-medium">
+                <Clapperboard className="h-4 w-4 text-primary" />
+                {t("profileBackground")}
+              </span>
+              <span className="truncate text-sm font-medium text-[#3390ec]">
+                {profileBackground ? profileBackground.name : t("profileBackgroundNone")}
+              </span>
+            </button>
+
             {/* Public profile toggle */}
             <div className="flex w-full items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2.5">
               <span className="text-sm font-medium">{t("publicProfileEnabled")}</span>
@@ -500,6 +570,18 @@ export default function ProfilePage() {
         isPremium={profile?.isPremium}
         onClose={() => setUsernameDialogOpen(false)}
       />
+
+      {/* Steam-style animated background picker */}
+      {user && (
+        <BackgroundPickerDialog
+          open={bgPickerOpen}
+          onOpenChange={setBgPickerOpen}
+          uid={user.uid}
+          profile={profile ?? null}
+          onSaved={onBackgroundSaved}
+          publishPublic={(bg) => publishBackgroundSettings(bg).then(() => undefined)}
+        />
+      )}
     </div>
   );
 }
