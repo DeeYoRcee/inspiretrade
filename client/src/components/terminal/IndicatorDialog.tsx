@@ -40,6 +40,8 @@ export function IndicatorDialog({
   const remove = (id: string) => onChange(active.filter((a) => a.id !== id));
   const patchParams = (id: string, key: string, value: number) =>
     onChange(active.map((a) => (a.id === id ? { ...a, params: { ...a.params, [key]: value } } : a)));
+  const patchColor = (id: string, value: string) =>
+    onChange(active.map((a) => (a.id === id ? { ...a, color: value } : a)));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -92,6 +94,15 @@ export function IndicatorDialog({
                               </label>
                             ))}
                             {Object.keys(def2.defaults).length === 0 && <div className="text-[10px] text-muted-foreground">—</div>}
+                            <label className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                              color
+                              <input
+                                type="color"
+                                value={a.color ?? "#4ade80"}
+                                onChange={(e) => patchColor(def.id, e.target.value)}
+                                className="h-6 w-12 cursor-pointer rounded border-0 bg-transparent"
+                              />
+                            </label>
                           </div>
                         );
                       })()}

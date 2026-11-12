@@ -104,6 +104,8 @@ export default function SettingsPage() {
             <ColorPick label={t("setBull")} value={settings.colors.up} onChange={(v) => update({ colors: { ...settings.colors, up: v } })} />
             <ColorPick label={t("setBear")} value={settings.colors.down} onChange={(v) => update({ colors: { ...settings.colors, down: v } })} />
             <ColorPick label={t("setAccent")} value={settings.colors.accent} onChange={(v) => update({ colors: { ...settings.colors, accent: v } })} />
+            <ColorPick label={t("setBg")} value={settings.colors.bg} onChange={(v) => update({ colors: { ...settings.colors, bg: v } })} />
+            <ColorPick label={t("setGrid")} value={settings.colors.grid} onChange={(v) => update({ colors: { ...settings.colors, grid: v } })} />
           </div>
         </div>
         <p className="mt-3 text-[11px] text-muted-foreground">{t("settingsSavedNote")}</p>

@@ -15,5 +15,10 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist"),
     emptyOutDir: true,
+    // Only the app entry ships to production; *-harness.html pages are
+    // dev-only visual-test rigs served by `vite dev`.
+    rollupOptions: {
+      input: path.resolve(import.meta.dirname, "client", "index.html"),
+    },
   },
 });

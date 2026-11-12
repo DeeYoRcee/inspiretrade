@@ -12,7 +12,7 @@ import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
 
 export type DrawingTool =
   | "cursor" | "trendline" | "hline" | "vline" | "ray" | "extline" | "rect"
-  | "fib" | "brush" | "text" | "arrow" | "long" | "short" | "measure";
+  | "fib" | "fibext" | "channel" | "brush" | "text" | "arrow" | "long" | "short" | "measure";
 
 export interface DrawingPoint { time: number; price: number }
 
@@ -30,6 +30,7 @@ export interface Drawing {
 export interface DrawingStyle { color: string; width: number; }
 
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+const FIB_EXT_LEVELS = [0, 0.618, 1, 1.618, 2.618];
 const SELECT_RADIUS = 8;
 
 function uid(): string {
@@ -45,6 +46,8 @@ export class DrawingEngine {
   tool: DrawingTool = "cursor";
   style: DrawingStyle = { color: "#4ade80", width: 2 };
   drawings: Drawing[] = [];
+  /** crosshair-sync vertical line from other charts (UNIX seconds) */
+  syncTime: number | null = null;
 
   /** in-progress drawing points (chart coords) */
   private pending: DrawingPoint[] = [];
@@ -153,6 +156,14 @@ export class DrawingEngine {
     this.onChange();
   }
 
+  /** Programmatically add a finished drawing (context menu shortcuts). */
+  addDrawing(tool: Exclude<DrawingTool, "cursor">, points: DrawingPoint[]) {
+    this.pushUndo();
+    this.drawings.push({ id: uid(), tool, points, color: this.style.color, width: this.style.width });
+    this.onChange();
+    this.render();
+  }
+
   serialize(): Drawing[] {
     return JSON.parse(JSON.stringify(this.drawings));
   }
@@ -259,6 +270,7 @@ export class DrawingEngine {
   private neededPoints(tool: Exclude<DrawingTool, "cursor">): number {
     switch (tool) {
       case "hline": case "vline": case "text": return 1;
+      case "fibext": case "channel": return 3;
       case "brush": return Infinity; // brush completes on pointerup
       default: return 2;
     }
@@ -308,9 +320,10 @@ export class DrawingEngine {
     this.render();
   };
 
-  private onDblClick = () => {
+  private onDblClick = (e: MouseEvent) => {
     const d = this.drawings.find((x) => x.id === this.selectedId);
     if (d && d.tool === "text" && !d.locked) {
+      e.stopPropagation(); // text edit wins over chart "reset view"
       const t = window.prompt("Text", d.text || "");
       if (t != null) { d.text = t; this.pushUndo(); this.onChange(); this.render(); }
     }
@@ -354,6 +367,24 @@ export class DrawingEngine {
             const y = p0.y + (p1.y - p0.y) * lvl;
             if (Math.abs(py - y) < SELECT_RADIUS && px >= Math.min(p0.x, p1.x) - 10 && px <= Math.max(p0.x, p1.x) + 10) hit = true;
           }
+          break;
+        }
+        case "fibext": {
+          if (P.length < 3) break;
+          // move height p0→p1 projected from p2
+          const dy = (P[1].y - P[0].y);
+          for (const lvl of FIB_EXT_LEVELS) {
+            const y = P[2].y + dy * lvl;
+            if (Math.abs(py - y) < SELECT_RADIUS) hit = true;
+          }
+          break;
+        }
+        case "channel": {
+          if (P.length < 3) break;
+          // offset of the parallel line relative to p0→p1
+          const ox = P[2].x - P[0].x, oy = P[2].y - P[0].y;
+          hit = this.distToSeg(px, py, P[0].x, P[0].y, P[1].x, P[1].y) < SELECT_RADIUS
+            || this.distToSeg(px, py, P[0].x + ox, P[0].y + oy, P[1].x + ox, P[1].y + oy) < SELECT_RADIUS;
           break;
         }
         case "brush": {
@@ -460,6 +491,49 @@ export class DrawingEngine {
           this.ctx.beginPath(); this.ctx.moveTo(p0.x, p0.y); this.ctx.lineTo(p1.x, p1.y); this.ctx.globalAlpha = 0.4; this.ctx.stroke(); this.ctx.globalAlpha = 1;
           break;
         }
+        case "fibext": {
+          if (P.length < 3) break;
+          // trend-based extension: move height (p0→p1) projected from p2
+          const dyP = d.points[1].price - d.points[0].price;
+          const yBase = P[2].y;
+          const x1 = Math.min(P[0].x, P[1].x, P[2].x), x2 = Math.max(P[0].x, P[1].x, P[2].x);
+          for (const lvl of FIB_EXT_LEVELS) {
+            const y = yBase + (P[1].y - P[0].y) * lvl;
+            this.ctx.beginPath(); this.ctx.moveTo(x1, y); this.ctx.lineTo(x2, y); this.ctx.stroke();
+            this.ctx.fillText(`${lvl.toFixed(3)}  ${this.fmt(series, d.points[2].price + dyP * lvl)}`, x2 + 4, y - 2);
+          }
+          this.ctx.globalAlpha = 0.4;
+          this.ctx.beginPath(); this.ctx.moveTo(P[0].x, P[0].y); this.ctx.lineTo(P[1].x, P[1].y); this.ctx.stroke();
+          this.ctx.beginPath(); this.ctx.moveTo(P[1].x, P[1].y); this.ctx.lineTo(P[2].x, P[2].y); this.ctx.stroke();
+          this.ctx.globalAlpha = 1;
+          break;
+        }
+        case "channel": {
+          if (P.length < 2) break;
+          // parallel channel: p0→p1 main line, p2 sets the offset of the second line
+          const ox = P.length >= 3 ? P[2].x - P[0].x : 0;
+          const oy = P.length >= 3 ? P[2].y - P[0].y : 0;
+          const big = Math.max(w, h) * 2;
+          const dx = P[1].x - P[0].x, dy = P[1].y - P[0].y;
+          const len = Math.hypot(dx, dy) || 1;
+          const ux = dx / len, uy = dy / len;
+          this.ctx.beginPath();
+          this.ctx.moveTo(P[0].x - ux * big, P[0].y - uy * big);
+          this.ctx.lineTo(P[1].x + ux * big, P[1].y + uy * big);
+          this.ctx.stroke();
+          this.ctx.beginPath();
+          this.ctx.moveTo(P[0].x + ox - ux * big, P[0].y + oy - uy * big);
+          this.ctx.lineTo(P[1].x + ox + ux * big, P[1].y + oy + uy * big);
+          this.ctx.stroke();
+          // translucent fill between the lines over the p0→p1 span
+          this.ctx.globalAlpha = 0.08;
+          this.ctx.beginPath();
+          this.ctx.moveTo(P[0].x, P[0].y); this.ctx.lineTo(P[1].x, P[1].y);
+          this.ctx.lineTo(P[1].x + ox, P[1].y + oy); this.ctx.lineTo(P[0].x + ox, P[0].y + oy);
+          this.ctx.closePath(); this.ctx.fill();
+          this.ctx.globalAlpha = 1;
+          break;
+        }
         case "brush": {
           if (P.length < 2) break;
           this.ctx.beginPath(); this.ctx.moveTo(P[0].x, P[0].y);
@@ -539,6 +613,19 @@ export class DrawingEngine {
         } else if (pts.length === 1) {
           this.ctx.beginPath(); this.ctx.moveTo(pts[0].x!, pts[0].y!); this.ctx.lineTo(last.x, last.y); this.ctx.stroke();
         }
+      }
+    }
+
+    // crosshair-sync vertical line (hover on another chart of the layout)
+    if (this.syncTime != null) {
+      const x = this.xFor(this.syncTime);
+      if (x != null) {
+        this.ctx.save();
+        this.ctx.strokeStyle = "rgba(250,204,21,0.55)";
+        this.ctx.lineWidth = 1;
+        this.ctx.setLineDash([3, 3]);
+        this.ctx.beginPath(); this.ctx.moveTo(x, 0); this.ctx.lineTo(x, h); this.ctx.stroke();
+        this.ctx.restore();
       }
     }
   }

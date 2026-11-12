@@ -11,6 +11,7 @@ import {
   Undo2, Redo2, Trash2, Lock, Eye, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity, LineChart,
+  Spline, MoveDiagonal,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -39,6 +40,8 @@ const TOOLS: { id: DrawingTool; icon: any; title: string }[] = [
   { id: "extline", icon: MoveUpRight, title: "Extended line" },
   { id: "rect", icon: SquareDashed, title: "Rectangle" },
   { id: "fib", icon: GitCompareArrows, title: "Fibonacci retracement" },
+  { id: "fibext", icon: Spline, title: "Fibonacci extension" },
+  { id: "channel", icon: MoveDiagonal, title: "Parallel channel" },
   { id: "brush", icon: Pencil, title: "Brush" },
   { id: "text", icon: Type, title: "Text" },
   { id: "arrow", icon: ArrowRight, title: "Arrow" },
@@ -84,9 +87,16 @@ export default function TerminalPage() {
 
   const toggleFullscreen = () => {
     const el = gridRef.current?.parentElement;
-    if (!document.fullscreenElement) el?.requestFullscreen?.().then(() => setFullscreen(true)).catch(() => {});
-    else document.exitFullscreen?.().then(() => setFullscreen(false)).catch(() => {});
+    if (!document.fullscreenElement) el?.requestFullscreen?.().catch(() => {});
+    else document.exitFullscreen?.().catch(() => {});
   };
+
+  // keep the fullscreen button in sync (F11-style exit, ESC)
+  useEffect(() => {
+    const onFs = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
 
   const chartNode = (i: number) => (
     <TerminalChart
@@ -101,6 +111,8 @@ export default function TerminalPage() {
       onDrawingsChange={save}
       activeTool={activeTool}
       onLastBar={i === 0 ? onLastBar : undefined}
+      onToggleVolume={() => update({ showVolume: !settings.showVolume })}
+      onRequestFullscreen={toggleFullscreen}
       height={420}
     />
   );
@@ -115,7 +127,7 @@ export default function TerminalPage() {
   const chartGrid = (
     <div
       className={cn(
-        "grid min-h-0 flex-1 gap-1.5",
+        "grid h-full min-h-0 w-full flex-1 gap-1.5",
         settings.layout === 1 && "grid-cols-1 grid-rows-1",
         settings.layout === 2 && "grid-cols-1 grid-rows-2 md:grid-cols-2 md:grid-rows-1",
         settings.layout === 4 && "grid-cols-1 grid-rows-2 sm:grid-cols-2",
@@ -216,8 +228,10 @@ export default function TerminalPage() {
           </select>
         </div>
 
-        {/* charts (desktop) */}
-        <div className="hidden min-w-0 flex-1 md:block">{chartGrid}</div>
+        {/* charts (desktop) — flex-col so the grid gets a DEFINITE height.
+            (A plain `md:block` wrapper made the grid auto-height collapse the
+            absolutely-positioned chart to 0px — the "blank chart" bug.) */}
+        <div className="hidden min-h-0 min-w-0 flex-1 md:flex md:flex-col">{chartGrid}</div>
 
         {/* charts (mobile) */}
         <div className="flex min-h-0 w-full flex-col gap-1.5 md:hidden">

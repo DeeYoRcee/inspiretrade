@@ -1,13 +1,12 @@
 /**
  * Terminal market data layer.
  *
- * Provider abstraction:
+ * Provider abstraction (REAL data only — no generated prices):
  *  - BinanceProvider: real live crypto via public REST + WebSocket (no key).
  *  - QuotesProvider : real (delayed) forex/metals/indices via our server proxy
  *                     /api/quotes → Yahoo Finance (polling).
- *  - DemoProvider   : clearly labeled synthetic feed used only when the real
- *                     provider for an instrument fails. NEVER presented as
- *                     real-time market data.
+ * On failure the caller gets a thrown error and renders an error state with a
+ * retry button — the chart never falls back to synthetic candles.
  *
  * Every feed normalizes to Bar[] (UNIX seconds UTC) and supports:
  *  - loadHistory(tf) once
@@ -20,7 +19,7 @@ import {
   aggregateBars, type Bar, type InstrumentSpec, type Timeframe,
 } from "@shared/terminal";
 
-export type FeedStatus = "connecting" | "live" | "polling" | "demo";
+export type FeedStatus = "connecting" | "live" | "polling" | "error";
 
 export interface FeedUpdate {
   bars: Bar[];        // full updated series (safe copy)
@@ -52,34 +51,11 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
   return out;
 }
 
-/** Deterministic seeded random walk — DEMO data only. */
-function demoHistory(symbol: string, tf: Timeframe, count = 600): Bar[] {
-  let seed = 0;
-  for (const ch of symbol + tf) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-  const base = { BTCUSD: 97000, ETHUSD: 3400, SOLUSD: 190, XRPUSD: 2.3, XAUUSD: 2920, XAGUSD: 32.5,
-    EURUSD: 1.085, GBPUSD: 1.295, USDJPY: 152.4, AUDUSD: 0.652, NZDUSD: 0.598, USDCAD: 1.372,
-    USDCHF: 0.879, NAS100: 21500, US30: 44200, SPX500: 6050, GER40: 20300, UK100: 8300 }[symbol] ?? 100;
-  const vol = { crypto: 0.004, metal: 0.0025, forex: 0.0006, index: 0.002 }[getInstrument(symbol)?.assetClass ?? "forex"];
-  const step = TF_SECONDS[tf];
-  const now = Math.floor(Date.now() / 1000 / step) * step;
-  const bars: Bar[] = [];
-  let price = base * (0.96 + rand() * 0.08);
-  for (let i = count - 1; i >= 0; i--) {
-    const time = now - i * step;
-    const drift = (rand() - 0.5) * 2 * vol * price;
-    const open = price;
-    const close = Math.max(price + drift, base * 0.5);
-    const high = Math.max(open, close) * (1 + rand() * vol);
-    const low = Math.min(open, close) * (1 - rand() * vol);
-    bars.push({ time, open, high, low, close, volume: Math.floor(500 + rand() * 4500) });
-    price = close;
-  }
-  return bars;
-}
+/**
+ * Deterministic seeded random walk — REMOVED.
+ * Policy: the chart must never display generated prices. When a real feed is
+ * unavailable the UI shows a clear error state with a retry button instead.
+ */
 
 // ---------------------------------------------------------------------------
 // Binance (crypto — real live)
@@ -211,24 +187,20 @@ export interface LoadResult {
   message?: string;
 }
 
-/** Load history for an instrument+tf, falling back to labeled DEMO data. */
+/**
+ * Load history for an instrument+tf from REAL providers only.
+ * Throws a descriptive error on failure — the chart shows an error state with
+ * a retry button. No generated/random prices, ever.
+ */
 export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResult> {
   const inst = getInstrument(symbol);
-  if (!inst) return { bars: [], status: "demo", message: "Unknown instrument" };
-  try {
-    if (inst.feed === "binance") {
-      const bars = await binanceProvider.load(symbol, tf);
-      return { bars, status: "live" };
-    }
-    const { bars, delayed } = await quotesProvider.load(symbol, tf);
-    return { bars, status: "polling", message: delayed ? "Delayed data (Yahoo)" : undefined };
-  } catch (e: any) {
-    return {
-      bars: demoHistory(symbol, tf),
-      status: "demo",
-      message: `Live feed unavailable (${String(e?.message || e)}) — DEMO data`,
-    };
+  if (!inst) throw new Error(`Unknown instrument: ${symbol}`);
+  if (inst.feed === "binance") {
+    const bars = await binanceProvider.load(symbol, tf);
+    return { bars, status: "live" };
   }
+  const { bars, delayed } = await quotesProvider.load(symbol, tf);
+  return { bars, status: "polling", message: delayed ? "Delayed data (Yahoo)" : undefined };
 }
 
 /** Subscribe to live updates. Returns an unsubscribe function. */
