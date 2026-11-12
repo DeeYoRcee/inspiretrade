@@ -28,6 +28,9 @@ import { UsernamePrompt } from "@/components/UsernamePrompt";
 import { DailyRewardDialog } from "@/components/rewards/DailyRewardDialog";
 import { GlobalChat } from "@/components/chat/GlobalChat";
 import { useIsAdmin } from "@/hooks/use-admin";
+import { useEconomyInvalidator } from "@/hooks/use-economy";
+import { authedFetch } from "@/lib/api";
+import { captureRefFromUrl, popStoredRef, clearStoredRef } from "@/lib/referral";
 import { Activity, Send } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -42,6 +45,48 @@ function PremiumSuccessHandler() {
     window.history.replaceState(null, "", "/");
     queryClient.invalidateQueries({ queryKey: ["premiumStatus", user.uid] });
     toast({ title: t("premiumThanks") });
+  }, [user]);
+
+  return null;
+}
+
+/**
+ * Referral pipeline:
+ * 1. On mount, capture `?ref=CODE` from the URL into localStorage.
+ * 2. When a (fresh) account signs in, POST the code to /api/referral?action=apply.
+ *    The server credits +100 INSP to the new user and +250 INSP to the referrer.
+ */
+function ReferralApplier() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const { t } = useLanguage();
+  const invalidate = useEconomyInvalidator();
+
+  useEffect(() => {
+    captureRefFromUrl();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const code = popStoredRef();
+    if (!code) return;
+    (async () => {
+      try {
+        // Only brand-new accounts can apply a referral code (15-minute window).
+        const created = new Date(user.metadata.creationTime || Date.now()).getTime();
+        if (Date.now() - created > 15 * 60 * 1000) {
+          clearStoredRef();
+          return;
+        }
+        await authedFetch("/api/referral?action=apply", { code });
+        clearStoredRef();
+        invalidate();
+        toast({ title: t("referralAppliedTitle"), description: t("referralAppliedBody") });
+      } catch {
+        // Invalid code / self-referral / already referred — drop silently.
+        clearStoredRef();
+      }
+    })();
   }, [user]);
 
   return null;
@@ -242,6 +287,7 @@ function App() {
             <TooltipProvider>
               <Toaster />
               <Router />
+              <ReferralApplier />
               <InstallPrompt />
             </TooltipProvider>
           </AuthProvider>

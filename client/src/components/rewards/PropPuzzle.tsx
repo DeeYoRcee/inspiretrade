@@ -100,38 +100,13 @@ function piecePath(r: number, c: number): string {
 // Precompute all 9 outlines once (pure geometry, no state).
 const PIECE_PATHS = Array.from({ length: 9 }, (_, i) => piecePath(Math.floor(i / 3), i % 3));
 
-// Puzzle tile faces per set — one slice of the prop account card per piece.
-const TILE_FACES: Record<CaseType, { main: string; sub: string }[]> = {
-  inspire: [
-    { main: "$5,000", sub: "account" },
-    { main: "+$3,000", sub: "profit target" },
-    { main: "$150", sub: "max loss · daily" },
-    { main: "01", sub: "evaluation phase" },
-    { main: "UNLTD", sub: "trades · min 5 days" },
-    { main: "80/20", sub: "profit split" },
-    { main: "1:100", sub: "leverage" },
-    { main: "6%", sub: "max drawdown" },
-    { main: "FUNDED", sub: "weekly payouts" },
-  ],
-  gold: [
-    { main: "$10,000", sub: "account" },
-    { main: "+$6,000", sub: "profit target" },
-    { main: "$300", sub: "max loss · daily" },
-    { main: "01", sub: "evaluation phase" },
-    { main: "UNLTD", sub: "trades · min 5 days" },
-    { main: "80/20", sub: "profit split" },
-    { main: "1:100", sub: "leverage" },
-    { main: "6%", sub: "max drawdown" },
-    { main: "FUNDED", sub: "weekly payouts" },
-  ],
-};
-
 /**
  * 9-piece jigsaw of a prop account. Each of the 9 fragment types
  * ("5k$ 1" … "5k$ 9" or "10k$ 1" … "10k$ 9") unlocks one interlocking
- * piece; collected pieces carry their slice of the account card. When all
- * 9 are unlocked the puzzle is assembled and the prop account can be
- * claimed (burns one of each fragment).
+ * piece. Pieces show ONLY their number — the prop account tier (5k$/10k$)
+ * is shown as a badge beside the puzzle. When all 9 are unlocked the puzzle
+ * is assembled and the prop account can be claimed (burns one of each
+ * fragment).
  */
 export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzleProps) {
   const { t } = useLanguage();
@@ -142,7 +117,6 @@ export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzl
   const unlockedCount = unlocked.filter(Boolean).length;
   const complete = unlockedCount === fragmentList.length;
 
-  const tileFaces = TILE_FACES[set];
   const gradientId = `pz-open-${set}`;
 
   return (
@@ -155,16 +129,29 @@ export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzl
           </h3>
           <p className="text-xs text-muted-foreground">{isGold ? t("goldPuzzleSubtitle") : t("puzzleSubtitle")}</p>
         </div>
-        <span
-          className={cn(
-            "rounded-full border px-3 py-1 text-xs font-bold",
-            complete
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-              : "border-border/60 bg-card/60 text-muted-foreground",
-          )}
-        >
-          {unlockedCount}/9 {t("puzzlePieces")}
-        </span>
+        <div className="flex items-center gap-2">
+          {/* which prop account this puzzle builds: 5k$ or 10k$ */}
+          <span
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs font-bold",
+              isGold
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                : "border-primary/40 bg-primary/10 text-primary",
+            )}
+          >
+            {isGold ? "10k$" : "5k$"} {t("propAccount")}
+          </span>
+          <span
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs font-bold",
+              complete
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                : "border-border/60 bg-card/60 text-muted-foreground",
+            )}
+          >
+            {unlockedCount}/9 {t("puzzlePieces")}
+          </span>
+        </div>
       </div>
 
       {/* 3×3 interlocking jigsaw — each unlocked piece is gold and shows its
@@ -192,7 +179,6 @@ export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzl
             const r = Math.floor(i / 3);
             const c = i % 3;
             const isOpen = unlocked[i];
-            const face = tileFaces[i];
             const meta = RARITY_META[fragment.rarity];
             const cx = c * S + S / 2;
             const cy = r * S + S / 2;
@@ -216,37 +202,13 @@ export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzl
                   <g style={{ pointerEvents: "none" }}>
                     <text
                       x={cx}
-                      y={cy - 20}
+                      y={cy + 5}
                       textAnchor="middle"
-                      fontSize="12.5"
+                      fontSize="15"
                       fontWeight={800}
                       style={{ fill: "#fbbf24", letterSpacing: "0.05em" }}
                     >
                       {fragment.name}
-                    </text>
-                    <text
-                      x={cx}
-                      y={cy + 1}
-                      textAnchor="middle"
-                      fontSize="16"
-                      fontWeight={800}
-                      style={{ fill: "hsl(var(--foreground))" }}
-                    >
-                      {face.main}
-                    </text>
-                    <text
-                      x={cx}
-                      y={cy + 14}
-                      textAnchor="middle"
-                      fontSize="7.5"
-                      fontWeight={600}
-                      style={{
-                        fill: "hsl(var(--muted-foreground))",
-                        letterSpacing: "0.08em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {face.sub}
                     </text>
                   </g>
                 ) : (

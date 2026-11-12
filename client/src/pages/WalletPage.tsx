@@ -14,6 +14,7 @@ import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
 import { auth } from "@/lib/firebase";
 import { useEconomy } from "@/hooks/use-economy";
+import { ReferralCard } from "@/components/wallet/ReferralCard";
 import { ref, get } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
@@ -121,6 +122,9 @@ export default function WalletPage() {
           </CardContent>
         </Card>
       </motion.div>
+
+      {/* Referral — share the link, earn INSP */}
+      <ReferralCard />
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Deposit */}

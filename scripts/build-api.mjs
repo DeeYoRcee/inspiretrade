@@ -18,7 +18,9 @@ import { dirname } from "path";
 // Vercel Hobby allows max 12 Serverless Functions per deployment.
 // Related endpoints are merged into one dispatcher each (action query param):
 // market (list|buy|cancel), admin (gift|withdrawals|chat-delete),
-// wallet (withdraw), whop (plans|checkout|verify).
+// wallet (withdraw), whop (plans|checkout|verify),
+// referral (info|apply). news is a public read-only feed aggregator.
+// Current count: 10/12 (health.ts + the 9 entries below).
 const entries = [
   ["api/_src/rewards/claim.ts", "api/rewards/claim.js"],
   ["api/_src/cases/open.ts", "api/cases/open.js"],
@@ -27,6 +29,8 @@ const entries = [
   ["api/_src/admin/index.ts", "api/admin.js"],
   ["api/_src/wallet/index.ts", "api/wallet.js"],
   ["api/_src/whop/index.ts", "api/whop.js"],
+  ["api/_src/referral/index.ts", "api/referral.js"],
+  ["api/_src/news/index.ts", "api/news.js"],
 ];
 
 for (const [inPath, outPath] of entries) {

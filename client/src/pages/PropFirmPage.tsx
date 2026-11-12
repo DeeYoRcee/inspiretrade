@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, ArrowRight, BadgeInfo, BarChart3, CalendarDays, Check, ChevronDown, CircleDollarSign, Clock3, Crown, Gauge, LockKeyhole, Shield, Target, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, ChevronDown, LockKeyhole, Wallet } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,7 +21,7 @@ type Challenge = {
   periodDays: number;
 };
 
-// These are illustrative examples, not real offers. Replace them with verified provider terms before enabling sales.
+// Illustrative examples only — replace with verified provider terms before enabling sales.
 const ACCOUNT_SIZES = [5000, 10000, 25000, 50000, 100000, 200000];
 const TYPES: ChallengeType[] = ["1-Step", "2-Step", "Instant Funding"];
 const SAMPLE_CHALLENGES: Challenge[] = ACCOUNT_SIZES.flatMap((size) =>
@@ -45,50 +45,41 @@ const SAMPLE_CHALLENGES: Challenge[] = ACCOUNT_SIZES.flatMap((size) =>
 
 const money = (value: number) => `$${value.toLocaleString("en-US")}`;
 
-function DemoNotice() {
+function StatChip({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mb-6 flex gap-3 rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 text-sm" role="note">
-      <BadgeInfo className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
-      <p className="text-muted-foreground"><strong className="text-foreground">Demo information only.</strong> These sample challenges, prices, targets and rules are illustrative—not real prop-firm offers. Purchases and funded accounts are not available yet.</p>
-    </div>
+    <span className="inline-flex min-w-0 items-baseline gap-1.5 rounded-lg border border-border/50 bg-card/60 px-2 py-1 text-xs">
+      <span className="truncate text-muted-foreground">{label}</span>
+      <span className="font-semibold text-foreground">{value}</span>
+    </span>
   );
 }
 
-function StatCard({ icon: Icon, label, value, note }: { icon: typeof Target; label: string; value: string; note: string }) {
+function DemoLine() {
   return (
-    <Card className="border-border/60 bg-card/60">
-      <CardContent className="p-4 sm:p-5">
-        <div className="mb-3 flex items-center justify-between text-sm text-muted-foreground"><span>{label}</span><Icon className="h-4 w-4 text-primary" /></div>
-        <div className="text-2xl font-semibold tracking-tight">{value}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{note}</div>
-      </CardContent>
-    </Card>
+    <p className="mb-5 text-xs text-muted-foreground">
+      <span className="font-semibold text-amber-400">Demo only</span> — sample challenges and prices, not real offers. Purchases are coming soon.
+    </p>
   );
 }
 
 function ChallengeCard({ challenge, onDetails }: { challenge: Challenge; onDetails: () => void }) {
   return (
     <Card className="group border-border/60 bg-background/60 transition-colors hover:border-primary/40">
-      <CardContent className="p-5">
-        <div className="mb-4 flex items-start justify-between gap-2">
-          <div>
-            <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{challenge.type}</span>
-            <h3 className="mt-3 text-2xl font-semibold">{money(challenge.size)} <span className="text-sm font-normal text-muted-foreground">account</span></h3>
-          </div>
-          <div className="text-right"><p className="text-xs text-muted-foreground">Example price</p><p className="text-xl font-semibold">{money(challenge.price)}</p></div>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2">
+          <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{challenge.type}</span>
+          <div className="text-right"><p className="text-xs text-muted-foreground">from</p><p className="text-sm font-semibold">{money(challenge.price)}</p></div>
         </div>
-        <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-card/60 p-3 text-sm">
-          <div><p className="text-xs text-muted-foreground">Phase 1 target</p><p className="mt-1 font-medium">{challenge.phaseOne ? `${challenge.phaseOne}%` : "—"}</p></div>
-          <div><p className="text-xs text-muted-foreground">Phase 2 target</p><p className="mt-1 font-medium">{challenge.phaseTwo ? `${challenge.phaseTwo}%` : "Not applicable"}</p></div>
-          <div><p className="text-xs text-muted-foreground">Daily drawdown</p><p className="mt-1 font-medium">{challenge.dailyDrawdown}%</p></div>
-          <div><p className="text-xs text-muted-foreground">Maximum drawdown</p><p className="mt-1 font-medium">{challenge.maxDrawdown}%</p></div>
-          <div><p className="text-xs text-muted-foreground">Profit split</p><p className="mt-1 font-medium">Up to {challenge.profitSplit}%</p></div>
-          <div><p className="text-xs text-muted-foreground">Minimum trading days</p><p className="mt-1 font-medium">{challenge.minDays || "None"}</p></div>
+        <h3 className="mt-2 text-2xl font-semibold tracking-tight">{money(challenge.size)} <span className="text-sm font-normal text-muted-foreground">account</span></h3>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <StatChip label="Targets" value={challenge.phaseTwo ? `${challenge.phaseOne}% / ${challenge.phaseTwo}%` : challenge.phaseOne ? `${challenge.phaseOne}%` : "—"} />
+          <StatChip label="Max DD" value={`${challenge.maxDrawdown}%`} />
+          <StatChip label="Daily DD" value={`${challenge.dailyDrawdown}%`} />
+          <StatChip label="Split" value={`${challenge.profitSplit}%`} />
         </div>
-        <p className="mb-4 text-xs text-muted-foreground">Example terms only · {challenge.periodDays ? `${challenge.periodDays}-day trading period` : "No time limit shown"}</p>
-        <div className="flex gap-2">
-          <Button variant="outline" className="flex-1 border-border" onClick={onDetails}>View example rules <ArrowRight className="h-4 w-4" /></Button>
-          <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90" disabled title="Purchases are not available yet"><LockKeyhole className="h-4 w-4" />Unavailable</Button>
+        <div className="mt-4 flex gap-2">
+          <Button variant="outline" className="flex-1 border-border" onClick={onDetails}>Rules <ArrowRight className="h-4 w-4" /></Button>
+          <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90" disabled title="Purchases are not available yet"><LockKeyhole className="h-4 w-4" />Soon</Button>
         </div>
       </CardContent>
     </Card>
@@ -96,36 +87,38 @@ function ChallengeCard({ challenge, onDetails }: { challenge: Challenge; onDetai
 }
 
 function ChallengeDetails({ challenge, onBack }: { challenge: Challenge; onBack: () => void }) {
-  const rules = [
-    ["Risk management", `Illustrative only: daily loss limit ${challenge.dailyDrawdown}% and total loss limit ${challenge.maxDrawdown}%. The real provider's calculation method must be confirmed.`],
-    ["News trading", "Provider policy not confirmed. Check the actual firm's restricted-news window before trading."],
-    ["Weekend holding", "Provider policy not confirmed. Do not assume positions may be held over weekends."],
-    ["Overnight holding", "Provider policy not confirmed. Check the actual provider's overnight rules."],
-    ["EA and automated trading", "Provider policy not confirmed. Obtain written approval for automated strategies from the actual provider."],
-    ["Consistency", "No consistency rule is represented by this demo. Review verified provider terms before purchase."],
-    ["Payout conditions", `Example split: up to ${challenge.profitSplit}%. Payout eligibility, schedule, minimum amount and verification are not set.`],
-  ];
-  const faqs = [
-    ["Is this a real challenge?", "No. This is a clearly marked example only and cannot be purchased."],
-    ["Will I get a funded account?", "No purchase, payment confirmation, or funded account is being created in this demo."],
-    ["Are the rules final?", "No. All values and rule descriptions are illustrative; confirm terms directly with a real provider."],
+  const rules: [string, string][] = [
+    ["Risk management", `Daily loss limit ${challenge.dailyDrawdown}%, total loss limit ${challenge.maxDrawdown}%.`],
+    ["Trading period", challenge.periodDays ? `${challenge.periodDays}-day period, minimum ${challenge.minDays} trading days.` : "No time limit, minimum trading days may apply."],
+    ["Profit split", `Up to ${challenge.profitSplit}%.`],
+    ["News, weekend & overnight holding", "Policies depend on the provider — confirmed before purchase."],
+    ["EA & automated trading", "Requires written approval from the provider."],
   ];
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <Button variant="ghost" onClick={onBack} className="mb-6 gap-2"><ArrowLeft className="h-4 w-4" />Back to challenges</Button>
-      <DemoNotice />
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div><p className="mb-2 text-sm text-primary">{challenge.type} · illustrative example</p><h1 className="text-3xl font-semibold sm:text-4xl">{money(challenge.size)} Challenge</h1><p className="mt-2 text-muted-foreground">Sample listing—not available for purchase.</p></div>
-        <div className="rounded-xl border border-border/60 bg-card/60 px-5 py-3"><p className="text-xs text-muted-foreground">Example price</p><p className="text-2xl font-semibold">{money(challenge.price)}</p></div>
+    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+      <Button variant="ghost" onClick={onBack} className="mb-4 gap-2"><ArrowLeft className="h-4 w-4" />Back</Button>
+      <DemoLine />
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div><p className="mb-1 text-sm text-primary">{challenge.type}</p><h1 className="text-3xl font-semibold sm:text-4xl">{money(challenge.size)} Challenge</h1></div>
+        <div className="rounded-xl border border-border/60 bg-card/60 px-4 py-2.5"><p className="text-[11px] text-muted-foreground">Example price</p><p className="text-xl font-semibold">{money(challenge.price)}</p></div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={Target} label="Phase 1 target" value={challenge.phaseOne ? `${challenge.phaseOne}%` : "—"} note={challenge.type === "Instant Funding" ? "Not applicable" : "Example only"} />
-        <StatCard icon={Target} label="Phase 2 target" value={challenge.phaseTwo ? `${challenge.phaseTwo}%` : "—"} note="Example only" />
-        <StatCard icon={Gauge} label="Daily drawdown" value={`${challenge.dailyDrawdown}%`} note="Example only" />
-        <StatCard icon={Shield} label="Maximum drawdown" value={`${challenge.maxDrawdown}%`} note="Example only" />
+      <div className="mb-6 flex flex-wrap gap-1.5">
+        <StatChip label="Phase 1" value={challenge.phaseOne ? `${challenge.phaseOne}%` : "—"} />
+        <StatChip label="Phase 2" value={challenge.phaseTwo ? `${challenge.phaseTwo}%` : "—"} />
+        <StatChip label="Daily DD" value={`${challenge.dailyDrawdown}%`} />
+        <StatChip label="Max DD" value={`${challenge.maxDrawdown}%`} />
+        <StatChip label="Split" value={`${challenge.profitSplit}%`} />
+        <StatChip label="Min days" value={challenge.minDays ? `${challenge.minDays}` : "—"} />
       </div>
-      <section className="mt-8"><h2 className="mb-4 text-xl font-semibold">Rules and policies</h2><div className="grid gap-3 md:grid-cols-2">{rules.map(([title, text]) => <Card key={title} className="border-border/60 bg-card/60"><CardContent className="p-5"><h3 className="mb-2 font-medium">{title}</h3><p className="text-sm leading-6 text-muted-foreground">{text}</p></CardContent></Card>)}</div></section>
-      <section className="mt-8"><h2 className="mb-4 text-xl font-semibold">Frequently asked questions</h2><div className="space-y-3">{faqs.map(([question, answer]) => <details key={question} className="group rounded-xl border border-border/60 bg-card/60 p-4"><summary className="flex cursor-pointer list-none items-center justify-between font-medium">{question}<ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" /></summary><p className="mt-3 text-sm leading-6 text-muted-foreground">{answer}</p></details>)}</div></section>
+      <section className="space-y-2">
+        {rules.map(([title, text]) => (
+          <details key={title} className="group rounded-xl border border-border/60 bg-card/60 px-4 py-3">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium">{title}<ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" /></summary>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
+          </details>
+        ))}
+      </section>
+      <p className="mt-6 text-xs text-muted-foreground">All values are illustrative examples — confirm real terms with the provider before any purchase.</p>
     </div>
   );
 }
@@ -133,64 +126,47 @@ function ChallengeDetails({ challenge, onBack }: { challenge: Challenge; onBack:
 export default function PropFirmPage({ params }: { params?: { challengeId?: string } }) {
   const { user } = useAuth();
   const [, navigate] = useLocation();
-  const [tab, setTab] = useState<"marketplace" | "accounts" | "admin">("marketplace");
+  const [tab, setTab] = useState<"marketplace" | "accounts">("marketplace");
   const [size, setSize] = useState("all");
   const [type, setType] = useState("all");
-  const [maxPrice, setMaxPrice] = useState("");
-  const [minSplit, setMinSplit] = useState("all");
   const challenge = SAMPLE_CHALLENGES.find((item) => item.id === params?.challengeId);
   const visibleChallenges = useMemo(() => SAMPLE_CHALLENGES.filter((item) =>
     (size === "all" || item.size === Number(size)) &&
-    (type === "all" || item.type === type) &&
-    (!maxPrice || item.price <= Number(maxPrice)) &&
-    (minSplit === "all" || item.profitSplit >= Number(minSplit)),
-  ), [size, type, maxPrice, minSplit]);
+    (type === "all" || item.type === type),
+  ), [size, type]);
 
   if (params?.challengeId) {
     return challenge ? <ChallengeDetails challenge={challenge} onBack={() => navigate("/prop-firm")} /> : <div className="mx-auto max-w-4xl p-8"><p>Example challenge not found.</p><Button variant="ghost" onClick={() => navigate("/prop-firm")}>Back to Prop Firm</Button></div>;
   }
 
   const tabs = [
-    { id: "marketplace" as const, label: "Challenge marketplace" },
+    { id: "marketplace" as const, label: "Challenges" },
     { id: "accounts" as const, label: "My challenges" },
-    { id: "admin" as const, label: "Admin" },
   ];
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
-          <div><p className="mb-2 flex items-center gap-2 text-sm font-medium text-primary"><BarChart3 className="h-4 w-4" />PROP TRADING</p><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Prop Firm Hub</h1><p className="mt-2 text-muted-foreground">Explore challenge formats and keep your funded-trading journey organized.</p></div>
-          <Link href="/" className="inline-flex items-center gap-2 rounded-lg border border-border/60 px-4 py-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Trading journal</Link>
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div><p className="mb-1 flex items-center gap-2 text-xs font-semibold tracking-wider text-primary"><BarChart3 className="h-4 w-4" />PROP TRADING</p><h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Prop Firm Hub</h1><p className="mt-1 text-sm text-muted-foreground">Pick a challenge format and start your funded journey.</p></div>
+          <Link href="/" className="inline-flex items-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Journal</Link>
         </div>
-        <DemoNotice />
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard icon={BarChart3} label="Sample challenges" value="18" note="Illustrative listings only" />
-          <StatCard icon={Wallet} label="Example account sizes" value="6" note="$5K to $200K" />
-          <StatCard icon={Target} label="Challenge formats" value="3" note="1-step, 2-step, instant" />
-          <StatCard icon={CircleDollarSign} label="Example starting price" value="$29.50" note="Not an offer or live price" />
-        </div>
-        <div className="mb-6 flex flex-wrap gap-2 border-b border-border/60 pb-3" role="tablist" aria-label="Prop Firm sections">
-          {tabs.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)} className={`rounded-lg px-4 py-2 text-sm transition-colors ${tab === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}>{item.label}</button>)}
+        <DemoLine />
+
+        <div className="mb-5 flex items-center gap-2" role="tablist" aria-label="Prop Firm sections">
+          {tabs.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)} className={`rounded-full px-4 py-1.5 text-sm transition-colors ${tab === item.id ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}>{item.label}</button>)}
         </div>
 
         {tab === "marketplace" && <>
-          <div className="mb-5 grid gap-3 rounded-xl border border-border/60 bg-card/50 p-4 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs text-muted-foreground">Account size<select value={size} onChange={(event) => setSize(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-border/60 bg-background/60 px-3 text-sm text-foreground"><option value="all">All sizes</option>{ACCOUNT_SIZES.map((item) => <option key={item} value={item}>{money(item)}</option>)}</select></label>
-            <label className="text-xs text-muted-foreground">Challenge type<select value={type} onChange={(event) => setType(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-border/60 bg-background/60 px-3 text-sm text-foreground"><option value="all">All types</option>{TYPES.map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label className="text-xs text-muted-foreground">Maximum example price<Input type="number" min="0" placeholder="Any price" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} className="mt-2 border-border/60 bg-background/60" /></label>
-            <label className="text-xs text-muted-foreground">Minimum example profit split<select value={minSplit} onChange={(event) => setMinSplit(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-border/60 bg-background/60 px-3 text-sm text-foreground"><option value="all">Any split</option><option value="80">80%+</option><option value="90">90%+</option></select></label>
+          <div className="mb-4 flex flex-wrap items-end gap-2 rounded-xl border border-border/60 bg-card/50 p-3">
+            <label className="min-w-36 flex-1 text-[11px] text-muted-foreground">Account size<select value={size} onChange={(event) => setSize(event.target.value)} className="mt-1 h-9 w-full rounded-lg border border-border/60 bg-background/60 px-2.5 text-sm text-foreground"><option value="all">All</option>{ACCOUNT_SIZES.map((item) => <option key={item} value={item}>{money(item)}</option>)}</select></label>
+            <label className="min-w-36 flex-1 text-[11px] text-muted-foreground">Type<select value={type} onChange={(event) => setType(event.target.value)} className="mt-1 h-9 w-full rounded-lg border border-border/60 bg-background/60 px-2.5 text-sm text-foreground"><option value="all">All</option>{TYPES.map((item) => <option key={item}>{item}</option>)}</select></label>
           </div>
-          <p className="mb-4 text-sm text-muted-foreground">Showing {visibleChallenges.length} illustrative examples</p>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visibleChallenges.map((item) => <ChallengeCard key={item.id} challenge={item} onDetails={() => navigate(`/prop-firm/${item.id}`)} />)}</div>
-          {visibleChallenges.length === 0 && <div className="rounded-xl border border-border/60 p-10 text-center text-muted-foreground">No sample challenges match these filters.</div>}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{visibleChallenges.map((item) => <ChallengeCard key={item.id} challenge={item} onDetails={() => navigate(`/prop-firm/${item.id}`)} />)}</div>
+          {visibleChallenges.length === 0 && <div className="rounded-xl border border-border/60 p-8 text-center text-sm text-muted-foreground">No challenges match these filters.</div>}
         </>}
 
-        {tab === "accounts" && <Card className="border-border/60 bg-card/50"><CardContent className="mx-auto max-w-xl p-8 text-center sm:p-12"><Wallet className="mx-auto mb-4 h-10 w-10 text-primary" /><h2 className="text-xl font-semibold">No purchased challenges</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{user ? "Your account has no verified Prop Firm purchases. This section will only show challenges after a real payment is verified securely." : "Sign in to see challenges connected to your account."}</p><p className="mt-4 inline-flex items-center gap-2 text-xs text-amber-300"><LockKeyhole className="h-4 w-4" />No demo purchases or payment confirmations are created.</p><Button className="mt-6 bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => setTab("marketplace")}>Browse examples</Button></CardContent></Card>}
-
-        {tab === "admin" && <Card className="border-border/60 bg-card/50"><CardContent className="mx-auto max-w-xl p-8 text-center sm:p-12"><Shield className="mx-auto mb-4 h-10 w-10 text-primary" /><h2 className="text-xl font-semibold">Admin controls are not configured</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">No admin identity or secure server-side admin authorization is configured in this project. For your security, this page does not allow changes to firms, prices, orders, or payouts.</p><p className="mt-4 text-xs text-muted-foreground">A button or hidden client-side page is not sufficient protection. Admin actions need verified server-side authorization.</p></CardContent></Card>}
-
-        <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/60 pt-5 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Periods are examples, not provider terms</span><span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" />Payment integration is not active</span><span className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5" />Existing journal and account stay separate</span></div>
+        {tab === "accounts" && <Card className="border-border/60 bg-card/50"><CardContent className="mx-auto max-w-md p-8 text-center sm:p-10"><Wallet className="mx-auto mb-3 h-9 w-9 text-primary" /><h2 className="text-lg font-semibold">No purchased challenges</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{user ? "Your purchased challenges will appear here after a verified payment." : "Sign in to see challenges connected to your account."}</p><Button className="mt-5 bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => setTab("marketplace")}>Browse challenges</Button></CardContent></Card>}
       </div>
     </main>
   );

@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
 import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, CalendarDays, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, Package, Wallet, ShieldCheck, Award, User as UserIcon } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, Package, Wallet, ShieldCheck, Award, User as UserIcon } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePremiumStatus } from "@/hooks/use-premium";
@@ -29,7 +29,7 @@ export function Navbar() {
     { href: "/inventory", label: t("inventory"), icon: Package },
     { href: "/market", label: t("market"), icon: Store },
     { href: "/wallet", label: t("wallet"), icon: Wallet },
-    { href: "/news", label: t("macroPulse"), icon: CalendarDays },
+    { href: "/news", label: t("news"), icon: Newspaper },
   ];
 
   return (
