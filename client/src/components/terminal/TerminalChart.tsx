@@ -16,11 +16,13 @@ import {
   type IChartApi, type ISeriesApi, type UTCTimestamp, type MouseEventParams,
 } from "lightweight-charts";
 import { getInstrument, toHeikinAshi, toRenko, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
-import { loadFeed, subscribeFeed, type FeedStatus } from "@/lib/terminal/data-feeds";
+import { loadFeed, subscribeFeed, loadBarsCached, type FeedStatus } from "@/lib/terminal/data-feeds";
 import { getIndicator, INDICATORS, type Line, type NamedLine } from "@/lib/terminal/indicators";
 import { DrawingEngine, type Drawing, type DrawingTool, type DrawingPoint } from "@/lib/terminal/drawings";
 import { drawingsBus } from "@/lib/terminal/drawings-bus";
 import { crosshairBus } from "@/lib/terminal/crosshair-bus";
+import { ChartOverlay, DEFAULT_OVERLAY, type OverlayConfig } from "@/lib/terminal/chart-overlay";
+import { anchoredVwap } from "@/lib/terminal/volume-analysis";
 import { Loader2, RefreshCw, WifiOff } from "lucide-react";
 
 export interface ActiveIndicator { id: string; params: Record<string, number>; color?: string; }
@@ -63,6 +65,18 @@ interface Props {
   onRequestFullscreen?: () => void;
   height?: number;
   compact?: boolean;
+  /** Bar-replay mode: display only the first `visibleBars` bars of history */
+  replay?: { active: boolean; visibleBars: number } | null;
+  /** fired with the current last visible bar during replay */
+  onReplayBar?: (bar: Bar) => void;
+  /** session boxes + prev day/week levels + volume profile overlay */
+  overlayCfg?: OverlayConfig | null;
+  /** anchored VWAP drawn from this bar time (null = off) */
+  anchoredVwapTime?: number | null;
+  /** normalized %-change comparison overlay of another instrument */
+  compareSymbol?: string | null;
+  /** set/clear the anchored VWAP anchor (right-click menu → Volume panel) */
+  onAnchorVwap?: (time: number | null) => void;
 }
 
 interface OverlayGroup { series: ISeriesApi<"Line">[]; named: NamedLine[]; }
@@ -74,6 +88,7 @@ export function TerminalChart({
   symbol, timeframe, chartType, indicators, showVolume, colors,
   drawings, onDrawingsChange, activeTool, onStatus, onLastBar,
   onToggleVolume, onRequestFullscreen, height, compact,
+  replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -92,6 +107,16 @@ export function TerminalChart({
   const lastEmittedRef = useRef<string>("[]");
   const chartIdRef = useRef<string>(`chart-${++CHART_SEQ}`);
   const lastFullRenderRef = useRef(0);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<ChartOverlay | null>(null);
+  const avwapRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const compareRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const replayRef = useRef<{ active: boolean; visibleBars: number } | null>(null);
+  const overlayCfgRef = useRef<OverlayConfig | null>(overlayCfg ?? null);
+  overlayCfgRef.current = overlayCfg ?? null;
+  const onReplayBarRef = useRef(onReplayBar);
+  onReplayBarRef.current = onReplayBar;
+  const [dataVersion, setDataVersion] = useState(0);
 
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("connecting");
   const [feedMsg, setFeedMsg] = useState<string | undefined>();
@@ -210,8 +235,18 @@ export function TerminalChart({
       else if (cmd === "style") e.setStyle(arg ?? {});
     });
 
-    // keep drawing overlay in sync with visible range changes
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => engineRef.current?.redraw());
+    // analysis overlay renderer (session boxes / prev levels / volume profile)
+    if (overlayCanvasRef.current) {
+      const ov = new ChartOverlay(overlayCanvasRef.current, () => chartRef.current, () => seriesRef.current, () => barsRef.current, () => displayBars());
+      ov.cfg = overlayCfgRef.current ?? DEFAULT_OVERLAY;
+      overlayRef.current = ov;
+    }
+
+    // keep drawing overlay + analysis overlay in sync with visible range changes
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      engineRef.current?.redraw();
+      overlayRef.current?.render();
+    });
 
     return () => {
       unsubCross();
@@ -220,9 +255,13 @@ export function TerminalChart({
       unsubRef.current = null;
       engineRef.current?.destroy();
       engineRef.current = null;
+      overlayRef.current?.destroy();
+      overlayRef.current = null;
       paneChartsRef.current.forEach((p) => { try { p.chart.remove(); } catch { /* already gone */ } });
       paneChartsRef.current = [];
       overlayGroupsRef.current = [];
+      avwapRef.current = null;
+      compareRef.current = null;
       volSeriesRef.current = null;
       seriesRef.current = null;
       chart.remove();
@@ -281,7 +320,14 @@ export function TerminalChart({
         setLoading(false);
         renderData();
         chartRef.current?.timeScale().scrollToRealTime();
-        startLive();
+        setDataVersion((v) => v + 1);
+        if (replayRef.current?.active) {
+          const bars = displayBars();
+          const lastBar = bars[bars.length - 1];
+          if (lastBar) onReplayBarRef.current?.(lastBar);
+        } else {
+          startLive();
+        }
       } catch (e: any) {
         if (cancelled) return;
         barsRef.current = [];
@@ -313,7 +359,9 @@ export function TerminalChart({
   // ---- series build / live update ------------------------------------------------
 
   function displayBars(): Bar[] {
-    const bars = barsRef.current;
+    const full = barsRef.current;
+    // replay mode hides everything after the replay cursor
+    const bars = replayRef.current?.active ? full.slice(0, Math.max(1, replayRef.current.visibleBars)) : full;
     if (chartType === "heikin") return toHeikinAshi(bars);
     if (chartType === "renko") return toRenko(bars);
     return bars;
@@ -562,6 +610,72 @@ export function TerminalChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneDefs]);
 
+  // ---- replay / overlay / anchored VWAP / comparison ------------------------------
+
+  // replay cursor moved or toggled → re-render sliced data
+  useEffect(() => {
+    replayRef.current = replay ?? null;
+    if (!chartRef.current) return;
+    renderData();
+    if (replay?.active) {
+      const bars = displayBars();
+      const lastBar = bars[bars.length - 1];
+      if (lastBar) onReplayBarRef.current?.(lastBar);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replay?.active, replay?.visibleBars]);
+
+  // analysis overlay config
+  useEffect(() => {
+    if (!overlayRef.current) return;
+    overlayRef.current.cfg = overlayCfg ?? DEFAULT_OVERLAY;
+    overlayRef.current.render();
+  }, [overlayCfg, dataVersion]);
+
+  // anchored VWAP (amber line from the anchor bar)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    try { if (avwapRef.current) chart.removeSeries(avwapRef.current); } catch { /* gone */ }
+    avwapRef.current = null;
+    if (anchoredVwapTime == null) return;
+    const line = anchoredVwap(barsRef.current, anchoredVwapTime);
+    if (!line.length) return;
+    const s = chart.addLineSeries({
+      color: "#fbbf24", lineWidth: 2, priceLineVisible: false,
+      lastValueVisible: true, title: "AVWAP", crosshairMarkerVisible: false,
+    });
+    s.setData(line.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
+    avwapRef.current = s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchoredVwapTime, dataVersion]);
+
+  // normalized % comparison overlay of another instrument
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      try { if (compareRef.current) chart.removeSeries(compareRef.current); } catch { /* gone */ }
+      compareRef.current = null;
+      if (!compareSymbol) { overlayRef.current?.render(); return; }
+      try {
+        const bars = await loadBarsCached(compareSymbol, timeframe, 1000);
+        if (cancelled || !chartRef.current || !bars.length || !barsRef.current.length) return;
+        const base = bars[0].close;
+        const s = chartRef.current.addLineSeries({
+          color: "#38bdf8", lineWidth: 1, priceScaleId: "compare",
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: compareSymbol,
+        });
+        s.setData(bars.map((b) => ({ time: b.time as UTCTimestamp, value: ((b.close / base) - 1) * 100 })));
+        chartRef.current.priceScale("compare").applyOptions({ visible: false, scaleMargins: { top: 0.1, bottom: 0.1 } });
+        compareRef.current = s;
+      } catch { /* comparison data unavailable — main chart unaffected */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareSymbol, timeframe, dataVersion]);
+
   // ---- interactions: dblclick reset, context menu ---------------------------------
 
   const resetView = () => {
@@ -601,6 +715,8 @@ export function TerminalChart({
     feedStatus === "polling" ? "text-amber-400" :
     feedStatus === "error" ? "text-red-400" : "text-muted-foreground";
 
+  const replaying = !!replay?.active;
+
   const last = barsRef.current[barsRef.current.length - 1];
   const prev = barsRef.current[barsRef.current.length - 2] ?? last;
   const dayChange = last && prev ? ((last.close - prev.close) / prev.close) * 100 : 0;
@@ -621,6 +737,8 @@ export function TerminalChart({
         <span className="font-bold text-foreground">{symbol}</span>
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold">{timeframe}</span>
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${feedColor}`} title={feedMsg}>{feedLabel}</span>
+        {replaying && <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">REPLAY {replay!.visibleBars}/{barsRef.current.length}</span>}
+        {compareSymbol && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">vs {compareSymbol}</span>}
         {shown && feedStatus !== "error" && (
           <span className="font-number hidden items-center gap-1.5 sm:flex">
             <span>O <b className="text-foreground">{shown.o?.toFixed(d)}</b></span>
@@ -638,6 +756,7 @@ export function TerminalChart({
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="relative min-h-0 flex-1">
           <div ref={mainRef} className="absolute inset-0" />
+          <canvas ref={overlayCanvasRef} className="pointer-events-none absolute inset-0 z-[9]" />
           <canvas ref={drawCanvasRef} className="absolute inset-0 z-10" style={{ touchAction: "none" }} />
 
           {/* loading state */}
@@ -686,6 +805,7 @@ export function TerminalChart({
           <div className="my-1 h-px bg-border/50" />
           <MenuItem onClick={() => addLineAt("hline", menu.price, menu.time)}>Horizontal line @ {menu.price.toFixed(d)}</MenuItem>
           <MenuItem onClick={() => addLineAt("vline", menu.price, menu.time)}>Vertical line here</MenuItem>
+          {onAnchorVwap && <MenuItem onClick={() => { onAnchorVwap(Number.isFinite(menu.time) ? menu.time : null); setMenu(null); }}>{anchoredVwapTime != null ? "Clear anchored VWAP" : "Anchor VWAP here"}</MenuItem>}
           <div className="my-1 h-px bg-border/50" />
           <MenuItem onClick={() => { engineRef.current?.clearAll(); setMenu(null); }}>Clear drawings</MenuItem>
           <MenuItem onClick={() => { setGridOn((v) => !v); setMenu(null); }}>{gridOn ? "Hide" : "Show"} grid</MenuItem>

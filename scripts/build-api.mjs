@@ -20,7 +20,8 @@ import { dirname } from "path";
 // market (list|buy|cancel), admin (gift|withdrawals|chat-delete),
 // wallet (withdraw), whop (plans|checkout|verify),
 // referral (info|apply). news is a public read-only feed aggregator.
-// Current count: 10/12 (health.ts + the 9 entries below).
+// alerts-cron is the server-side alert evaluator (Vercel Cron, no user auth).
+// Current count: 11/12 (health.ts + the 10 entries below).
 const entries = [
   ["api/_src/rewards/claim.ts", "api/rewards/claim.js"],
   ["api/_src/cases/open.ts", "api/cases/open.js"],
@@ -32,6 +33,7 @@ const entries = [
   ["api/_src/referral/index.ts", "api/referral.js"],
   ["api/_src/news/index.ts", "api/news.js"],
   ["api/_src/quotes.ts", "api/quotes.js"],
+  ["api/_src/alerts-cron.ts", "api/alerts-cron.js"],
 ];
 
 for (const [inPath, outPath] of entries) {

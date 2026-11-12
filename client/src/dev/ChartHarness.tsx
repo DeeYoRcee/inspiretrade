@@ -14,10 +14,14 @@ function Harness() {
   const drawings: Drawing[] = [];
   // ?tool=trendline|fib|fibext|channel|rect|measure… — activate a drawing tool
   const tool = (new URLSearchParams(location.search).get("tool") ?? "cursor") as any;
+  // ?replay=200 — bar replay mode showing the first 200 real bars
+  const replayN = Number(new URLSearchParams(location.search).get("replay") ?? 0) || null;
+  // ?overlay=1 — session boxes + prev day/week levels + volume profile
+  const overlay = new URLSearchParams(location.search).has("overlay");
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 12, boxSizing: "border-box", gap: 10 }}>
       <div style={{ color: "#9aa4b2", fontSize: 12 }}>
-        Chart harness — BTCUSD (live Binance) · 15m · EMA overlay + RSI pane + volume · tool={tool}
+        Chart harness — BTCUSD (live Binance) · 15m · EMA overlay + RSI pane + volume · tool={tool}{replayN ? ` · replay=${replayN}` : ""}{overlay ? " · overlay=on" : ""}
       </div>
       {/* definite height container mirrors the fixed terminal layout chain */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -35,6 +39,8 @@ function Harness() {
           onDrawingsChange={() => {}}
           activeTool={tool}
           height={600}
+          replay={replayN ? { active: true, visibleBars: replayN } : null}
+          overlayCfg={overlay ? { sessions: ["london", "newyork"], prevLevels: { day: true, week: true }, volumeProfile: { mode: "visible", sessionId: "london", bins: 24, levels: true } } : null}
         />
       </div>
     </div>

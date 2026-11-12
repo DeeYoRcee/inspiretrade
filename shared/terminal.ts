@@ -166,6 +166,9 @@ export interface Bar {
   low: number;
   close: number;
   volume?: number;
+  /** REAL taker-buy base volume (Binance kline field 9). Enables true
+   *  volume delta for crypto; absent for forex/indices feeds. */
+  takerBuy?: number;
 }
 
 /** Aggregate 1m bars into N-minute bars (for 3m / 2h / 4h from proxy data). */

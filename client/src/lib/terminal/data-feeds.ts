@@ -75,6 +75,7 @@ class BinanceProvider {
     const raw: any[] = await (await fetch(url)).json();
     const bars: Bar[] = raw.map((k) => ({
       time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
+      takerBuy: k[9] != null ? +k[9] : undefined,
     }));
     this.history.set(key, bars);
     return bars;
@@ -110,7 +111,7 @@ class BinanceProvider {
       try {
         const k = JSON.parse(ev.data)?.k;
         if (!k) return;
-        const bar: Bar = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v };
+        const bar: Bar = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v, takerBuy: k.V != null ? +k.V : undefined };
         const bars = upsert(this.history.get(key) || [], bar);
         this.history.set(key, bars);
         this.listeners.get(key)?.forEach((cb) => cb({ bars, lastBar: bar, isRealtime: true }));
@@ -246,4 +247,49 @@ const INSTRUMENT_BY_YAHOO = new Map<string, InstrumentSpec>();
 for (const inst of INSTRUMENTS) {
   if (inst.binance) INSTRUMENT_BY_BINANCE.set(inst.binance, inst);
   if (inst.yahoo) INSTRUMENT_BY_YAHOO.set(inst.yahoo, inst);
+}
+
+// ---------------------------------------------------------------------------
+// TTL-cached multi-instrument loader (screener / MTF / heatmap / backtester).
+// sessionStorage keeps one browser session inside provider rate limits.
+// ---------------------------------------------------------------------------
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const memCache = new Map<string, { at: number; bars: Bar[] }>();
+
+export async function loadBarsCached(symbol: string, tf: Timeframe, maxBars = 500): Promise<Bar[]> {
+  const key = `bars:${symbol}:${tf}`;
+  const mem = memCache.get(key);
+  if (mem && Date.now() - mem.at < CACHE_TTL_MS) return mem.bars;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (raw) {
+      const p = JSON.parse(raw) as { at: number; bars: Bar[] };
+      if (Date.now() - p.at < CACHE_TTL_MS) { memCache.set(key, p); return p.bars; }
+    }
+  } catch { /* storage unavailable */ }
+  const res = await loadFeed(symbol, tf);
+  const bars = res.bars.slice(-maxBars);
+  const entry = { at: Date.now(), bars };
+  memCache.set(key, entry);
+  try { sessionStorage.setItem(key, JSON.stringify(entry)); } catch { /* quota */ }
+  return bars;
+}
+
+export function clearBarsCache() {
+  memCache.clear();
+  try {
+    Object.keys(sessionStorage).filter((k) => k.startsWith("bars:")).forEach((k) => sessionStorage.removeItem(k));
+  } catch { /* storage unavailable */ }
+}
+
+/** Load bars for many symbols with limited concurrency (staggered batches). */
+export async function loadBarsMany(symbols: string[], tf: Timeframe, maxBars = 500, batchSize = 3): Promise<Record<string, Bar[]>> {
+  const out: Record<string, Bar[]> = {};
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    const batch = symbols.slice(i, i + batchSize);
+    const results = await Promise.allSettled(batch.map((s) => loadBarsCached(s, tf, maxBars)));
+    results.forEach((r, j) => { if (r.status === "fulfilled") out[batch[j]] = r.value; });
+  }
+  return out;
 }
