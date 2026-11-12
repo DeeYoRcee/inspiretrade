@@ -199,7 +199,7 @@ export function AlertsPanel({ prices, drawings, className }: {
       </div>
       {!user && <p className="text-[9px] text-amber-400">Sign in to persist alerts.</p>}
       <p className="text-[9px] leading-relaxed text-muted-foreground">
-        Evaluated in-app every 30s; price &amp; prev-day levels also hourly on the server (cron). Repeat notifications respect the cooldown. Signals are informational — not trading advice.
+        Evaluated in-app every 30s; price &amp; prev-day levels are additionally evaluated server-side on a scheduled cron (external schedulers can call /api/alerts-cron more often). Repeat notifications respect the cooldown. Signals are informational — not trading advice.
       </p>
     </div>
   );
