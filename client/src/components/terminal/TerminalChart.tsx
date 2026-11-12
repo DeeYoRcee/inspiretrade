@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart, ColorType, CrosshairMode, LineStyle,
-  type IChartApi, type ISeriesApi, type UTCTimestamp, type MouseEventParams,
+  type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type MouseEventParams,
 } from "lightweight-charts";
 import { getInstrument, toHeikinAshi, toRenko, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { loadFeed, subscribeFeed, loadBarsCached, type FeedStatus } from "@/lib/terminal/data-feeds";
@@ -65,8 +65,12 @@ interface Props {
   onRequestFullscreen?: () => void;
   height?: number;
   compact?: boolean;
-  /** Bar-replay mode: display only the first `visibleBars` bars of history */
-  replay?: { active: boolean; visibleBars: number } | null;
+  /**
+   * Bar-replay mode: display only bars with time ≤ `upToTime` (UTC sec).
+   * The cursor time is the single source of truth — every chart (any
+   * timeframe) stays synchronized to the same historical instant.
+   */
+  replay?: { active: boolean; upToTime: number } | null;
   /** fired with the current last visible bar during replay */
   onReplayBar?: (bar: Bar) => void;
   /** session boxes + prev day/week levels + volume profile overlay */
@@ -77,6 +81,20 @@ interface Props {
   compareSymbol?: string | null;
   /** set/clear the anchored VWAP anchor (right-click menu → Volume panel) */
   onAnchorVwap?: (time: number | null) => void;
+  /** simulated-trade markers (entry/exit arrows) on the price series */
+  tradeMarkers?: ReplayTradeMarker[];
+  /** horizontal level lines for open positions / SL / TP / pending orders */
+  priceLines?: ReplayPriceLine[];
+  /** extra right-click menu items for replay trading (price/time context) */
+  onReplayMenu?: (price: number, time: number) => { label: string; onClick: () => void }[];
+}
+
+export interface ReplayTradeMarker {
+  time: number; side: "buy" | "sell"; kind: "entry" | "exit"; profit?: number; reason?: string;
+}
+
+export interface ReplayPriceLine {
+  id: string; price: number; color: string; title: string; dashed?: boolean; width?: 1 | 2;
 }
 
 interface OverlayGroup { series: ISeriesApi<"Line">[]; named: NamedLine[]; }
@@ -89,6 +107,7 @@ export function TerminalChart({
   drawings, onDrawingsChange, activeTool, onStatus, onLastBar,
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
+  tradeMarkers, priceLines, onReplayMenu,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -111,7 +130,8 @@ export function TerminalChart({
   const overlayRef = useRef<ChartOverlay | null>(null);
   const avwapRef = useRef<ISeriesApi<"Line"> | null>(null);
   const compareRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const replayRef = useRef<{ active: boolean; visibleBars: number } | null>(null);
+  const replayRef = useRef<{ active: boolean; upToTime: number } | null>(null);
+  const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
   const overlayCfgRef = useRef<OverlayConfig | null>(overlayCfg ?? null);
   overlayCfgRef.current = overlayCfg ?? null;
   const onReplayBarRef = useRef(onReplayBar);
@@ -360,8 +380,15 @@ export function TerminalChart({
 
   function displayBars(): Bar[] {
     const full = barsRef.current;
-    // replay mode hides everything after the replay cursor
-    const bars = replayRef.current?.active ? full.slice(0, Math.max(1, replayRef.current.visibleBars)) : full;
+    // replay mode hides everything after the cursor time (binary scan from end)
+    const rp = replayRef.current;
+    let bars = full;
+    if (rp?.active) {
+      let hi = full.length; // first index with time > upToTime
+      let lo = 0;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (full[mid].time <= rp.upToTime) lo = mid + 1; else hi = mid; }
+      bars = full.slice(0, Math.max(1, lo));
+    }
     if (chartType === "heikin") return toHeikinAshi(bars);
     if (chartType === "renko") return toRenko(bars);
     return bars;
@@ -381,6 +408,9 @@ export function TerminalChart({
     // remove old series
     try { if (seriesRef.current) chart.removeSeries(seriesRef.current); } catch { /* not yet created */ }
     seriesRef.current = null;
+    // price lines died with the old series — drop the stale references so the
+    // priceLines effect re-creates them on the fresh series
+    priceLineRefs.current = new Map();
     if (volSeriesRef.current) { try { chart.removeSeries(volSeriesRef.current); } catch { /* gone */ } volSeriesRef.current = null; }
     for (const g of overlayGroupsRef.current) for (const s of g.series) { try { chart.removeSeries(s); } catch { /* gone */ } }
     overlayGroupsRef.current = [];
@@ -623,7 +653,58 @@ export function TerminalChart({
       if (lastBar) onReplayBarRef.current?.(lastBar);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [replay?.active, replay?.visibleBars]);
+  }, [replay?.active, replay?.upToTime]);
+
+  // simulated-trade markers on the price series
+  useEffect(() => {
+    const s = seriesRef.current as unknown as { setMarkers?: (m: unknown[]) => void } | null;
+    if (!s?.setMarkers) return;
+    if (!tradeMarkers?.length) { s.setMarkers([]); return; }
+    s.setMarkers(tradeMarkers.map((m) => ({
+      time: m.time as UTCTimestamp,
+      position: m.kind === "entry"
+        ? (m.side === "buy" ? "belowBar" : "aboveBar")
+        : (m.side === "buy" ? "aboveBar" : "belowBar"),
+      color: m.kind === "entry" ? (m.side === "buy" ? "#22c55e" : "#ef4444") : "#e2e8f0",
+      shape: m.kind === "entry" ? (m.side === "buy" ? "arrowUp" : "arrowDown") : "circle",
+      text: m.kind === "entry" ? (m.side === "buy" ? "B" : "S") : (m.profit != null ? `${m.profit >= 0 ? "+" : ""}${m.profit.toFixed(0)}` : "×"),
+    })) as any);
+  }, [tradeMarkers, dataVersion]);
+
+  // position / SL / TP / pending level lines (diffed — cheap on every change)
+  useEffect(() => {
+    const s = seriesRef.current;
+    if (!s) return;
+    const next = new Map((priceLines ?? []).map((l) => [l.id, l]));
+    for (const [id, line] of priceLineRefs.current) {
+      if (!next.has(id)) {
+        try { s.removePriceLine(line); } catch { /* gone */ }
+        priceLineRefs.current.delete(id);
+      }
+    }
+    for (const [id, l] of next) {
+      const existing = priceLineRefs.current.get(id);
+      if (existing) {
+        existing.applyOptions({ price: l.price, color: l.color, title: l.title, lineStyle: l.dashed ? LineStyle.Dashed : LineStyle.Solid, lineWidth: l.width ?? 1 });
+      } else {
+        try {
+          const created = s.createPriceLine({
+            price: l.price, color: l.color, lineWidth: l.width ?? 1,
+            lineStyle: l.dashed ? LineStyle.Dashed : LineStyle.Solid,
+            axisLabelVisible: true, title: l.title,
+          });
+          priceLineRefs.current.set(id, created);
+        } catch { /* series replaced mid-flight — next cycle fixes */ }
+      }
+    }
+  }, [priceLines, dataVersion]);
+
+  // clear level lines when the chart unmounts
+  useEffect(() => () => {
+    const s = seriesRef.current;
+    for (const [, line] of priceLineRefs.current) { if (s) try { s.removePriceLine(line); } catch { /* gone */ } }
+    priceLineRefs.current = new Map();
+  }, []);
 
   // analysis overlay config
   useEffect(() => {
@@ -737,7 +818,7 @@ export function TerminalChart({
         <span className="font-bold text-foreground">{symbol}</span>
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold">{timeframe}</span>
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${feedColor}`} title={feedMsg}>{feedLabel}</span>
-        {replaying && <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">REPLAY {replay!.visibleBars}/{barsRef.current.length}</span>}
+        {replaying && <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">REPLAY {new Date(replay!.upToTime * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
         {compareSymbol && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">vs {compareSymbol}</span>}
         {shown && feedStatus !== "error" && (
           <span className="font-number hidden items-center gap-1.5 sm:flex">
@@ -805,6 +886,9 @@ export function TerminalChart({
           <div className="my-1 h-px bg-border/50" />
           <MenuItem onClick={() => addLineAt("hline", menu.price, menu.time)}>Horizontal line @ {menu.price.toFixed(d)}</MenuItem>
           <MenuItem onClick={() => addLineAt("vline", menu.price, menu.time)}>Vertical line here</MenuItem>
+          {(onReplayMenu ? onReplayMenu(menu.price, menu.time) : []).map((item) => (
+            <MenuItem key={item.label} onClick={() => { item.onClick(); setMenu(null); }}>{item.label}</MenuItem>
+          ))}
           {onAnchorVwap && <MenuItem onClick={() => { onAnchorVwap(Number.isFinite(menu.time) ? menu.time : null); setMenu(null); }}>{anchoredVwapTime != null ? "Clear anchored VWAP" : "Anchor VWAP here"}</MenuItem>}
           <div className="my-1 h-px bg-border/50" />
           <MenuItem onClick={() => { engineRef.current?.clearAll(); setMenu(null); }}>Clear drawings</MenuItem>

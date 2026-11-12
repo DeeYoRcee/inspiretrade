@@ -20,6 +20,20 @@ export const tradeSchema = z.object({
   imageBase64: z.string().optional(),
   instrumentSymbol: z.string().optional(),
   instrumentName: z.string().optional(),
+  // ---- Replay 2.0 journal integration (§8) — all optional, backward-compatible
+  replay: z.boolean().optional(),
+  replaySessionId: z.string().optional(),
+  exitTime: z.number().optional(),
+  slPrice: z.number().nullable().optional(),
+  tpPrice: z.number().nullable().optional(),
+  riskReward: z.number().nullable().optional(),
+  tradingStrategy: z.string().optional(),
+  entryReason: z.string().optional(),
+  exitReason: z.string().optional(),
+  marketStructure: z.string().optional(),
+  psychology: z.string().optional(),
+  mistakes: z.string().optional(),
+  lessons: z.string().optional(),
 });
 
 export type Trade = z.infer<typeof tradeSchema>;

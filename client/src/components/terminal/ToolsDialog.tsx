@@ -10,12 +10,16 @@ import { cn } from "@/lib/utils";
 
 export type ToolId =
   | "replay" | "backtest" | "sessions" | "heatmap" | "screener" | "mtf"
-  | "volume" | "alerts" | "templates" | "analytics" | "calculators" | "compare";
+  | "volume" | "alerts" | "templates" | "analytics" | "calculators" | "compare"
+  | "replayStats" | "replayChallenge" | "replayMissions";
 
 interface ToolDef { id: ToolId; name: string; desc: string; keywords: string; icon: string }
 
 const TOOLS: ToolDef[] = [
-  { id: "replay", name: "Bar Replay", desc: "Replay historical candles step by step with simulated trades", keywords: "replay history practice simulate backtest candle", icon: "⏵" },
+  { id: "replay", name: "Trade Replay 2.0", desc: "Professional historical trading simulator — replay, trade, analyze", keywords: "replay history practice simulate trade candle train", icon: "⏵" },
+  { id: "replayStats", name: "Replay Performance", desc: "Statistics, curves, calendar and CSV of replay sessions", keywords: "replay stats performance equity drawdown csv calendar", icon: "🏅" },
+  { id: "replayChallenge", name: "Replay Challenge", desc: "Training challenge with targets and drawdown rules", keywords: "replay challenge training target drawdown random", icon: "🎯" },
+  { id: "replayMissions", name: "Replay Missions", desc: "Practice missions and achievements", keywords: "replay missions achievements practice discipline", icon: "🥇" },
   { id: "backtest", name: "Strategy Tester", desc: "Backtest entry/exit rules on real data with full statistics", keywords: "backtest strategy tester rules equity drawdown winrate", icon: "🧪" },
   { id: "sessions", name: "Session Analyzer", desc: "Sydney/Tokyo/London/NY times, ranges and chart overlays", keywords: "session london tokyo newyork sydney timezone overlay", icon: "🌍" },
   { id: "heatmap", name: "Market Heatmap", desc: "Daily performance of every instrument + currency strength", keywords: "heatmap currency strength usd eur performance", icon: "🔥" },

@@ -39,7 +39,17 @@ function Harness() {
           onDrawingsChange={() => {}}
           activeTool={tool}
           height={600}
-          replay={replayN ? { active: true, visibleBars: replayN } : null}
+          replay={replayN ? { active: true, upToTime: Math.floor(Date.now() / 1000) - replayN * 900 } : null}
+          tradeMarkers={replayN ? [
+            { time: Math.floor(Date.now() / 1000) - (replayN + 30) * 900, side: "buy", kind: "entry" },
+            { time: Math.floor(Date.now() / 1000) - (replayN + 10) * 900, side: "buy", kind: "exit", profit: 240 },
+          ] : undefined}
+          priceLines={replayN ? [
+            { id: "pos", price: 74800, color: "#22c55e", title: "LONG 0.5", width: 2 },
+            { id: "sl", price: 74200, color: "#ef4444", title: "SL", dashed: true },
+            { id: "tp", price: 75800, color: "#22c55e", title: "TP", dashed: true },
+            { id: "ord", price: 74500, color: "#f59e0b", title: "BUY LIMIT 0.2", dashed: true },
+          ] : undefined}
           overlayCfg={overlay ? { sessions: ["london", "newyork"], prevLevels: { day: true, week: true }, volumeProfile: { mode: "visible", sessionId: "london", bins: 24, levels: true } } : null}
         />
       </div>

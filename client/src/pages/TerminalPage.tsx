@@ -9,7 +9,7 @@
  * analysis, workspace templates, chart comparison, prop-firm analytics,
  * calculators — all fed by REAL data through the terminal feed layer.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   Maximize, Minimize, BarChart2, LayoutGrid, Columns2, Square,
   Undo2, Redo2, Trash2, Lock, Eye, MousePointer2, Minus, MoveUp,
@@ -33,7 +33,13 @@ import { RiskCalculator } from "@/components/terminal/RiskCalculator";
 import { IndicatorDialog } from "@/components/terminal/IndicatorDialog";
 import { ToolDrawer } from "@/components/terminal/ToolDrawer";
 import { ToolsDialog, type ToolId } from "@/components/terminal/ToolsDialog";
-import { ReplayPanel, type ReplayState } from "@/components/terminal/ReplayPanel";
+import { useReplaySession } from "@/hooks/use-replay";
+import { ReplayToolbar } from "@/components/terminal/ReplayToolbar";
+import { ReplayTradingPanel } from "@/components/terminal/ReplayTradingPanel";
+import { ReplayStatsPanel } from "@/components/terminal/ReplayStatsPanel";
+import { ReplayChallengePanel } from "@/components/terminal/ReplayChallengePanel";
+import { ReplayMissionsPanel } from "@/components/terminal/ReplayMissionsPanel";
+import { ReplayJournalDialog, type JournalDraft } from "@/components/terminal/ReplayJournalDialog";
 import { StrategyTester } from "@/components/terminal/StrategyTester";
 import { SessionsPanel } from "@/components/terminal/SessionsPanel";
 import { HeatmapPanel } from "@/components/terminal/HeatmapPanel";
@@ -70,7 +76,7 @@ const TOOLS: { id: DrawingTool; icon: any; title: string }[] = [
   { id: "measure", icon: Ruler, title: "Measure" },
 ];
 
-type SideTab = "trade" | "challenge" | "calendar" | "alerts" | "risk";
+type SideTab = "trade" | "challenge" | "calendar" | "alerts" | "risk" | "replay";
 
 const DRAWER_TITLES: Partial<Record<ToolId, { title: string; subtitle: string }>> = {
   backtest: { title: "Strategy Tester", subtitle: "Backtest rules on real historical data — no look-ahead" },
@@ -82,6 +88,9 @@ const DRAWER_TITLES: Partial<Record<ToolId, { title: string; subtitle: string }>
   templates: { title: "Workspace Templates", subtitle: "Save / restore complete chart setups" },
   analytics: { title: "Prop Firm Analytics", subtitle: "Your demo-account trade history" },
   compare: { title: "Chart Comparison", subtitle: "Normalized performance of two instruments" },
+  replayStats: { title: "Replay Performance", subtitle: "Statistics of the simulated session — CSV export" },
+  replayChallenge: { title: "Replay Challenge", subtitle: "Training mode — separate from real Prop Firm" },
+  replayMissions: { title: "Replay Missions", subtitle: "Practice goals & achievements" },
 };
 
 function playBeep() {
@@ -116,8 +125,6 @@ export default function TerminalPage() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tool, setTool] = useState<ToolId | null>(null);
   const [calcOpen, setCalcOpen] = useState(false);
-  const [replay, setReplay] = useState<ReplayState | null>(null);
-  const [replayBarOpen, setReplayBarOpen] = useState(false);
   const [overlay, setOverlay] = useState<OverlayConfig>(() => {
     try { return { ...DEFAULT_OVERLAY, ...(JSON.parse(localStorage.getItem("terminalOverlay") ?? "null") ?? {}) }; } catch { return DEFAULT_OVERLAY; }
   });
@@ -125,6 +132,23 @@ export default function TerminalPage() {
     const v = localStorage.getItem("terminalAvwap"); return v ? Number(v) : null;
   });
   const [compare, setCompare] = useState<string | null>(() => localStorage.getItem("terminalCompare") || null);
+
+  // ===== Replay 2.0 =====
+  const rs = useReplaySession(settings.symbol, settings.timeframe);
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [journalDraft, setJournalDraft] = useState<JournalDraft | null>(null);
+  const replaySymbolRef = useRef(settings.symbol);
+  useEffect(() => {
+    if (replaySymbolRef.current !== settings.symbol) {
+      replaySymbolRef.current = settings.symbol;
+      if (rs.active) { rs.stop(); toast({ title: "Replay stopped — instrument changed" }); }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.symbol]);
+  // auto-evaluate the training challenge after every trade / equity move
+  useEffect(() => { rs.evaluateChallenge(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [rs.engine.closed.length, Math.round(rs.equity)]);
+  // open the replay side tab automatically when a session starts
+  useEffect(() => { if (rs.active) setSideTab((cur) => (cur === "replay" ? cur : "replay")); }, [rs.active]);
 
   useEffect(() => { localStorage.setItem("terminalOverlay", JSON.stringify(overlay)); }, [overlay]);
   useEffect(() => { anchor == null ? localStorage.removeItem("terminalAvwap") : localStorage.setItem("terminalAvwap", String(anchor)); }, [anchor]);
@@ -212,9 +236,41 @@ export default function TerminalPage() {
   }, []);
 
   const launchTool = (id: ToolId) => {
-    if (id === "replay") { setReplayBarOpen(true); return; }
+    if (id === "replay") { setReplayOpen(true); return; }
     setTool(id);
   };
+
+  // keyboard shortcuts (§2) — only while replay is active and no field focused
+  useEffect(() => {
+    if (!rs.active) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      switch (e.key) {
+        case " ": e.preventDefault(); rs.setPlaying(!rs.playing); break;
+        case "ArrowRight": e.preventDefault(); rs.stepForward(1); break;
+        case "ArrowLeft": e.preventDefault(); rs.stepBack(1); break;
+        case "ArrowUp": e.preventDefault(); rs.setSpeedIdx(Math.min(7, rs.speedIdx + 1)); break;
+        case "ArrowDown": e.preventDefault(); rs.setSpeedIdx(Math.max(0, rs.speedIdx - 1)); break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rs]);
+
+  // chart screenshot for the journal (downscaled JPEG of the first chart canvas)
+  const captureChart = useCallback((): string | null => {
+    try {
+      const canvas = gridRef.current?.querySelector("canvas");
+      if (!canvas) return null;
+      const scale = Math.min(1, 900 / canvas.width);
+      const out = document.createElement("canvas");
+      out.width = Math.round(canvas.width * scale);
+      out.height = Math.round(canvas.height * scale);
+      out.getContext("2d")!.drawImage(canvas, 0, 0, out.width, out.height);
+      return out.toDataURL("image/jpeg", 0.7);
+    } catch { return null; }
+  }, []);
 
   const chartNode = (i: number) => (
     <TerminalChart
@@ -231,11 +287,28 @@ export default function TerminalPage() {
       onLastBar={i === 0 ? onLastBar : undefined}
       onToggleVolume={() => update({ showVolume: !settings.showVolume })}
       onRequestFullscreen={toggleFullscreen}
-      replay={replay}
       overlayCfg={overlay}
       anchoredVwapTime={anchor}
       compareSymbol={compare}
       onAnchorVwap={setAnchor}
+      {...(rs.active ? rs.replayChartProps : {})}
+      onReplayMenu={i === 0 && rs.active ? (price) => {
+        const pos = rs.engine.positions.find((p) => p.symbol === settings.symbol);
+        const items: { label: string; onClick: () => void }[] = [
+          { label: "Buy limit here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "buy", lots: 0.1, type: "limit", price, sl: null, tp: null }) },
+          { label: "Sell limit here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "sell", lots: 0.1, type: "limit", price, sl: null, tp: null }) },
+          { label: "Buy stop here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "buy", lots: 0.1, type: "stop", price, sl: null, tp: null }) },
+          { label: "Sell stop here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "sell", lots: 0.1, type: "stop", price, sl: null, tp: null }) },
+        ];
+        if (pos) {
+          items.push(
+            { label: `Set SL of #${pos.id} here`, onClick: () => rs.modify(pos.id, { sl: price }) },
+            { label: `Set TP of #${pos.id} here`, onClick: () => rs.modify(pos.id, { tp: price }) },
+            { label: `Close #${pos.id} at this price`, onClick: () => rs.close(pos.id) },
+          );
+        }
+        return items;
+      } : undefined}
       height={420}
     />
   );
@@ -245,6 +318,7 @@ export default function TerminalPage() {
     sideTab === "challenge" ? <ChallengeDashboard prices={prices} className={cls} /> :
     sideTab === "calendar" ? <CalendarPanel symbol={settings.symbol} className={cls} /> :
     sideTab === "alerts" ? <AlertsPanel prices={prices} drawings={drawings} className={cls} /> :
+    sideTab === "replay" ? <ReplayTradingPanel rs={rs} onJournal={(t) => setJournalDraft({ trade: t, sessionId: `${settings.symbol}-${settings.timeframe}`, symbol: settings.symbol, timeframe: settings.timeframe, captureChart })} /> :
     <RiskCalculator symbol={settings.symbol} price={price} balance={account?.balance ?? 0} className={cls} />;
 
   const chartGrid = (
@@ -339,6 +413,11 @@ export default function TerminalPage() {
         </div>
       </div>
 
+      {/* ===== replay toolbar ===== */}
+      {replayOpen && (
+        <ReplayToolbar rs={rs} onOpenStats={() => setTool("replayStats")} />
+      )}
+
       {/* ===== workspace ===== */}
       <div className="relative flex min-h-0 flex-1 gap-1.5" ref={gridRef}>
         {/* drawing toolbar */}
@@ -403,13 +482,13 @@ export default function TerminalPage() {
         <div className="hidden w-80 shrink-0 md:block">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/50 bg-card/60">
             <div className="flex shrink-0 gap-0.5 border-b border-border/40 p-1">
-              {(["trade", "challenge", "calendar", "alerts", "risk"] as SideTab[]).map((tab) => (
+              {(["trade", "challenge", "calendar", "alerts", "risk", "replay"] as SideTab[]).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setSideTab(tab)}
-                  className={cn("flex-1 rounded-lg px-1 py-1.5 text-[10px] font-bold uppercase tracking-wide transition-colors", sideTab === tab ? "bg-emerald-500/15 text-emerald-400" : "text-muted-foreground hover:text-foreground")}
+                  className={cn("flex-1 rounded-lg px-1 py-1.5 text-[10px] font-bold uppercase tracking-wide transition-colors", sideTab === tab ? "bg-emerald-500/15 text-emerald-400" : "text-muted-foreground hover:text-foreground", tab === "replay" && rs.active && "text-sky-400")}
                 >
-                  {tab === "trade" ? t("tabTrade") : tab === "challenge" ? t("tabChallenge") : tab === "calendar" ? t("tabCalendar") : tab === "alerts" ? t("tabAlerts") : t("tabRisk")}
+                  {tab === "replay" ? "REPLAY" : tab === "trade" ? t("tabTrade") : tab === "challenge" ? t("tabChallenge") : tab === "calendar" ? t("tabCalendar") : tab === "alerts" ? t("tabAlerts") : t("tabRisk")}
                 </button>
               ))}
             </div>
@@ -417,19 +496,7 @@ export default function TerminalPage() {
           </div>
         </div>
 
-        {/* floating replay bar */}
-        {replayBarOpen && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-2 z-30 flex justify-center px-2">
-            <div className="pointer-events-auto w-full max-w-2xl">
-              <ReplayPanel
-                symbol={settings.symbol}
-                timeframe={settings.timeframe}
-                replay={replay}
-                setReplay={setReplay}
-              />
-            </div>
-          </div>
-        )}
+        {/* floating replay bar — replaced by the dedicated toolbar above the workspace */}
 
         {/* advanced tool drawers */}
         <ToolDrawer open={tool != null} onClose={() => setTool(null)}
@@ -444,6 +511,9 @@ export default function TerminalPage() {
           {tool === "templates" && <TemplatesPanel settings={settings} currentDrawings={drawings} onApply={(s: TerminalSettings) => update(s)} />}
           {tool === "analytics" && <PropAnalyticsPanel />}
           {tool === "compare" && <ComparisonPanel symbol={settings.symbol} compare={compare} setCompare={setCompare} onSelect={(s) => { update({ symbol: s }); setTool(null); }} />}
+          {tool === "replayStats" && <ReplayStatsPanel rs={rs} />}
+          {tool === "replayChallenge" && <ReplayChallengePanel rs={rs} />}
+          {tool === "replayMissions" && <ReplayMissionsPanel rs={rs} />}
         </ToolDrawer>
       </div>
 
@@ -455,6 +525,7 @@ export default function TerminalPage() {
       <IndicatorDialog open={indDialog} onOpenChange={setIndDialog} active={settings.indicators} onChange={(list: ActiveIndicator[]) => update({ indicators: list })} />
       <ToolsDialog open={toolsOpen} onOpenChange={setToolsOpen} onLaunch={launchTool} />
       <CalculatorsDialog open={calcOpen} onOpenChange={setCalcOpen} symbol={settings.symbol} prices={prices} />
+      <ReplayJournalDialog draft={journalDraft} onClose={() => setJournalDraft(null)} />
     </div>
   );
 }
