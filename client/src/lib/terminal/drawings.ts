@@ -1,0 +1,557 @@
+/**
+ * Terminal drawing engine — a transparent <canvas> overlay on top of a
+ * lightweight-charts instance. Drawings are stored in chart coordinates
+ * ({time, price}) so they stay anchored when the user scrolls/zooms.
+ *
+ * Supported tools: trendline, hline, vline, ray, extended line, rectangle,
+ * fibonacci retracement, brush, text, arrow, long/short position, measure.
+ * Selection, dragging, lock, hide, delete, undo/redo and JSON serialization
+ * for per-user Firebase persistence are included.
+ */
+import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
+
+export type DrawingTool =
+  | "cursor" | "trendline" | "hline" | "vline" | "ray" | "extline" | "rect"
+  | "fib" | "brush" | "text" | "arrow" | "long" | "short" | "measure";
+
+export interface DrawingPoint { time: number; price: number }
+
+export interface Drawing {
+  id: string;
+  tool: Exclude<DrawingTool, "cursor">;
+  points: DrawingPoint[];
+  color: string;
+  width: number;
+  locked?: boolean;
+  hidden?: boolean;
+  text?: string;
+}
+
+export interface DrawingStyle { color: string; width: number; }
+
+const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+const SELECT_RADIUS = 8;
+
+function uid(): string {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+export class DrawingEngine {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private getChart: () => IChartApi | null;
+  private getSeries: () => ISeriesApi<"Candlestick"> | null;
+
+  tool: DrawingTool = "cursor";
+  style: DrawingStyle = { color: "#4ade80", width: 2 };
+  drawings: Drawing[] = [];
+
+  /** in-progress drawing points (chart coords) */
+  private pending: DrawingPoint[] = [];
+  private dragging: { id: string; startX: number; startY: number; orig: DrawingPoint[] } | null = null;
+  private selectedId: string | null = null;
+  private hoverId: string | null = null;
+
+  private undoStack: string[] = [];
+  private redoStack: string[] = [];
+
+  private onChange: () => void;
+  private ro: ResizeObserver;
+
+  constructor(
+    canvas: HTMLCanvasElement,
+    getChart: () => IChartApi | null,
+    getSeries: () => ISeriesApi<"Candlestick"> | null,
+    onChange: () => void,
+  ) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d")!;
+    this.getChart = getChart;
+    this.getSeries = getSeries;
+    this.onChange = onChange;
+
+    this.ro = new ResizeObserver(() => this.syncSize());
+    this.ro.observe(canvas.parentElement ?? canvas);
+    this.syncSize();
+
+    canvas.addEventListener("pointerdown", this.onDown);
+    canvas.addEventListener("pointermove", this.onMove);
+    canvas.addEventListener("pointerup", this.onUp);
+    canvas.addEventListener("pointerleave", this.onUp);
+    canvas.addEventListener("dblclick", this.onDblClick);
+  }
+
+  destroy() {
+    this.ro.disconnect();
+    this.canvas.removeEventListener("pointerdown", this.onDown);
+    this.canvas.removeEventListener("pointermove", this.onMove);
+    this.canvas.removeEventListener("pointerup", this.onUp);
+    this.canvas.removeEventListener("pointerleave", this.onUp);
+    this.canvas.removeEventListener("dblclick", this.onDblClick);
+  }
+
+  // ---- coordinate helpers ---------------------------------------------------
+
+  private xFor(time: number): number | null {
+    const chart = this.getChart();
+    return chart ? chart.timeScale().timeToCoordinate(time as Time) : null;
+  }
+  private yFor(price: number): number | null {
+    const s = this.getSeries();
+    return s ? s.priceToCoordinate(price) : null;
+  }
+  private timeFor(x: number): number | null {
+    const chart = this.getChart();
+    const t = chart?.timeScale().coordinateToTime(x);
+    return t == null ? null : Number(t);
+  }
+  private priceFor(y: number): number | null {
+    const s = this.getSeries();
+    const p = s?.coordinateToPrice(y);
+    return p == null ? null : Number(p);
+  }
+
+  private syncSize() {
+    const parent = this.canvas.parentElement;
+    if (!parent) return;
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = parent.clientWidth * dpr;
+    this.canvas.height = parent.clientHeight * dpr;
+    this.canvas.style.width = `${parent.clientWidth}px`;
+    this.canvas.style.height = `${parent.clientHeight}px`;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.render();
+  }
+
+  // ---- public API -----------------------------------------------------------
+
+  redraw() { this.render(); }
+
+  setTool(tool: DrawingTool) {
+    this.tool = tool;
+    this.pending = [];
+    this.selectedId = null;
+    this.canvas.style.pointerEvents = tool === "cursor" ? "none" : "auto";
+    this.canvas.style.cursor = tool === "cursor" ? "default" : "crosshair";
+    this.render();
+  }
+
+  setStyle(style: Partial<DrawingStyle>) {
+    this.style = { ...this.style, ...style };
+    if (this.selectedId) {
+      const d = this.drawings.find((x) => x.id === this.selectedId);
+      if (d) { d.color = this.style.color; d.width = this.style.width; this.pushUndo(); this.onChange(); }
+    }
+    this.render();
+  }
+
+  load(drawings: Drawing[]) {
+    this.drawings = (drawings || []).filter((d) => d && d.tool && Array.isArray(d.points));
+    this.undoStack = [];
+    this.redoStack = [];
+    this.render();
+    this.onChange();
+  }
+
+  serialize(): Drawing[] {
+    return JSON.parse(JSON.stringify(this.drawings));
+  }
+
+  deleteSelected() {
+    if (!this.selectedId) return;
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d || d.locked) return;
+    this.pushUndo();
+    this.drawings = this.drawings.filter((x) => x.id !== this.selectedId);
+    this.selectedId = null;
+    this.onChange();
+    this.render();
+  }
+
+  toggleLockSelected() {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d) return;
+    d.locked = !d.locked;
+    this.pushUndo();
+    this.onChange();
+    this.render();
+  }
+  toggleHideSelected() {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d) return;
+    d.hidden = !d.hidden;
+    this.onChange();
+    this.render();
+  }
+  clearAll() {
+    this.pushUndo();
+    this.drawings = [];
+    this.selectedId = null;
+    this.onChange();
+    this.render();
+  }
+
+  private pushUndo() {
+    this.undoStack.push(JSON.stringify(this.drawings));
+    if (this.undoStack.length > 50) this.undoStack.shift();
+    this.redoStack = [];
+  }
+  canUndo() { return this.undoStack.length > 0; }
+  canRedo() { return this.redoStack.length > 0; }
+  undo() {
+    if (!this.undoStack.length) return;
+    this.redoStack.push(JSON.stringify(this.drawings));
+    this.drawings = JSON.parse(this.undoStack.pop()!);
+    this.selectedId = null;
+    this.onChange();
+    this.render();
+  }
+  redo() {
+    if (!this.redoStack.length) return;
+    this.undoStack.push(JSON.stringify(this.drawings));
+    this.drawings = JSON.parse(this.redoStack.pop()!);
+    this.selectedId = null;
+    this.onChange();
+    this.render();
+  }
+
+  // ---- interaction ----------------------------------------------------------
+
+  private evPos(e: PointerEvent | MouseEvent): { x: number; y: number } {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  private onDown = (e: PointerEvent) => {
+    const { x, y } = this.evPos(e);
+    const time = this.timeFor(x), price = this.priceFor(y);
+    if (time == null || price == null) return;
+
+    if (this.tool === "cursor") {
+      const hit = this.hitTest(x, y);
+      this.selectedId = hit?.id ?? null;
+      if (hit && !hit.d.locked) {
+        this.dragging = { id: hit.id, startX: x, startY: y, orig: JSON.parse(JSON.stringify(hit.d.points)) };
+      }
+      this.render();
+      this.onChange(); // selection may change toolbar state
+      return;
+    }
+
+    // click-to-place tools
+    this.pending.push({ time, price });
+    const needed = this.neededPoints(this.tool);
+    if (needed !== Infinity && this.pending.length >= needed) {
+      this.pushUndo();
+      this.drawings.push({
+        id: uid(),
+        tool: this.tool as Exclude<DrawingTool, "cursor">,
+        points: [...this.pending],
+        color: this.style.color,
+        width: this.style.width,
+      });
+      this.pending = [];
+      this.onChange();
+    }
+    this.render();
+  };
+
+  private neededPoints(tool: Exclude<DrawingTool, "cursor">): number {
+    switch (tool) {
+      case "hline": case "vline": case "text": return 1;
+      case "brush": return Infinity; // brush completes on pointerup
+      default: return 2;
+    }
+  }
+
+  private onMove = (e: PointerEvent) => {
+    const { x, y } = this.evPos(e);
+    if (this.dragging) {
+      const d = this.drawings.find((z) => z.id === this.dragging!.id);
+      if (!d) return;
+      const dxTime = (this.timeFor(x) ?? 0) - (this.timeFor(this.dragging.startX) ?? 0);
+      const dyPrice = (this.priceFor(y) ?? 0) - (this.priceFor(this.dragging.startY) ?? 0);
+      d.points = this.dragging.orig.map((p) => ({ time: p.time + dxTime, price: p.price + dyPrice }));
+      this.render();
+      return;
+    }
+    if (this.tool === "brush" && this.pending.length) {
+      const time = this.timeFor(x), price = this.priceFor(y);
+      if (time != null && price != null) this.pending.push({ time, price });
+      this.render();
+      return;
+    }
+    if (this.tool === "cursor") {
+      const hit = this.hitTest(x, y);
+      if ((hit?.id ?? null) !== this.hoverId) {
+        this.hoverId = hit?.id ?? null;
+        this.canvas.style.cursor = hit ? "pointer" : "default";
+        this.render();
+      }
+    } else if (this.pending.length) {
+      this.render(); // preview line to cursor
+    }
+  };
+
+  private onUp = () => {
+    if (this.dragging) {
+      this.pushUndo();
+      this.dragging = null;
+      this.onChange();
+    }
+    if (this.tool === "brush" && this.pending.length > 1) {
+      this.pushUndo();
+      this.drawings.push({ id: uid(), tool: "brush", points: [...this.pending], color: this.style.color, width: this.style.width });
+      this.pending = [];
+      this.onChange();
+    }
+    this.render();
+  };
+
+  private onDblClick = () => {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (d && d.tool === "text" && !d.locked) {
+      const t = window.prompt("Text", d.text || "");
+      if (t != null) { d.text = t; this.pushUndo(); this.onChange(); this.render(); }
+    }
+  };
+
+  // ---- hit testing ----------------------------------------------------------
+
+  private distToSeg(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    const cx = x1 + t * dx, cy = y1 + t * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+
+  private hitTest(px: number, py: number): { id: string; d: Drawing } | null {
+    for (const d of [...this.drawings].reverse()) {
+      if (d.hidden) continue;
+      const pts = d.points.map((p) => ({ x: this.xFor(p.time), y: this.yFor(p.price) }));
+      if (pts.some((p) => p.x == null || p.y == null)) continue;
+      const P = pts as { x: number; y: number }[];
+      let hit = false;
+      switch (d.tool) {
+        case "hline": hit = Math.abs(P[0].y - py) < SELECT_RADIUS; break;
+        case "vline": hit = Math.abs(P[0].x - px) < SELECT_RADIUS; break;
+        case "text": {
+          const w = this.ctx.measureText(d.text || "").width;
+          hit = px >= P[0].x - 4 && px <= P[0].x + w + 8 && Math.abs(py - P[0].y) < 14;
+          break;
+        }
+        case "rect": case "long": case "short": case "measure": {
+          const x1 = Math.min(P[0].x, P[1].x), x2 = Math.max(P[0].x, P[1].x);
+          const y1 = Math.min(P[0].y, P[1].y), y2 = Math.max(P[0].y, P[1].y);
+          hit = (Math.abs(py - y1) < SELECT_RADIUS || Math.abs(py - y2) < SELECT_RADIUS) && px >= x1 && px <= x2
+            || (Math.abs(px - x1) < SELECT_RADIUS || Math.abs(px - x2) < SELECT_RADIUS) && py >= y1 && py <= y2;
+          break;
+        }
+        case "fib": {
+          const p0 = P[0], p1 = P[1];
+          for (const lvl of FIB_LEVELS) {
+            const y = p0.y + (p1.y - p0.y) * lvl;
+            if (Math.abs(py - y) < SELECT_RADIUS && px >= Math.min(p0.x, p1.x) - 10 && px <= Math.max(p0.x, p1.x) + 10) hit = true;
+          }
+          break;
+        }
+        case "brush": {
+          for (let i = 1; i < P.length && !hit; i++) hit = this.distToSeg(px, py, P[i - 1].x, P[i - 1].y, P[i].x, P[i].y) < SELECT_RADIUS;
+          break;
+        }
+        default: {
+          if (P.length >= 2) hit = this.distToSeg(px, py, P[0].x, P[0].y, P[1].x, P[1].y) < SELECT_RADIUS;
+        }
+      }
+      if (hit) return { id: d.id, d };
+    }
+    return null;
+  }
+
+  // ---- rendering ------------------------------------------------------------
+
+  render() {
+    const parent = this.canvas.parentElement;
+    if (!parent) return;
+    const w = this.canvas.width / (window.devicePixelRatio || 1);
+    const h = this.canvas.height / (window.devicePixelRatio || 1);
+    this.ctx.clearRect(0, 0, w, h);
+    const series = this.getSeries();
+
+    const toXY = (p: DrawingPoint) => ({ x: this.xFor(p.time), y: this.yFor(p.price) });
+
+    for (const d of this.drawings) {
+      if (d.hidden) continue;
+      const pts = d.points.map(toXY);
+      const selected = d.id === this.selectedId;
+      const col = d.color;
+      const lw = d.width;
+      this.ctx.lineWidth = lw;
+      this.ctx.strokeStyle = col;
+      this.ctx.fillStyle = col;
+      this.ctx.font = "12px ui-sans-serif, system-ui";
+
+      if (pts.some((p) => p.x == null || p.y == null)) {
+        // partially offscreen — still draw tools that tolerate one anchor
+        if (!["hline", "fib", "rect", "long", "short", "measure"].includes(d.tool)) continue;
+      }
+      const P = pts as { x: number; y: number }[];
+      const n = d.tool === "brush" ? Infinity : this.neededPoints(d.tool as Exclude<DrawingTool, "cursor">);
+      const complete = d.points.length >= (n === Infinity ? 2 : n);
+
+      switch (d.tool) {
+        case "trendline": case "arrow": {
+          if (P.length < 2) break;
+          this.ctx.beginPath(); this.ctx.moveTo(P[0].x, P[0].y); this.ctx.lineTo(P[1].x, P[1].y); this.ctx.stroke();
+          if (d.tool === "arrow") {
+            const ang = Math.atan2(P[1].y - P[0].y, P[1].x - P[0].x);
+            const a1 = ang + Math.PI - 0.4, a2 = ang + Math.PI + 0.4, L = 10 + lw * 2;
+            this.ctx.beginPath();
+            this.ctx.moveTo(P[1].x, P[1].y); this.ctx.lineTo(P[1].x + L * Math.cos(a1), P[1].y + L * Math.sin(a1));
+            this.ctx.moveTo(P[1].x, P[1].y); this.ctx.lineTo(P[1].x + L * Math.cos(a2), P[1].y + L * Math.sin(a2));
+            this.ctx.stroke();
+          }
+          break;
+        }
+        case "hline": {
+          if (!P[0]) break;
+          this.ctx.beginPath(); this.ctx.moveTo(0, P[0].y); this.ctx.lineTo(w, P[0].y); this.ctx.stroke();
+          this.ctx.fillText(this.fmt(series, d.points[0].price), 6, P[0].y - 4);
+          break;
+        }
+        case "vline": {
+          if (!P[0]) break;
+          this.ctx.beginPath(); this.ctx.moveTo(P[0].x, 0); this.ctx.lineTo(P[0].x, h); this.ctx.stroke();
+          break;
+        }
+        case "ray": case "extline": {
+          if (P.length < 2) break;
+          const dx = P[1].x - P[0].x, dy = P[1].y - P[0].y;
+          const big = Math.max(w, h) * 2;
+          this.ctx.beginPath();
+          if (d.tool === "ray") {
+            this.ctx.moveTo(P[0].x, P[0].y); this.ctx.lineTo(P[0].x + dx * big, P[0].y + dy * big);
+          } else {
+            this.ctx.moveTo(P[0].x - dx * big, P[0].y - dy * big); this.ctx.lineTo(P[0].x + dx * big, P[0].y + dy * big);
+          }
+          this.ctx.stroke();
+          break;
+        }
+        case "rect": {
+          if (P.length < 2) break;
+          const x = Math.min(P[0].x, P[1].x), y = Math.min(P[0].y, P[1].y);
+          const rw = Math.abs(P[1].x - P[0].x), rh = Math.abs(P[1].y - P[0].y);
+          this.ctx.globalAlpha = 0.12; this.ctx.fillRect(x, y, rw, rh);
+          this.ctx.globalAlpha = 1; this.ctx.strokeRect(x, y, rw, rh);
+          break;
+        }
+        case "fib": {
+          if (P.length < 2) break;
+          const p0 = P[0], p1 = P[1];
+          const x1 = Math.min(p0.x, p1.x), x2 = Math.max(p0.x, p1.x);
+          for (const lvl of FIB_LEVELS) {
+            const y = p0.y + (p1.y - p0.y) * lvl;
+            this.ctx.globalAlpha = 0.1; this.ctx.fillRect(x1, y, x2 - x1, (p1.y - p0.y) * (FIB_LEVELS[1] || 0.236));
+            this.ctx.globalAlpha = 1;
+            this.ctx.beginPath(); this.ctx.moveTo(x1, y); this.ctx.lineTo(x2, y); this.ctx.stroke();
+            this.ctx.fillText(`${lvl.toFixed(3)}  ${this.fmt(series, d.points[0].price + (d.points[1].price - d.points[0].price) * lvl)}`, x2 + 4, y - 2);
+          }
+          this.ctx.beginPath(); this.ctx.moveTo(p0.x, p0.y); this.ctx.lineTo(p1.x, p1.y); this.ctx.globalAlpha = 0.4; this.ctx.stroke(); this.ctx.globalAlpha = 1;
+          break;
+        }
+        case "brush": {
+          if (P.length < 2) break;
+          this.ctx.beginPath(); this.ctx.moveTo(P[0].x, P[0].y);
+          for (let i = 1; i < P.length; i++) this.ctx.lineTo(P[i].x, P[i].y);
+          this.ctx.stroke();
+          break;
+        }
+        case "text": {
+          if (!P[0]) break;
+          this.ctx.fillText(d.text || "Text", P[0].x, P[0].y);
+          break;
+        }
+        case "long": case "short": {
+          if (P.length < 2) break;
+          const isLong = d.tool === "long";
+          const entry = d.points[0].price, stop = d.points[1].price;
+          const risk = Math.abs(entry - stop);
+          const target = isLong ? entry + 2 * risk : entry - 2 * risk;
+          const ty = this.yFor(target);
+          if (ty == null) break;
+          const x = Math.min(P[0].x, P[1].x), rw = Math.max(Math.abs(P[1].x - P[0].x), 60);
+          const ey = P[0].y, sy = P[1].y;
+          // risk zone (red)
+          this.ctx.fillStyle = "rgba(239,68,68,0.18)";
+          this.ctx.fillRect(x, Math.min(ey, sy), rw, Math.abs(sy - ey));
+          // profit zone (green)
+          this.ctx.fillStyle = "rgba(34,197,94,0.18)";
+          this.ctx.fillRect(x, Math.min(ey, ty), rw, Math.abs(ty - ey));
+          this.ctx.strokeStyle = col;
+          for (const yy of [ey, sy, ty]) { this.ctx.beginPath(); this.ctx.moveTo(x, yy); this.ctx.lineTo(x + rw, yy); this.ctx.stroke(); }
+          this.ctx.fillStyle = "rgba(34,197,94,0.9)";
+          this.ctx.fillText(`${isLong ? "LONG" : "SHORT"}  1:2`, x + 4, Math.min(ey, ty) + 12);
+          break;
+        }
+        case "measure": {
+          if (P.length < 2) break;
+          const x = Math.min(P[0].x, P[1].x), y = Math.min(P[0].y, P[1].y);
+          const rw = Math.abs(P[1].x - P[0].x), rh = Math.abs(P[1].y - P[0].y);
+          this.ctx.fillStyle = "rgba(59,130,246,0.12)";
+          this.ctx.fillRect(x, y, rw, rh);
+          this.ctx.strokeStyle = col; this.ctx.strokeRect(x, y, rw, rh);
+          const p0 = d.points[0], p1 = d.points[1];
+          const diff = p1.price - p0.price;
+          const pct = p0.price ? (diff / p0.price) * 100 : 0;
+          const bars = Math.round(Math.abs(p1.time - p0.time));
+          this.ctx.fillStyle = "rgba(147,197,253,0.95)";
+          this.ctx.fillText(`${diff >= 0 ? "+" : ""}${this.fmt(series, diff)}  (${pct.toFixed(2)}%)  ${bars}s`, x + 6, y - 6);
+          break;
+        }
+      }
+
+      // pending preview
+      if (selected) {
+        this.ctx.strokeStyle = "#fbbf24";
+        this.ctx.lineWidth = 1;
+        for (const p of P) { if (p.x == null) continue; this.ctx.beginPath(); this.ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); this.ctx.stroke(); }
+      }
+      if (this.hoverId === d.id && !selected) {
+        this.ctx.save(); this.ctx.globalAlpha = 0.9; this.ctx.strokeStyle = "#fbbf24";
+        this.ctx.lineWidth = 1; this.ctx.setLineDash([4, 3]);
+        // dashed outline approximated by re-stroking with dash
+        this.ctx.restore();
+      }
+    }
+
+    // in-progress tool preview (current tool)
+    if (this.pending.length) {
+      const pts = this.pending.map(toXY);
+      const last = pts[pts.length - 1];
+      if (last.x != null && last.y != null) {
+        this.ctx.strokeStyle = this.style.color;
+        this.ctx.lineWidth = this.style.width;
+        if (this.tool === "brush") {
+          this.ctx.beginPath(); this.ctx.moveTo(pts[0].x!, pts[0].y!);
+          for (let i = 1; i < pts.length; i++) this.ctx.lineTo(pts[i].x!, pts[i].y!);
+          this.ctx.stroke();
+        } else if (pts.length === 1) {
+          this.ctx.beginPath(); this.ctx.moveTo(pts[0].x!, pts[0].y!); this.ctx.lineTo(last.x, last.y); this.ctx.stroke();
+        }
+      }
+    }
+  }
+
+  private fmt(series: ISeriesApi<"Candlestick"> | null, v: number): string {
+    if (series == null || !Number.isFinite(v)) return String(v);
+    try {
+      const p = (series as any).options?.priceFormat?.precision ?? 2;
+      const m = (series as any).options?.priceFormat?.minMove ?? 0.01;
+      const digits = Math.max(0, Math.round(-Math.log10(m || 0.01)));
+      return v.toFixed(Math.min(Number(p) || digits, 8) || digits);
+    } catch {
+      return v.toFixed(2);
+    }
+  }
+}

@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
-import { LANGUAGE_LABELS, type Language, useLanguage } from "@/lib/language-context";
+import { useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, Package, Wallet, ShieldCheck, Award, User as UserIcon } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, ChartCandlestick, Wallet, ShieldCheck, Award, User as UserIcon, Package } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePremiumStatus } from "@/hooks/use-premium";
@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 export function Navbar() {
   const { logout, user } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { language, setLanguage, t } = useLanguage();
+  const { t } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
   const { data: isPremium = false } = usePremiumStatus();
   const { data: economy } = useEconomy();
@@ -27,7 +27,7 @@ export function Navbar() {
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/prop-firm", label: "Prop", icon: Activity },
     { href: "/rewards", label: t("rewards"), icon: Gift },
-    { href: "/inventory", label: t("inventory"), icon: Package },
+    { href: "/terminal", label: t("terminal"), icon: ChartCandlestick },
     { href: "/market", label: t("market"), icon: Store },
     { href: "/wallet", label: t("wallet"), icon: Wallet },
     { href: "/news", label: t("news"), icon: Newspaper },
@@ -74,14 +74,11 @@ export function Navbar() {
               <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("mr-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("settings")} className="h-9 gap-1.5 rounded-full px-2.5"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">{(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer", language === code && "bg-primary/10 text-primary")}>{LANGUAGE_LABELS[code]}</DropdownMenuItem>)}</DropdownMenuContent>
-            </DropdownMenu>
+            <Button variant="ghost" size="sm" aria-label={t("settings")} title={t("settings")} onClick={() => navigate("/settings")} className="h-9 gap-1.5 rounded-full px-2.5"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button>
 
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("account")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-2.5"><UserRound className="h-4 w-4 md:hidden" /><span className="hidden md:inline">{t("account")}</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => navigate("/profile")} className="cursor-pointer gap-2"><UserIcon className="h-4 w-4" />{t("profile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/certificate")} className="cursor-pointer gap-2"><Award className="h-4 w-4" />{t("certificate")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/wallet")} className="cursor-pointer gap-2"><Wallet className="h-4 w-4" />{t("wallet")}</DropdownMenuItem>{isAdmin && <DropdownMenuItem onSelect={() => navigate("/admin")} className="cursor-pointer gap-2 text-emerald-400"><ShieldCheck className="h-4 w-4" />{t("adminPanel")}</DropdownMenuItem>}{!isPremium && <DropdownMenuItem onSelect={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem></DropdownMenuContent>
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60"><div className="truncate px-3 py-2 text-xs text-muted-foreground">{user.email}</div><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => navigate("/profile")} className="cursor-pointer gap-2"><UserIcon className="h-4 w-4" />{t("profile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/inventory")} className="cursor-pointer gap-2"><Package className="h-4 w-4" />{t("inventory")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/public-profile")} className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("publicProfile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/certificate")} className="cursor-pointer gap-2"><Award className="h-4 w-4" />{t("certificate")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/wallet")} className="cursor-pointer gap-2"><Wallet className="h-4 w-4" />{t("wallet")}</DropdownMenuItem><DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2"><Settings className="h-4 w-4" />{t("settings")}</DropdownMenuItem>{isAdmin && <DropdownMenuItem onSelect={() => navigate("/admin")} className="cursor-pointer gap-2 text-emerald-400"><ShieldCheck className="h-4 w-4" />{t("adminPanel")}</DropdownMenuItem>}{!isPremium && <DropdownMenuItem onSelect={() => navigate("/premium")} className="cursor-pointer gap-2 text-primary"><Crown className="h-4 w-4" />{t("getPremium")}</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setShowConfirm(true)} className="cursor-pointer gap-2 text-destructive focus:text-destructive"><LogOut className="h-4 w-4" />{t("logout")}</DropdownMenuItem></DropdownMenuContent>
             </DropdownMenu>
           </div>}
         </div>

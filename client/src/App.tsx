@@ -20,6 +20,8 @@ import RewardsPage from "@/pages/RewardsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import MarketPage from "@/pages/MarketPage";
 import InventoryPage from "@/pages/InventoryPage";
+import TerminalPage from "@/pages/TerminalPage";
+import SettingsPage from "@/pages/SettingsPage";
 import WalletPage from "@/pages/WalletPage";
 import AdminPage from "@/pages/AdminPage";
 import CertificatePage from "@/pages/CertificatePage";
@@ -218,6 +220,20 @@ function InventoryRoute() {
   return <AppLayout><InventoryPage /></AppLayout>;
 }
 
+function TerminalRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><TerminalPage /></AppLayout>;
+}
+
+function SettingsRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><SettingsPage /></AppLayout>;
+}
+
 function WalletRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
@@ -268,6 +284,8 @@ function Router() {
         <Route path="/profile" component={ProfileRoute} />
         <Route path="/market" component={MarketRoute} />
         <Route path="/inventory" component={InventoryRoute} />
+        <Route path="/terminal" component={TerminalRoute} />
+        <Route path="/settings" component={SettingsRoute} />
         <Route path="/wallet" component={WalletRoute} />
         <Route path="/admin" component={AdminRoute} />
         <Route path="/certificate" component={CertificateRoute} />

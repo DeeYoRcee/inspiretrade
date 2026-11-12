@@ -4,14 +4,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ref } from "firebase/database";
 import {
-  Award, Camera, Clapperboard, Copy, Crown, Globe2, Loader2, Pencil, Trash2,
+  Award, Camera, Clapperboard, Copy, Crown, Globe2, Loader2, Package, Pencil, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { saveUserProfile, useUserProfile } from "@/hooks/use-premium";
-import { useEconomy } from "@/hooks/use-economy";
+import { useEconomy, useInventory } from "@/hooks/use-economy";
+import { ALL_FRAGMENTS } from "@shared/fragments";
 import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
@@ -117,6 +118,11 @@ export default function ProfilePage() {
   const [, navigate] = useLocation();
   const { data: profile } = useUserProfile();
   const { data: economy } = useEconomy();
+  const { data: inventory } = useInventory();
+  const ownedFragments = useMemo(
+    () => Object.entries(inventory || {}).filter(([, n]) => (n ?? 0) > 0) as [string, number][],
+    [inventory],
+  );
   const { data: trades } = useTrades();
   const { data: settings } = usePublicProfileSettings();
   const savePublicProfile = useSavePublicProfile();
@@ -562,6 +568,33 @@ export default function ProfilePage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Account → Inventory (fragments summary + link to the full page) */}
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass-panel rounded-2xl border-border/50 p-5"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-base font-bold"><Package className="h-5 w-5 text-primary" />{t("inventory")}</h2>
+          <Button variant="outline" size="sm" className="rounded-xl" onClick={() => navigate("/inventory")}>{t("openInventory")}</Button>
+        </div>
+        {ownedFragments.length ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {ownedFragments.map(([id, count]) => {
+              const frag = ALL_FRAGMENTS.find((f) => f.id === id);
+              return (
+                <span key={id} className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-card/50 px-2.5 py-1.5 text-xs">
+                  <b>{frag?.name ?? id}</b>
+                  <span className="font-number text-muted-foreground">×{count}</span>
+                </span>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">{t("inventoryEmptyHint")}</p>
+        )}
+      </motion.section>
 
       {/* Set username dialog (moved here from the Account menu) */}
       <UsernameDialog

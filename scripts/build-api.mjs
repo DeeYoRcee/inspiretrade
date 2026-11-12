@@ -31,6 +31,7 @@ const entries = [
   ["api/_src/whop/index.ts", "api/whop.js"],
   ["api/_src/referral/index.ts", "api/referral.js"],
   ["api/_src/news/index.ts", "api/news.js"],
+  ["api/_src/quotes.ts", "api/quotes.js"],
 ];
 
 for (const [inPath, outPath] of entries) {
