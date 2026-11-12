@@ -12,10 +12,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  createChart, ColorType, CrosshairMode, LineStyle,
+  createChart, ColorType, CrosshairMode, LineStyle, PriceScaleMode,
   type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type MouseEventParams,
 } from "lightweight-charts";
-import { getInstrument, toHeikinAshi, toRenko, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
+import { getInstrument, toHeikinAshi, toRenko, TF_SECONDS, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { loadFeed, subscribeFeed, loadBarsCached, type FeedStatus } from "@/lib/terminal/data-feeds";
 import { getIndicator, INDICATORS, type Line, type NamedLine } from "@/lib/terminal/indicators";
 import { DrawingEngine, type Drawing, type DrawingTool, type DrawingPoint } from "@/lib/terminal/drawings";
@@ -87,6 +87,12 @@ interface Props {
   priceLines?: ReplayPriceLine[];
   /** extra right-click menu items for replay trading (price/time context) */
   onReplayMenu?: (price: number, time: number) => { label: string; onClick: () => void }[];
+  /** right price-scale mode — TradingView-style LOG / % toggles */
+  priceScaleMode?: "normal" | "log" | "percent";
+  /** magnet crosshair — snaps the crosshair to OHLC values */
+  magnet?: boolean;
+  /** increment to trigger a PNG download of the chart (screenshot) */
+  screenshotSignal?: number;
 }
 
 export interface ReplayTradeMarker {
@@ -107,7 +113,7 @@ export function TerminalChart({
   drawings, onDrawingsChange, activeTool, onStatus, onLastBar,
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
-  tradeMarkers, priceLines, onReplayMenu,
+  tradeMarkers, priceLines, onReplayMenu, priceScaleMode, magnet, screenshotSignal,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -132,6 +138,7 @@ export function TerminalChart({
   const compareRef = useRef<ISeriesApi<"Line"> | null>(null);
   const replayRef = useRef<{ active: boolean; upToTime: number } | null>(null);
   const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
+  const countdownRef = useRef<HTMLSpanElement>(null);
   const overlayCfgRef = useRef<OverlayConfig | null>(overlayCfg ?? null);
   overlayCfgRef.current = overlayCfg ?? null;
   const onReplayBarRef = useRef(onReplayBar);
@@ -706,6 +713,55 @@ export function TerminalChart({
     priceLineRefs.current = new Map();
   }, []);
 
+  // LOG / % price scale (TradingView-style)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const mode = priceScaleMode === "log" ? PriceScaleMode.Logarithmic : priceScaleMode === "percent" ? PriceScaleMode.Percentage : PriceScaleMode.Normal;
+    try { chart.priceScale("right").applyOptions({ mode }); } catch { /* scale not ready */ }
+  }, [priceScaleMode, dataVersion]);
+
+  // magnet crosshair
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.applyOptions({ crosshair: { mode: magnet ? CrosshairMode.Magnet : CrosshairMode.Normal } });
+  }, [magnet, dataVersion]);
+
+  // screenshot → PNG download
+  useEffect(() => {
+    if (!screenshotSignal) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    try {
+      const canvas = chart.takeScreenshot();
+      const a = document.createElement("a");
+      a.download = `inspiretrade-${symbol}-${timeframe}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`;
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+    } catch { /* chart not ready */ }
+  }, [screenshotSignal, symbol, timeframe]);
+
+  // bar-close countdown (live mode only — hidden during replay and for stale feeds)
+  useEffect(() => {
+    const tick = () => {
+      const el = countdownRef.current;
+      if (!el) return;
+      if (replayRef.current?.active) { el.style.display = "none"; return; }
+      const bars = barsRef.current;
+      const last = bars[bars.length - 1];
+      if (!last) { el.style.display = "none"; return; }
+      const tf = TF_SECONDS[timeframe];
+      const remain = tf - (Math.floor(Date.now() / 1000) - last.time);
+      if (remain <= 0 || remain > tf) { el.style.display = "none"; return; }
+      el.style.display = "";
+      el.textContent = `${String(Math.floor(remain / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`;
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [timeframe, dataVersion]);
+
   // analysis overlay config
   useEffect(() => {
     if (!overlayRef.current) return;
@@ -839,6 +895,10 @@ export function TerminalChart({
           <div ref={mainRef} className="absolute inset-0" />
           <canvas ref={overlayCanvasRef} className="pointer-events-none absolute inset-0 z-[9]" />
           <canvas ref={drawCanvasRef} className="absolute inset-0 z-10" style={{ touchAction: "none" }} />
+          {/* bar-close countdown (bottom-right, above the time axis) */}
+          <span ref={countdownRef} style={{ display: "none" }}
+            className="pointer-events-none absolute bottom-[34px] right-[74px] z-[12] rounded bg-[#131a24]/90 px-1.5 py-0.5 font-number text-[11px] font-bold text-emerald-400 shadow"
+            title="Time until this candle closes" />
 
           {/* loading state */}
           {loading && (

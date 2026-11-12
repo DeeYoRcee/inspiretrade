@@ -114,3 +114,16 @@ header nav[aria-label="Main navigation"] > button:not([aria-current="page"]):hov
   -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
   will-change: transform;
 }
+
+/* browser fullscreen for the terminal workspace — make the element actually fill */
+:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  background: #0b0e13;
+}
+:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  background: #0b0e13;
+}

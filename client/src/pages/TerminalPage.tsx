@@ -12,10 +12,10 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   Maximize, Minimize, BarChart2, LayoutGrid, Columns2, Square,
-  Undo2, Redo2, Trash2, Lock, Eye, MousePointer2, Minus, MoveUp,
+  Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity, LineChart,
-  Spline, MoveDiagonal, Wrench, Calculator,
+  Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Scan, Shapes,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -137,6 +137,8 @@ export default function TerminalPage() {
   const rs = useReplaySession(settings.symbol, settings.timeframe);
   const [replayOpen, setReplayOpen] = useState(false);
   const [journalDraft, setJournalDraft] = useState<JournalDraft | null>(null);
+  const [focusMode, setFocusMode] = useState(false);
+  const [screenshotSignal, setScreenshotSignal] = useState(0);
   const replaySymbolRef = useRef(settings.symbol);
   useEffect(() => {
     if (replaySymbolRef.current !== settings.symbol) {
@@ -224,9 +226,29 @@ export default function TerminalPage() {
 
   const toggleFullscreen = () => {
     const el = gridRef.current?.parentElement;
-    if (!document.fullscreenElement) el?.requestFullscreen?.().catch(() => {});
-    else document.exitFullscreen?.().catch(() => {});
+    if (!document.fullscreenElement) {
+      // browser fullscreen (whole screen, site chrome hidden); fall back to
+      // in-page focus mode when the API is unavailable or denied (iframes)
+      const req = el?.requestFullscreen?.();
+      if (req && typeof req.catch === "function") req.catch(() => setFocusMode(true));
+      else if (!req) setFocusMode(true);
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
   };
+
+  // immersive = browser fullscreen OR in-page focus/maximize mode
+  const immersive = fullscreen || focusMode;
+  const [drawingsHidden, setDrawingsHidden] = useState(false);
+  const [objectsOpen, setObjectsOpen] = useState(false);
+
+  // ESC exits focus mode (browser fullscreen exits natively)
+  useEffect(() => {
+    if (!focusMode) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFocusMode(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusMode]);
 
   // keep the fullscreen button in sync (F11-style exit, ESC)
   useEffect(() => {
@@ -281,12 +303,15 @@ export default function TerminalPage() {
       indicators={settings.indicators}
       showVolume={settings.showVolume}
       colors={settings.colors}
-      drawings={drawings}
+      drawings={drawingsHidden ? [] : drawings}
       onDrawingsChange={save}
       activeTool={activeTool}
       onLastBar={i === 0 ? onLastBar : undefined}
       onToggleVolume={() => update({ showVolume: !settings.showVolume })}
       onRequestFullscreen={toggleFullscreen}
+      priceScaleMode={settings.priceScale}
+      magnet={settings.magnet}
+      screenshotSignal={i === 0 ? screenshotSignal : 0}
       overlayCfg={overlay}
       anchoredVwapTime={anchor}
       compareSymbol={compare}
@@ -336,7 +361,8 @@ export default function TerminalPage() {
 
   return (
     <div className="flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5">
-      {/* ===== toolbar ===== */}
+      {/* ===== toolbar (hidden in focus/maximize mode) ===== */}
+      {!immersive && (
       <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/50 bg-card/60 p-1.5">
         <select
           value={settings.symbol}
@@ -396,6 +422,62 @@ export default function TerminalPage() {
           <Calculator className="h-3.5 w-3.5" />
         </button>
 
+        {/* TradingView-style view controls — scale, magnet, screenshot, objects */}
+        <button
+          onClick={() => update({ priceScale: settings.priceScale === "log" ? "normal" : "log" })}
+          className={cn("h-8 rounded-lg border px-2 text-[11px] font-bold", settings.priceScale === "log" ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
+          title="Logarithmic price scale"
+        >LOG</button>
+        <button
+          onClick={() => update({ priceScale: settings.priceScale === "percent" ? "normal" : "percent" })}
+          className={cn("h-8 rounded-lg border px-2 text-[11px] font-bold", settings.priceScale === "percent" ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
+          title="Percent price scale"
+        >%</button>
+        <button
+          onClick={() => update({ magnet: !settings.magnet })}
+          className={cn("flex h-8 w-8 items-center justify-center rounded-lg border", settings.magnet ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
+          title="Magnet crosshair — snap to OHLC"
+        ><Magnet className="h-3.5 w-3.5" /></button>
+        <button onClick={() => setScreenshotSignal((n) => n + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground" title="Export chart image (PNG)">
+          <Camera className="h-3.5 w-3.5" />
+        </button>
+        <div className="relative">
+          <button
+            onClick={() => setObjectsOpen((v) => !v)}
+            className={cn("flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold", objectsOpen ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
+            title="Objects — drawings on this chart"
+          >
+            <Shapes className="h-3.5 w-3.5" />{drawings.length > 0 ? drawings.length : ""}
+          </button>
+          {objectsOpen && (
+            <div className="absolute right-0 top-9 z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-2 shadow-2xl">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase text-muted-foreground">
+                <span>Objects ({drawings.length})</span>
+                <button onClick={() => setDrawingsHidden((v) => !v)} className={cn("flex items-center gap-1 rounded px-1.5 py-0.5", drawingsHidden ? "text-amber-400" : "text-muted-foreground hover:text-foreground")} title="Show/hide all drawings">
+                  {drawingsHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}{drawingsHidden ? "Hidden" : "Visible"}
+                </button>
+              </div>
+              <div className="max-h-44 space-y-0.5 overflow-y-auto">
+                {!drawings.length && <div className="py-2 text-center text-[10px] text-muted-foreground">No drawings on {settings.symbol}</div>}
+                {drawings.map((d) => (
+                  <div key={d.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 text-[10px] hover:bg-card/60">
+                    <span className="uppercase text-muted-foreground">{d.tool}</span>
+                    <span className="ml-auto text-muted-foreground">{d.points?.[0] ? new Date(d.points[0].time * 1000).toLocaleDateString() : ""}</span>
+                  </div>
+                ))}
+              </div>
+              {drawings.length > 0 && (
+                <button
+                  onClick={() => { if (confirm("Remove all drawings on this symbol?")) { save([]); setObjectsOpen(false); } }}
+                  className="mt-1.5 w-full rounded-lg border border-red-500/40 py-1 text-[10px] font-bold text-red-400 hover:bg-red-500/10"
+                >
+                  Remove all
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="ml-auto flex items-center gap-1.5">
           {([1, 2, 4] as const).map((l) => (
             <button
@@ -407,11 +489,14 @@ export default function TerminalPage() {
               {l === 1 ? <Square className="h-3.5 w-3.5" /> : l === 2 ? <Columns2 className="h-3.5 w-3.5" /> : <LayoutGrid className="h-3.5 w-3.5" />}
             </button>
           ))}
-          <button onClick={toggleFullscreen} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground" title="Fullscreen">
+          <button onClick={() => setFocusMode((v) => !v)} className={cn("flex h-8 w-8 items-center justify-center rounded-lg border", focusMode ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")} title="Maximize chart — hide panels (Esc to exit)">
+            <Scan className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={toggleFullscreen} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground" title="Fullscreen (whole screen)">
             {fullscreen ? <Minimize className="h-3.5 w-3.5" /> : <Maximize className="h-3.5 w-3.5" />}
           </button>
         </div>
-      </div>
+      </div>)}
 
       {/* ===== replay toolbar ===== */}
       {replayOpen && (
@@ -420,6 +505,16 @@ export default function TerminalPage() {
 
       {/* ===== workspace ===== */}
       <div className="relative flex min-h-0 flex-1 gap-1.5" ref={gridRef}>
+        {/* exit chip in focus / fullscreen mode */}
+        {immersive && (
+          <button
+            onClick={() => (document.fullscreenElement ? document.exitFullscreen?.().catch(() => {}) : setFocusMode(false))}
+            className="absolute right-2 top-2 z-[70] flex items-center gap-1 rounded-lg border border-border/60 bg-[#0d1117]/90 px-2 py-1 text-[10px] font-bold text-muted-foreground hover:text-foreground"
+            title="Exit full view"
+          >
+            <Minimize className="h-3 w-3" />Exit full view (Esc)
+          </button>
+        )}
         {/* drawing toolbar */}
         <div className="flex w-11 shrink-0 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-border/50 bg-card/60 py-1.5">
           {TOOLS.map(({ id, icon: Icon, title }) => (
@@ -478,7 +573,8 @@ export default function TerminalPage() {
           </div>
         </div>
 
-        {/* side panel (desktop) */}
+        {/* side panel (desktop) — hidden in focus/maximize mode */}
+        {!immersive && (
         <div className="hidden w-80 shrink-0 md:block">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/50 bg-card/60">
             <div className="flex shrink-0 gap-0.5 border-b border-border/40 p-1">
@@ -494,7 +590,7 @@ export default function TerminalPage() {
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">{sidePanel()}</div>
           </div>
-        </div>
+        </div>)}
 
         {/* floating replay bar — replaced by the dedicated toolbar above the workspace */}
 

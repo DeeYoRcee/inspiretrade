@@ -24,6 +24,10 @@ export interface TerminalSettings {
   sound: boolean;
   colors: ChartColors;
   defaultRiskPct: number;
+  /** right price scale mode — TradingView-style log / percent toggles */
+  priceScale: "normal" | "log" | "percent";
+  /** magnet crosshair — snaps to OHLC values */
+  magnet: boolean;
 }
 
 export const DEFAULT_SETTINGS: TerminalSettings = {
@@ -36,6 +40,8 @@ export const DEFAULT_SETTINGS: TerminalSettings = {
   sound: true,
   colors: DEFAULT_COLORS,
   defaultRiskPct: 1,
+  priceScale: "normal",
+  magnet: false,
 };
 
 export function useTerminalWorkspace() {
