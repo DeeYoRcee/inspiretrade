@@ -15,7 +15,7 @@ interface ReferralInfo {
   invited: number;
   earned: number;
   referredByCode: string | null;
-  bonuses: { new: number; referrer: number };
+  bonuses: { new: number; referrerCase: number };
 }
 
 export function ReferralCard() {

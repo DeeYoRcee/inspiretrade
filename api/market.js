@@ -141,7 +141,7 @@ var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var MARKET_FEE_PERCENT = 10;
 var MAX_ACTIVE_LISTINGS = 20;
-var MIN_LISTING_PRICE = 1;
+var MIN_LISTING_PRICE = 0.01;
 var MAX_LISTING_PRICE = 1e6;
 function getFragment(id) {
   return ALL_FRAGMENTS.find((f) => f.id === id);
@@ -154,9 +154,11 @@ var list_default = handle(async (req, res) => {
   const { fragmentId, price } = req.body || {};
   const fragment = getFragment(String(fragmentId || ""));
   if (!fragment) throw new HttpError(400, "BAD_FRAGMENT", "Unknown fragment");
-  const parsedPrice = Number(price);
-  if (!Number.isInteger(parsedPrice) || parsedPrice < MIN_LISTING_PRICE || parsedPrice > MAX_LISTING_PRICE) {
-    throw new HttpError(400, "BAD_PRICE", `Price must be a whole number between ${MIN_LISTING_PRICE} and ${MAX_LISTING_PRICE} INSP`);
+  const rawPrice = Number(price);
+  const priceCents = Math.round(rawPrice * 100);
+  const normalizedPrice = priceCents / 100;
+  if (!Number.isFinite(rawPrice) || Math.abs(rawPrice - normalizedPrice) > 1e-9 || normalizedPrice < MIN_LISTING_PRICE || normalizedPrice > MAX_LISTING_PRICE) {
+    throw new HttpError(400, "BAD_PRICE", `Price must be between ${MIN_LISTING_PRICE} and ${MAX_LISTING_PRICE} INSP (up to 2 decimals)`);
   }
   const db = rtdb();
   const now = Date.now();
@@ -182,13 +184,13 @@ var list_default = handle(async (req, res) => {
     sellerUid: user.uid,
     sellerName,
     fragmentId: fragment.id,
-    price: parsedPrice,
+    price: normalizedPrice,
     status: "active",
     listedAt: now
   };
   await listingRef.set(listing);
   await db.ref(`inventory/${user.uid}/${fragment.id}/updatedAt`).set(now);
-  await logLedger({ type: "market_list", uid: user.uid, listingId: listingRef.key, fragmentId: fragment.id, price: parsedPrice });
+  await logLedger({ type: "market_list", uid: user.uid, listingId: listingRef.key, fragmentId: fragment.id, price: normalizedPrice });
   res.status(200).json({ ok: true, listing });
 });
 
@@ -231,8 +233,10 @@ var buy_default = handle(async (req, res) => {
     });
     throw new HttpError(400, "INSUFFICIENT_COINS", "Not enough INSP coins");
   }
-  const sellerReceives = Math.floor(listing.price * (1 - MARKET_FEE_PERCENT / 100));
-  const fee = listing.price - sellerReceives;
+  const priceCents = Math.round(listing.price * 100);
+  const feeCents = Math.round(priceCents * MARKET_FEE_PERCENT / 100);
+  const sellerReceives = (priceCents - feeCents) / 100;
+  const fee = feeCents / 100;
   await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c) => (c || 0) + sellerReceives);
   await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
   await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);

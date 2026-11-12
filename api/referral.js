@@ -99,7 +99,7 @@ async function logLedger(entry) {
 
 // api/_src/referral/index.ts
 var BONUS_NEW = 100;
-var BONUS_REF = 250;
+var REFERRAL_CASES = 1;
 var ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 function newCode() {
   let s = "";
@@ -153,7 +153,7 @@ var index_default = handle(async (req, res) => {
       invited: node.count || 0,
       earned: node.earned || 0,
       referredByCode: node.referredByCode || null,
-      bonuses: { new: BONUS_NEW, referrer: BONUS_REF }
+      bonuses: { new: BONUS_NEW, referrerCase: REFERRAL_CASES }
     });
   }
   if (action === "apply") {
@@ -182,15 +182,11 @@ var index_default = handle(async (req, res) => {
       coins: (cur?.coins || 0) + BONUS_NEW,
       updatedAt: now
     }));
-    await rtdb().ref(`economy/${referrerUid}`).transaction((cur) => ({
-      ...cur || { coins: 0, cases: 0, goldCases: 0 },
-      coins: (cur?.coins || 0) + BONUS_REF,
-      updatedAt: now
-    }));
+    await rtdb().ref(`economy/${referrerUid}/cases`).transaction((c) => (c || 0) + REFERRAL_CASES);
     await rtdb().ref(`referrals/${referrerUid}`).transaction((cur) => ({
       ...cur || {},
       count: (cur?.count || 0) + 1,
-      earned: (cur?.earned || 0) + BONUS_REF,
+      earned: (cur?.earned || 0) + REFERRAL_CASES,
       lastInviteAt: now
     }));
     await logLedger({
@@ -199,9 +195,9 @@ var index_default = handle(async (req, res) => {
       referrerUid,
       code,
       bonusNew: BONUS_NEW,
-      bonusRef: BONUS_REF
+      referralCases: REFERRAL_CASES
     });
-    return res.status(200).json({ ok: true, bonusNew: BONUS_NEW, bonusRef: BONUS_REF });
+    return res.status(200).json({ ok: true, bonusNew: BONUS_NEW, referralCases: REFERRAL_CASES });
   }
   throw new HttpError(400, "BAD_ACTION", "Unknown referral action (use info|apply)");
 });

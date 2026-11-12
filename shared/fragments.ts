@@ -98,7 +98,7 @@ export const DAILY_CASES = 1;              // cases granted per claim
 export const STREAK_BONUS_EVERY = REWARD_CYCLE_DAYS;
 export const MARKET_FEE_PERCENT = 10;      // seller fee (burned, CS2-like)
 export const MAX_ACTIVE_LISTINGS = 20;     // per user
-export const MIN_LISTING_PRICE = 1;        // INSP
+export const MIN_LISTING_PRICE = 0.01;     // INSP (2-decimal precision)
 export const MAX_LISTING_PRICE = 1000000;  // INSP
 
 export function getFragment(id: string): FragmentDef | undefined {
@@ -109,8 +109,10 @@ export function getCase(type: CaseType): CaseDef {
   return CASES[type];
 }
 
+/** Seller proceeds after the market fee, cent-accurate (prices are 2-decimal). */
 export function sellerReceives(price: number): number {
-  return Math.floor(price * (1 - MARKET_FEE_PERCENT / 100));
+  const cents = Math.round(price * 100);
+  return (cents - Math.round((cents * MARKET_FEE_PERCENT) / 100)) / 100;
 }
 
 /** Cycle day (1…7) for a given streak count AFTER the claim. */

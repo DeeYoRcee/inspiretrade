@@ -4,7 +4,7 @@
  * Referral system. Each user gets a unique referral code (created lazily on
  * first `info` call). A NEW account can apply a code exactly once:
  *   new user  → +100 INSP welcome bonus
- *   referrer  → +250 INSP + invited counter +1
+ *   referrer  → +1 Inspire Case per invited friend
  *
  * All writes go through the Admin SDK (clients never touch referral nodes —
  * no database.rules.json changes needed). Economy updates use value-returning
@@ -18,7 +18,7 @@
 import { handle, requireUser, rtdb, HttpError, logLedger } from "../lib/firebase";
 
 const BONUS_NEW = 100; // INSP for the invited (new) user
-const BONUS_REF = 250; // INSP for the referrer per invited friend
+const REFERRAL_CASES = 1; // Inspire Cases granted to the referrer per invited friend
 
 // Unambiguous alphabet (no 0/O, 1/I/L confusion) — codes are shown in URLs.
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -85,7 +85,7 @@ export default handle(async (req, res) => {
       invited: node.count || 0,
       earned: node.earned || 0,
       referredByCode: node.referredByCode || null,
-      bonuses: { new: BONUS_NEW, referrer: BONUS_REF },
+      bonuses: { new: BONUS_NEW, referrerCase: REFERRAL_CASES },
     });
   }
 
@@ -125,19 +125,16 @@ export default handle(async (req, res) => {
         coins: (cur?.coins || 0) + BONUS_NEW,
         updatedAt: now,
       }));
+    // Referrer reward: +1 Inspire Case per invited friend (atomic grant).
     await rtdb()
-      .ref(`economy/${referrerUid}`)
-      .transaction((cur: any) => ({
-        ...(cur || { coins: 0, cases: 0, goldCases: 0 }),
-        coins: (cur?.coins || 0) + BONUS_REF,
-        updatedAt: now,
-      }));
+      .ref(`economy/${referrerUid}/cases`)
+      .transaction((c: any) => (c || 0) + REFERRAL_CASES);
     await rtdb()
       .ref(`referrals/${referrerUid}`)
       .transaction((cur: any) => ({
         ...(cur || {}),
         count: (cur?.count || 0) + 1,
-        earned: (cur?.earned || 0) + BONUS_REF,
+        earned: (cur?.earned || 0) + REFERRAL_CASES,
         lastInviteAt: now,
       }));
     await logLedger({
@@ -146,10 +143,10 @@ export default handle(async (req, res) => {
       referrerUid,
       code,
       bonusNew: BONUS_NEW,
-      bonusRef: BONUS_REF,
+      referralCases: REFERRAL_CASES,
     });
 
-    return res.status(200).json({ ok: true, bonusNew: BONUS_NEW, bonusRef: BONUS_REF });
+    return res.status(200).json({ ok: true, bonusNew: BONUS_NEW, referralCases: REFERRAL_CASES });
   }
 
   throw new HttpError(400, "BAD_ACTION", "Unknown referral action (use info|apply)");

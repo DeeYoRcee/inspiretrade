@@ -14,9 +14,18 @@ export default handle(async (req, res) => {
   const fragment = getFragment(String(fragmentId || ""));
   if (!fragment) throw new HttpError(400, "BAD_FRAGMENT", "Unknown fragment");
 
-  const parsedPrice = Number(price);
-  if (!Number.isInteger(parsedPrice) || parsedPrice < MIN_LISTING_PRICE || parsedPrice > MAX_LISTING_PRICE) {
-    throw new HttpError(400, "BAD_PRICE", `Price must be a whole number between ${MIN_LISTING_PRICE} and ${MAX_LISTING_PRICE} INSP`);
+  // Prices are decimal INSP with 2-digit precision (e.g. 0.03). Normalize to
+  // cents and reject anything that isn't an exact 2-decimal value.
+  const rawPrice = Number(price);
+  const priceCents = Math.round(rawPrice * 100);
+  const normalizedPrice = priceCents / 100;
+  if (
+    !Number.isFinite(rawPrice) ||
+    Math.abs(rawPrice - normalizedPrice) > 1e-9 ||
+    normalizedPrice < MIN_LISTING_PRICE ||
+    normalizedPrice > MAX_LISTING_PRICE
+  ) {
+    throw new HttpError(400, "BAD_PRICE", `Price must be between ${MIN_LISTING_PRICE} and ${MAX_LISTING_PRICE} INSP (up to 2 decimals)`);
   }
 
   const db = rtdb();
@@ -51,14 +60,14 @@ export default handle(async (req, res) => {
     sellerUid: user.uid,
     sellerName,
     fragmentId: fragment.id,
-    price: parsedPrice,
+    price: normalizedPrice,
     status: "active",
     listedAt: now,
   };
   await listingRef.set(listing);
   await db.ref(`inventory/${user.uid}/${fragment.id}/updatedAt`).set(now);
 
-  await logLedger({ type: "market_list", uid: user.uid, listingId: listingRef.key, fragmentId: fragment.id, price: parsedPrice });
+  await logLedger({ type: "market_list", uid: user.uid, listingId: listingRef.key, fragmentId: fragment.id, price: normalizedPrice });
 
   res.status(200).json({ ok: true, listing });
 });

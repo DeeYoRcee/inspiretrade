@@ -73,8 +73,15 @@ export default function MarketPage() {
 
   const myListings = (listings || []).filter((listing) => listing.isOwn);
 
-  const parsedPrice = Number.parseInt(sellPrice, 10);
-  const priceValid = Number.isInteger(parsedPrice) && parsedPrice >= MIN_LISTING_PRICE && parsedPrice <= MAX_LISTING_PRICE;
+  // Prices are decimal INSP with up to 2 decimals (e.g. 0.03).
+  const rawPrice = Number(sellPrice);
+  const parsedPrice = Math.round(rawPrice * 100) / 100;
+  const priceValid =
+    sellPrice.trim() !== "" &&
+    Number.isFinite(rawPrice) &&
+    Math.abs(rawPrice - parsedPrice) < 1e-9 &&
+    parsedPrice >= MIN_LISTING_PRICE &&
+    parsedPrice <= MAX_LISTING_PRICE;
   const receive = priceValid ? sellerReceives(parsedPrice) : 0;
 
   return (
@@ -167,9 +174,10 @@ export default function MarketPage() {
                         type="number"
                         min={MIN_LISTING_PRICE}
                         max={MAX_LISTING_PRICE}
+                        step={0.01}
                         value={sellPrice}
                         onChange={(e) => setSellPrice(e.target.value)}
-                        placeholder="25"
+                        placeholder="0.03"
                         className="rounded-xl"
                       />
                     </div>

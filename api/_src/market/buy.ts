@@ -58,9 +58,11 @@ export default handle(async (req, res) => {
     throw new HttpError(400, "INSUFFICIENT_COINS", "Not enough INSP coins");
   }
 
-  // 3) Credit seller and deliver the fragment.
-  const sellerReceives = Math.floor(listing.price * (1 - MARKET_FEE_PERCENT / 100));
-  const fee = listing.price - sellerReceives;
+  // 3) Credit seller and deliver the fragment (cent-accurate fee, 2-decimal prices).
+  const priceCents = Math.round(listing.price * 100);
+  const feeCents = Math.round((priceCents * MARKET_FEE_PERCENT) / 100);
+  const sellerReceives = (priceCents - feeCents) / 100;
+  const fee = feeCents / 100;
   await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c: any) => (c || 0) + sellerReceives);
   await db
     .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
