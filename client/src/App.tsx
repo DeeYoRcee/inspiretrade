@@ -27,6 +27,7 @@ import { InstallPrompt } from "@/components/InstallPrompt";
 import { UsernamePrompt } from "@/components/UsernamePrompt";
 import { DailyRewardDialog } from "@/components/rewards/DailyRewardDialog";
 import { GlobalChat } from "@/components/chat/GlobalChat";
+import { AlertsEngine } from "@/components/news/AlertsEngine";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { useEconomyInvalidator } from "@/hooks/use-economy";
 import { authedFetch } from "@/lib/api";
@@ -288,6 +289,7 @@ function App() {
               <Toaster />
               <Router />
               <ReferralApplier />
+              <AlertsEngine />
               <InstallPrompt />
             </TooltipProvider>
           </AuthProvider>

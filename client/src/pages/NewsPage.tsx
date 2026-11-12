@@ -1,11 +1,22 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, CalendarDays, Clock3, Globe2, Loader2, Newspaper, RefreshCw } from "lucide-react";
+import { ArrowUpRight, Bell, BellRing, CalendarDays, Clock3, Globe2, Loader2, Newspaper, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import { useLanguage } from "@/lib/language-context";
 import { useTheme } from "@/lib/theme-context";
 import { cn } from "@/lib/utils";
+import {
+  CALENDAR_CURRENCIES,
+  SYMBOLS,
+  SYMBOL_COLOR,
+  fetchNews,
+  type NewsResponse,
+  type NewsSymbol,
+} from "@/lib/news-api";
+import { loadAlertSettings, saveAlertSettings, type AlertSettings } from "@/lib/notifications";
 
 const CALENDAR_WIDGET_CONFIG = {
   width: "100%",
@@ -16,28 +27,8 @@ const CALENDAR_WIDGET_CONFIG = {
 };
 
 // ---- market news -----------------------------------------------------------
-
-const SYMBOLS = ["XAUUSD", "EURUSD", "GBPUSD", "NASDAQ", "USD", "BTC"] as const;
-type Symbol = (typeof SYMBOLS)[number];
-
-// Brand accent per symbol — works on every theme (used as text/border color).
-const SYMBOL_COLOR: Record<Symbol, string> = {
-  XAUUSD: "#f59e0b",
-  EURUSD: "#60a5fa",
-  GBPUSD: "#c084fc",
-  NASDAQ: "#34d399",
-  USD: "#2dd4bf",
-  BTC: "#f7931a",
-};
-
-interface NewsItem {
-  title: string;
-  link: string;
-  source: string;
-  publishedAt: number;
-  summary: string;
-  symbols: string[];
-}
+// SYMBOLS / SYMBOL_COLOR / types come from @/lib/news-api (shared with the
+// AlertsEngine so filters and alert settings always agree).
 
 /** Compact relative time: 4m / 3h / 2d — digits need no translation. */
 function timeAgo(ts: number): string {
@@ -49,18 +40,101 @@ function timeAgo(ts: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-function MarketNewsPanel() {
+/** Alert settings panel: notifications on/off + symbol & currency pickers. */
+function AlertsSettingsPanel({ alerts, onChange }: { alerts: AlertSettings; onChange: (patch: Partial<AlertSettings>) => void }) {
   const { t } = useLanguage();
-  const [filter, setFilter] = useState<"All" | Symbol>("All");
-  const [limit, setLimit] = useState(30);
+  const toggleSymbol = (sym: NewsSymbol) =>
+    onChange({
+      symbols: alerts.symbols.includes(sym) ? alerts.symbols.filter((s) => s !== sym) : [...alerts.symbols, sym],
+    });
+  const toggleCurrency = (cur: string) =>
+    onChange({
+      calCurrencies: alerts.calCurrencies.includes(cur)
+        ? alerts.calCurrencies.filter((c) => c !== cur)
+        : [...alerts.calCurrencies, cur],
+    });
 
-  const { data, isLoading, isError, dataUpdatedAt, refetch, isFetching } = useQuery<{ items: NewsItem[] }>({
-    queryKey: ["marketNews"],
-    queryFn: async () => {
-      const res = await fetch("/api/news");
-      if (!res.ok) throw new Error("news fetch failed");
-      return res.json();
-    },
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold">{t("notifications")}</span>
+        <Switch checked={alerts.enabled} onCheckedChange={(v) => onChange({ enabled: v })} />
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-xs font-medium text-muted-foreground">{t("alertsSymbols")}</p>
+        <div className="flex flex-wrap gap-1.5">
+          {SYMBOLS.map((sym) => {
+            const on = alerts.symbols.includes(sym);
+            return (
+              <button
+                key={sym}
+                onClick={() => toggleSymbol(sym)}
+                aria-pressed={on}
+                className="rounded-full border px-2.5 py-1 text-[11px] font-bold transition-all"
+                style={
+                  on
+                    ? { backgroundColor: SYMBOL_COLOR[sym], borderColor: SYMBOL_COLOR[sym], color: "#0b0d0c" }
+                    : { borderColor: `${SYMBOL_COLOR[sym]}66`, color: SYMBOL_COLOR[sym], backgroundColor: `${SYMBOL_COLOR[sym]}14` }
+                }
+              >
+                {sym}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">{t("alertsCalendar")}</span>
+        <Switch checked={alerts.calEnabled} onCheckedChange={(v) => onChange({ calEnabled: v })} />
+      </div>
+
+      {alerts.calEnabled && (
+        <div>
+          <p className="mb-1.5 text-xs font-medium text-muted-foreground">{t("alertsCurrencies")}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {CALENDAR_CURRENCIES.map((cur) => {
+              const on = alerts.calCurrencies.includes(cur);
+              return (
+                <button
+                  key={cur}
+                  onClick={() => toggleCurrency(cur)}
+                  aria-pressed={on}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors",
+                    on ? "border-transparent bg-primary text-primary-foreground" : "border-border/60 text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {cur}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <p className="text-[11px] leading-relaxed text-muted-foreground">{t("alertsHint")}</p>
+    </div>
+  );
+}
+
+function MarketNewsPanel() {
+  const { t, language } = useLanguage();
+  const [filter, setFilter] = useState<"All" | NewsSymbol>("All");
+  const [limit, setLimit] = useState(30);
+  const [alerts, setAlerts] = useState<AlertSettings>(() => loadAlertSettings());
+
+  const updateAlerts = (patch: Partial<AlertSettings>) =>
+    setAlerts((prev) => {
+      const next = { ...prev, ...patch };
+      saveAlertSettings(next);
+      return next;
+    });
+
+  const { data, isLoading, isError, dataUpdatedAt, refetch, isFetching } = useQuery<NewsResponse>({
+    queryKey: ["marketNews", language],
+    queryFn: () => fetchNews(language),
     staleTime: 2 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
   });
@@ -77,20 +151,61 @@ function MarketNewsPanel() {
             <Newspaper className="h-5 w-5 shrink-0 text-primary" />
             <h2 className="truncate font-display text-lg font-semibold">{t("marketNews")}</h2>
           </div>
-          <button
-            onClick={() => refetch()}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-            title={t("newsUpdated")}
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
-            {dataUpdatedAt ? timeAgo(dataUpdatedAt) : ""}
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {/* alert settings */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                  title={t("notifications")}
+                  aria-label={t("notifications")}
+                >
+                  {alerts.enabled && (alerts.symbols.length > 0 || alerts.calEnabled) ? (
+                    <BellRing className="h-3.5 w-3.5 text-primary" />
+                  ) : (
+                    <Bell className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72">
+                <AlertsSettingsPanel alerts={alerts} onChange={updateAlerts} />
+              </PopoverContent>
+            </Popover>
+            <button
+              onClick={() => refetch()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+              title={t("newsUpdated")}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+              {dataUpdatedAt ? timeAgo(dataUpdatedAt) : ""}
+            </button>
+          </div>
         </div>
-        {/* symbol filter chips */}
+        {/* symbol filter chips — every chip keeps its symbol color in ALL view */}
         <div className="flex flex-wrap gap-1.5">
           {(["All", ...SYMBOLS] as const).map((sym) => {
             const active = filter === sym;
-            const color = sym === "All" ? undefined : SYMBOL_COLOR[sym];
+            if (sym === "All") {
+              return (
+                <button
+                  key={sym}
+                  onClick={() => {
+                    setFilter(sym);
+                    setLimit(30);
+                  }}
+                  aria-pressed={active}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-bold transition-colors",
+                    active
+                      ? "border-transparent bg-primary text-primary-foreground"
+                      : "border-border/60 bg-card/60 text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {t("newsFilterAll")}
+                </button>
+              );
+            }
+            const color = SYMBOL_COLOR[sym];
             return (
               <button
                 key={sym}
@@ -99,15 +214,14 @@ function MarketNewsPanel() {
                   setLimit(30);
                 }}
                 aria-pressed={active}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-xs font-bold transition-colors",
+                className="rounded-full border px-3 py-1 text-xs font-bold transition-all"
+                style={
                   active
-                    ? "border-transparent text-background"
-                    : "border-border/60 bg-card/60 text-muted-foreground hover:text-foreground",
-                )}
-                style={active && color ? { backgroundColor: color, color: "#0b0d0c" } : undefined}
+                    ? { backgroundColor: color, borderColor: color, color: "#0b0d0c" }
+                    : { borderColor: `${color}66`, color, backgroundColor: `${color}14` }
+                }
               >
-                {sym === "All" ? t("newsFilterAll") : sym}
+                {sym}
               </button>
             );
           })}
@@ -147,8 +261,8 @@ function MarketNewsPanel() {
                       key={sym}
                       className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
                       style={{
-                        color: SYMBOL_COLOR[sym as Symbol] ?? "#9ca3af",
-                        backgroundColor: `${SYMBOL_COLOR[sym as Symbol] ?? "#9ca3af"}1f`,
+                        color: SYMBOL_COLOR[sym] ?? "#9ca3af",
+                        backgroundColor: `${SYMBOL_COLOR[sym] ?? "#9ca3af"}1f`,
                       }}
                     >
                       {sym}
