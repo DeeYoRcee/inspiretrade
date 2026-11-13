@@ -160,8 +160,49 @@ function safeParse(raw) {
   }
 }
 
-// api/_src/wallet/index.ts
+// api/_src/wallet/deposit.ts
+var METHODS2 = {
+  crypto: "Crypto (USDT / INSP)",
+  other: "Other (card / manual)"
+};
+var MIN_DEPOSIT = 10;
+var MAX_DEPOSIT = 1e5;
 function safeParse2(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+var deposit_default = handle(async (req, res) => {
+  const user = await requireUser(req);
+  if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
+  const body = typeof req.body === "string" ? safeParse2(req.body) : req.body || {};
+  const amount = Math.floor(Number(body.amount) || 0);
+  const method = String(body.method || "");
+  const details = String(body.details || "").trim().slice(0, 300);
+  if (!METHODS2[method]) throw new HttpError(400, "INVALID_METHOD", "Choose a deposit method");
+  if (amount < MIN_DEPOSIT) throw new HttpError(400, "AMOUNT_TOO_SMALL", `Minimum deposit is ${MIN_DEPOSIT} INSP`);
+  if (amount > MAX_DEPOSIT) throw new HttpError(400, "AMOUNT_TOO_LARGE", `Maximum deposit is ${MAX_DEPOSIT} INSP`);
+  if (details.length < 4) throw new HttpError(400, "MISSING_DETAILS", "Provide payment details (txid / contact)");
+  const requestRef = rtdb().ref(`depositRequests/${user.uid}`).push();
+  const request = {
+    id: requestRef.key,
+    uid: user.uid,
+    amount,
+    method,
+    methodLabel: METHODS2[method],
+    details,
+    status: "pending",
+    at: Date.now()
+  };
+  await requestRef.set(request);
+  await logLedger({ type: "deposit_request", uid: user.uid, amount, method });
+  res.status(200).json({ ok: true, request });
+});
+
+// api/_src/wallet/index.ts
+function safeParse3(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -175,7 +216,7 @@ function getAction(req) {
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse2(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse3(req.body) : req.body;
   return String(body?.action || "withdraw");
 }
 async function handler(req, res) {
@@ -183,8 +224,10 @@ async function handler(req, res) {
   switch (action) {
     case "withdraw":
       return withdraw_default(req, res);
+    case "deposit":
+      return deposit_default(req, res);
     default:
-      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown wallet action (use ?action=withdraw)" });
+      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown wallet action (use ?action=withdraw|deposit)" });
   }
 }
 export {

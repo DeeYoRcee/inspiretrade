@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw,
+  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,16 @@ import { authedFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface Withdrawal {
+  id: string;
+  uid: string;
+  amount: number;
+  methodLabel: string;
+  details: string;
+  status: string;
+  at: number;
+}
+
+interface DepositReq {
   id: string;
   uid: string;
   amount: number;
@@ -42,6 +52,10 @@ export default function AdminPage() {
   // Withdrawals
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+
+  // Deposits (in-app requests)
+  const [deposits, setDepositsList] = useState<DepositReq[]>([]);
+  const [loadingDeposits, setLoadingDeposits] = useState(false);
 
   const giftMutation = useMutation({
     mutationFn: async () => {
@@ -93,6 +107,35 @@ export default function AdminPage() {
     },
   });
 
+  const loadDeposits = async () => {
+    setLoadingDeposits(true);
+    try {
+      const res = await authedFetch("/api/admin?action=deposits");
+      setDepositsList(res.deposits || []);
+    } catch (error: any) {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    } finally {
+      setLoadingDeposits(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDeposits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const depMutation = useMutation({
+    mutationFn: async ({ uid, id, action }: { uid: string; id: string; action: string }) =>
+      authedFetch("/api/admin?action=deposits", { uid, id, action }),
+    onSuccess: (_data, vars) => {
+      toast({ title: vars.action === "approve" ? t("depositApproved") : t("depositRejectedToast") });
+      loadDeposits();
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
   return (
     <div className="container mx-auto max-w-5xl space-y-6 p-4 sm:px-6">
       <div>
@@ -106,6 +149,7 @@ export default function AdminPage() {
       <Tabs defaultValue="gift">
         <TabsList className="rounded-full">
           <TabsTrigger value="gift" className="gap-1.5 rounded-full"><Send className="h-4 w-4" />{t("giftTab")}</TabsTrigger>
+          <TabsTrigger value="deposits" className="gap-1.5 rounded-full"><ArrowDownToLine className="h-4 w-4" />{t("depositsTab")}</TabsTrigger>
           <TabsTrigger value="withdrawals" className="gap-1.5 rounded-full"><Clock className="h-4 w-4" />{t("withdrawalsTab")}</TabsTrigger>
         </TabsList>
 
@@ -162,6 +206,65 @@ export default function AdminPage() {
                 {giftMutation.isPending ? t("sending") : <><Send className="mr-2 h-5 w-5" />{t("giftSend")}</>}
               </Button>
               <p className="text-center text-[11px] text-muted-foreground">{t("giftNote")}</p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Deposits */}
+        <TabsContent value="deposits">
+          <Card className="glass-panel border-border/50">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">{t("depositsTitle")}</CardTitle>
+                <Button variant="outline" size="sm" className="gap-1.5 rounded-full" onClick={loadDeposits} disabled={loadingDeposits}>
+                  <RefreshCw className={cn("h-3.5 w-3.5", loadingDeposits && "animate-spin")} />
+                  {t("refresh")}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {!deposits.length && !loadingDeposits && (
+                <p className="py-6 text-center text-sm text-muted-foreground">{t("noDeposits")}</p>
+              )}
+              {deposits.map((d) => (
+                <div key={d.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/50 bg-card/50 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="font-number text-sm font-bold text-amber-400">
+                      {d.amount} INSP
+                      <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+                        {d.methodLabel} · uid {d.uid.slice(0, 8)}…
+                      </span>
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">{d.details}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={cn("rounded-full text-[10px] font-bold uppercase", STATUS_STYLES[d.status])}>
+                      {d.status}
+                    </Badge>
+                    {d.status === "pending" && (
+                      <>
+                        <Button
+                          size="sm"
+                          className="h-8 gap-1 rounded-full bg-emerald-600 text-white hover:bg-emerald-500"
+                          disabled={depMutation.isPending}
+                          onClick={() => depMutation.mutate({ uid: d.uid, id: d.id, action: "approve" })}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />{t("approveDeposit")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1 rounded-full border-red-500/40 text-red-400 hover:bg-red-500/10"
+                          disabled={depMutation.isPending}
+                          onClick={() => depMutation.mutate({ uid: d.uid, id: d.id, action: "reject" })}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />{t("reject")}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
             </CardContent>
           </Card>
         </TabsContent>

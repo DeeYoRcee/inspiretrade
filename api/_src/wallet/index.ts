@@ -1,15 +1,17 @@
 /**
- * POST /api/wallet?action=withdraw
- * Body: { amount: number, method: "crypto"|"telegram"|"other", details: string }
+ * POST /api/wallet?action=withdraw|deposit
  *
  * Single wallet serverless function (Vercel Hobby = max 12 functions).
- * Atomically reserves INSP from the user's balance and stores a pending
- * withdrawal request. The owner processes it manually and marks it paid or
- * rejected (rejected = coins refunded) via /api/admin?action=withdrawals.
- * Deposits are handled manually via Telegram (owner gifts coins with
- * /api/admin?action=gift), so no deposit endpoint is needed.
+ *
+ * withdraw — atomically reserves INSP from the user's balance and stores a
+ *            pending withdrawal request (processed via /api/admin?action=withdrawals).
+ * deposit  — in-app deposit REQUEST (no balance change): the user submits
+ *            amount + payment details, the owner approves via
+ *            /api/admin?action=deposits and the coins are credited then.
+ *            Replaces the old "contact the owner on Telegram" flow.
  */
 import withdraw from "./withdraw";
+import deposit from "./deposit";
 
 function safeParse(raw: string): any {
   try {
@@ -36,9 +38,11 @@ export default async function handler(req: any, res: any) {
   switch (action) {
     case "withdraw":
       return withdraw(req, res);
+    case "deposit":
+      return deposit(req, res);
     default:
       return res
         .status(400)
-        .json({ error: "BAD_ACTION", message: "Unknown wallet action (use ?action=withdraw)" });
+        .json({ error: "BAD_ACTION", message: "Unknown wallet action (use ?action=withdraw|deposit)" });
   }
 }

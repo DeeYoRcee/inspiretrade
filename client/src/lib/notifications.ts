@@ -24,6 +24,8 @@ export interface AlertSettings {
   symbols: string[];
   calEnabled: boolean;
   calCurrencies: string[];
+  /** Telegram-style browser notifications (Notification API) */
+  browser: boolean;
 }
 
 const SETTINGS_KEY = "inspire_alert_settings";
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: AlertSettings = {
   symbols: ["XAUUSD"],
   calEnabled: true,
   calCurrencies: ["USD"],
+  browser: false,
 };
 
 function readJson<T>(key: string, fallback: T): T {
@@ -68,12 +71,38 @@ export function loadAlertSettings(): AlertSettings {
     symbols: Array.isArray(raw.symbols) ? raw.symbols.filter((s) => (SYMBOLS as readonly string[]).includes(s)) : DEFAULT_SETTINGS.symbols,
     calEnabled: raw.calEnabled ?? DEFAULT_SETTINGS.calEnabled,
     calCurrencies: Array.isArray(raw.calCurrencies) ? raw.calCurrencies : DEFAULT_SETTINGS.calCurrencies,
+    browser: raw.browser ?? DEFAULT_SETTINGS.browser,
   };
 }
 
 export function saveAlertSettings(settings: AlertSettings): void {
   writeJson(SETTINGS_KEY, settings);
   window.dispatchEvent(new CustomEvent(ALERTS_SETTINGS_EVENT));
+}
+
+/**
+ * Telegram-style OS/browser notification. Works while any tab of the site is
+ * open (web apps cannot push without a server sender-id; Vercel Hobby has no
+ * cron budget for that — the 45s in-tab poller is the trigger).
+ */
+export function browserNotify(title: string, body: string): void {
+  try {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    const n = new Notification(title, { body: body.slice(0, 180), tag: title + body, icon: "/favicon.ico" });
+    n.onclick = () => { try { window.focus(); n.close(); } catch { /* ignore */ } };
+  } catch { /* notifications unavailable — silent */ }
+}
+
+/** Ask the user for Notification permission; resolves to the final state. */
+export function requestBrowserPermission(): Promise<string> {
+  try {
+    if (typeof Notification === "undefined") return Promise.resolve("unsupported");
+    if (Notification.permission === "granted") return Promise.resolve("granted");
+    return Notification.requestPermission();
+  } catch {
+    return Promise.resolve("denied");
+  }
 }
 
 // ---- seen markers --------------------------------------------------------------

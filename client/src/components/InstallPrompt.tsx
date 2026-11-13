@@ -69,7 +69,9 @@ export function InstallPrompt() {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 100, opacity: 0 }}
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] w-[calc(100%-2rem)] max-w-sm"
+          /* no translate-x here: framer-motion overrides the transform,
+             which pushed the prompt off the right edge on mobile */
+          className="fixed inset-x-3 bottom-6 z-[200] mx-auto max-w-sm"
         >
           <div className="rounded-2xl glass-panel border border-border/60 shadow-2xl shadow-black/40 p-4">
             <div className="flex items-start gap-3">

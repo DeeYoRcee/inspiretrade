@@ -6,6 +6,7 @@ import { fetchNews } from "@/lib/news-api";
 import {
   ALERTS_SETTINGS_EVENT,
   appendAlertLog,
+  browserNotify,
   getCalSeen,
   getNewsSeen,
   loadAlertSettings,
@@ -38,8 +39,8 @@ export function AlertsEngine() {
   const { data } = useQuery({
     queryKey: ["marketNews", language],
     queryFn: () => fetchNews(language),
-    staleTime: 45 * 1000,
-    refetchInterval: 60 * 1000,
+    staleTime: 40 * 1000,
+    refetchInterval: 45 * 1000,
     retry: 1,
   });
 
@@ -61,6 +62,7 @@ export function AlertsEngine() {
       for (const item of fresh.slice(0, 3)) {
         const syms = item.symbols.filter((s) => settings.symbols.includes(s)).join(" · ");
         toast({ title: syms || "News", description: item.title });
+        if (settings.browser) browserNotify(syms || "News", item.title);
         appendAlertLog({ id: item.link, kind: "news", symbol: item.symbols[0], title: item.title });
       }
     }
@@ -78,6 +80,7 @@ export function AlertsEngine() {
       for (const ev of soon.slice(0, 2)) {
         const mins = Math.max(1, Math.round((ev.date - Date.now()) / 60000));
         toast({ title: `${ev.currency} — ${mins} min`, description: ev.title });
+        if (settings.browser) browserNotify(`${ev.currency} — ${mins} min`, ev.title);
         appendAlertLog({ id: ev.id, kind: "calendar", symbol: ev.currency, title: ev.title });
         calSeen.add(ev.id);
       }

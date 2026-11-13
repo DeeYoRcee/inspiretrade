@@ -16,7 +16,7 @@ import {
   type NewsResponse,
   type NewsSymbol,
 } from "@/lib/news-api";
-import { loadAlertSettings, saveAlertSettings, type AlertSettings } from "@/lib/notifications";
+import { loadAlertSettings, saveAlertSettings, requestBrowserPermission, type AlertSettings } from "@/lib/notifications";
 
 const CALENDAR_WIDGET_CONFIG = {
   width: "100%",
@@ -88,6 +88,24 @@ function AlertsSettingsPanel({ alerts, onChange }: { alerts: AlertSettings; onCh
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground">{t("alertsCalendar")}</span>
         <Switch checked={alerts.calEnabled} onCheckedChange={(v) => onChange({ calEnabled: v })} />
+      </div>
+
+      {/* Telegram-style browser notifications (Notification API) */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">{t("alertsBrowser")}</span>
+        <Switch
+          checked={alerts.browser}
+          onCheckedChange={async (v) => {
+            if (v) {
+              const perm = await requestBrowserPermission();
+              if (perm !== "granted") {
+                onChange({ ...alerts, browser: false });
+                return;
+              }
+            }
+            onChange({ browser: v });
+          }}
+        />
       </div>
 
       {alerts.calEnabled && (

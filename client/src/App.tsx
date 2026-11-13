@@ -30,6 +30,7 @@ import { UsernamePrompt } from "@/components/UsernamePrompt";
 import { DailyRewardDialog } from "@/components/rewards/DailyRewardDialog";
 import { GlobalChat } from "@/components/chat/GlobalChat";
 import { AlertsEngine } from "@/components/news/AlertsEngine";
+import { MusicPlayer } from "@/components/music/MusicPlayer";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { useEconomyInvalidator } from "@/hooks/use-economy";
 import { authedFetch } from "@/lib/api";
@@ -75,9 +76,10 @@ function ReferralApplier() {
     if (!code) return;
     (async () => {
       try {
-        // Only brand-new accounts can apply a referral code (15-minute window).
+        // Only fresh accounts can claim the referral bonus (24-hour window —
+        // the server is the final authority; this just avoids doomed calls).
         const created = new Date(user.metadata.creationTime || Date.now()).getTime();
-        if (Date.now() - created > 15 * 60 * 1000) {
+        if (Date.now() - created > 24 * 60 * 60 * 1000) {
           clearStoredRef();
           return;
         }
@@ -85,9 +87,14 @@ function ReferralApplier() {
         clearStoredRef();
         invalidate();
         toast({ title: t("referralAppliedTitle"), description: t("referralAppliedBody") });
-      } catch {
-        // Invalid code / self-referral / already referred — drop silently.
-        clearStoredRef();
+      } catch (error: any) {
+        const msg = String(error?.message || "");
+        // Permanent rejections — give up and surface WHY (was silent before).
+        if (/ALREADY_REFERRED|BAD_CODE|CODE_NOT_FOUND|SELF_REFERRAL|409|400|404/.test(msg)) {
+          clearStoredRef();
+          toast({ title: t("referralFailedTitle"), description: msg.slice(0, 140), variant: "destructive" });
+        }
+        // Transient failures (network/500): KEEP the code — retried on next login.
       }
     })();
   }, [user]);
@@ -306,6 +313,7 @@ function App() {
             <TooltipProvider>
               <Toaster />
               <Router />
+              <MusicPlayer />
               <ReferralApplier />
               <AlertsEngine />
               <InstallPrompt />

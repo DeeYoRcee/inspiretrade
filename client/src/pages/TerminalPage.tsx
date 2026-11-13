@@ -16,6 +16,7 @@ import {
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity, LineChart,
   Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Scan, Shapes, Palette,
+  PanelRight, PanelRightClose,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -242,6 +243,16 @@ export default function TerminalPage() {
   const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [objectsOpen, setObjectsOpen] = useState(false);
   const [themesOpen, setThemesOpen] = useState(false);
+  // instrument search combo (toolbar, top-left)
+  const [symQuery, setSymQuery] = useState("");
+  const [symOpen, setSymOpen] = useState(false);
+  // side panel visibility — collapse to give the chart the full width
+  const [panelOpen, setPanelOpen] = useState(true);
+  const symMatches = useMemo(() => {
+    const q = symQuery.trim().toLowerCase();
+    if (!q) return INSTRUMENTS;
+    return INSTRUMENTS.filter((i) => i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q));
+  }, [symQuery]);
 
   // "F" hotkey toggles focus/maximize mode (TradingView-style), ignored while typing
   useEffect(() => {
@@ -249,6 +260,11 @@ export default function TerminalPage() {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (e.key === "f" || e.key === "F") setFocusMode((v) => !v);
+      // "/" opens the searchable tools palette (replay, backtest, sessions…)
+      if (e.key === "/") {
+        e.preventDefault();
+        setToolsOpen(true);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -376,14 +392,41 @@ export default function TerminalPage() {
       {/* ===== toolbar (hidden in focus/maximize mode) ===== */}
       {!immersive && (
       <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/50 bg-card/60 p-1.5">
-        <select
-          value={settings.symbol}
-          onChange={(e) => update({ symbol: e.target.value })}
-          className="num-input h-8 w-28 font-bold"
-          aria-label="Instrument"
-        >
-          {INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}
-        </select>
+        {/* instrument search — top-left of the terminal (was buried in the side panel) */}
+        <div className="relative">
+          <input
+            value={symOpen ? symQuery : settings.symbol}
+            onChange={(e) => { setSymQuery(e.target.value); setSymOpen(true); }}
+            onFocus={() => { setSymQuery(""); setSymOpen(true); }}
+            onBlur={() => setTimeout(() => setSymOpen(false), 150)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && symMatches.length > 0) {
+                update({ symbol: symMatches[0].symbol });
+                setSymOpen(false);
+                (e.target as HTMLInputElement).blur();
+              }
+              if (e.key === "Escape") setSymOpen(false);
+            }}
+            placeholder="Search instrument…"
+            aria-label="Instrument search"
+            className="num-input h-8 w-44 font-bold"
+          />
+          {symOpen && (
+            <div className="absolute left-0 top-9 z-50 max-h-64 w-60 overflow-y-auto rounded-xl border border-border/60 bg-[#0d1117] p-1 shadow-2xl">
+              {symMatches.slice(0, 10).map((i) => (
+                <button
+                  key={i.symbol}
+                  onMouseDown={() => { update({ symbol: i.symbol }); setSymOpen(false); }}
+                  className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
+                >
+                  <span className="w-16 font-bold">{i.symbol}</span>
+                  <span className="truncate">{i.name}</span>
+                </button>
+              ))}
+              {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
+            </div>
+          )}
+        </div>
 
         <div className="flex max-w-full overflow-x-auto rounded-lg border border-border/60">
           {TIMEFRAMES.map((tf) => (
@@ -400,14 +443,14 @@ export default function TerminalPage() {
         <select
           value={settings.chartType}
           onChange={(e) => update({ chartType: e.target.value as ChartType })}
-          className="num-input h-8 w-32"
+          className="num-input h-8 w-28 sm:w-32"
           aria-label="Chart type"
         >
           {CHART_TYPES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select>
 
         <button onClick={() => setIndDialog(true)} className="flex h-8 items-center gap-1.5 rounded-lg border border-border/60 px-2.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground">
-          <Layers className="h-3.5 w-3.5" />{t("indicators")}
+          <Layers className="h-3.5 w-3.5" /><span className="hidden sm:inline">{t("indicators")}</span>
           {settings.indicators.length > 0 && <span className="rounded bg-emerald-500/20 px-1 text-[10px] text-emerald-400">{settings.indicators.length}</span>}
         </button>
 
@@ -416,7 +459,7 @@ export default function TerminalPage() {
           className={cn("flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold", settings.showVolume ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
           title="Volume"
         >
-          <BarChart2 className="h-3.5 w-3.5" />Vol
+          <BarChart2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Vol</span>
         </button>
 
         <button
@@ -424,7 +467,7 @@ export default function TerminalPage() {
           className="flex h-8 items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 text-[11px] font-bold text-sky-400 hover:bg-sky-500/20"
           title="Search tools (replay, backtest, sessions, heatmap…)"
         >
-          <Wrench className="h-3.5 w-3.5" />Tools
+          <Wrench className="h-3.5 w-3.5" /><span className="hidden sm:inline">Tools</span>
         </button>
         <button
           onClick={() => setCalcOpen(true)}
@@ -497,7 +540,7 @@ export default function TerminalPage() {
             className={cn("flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold", themesOpen ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
             title="Chart theme"
           >
-            <Palette className="h-3.5 w-3.5" />{CHART_THEMES.find((th) => JSON.stringify(th.colors) === JSON.stringify(settings.colors))?.label ?? "Custom"}
+            <Palette className="h-3.5 w-3.5" /><span className="hidden sm:inline">{CHART_THEMES.find((th) => JSON.stringify(th.colors) === JSON.stringify(settings.colors))?.label ?? "Custom"}</span>
           </button>
           {themesOpen && (
             <div className="absolute right-0 top-9 z-50 w-56 rounded-xl border border-border/60 bg-[#0d1117] p-2 shadow-2xl">
@@ -617,11 +660,27 @@ export default function TerminalPage() {
           </div>
         </div>
 
-        {/* side panel (desktop) — hidden in focus/maximize mode */}
-        {!immersive && (
+        {/* side panel (desktop) — hidden in focus mode; collapsible to widen the chart */}
+        {!immersive && !panelOpen && (
+          <button
+            onClick={() => setPanelOpen(true)}
+            className="hidden w-6 shrink-0 flex-col items-center rounded-xl border border-border/50 bg-card/60 py-2 text-muted-foreground hover:text-foreground md:flex"
+            title="Show panel"
+          >
+            <PanelRight className="h-4 w-4" />
+          </button>
+        )}
+        {!immersive && panelOpen && (
         <div className="hidden w-80 shrink-0 md:block">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/50 bg-card/60">
-            <div className="flex shrink-0 gap-0.5 border-b border-border/40 p-1">
+            <div className="flex shrink-0 items-center gap-0.5 border-b border-border/40 p-1">
+              <button
+                onClick={() => setPanelOpen(false)}
+                className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                title="Hide panel (more chart)"
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+              </button>
               {(["trade", "challenge", "calendar", "alerts", "risk", "replay"] as SideTab[]).map((tab) => (
                 <button
                   key={tab}

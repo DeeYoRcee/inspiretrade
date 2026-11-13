@@ -1,15 +1,19 @@
 /**
- * /api/admin?action=gift|withdrawals|chat-delete   (owner only)
+ * /api/admin?action=gift|withdrawals|deposits|chat-delete   (owner only)
  *
  * Single owner/admin serverless function (Vercel Hobby = max 12 functions).
  *
  *   ?action=gift            POST { uid?|username?, coins?, cases?, note? }
  *   ?action=withdrawals     GET  — list withdrawal requests (newest first)
  *                           POST { uid, id, action: "paid"|"rejected" }
+ *   ?action=deposits        GET  — list deposit requests (newest first)
+ *                           POST { uid, id, action: "approve"|"reject" }
+ *                           approve credits the coins atomically.
  *   ?action=chat-delete     POST { messageId }
  */
 import gift from "./gift";
 import withdrawals from "./withdrawals";
+import deposits from "./deposits";
 import chatDelete from "./chat-delete";
 
 function safeParse(raw: string): any {
@@ -40,11 +44,14 @@ export default async function handler(req: any, res: any) {
     case "withdrawals":
       // GET lists requests, POST marks one paid/rejected (handled inside).
       return withdrawals(req, res);
+    case "deposits":
+      // GET lists requests, POST approves (credits coins) / rejects one.
+      return deposits(req, res);
     case "chat-delete":
       return chatDelete(req, res);
     default:
       return res
         .status(400)
-        .json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|chat-delete)" });
+        .json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete)" });
   }
 }

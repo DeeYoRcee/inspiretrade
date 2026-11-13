@@ -159,6 +159,12 @@
         }
       }
     },
+    "depositRequests": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": false
+      }
+    },
     "withdrawals": {
       "$uid": {
         ".read": "$uid === auth.uid",
