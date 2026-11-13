@@ -16,7 +16,7 @@ import {
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity, LineChart,
   Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Scan, Shapes, Palette,
-  PanelRight, PanelRightClose,
+  PanelRight, PanelRightClose, ChevronDown, ImagePlus,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -248,6 +248,36 @@ export default function TerminalPage() {
   const [symOpen, setSymOpen] = useState(false);
   // side panel visibility — collapse to give the chart the full width
   const [panelOpen, setPanelOpen] = useState(true);
+  // terminal background image (per-device in localStorage — a data-URL is too
+  // big for the RTDB settings string)
+  const [bg, setBg] = useState<{ img: string; dim: number }>(() => {
+    try { return JSON.parse(localStorage.getItem("inspire_terminal_bg") || "") as { img: string; dim: number }; }
+    catch { return { img: "", dim: 0.45 }; }
+  });
+
+  const setBgPersist = (next: { img: string; dim: number }) => {
+    setBg(next);
+    try { localStorage.setItem("inspire_terminal_bg", JSON.stringify(next)); } catch { /* ignore */ }
+  };
+
+  /** pick an image → downscale to 1600px JPEG → data-URL (keeps storage sane) */
+  const onBgFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1600 / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setBgPersist({ img: canvas.toDataURL("image/jpeg", 0.72), dim: bg.dim });
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const symMatches = useMemo(() => {
     const q = symQuery.trim().toLowerCase();
     if (!q) return INSTRUMENTS;
@@ -334,6 +364,7 @@ export default function TerminalPage() {
       drawings={drawingsHidden ? [] : drawings}
       onDrawingsChange={save}
       activeTool={activeTool}
+      onToolDone={() => setActiveTool("cursor")}
       onLastBar={i === 0 ? onLastBar : undefined}
       onToggleVolume={() => update({ showVolume: !settings.showVolume })}
       onRequestFullscreen={toggleFullscreen}
@@ -388,42 +419,56 @@ export default function TerminalPage() {
   );
 
   return (
-    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5">
+    <div
+      className="relative flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5"
+      style={bg.img ? {
+        backgroundImage: `url(${bg.img})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundBlendMode: "multiply",
+        backgroundColor: `rgba(5, 8, 12, ${bg.dim})`,
+      } : undefined}
+    >
       {/* ===== toolbar (hidden in focus/maximize mode) ===== */}
       {!immersive && (
       <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/50 bg-card/60 p-1.5">
-        {/* instrument search — top-left of the terminal (was buried in the side panel) */}
+        {/* instrument — compact symbol box with built-in search (merged) */}
         <div className="relative">
-          <input
-            value={symOpen ? symQuery : settings.symbol}
-            onChange={(e) => { setSymQuery(e.target.value); setSymOpen(true); }}
-            onFocus={() => { setSymQuery(""); setSymOpen(true); }}
-            onBlur={() => setTimeout(() => setSymOpen(false), 150)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && symMatches.length > 0) {
-                update({ symbol: symMatches[0].symbol });
-                setSymOpen(false);
-                (e.target as HTMLInputElement).blur();
-              }
-              if (e.key === "Escape") setSymOpen(false);
-            }}
-            placeholder="Search instrument…"
-            aria-label="Instrument search"
-            className="num-input h-8 w-44 font-bold"
-          />
+          <button
+            onClick={() => { setSymQuery(""); setSymOpen((v) => !v); }}
+            className={cn("num-input flex h-8 w-24 items-center justify-between gap-1 px-2.5 font-bold", symOpen && "border-emerald-500/50")}
+            aria-label="Instrument"
+            title="Instrument — click to search"
+          >
+            <span className="truncate">{settings.symbol}</span>
+            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+          </button>
           {symOpen && (
-            <div className="absolute left-0 top-9 z-50 max-h-64 w-60 overflow-y-auto rounded-xl border border-border/60 bg-[#0d1117] p-1 shadow-2xl">
-              {symMatches.slice(0, 10).map((i) => (
-                <button
-                  key={i.symbol}
-                  onMouseDown={() => { update({ symbol: i.symbol }); setSymOpen(false); }}
-                  className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
-                >
-                  <span className="w-16 font-bold">{i.symbol}</span>
-                  <span className="truncate">{i.name}</span>
-                </button>
-              ))}
-              {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
+            <div className="absolute left-0 top-9 z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-1.5 shadow-2xl">
+              <input
+                autoFocus
+                value={symQuery}
+                onChange={(e) => setSymQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && symMatches.length > 0) { update({ symbol: symMatches[0].symbol }); setSymOpen(false); }
+                  if (e.key === "Escape") setSymOpen(false);
+                }}
+                placeholder="Search instrument…"
+                className="num-input h-7 w-full text-[11px]"
+              />
+              <div className="mt-1 max-h-56 overflow-y-auto">
+                {symMatches.slice(0, 10).map((i) => (
+                  <button
+                    key={i.symbol}
+                    onClick={() => { update({ symbol: i.symbol }); setSymOpen(false); }}
+                    className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
+                  >
+                    <span className="w-16 font-bold">{i.symbol}</span>
+                    <span className="truncate">{i.name}</span>
+                  </button>
+                ))}
+                {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
+              </div>
             </div>
           )}
         </div>
@@ -560,6 +605,41 @@ export default function TerminalPage() {
                     {th.label}
                   </button>
                 ))}
+              </div>
+
+              {/* terminal background image */}
+              <div className="mt-2 border-t border-border/50 pt-2">
+                <div className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Background image</div>
+                <div className="flex gap-1">
+                  <label className="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/60 px-2 py-1.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:border-emerald-500/40 hover:text-foreground">
+                    <ImagePlus className="h-3 w-3" /> Upload
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) onBgFile(f); e.target.value = ""; }}
+                    />
+                  </label>
+                  {bg.img && (
+                    <button
+                      onClick={() => setBgPersist({ ...bg, img: "" })}
+                      className="rounded-lg border border-border/60 px-2.5 py-1.5 text-[11px] font-semibold text-red-400 hover:bg-red-500/10"
+                      title="Remove background"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                {bg.img && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <span className="text-[10px] text-muted-foreground">Dim</span>
+                    <input
+                      type="range" min={0} max={90} value={Math.round(bg.dim * 100)}
+                      onChange={(e) => setBgPersist({ ...bg, dim: Number(e.target.value) / 100 })}
+                      className="h-1 flex-1 accent-emerald-400"
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}

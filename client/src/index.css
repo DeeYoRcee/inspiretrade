@@ -80,6 +80,22 @@
   .text-gradient { @apply bg-clip-text text-transparent bg-gradient-to-br from-foreground to-foreground/50; }
   .social-badge { @apply hidden md:flex fixed bottom-6 left-6 z-[60] flex-col gap-3; }
   .social-badge-item { @apply flex items-center gap-3 px-4 py-2 rounded-full glass-panel border border-border/50 shadow-lg hover-glow animate-in fade-in slide-in-from-left-4 duration-500 transition-all; }
+
+  /* Terminal / settings inputs & selects — used across the terminal toolbar,
+     Settings "Terminal defaults" and dialogs. Soft glass pill, never a raw
+     browser-default rectangle. */
+  .num-input {
+    @apply rounded-xl border border-border/60 bg-card/70 px-3 font-semibold text-foreground outline-none backdrop-blur transition-colors;
+    @apply hover:border-border focus:border-primary/50 focus:ring-2 focus:ring-primary/20;
+  }
+  select.num-input {
+    @apply cursor-pointer appearance-none pr-8;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.55rem center;
+    background-size: 0.8rem;
+  }
+  select.num-input option { background-color: #0d1117; color: #e5e7eb; }
 }
 
 /* Overflow on html/body/#root can turn sticky into a non-sticky element; confine horizontal clipping to components instead. */

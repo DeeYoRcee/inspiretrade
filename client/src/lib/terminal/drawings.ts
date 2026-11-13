@@ -48,6 +48,8 @@ export class DrawingEngine {
   drawings: Drawing[] = [];
   /** crosshair-sync vertical line from other charts (UNIX seconds) */
   syncTime: number | null = null;
+  /** fired when a tool finishes its drawing (host resets the toolbar highlight) */
+  onToolDone: (tool: DrawingTool) => void = () => {};
 
   /** in-progress drawing points (chart coords) */
   private pending: DrawingPoint[] = [];
@@ -82,6 +84,7 @@ export class DrawingEngine {
     canvas.addEventListener("pointerup", this.onUp);
     canvas.addEventListener("pointerleave", this.onUp);
     canvas.addEventListener("dblclick", this.onDblClick);
+    window.addEventListener("keydown", this.onKey);
   }
 
   destroy() {
@@ -91,7 +94,19 @@ export class DrawingEngine {
     this.canvas.removeEventListener("pointerup", this.onUp);
     this.canvas.removeEventListener("pointerleave", this.onUp);
     this.canvas.removeEventListener("dblclick", this.onDblClick);
+    window.removeEventListener("keydown", this.onKey);
   }
+
+  /** Esc — cancel the in-progress drawing and go back to the cursor. */
+  private onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    if (this.pending.length || this.tool !== "cursor") {
+      this.pending = [];
+      this.tool = "cursor";
+      this.onToolDone("cursor");
+      this.render();
+    }
+  };
 
   // ---- coordinate helpers ---------------------------------------------------
 
@@ -262,6 +277,10 @@ export class DrawingEngine {
         width: this.style.width,
       });
       this.pending = [];
+      // drawing finished — deactivate the tool so the next click doesn't
+      // start another one (arrow "never stops" bug)
+      this.tool = "cursor";
+      this.onToolDone("cursor");
       this.onChange();
     }
     this.render();
@@ -315,6 +334,9 @@ export class DrawingEngine {
       this.pushUndo();
       this.drawings.push({ id: uid(), tool: "brush", points: [...this.pending], color: this.style.color, width: this.style.width });
       this.pending = [];
+      // brush stroke finished — back to the cursor
+      this.tool = "cursor";
+      this.onToolDone("cursor");
       this.onChange();
     }
     this.render();

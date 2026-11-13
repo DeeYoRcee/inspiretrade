@@ -13,9 +13,11 @@ import {
   SYMBOLS,
   SYMBOL_COLOR,
   fetchNews,
+  type NewsItem,
   type NewsResponse,
   type NewsSymbol,
 } from "@/lib/news-api";
+import { ArticleDialog } from "@/components/news/ArticleDialog";
 import { loadAlertSettings, saveAlertSettings, requestBrowserPermission, type AlertSettings } from "@/lib/notifications";
 
 const CALENDAR_WIDGET_CONFIG = {
@@ -142,6 +144,8 @@ function MarketNewsPanel() {
   const [filter, setFilter] = useState<"All" | NewsSymbol>("All");
   const [limit, setLimit] = useState(30);
   const [alerts, setAlerts] = useState<AlertSettings>(() => loadAlertSettings());
+  // in-app reader: the selected story opens right here, no external bounce
+  const [article, setArticle] = useState<NewsItem | null>(null);
 
   const updateAlerts = (patch: Partial<AlertSettings>) =>
     setAlerts((prev) => {
@@ -258,12 +262,10 @@ function MarketNewsPanel() {
         ) : (
           <div className="space-y-2">
             {visible.map((item) => (
-              <a
+              <button
                 key={item.link}
-                href={item.link}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded-xl border border-border/40 bg-background/40 px-4 py-3 transition-colors hover:border-primary/40 hover:bg-card/80"
+                onClick={() => setArticle(item)}
+                className="block w-full text-left rounded-xl border border-border/40 bg-background/40 px-4 py-3 transition-colors hover:border-primary/40 hover:bg-card/80"
               >
                 <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-1 font-semibold text-foreground/80">
@@ -291,7 +293,7 @@ function MarketNewsPanel() {
                 {item.summary && (
                   <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{item.summary}</p>
                 )}
-              </a>
+              </button>
             ))}
             {filtered.length > visible.length && (
               <div className="pt-1 text-center">
@@ -302,6 +304,7 @@ function MarketNewsPanel() {
             )}
           </div>
         )}
+        <ArticleDialog item={article} onClose={() => setArticle(null)} />
       </CardContent>
     </Card>
   );
@@ -311,6 +314,16 @@ export default function NewsPage() {
   const { t } = useLanguage();
   const { theme } = useTheme();
   const [tab, setTab] = useState<"news" | "calendar">("news");
+
+  // Entering the News section asks for Telegram-style browser notifications
+  // right away (only when the browser hasn't decided yet).
+  useEffect(() => {
+    const s = loadAlertSettings();
+    if (s.enabled && typeof Notification !== "undefined" && Notification.permission === "default") {
+      requestBrowserPermission();
+    }
+  }, []);
+
   // Keep a stable ref to the widget container: the tradays script mounts into
   // it once and the iframe survives BOTH tab switches and route changes
   // (CalendarKeepAlive keeps this whole page alive with display:none).

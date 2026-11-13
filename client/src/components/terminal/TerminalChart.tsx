@@ -121,7 +121,7 @@ let CHART_SEQ = 0;
 
 export function TerminalChart({
   symbol, timeframe, chartType, indicators, showVolume, colors,
-  drawings, onDrawingsChange, activeTool, onStatus, onLastBar,
+  drawings, onDrawingsChange, activeTool, onToolDone, onStatus, onLastBar,
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
   tradeMarkers, priceLines, onReplayMenu, priceScaleMode, magnet, screenshotSignal,
@@ -137,6 +137,9 @@ export function TerminalChart({
   const overlayGroupsRef = useRef<OverlayGroup[]>([]);
   const paneChartsRef = useRef<PaneEntry[]>([]);
   const engineRef = useRef<DrawingEngine | null>(null);
+  // latest onToolDone without re-creating the engine (mount-only effect)
+  const onToolDoneRef = useRef(onToolDone);
+  onToolDoneRef.current = onToolDone;
   const barsRef = useRef<Bar[]>([]);
   const unsubRef = useRef<(() => void) | null>(null);
   const syncingRef = useRef(false);
@@ -257,6 +260,7 @@ export function TerminalChart({
         },
       );
       engineRef.current = engine;
+      engine.onToolDone = () => onToolDoneRef.current?.();
       engine.load(drawings);
       lastEmittedRef.current = JSON.stringify(drawings ?? []);
     }
