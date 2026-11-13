@@ -1,13 +1,18 @@
 /**
  * MusicPlayer — site-wide floating music widget. DRAG it anywhere by the
- * green music-icon handle (or the dot itself) — position is persisted.
+ * green music-icon handle (or the dot itself); position is persisted.
  *
  * Windows-11-Media-Player style: big cover art, seek bar with times,
  * shuffle/repeat, volume, adjustable panel transparency.
- * ALL songs are FULL-LENGTH, streamed FREE from Audius (decentralized music
- * platform, public API, no key — CORS verified). No 30-second previews —
- * searches return up to 100 full-length tracks; no match → nothing plays.
- * Nothing touches the Vercel serverless budget.
+ *
+ * Two music sources:
+ *   spotify — after a one-time login, search the FULL WORLD CATALOG and play
+ *             any track in full (requires the listener's own Spotify Premium;
+ *             Web Playback SDK, client-side only). Results marked "Spotify".
+ *   audius  — free fallback, full-length tracks, no login needed.
+ *
+ * The song list is visible whenever nothing is playing and hides itself
+ * ONLY while a track is actually playing (pause → list comes back).
  *
  * Three sizes, persisted in localStorage:
  *   bar  — full player (~320px)
@@ -20,6 +25,10 @@ import {
   ChevronDown, Repeat, Repeat1, Shuffle, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  getSpotifyClientId, setSpotifyClientId, spotifyHandleRedirect, spotifyLogin,
+  spotifyLogout, spotifyLoggedIn, spotifySearch, spotifyToken,
+} from "@/lib/spotify";
 
 interface Track {
   id: string;
@@ -28,6 +37,8 @@ interface Track {
   art: string;
   url: string;
   duration: number;
+  /** Spotify URI — when set the track plays through the Web Playback SDK */
+  uri?: string;
 }
 
 type View = "bar" | "mini" | "dot";
@@ -102,6 +113,21 @@ async function audiusSearch(q: string): Promise<Track[]> {
   return [];
 }
 
+/** Web Playback SDK loader (script tag + ready promise, loaded once). */
+let sdkPromise: Promise<void> | null = null;
+function loadSpotifySdk(): Promise<void> {
+  if ((window as any).Spotify) return Promise.resolve();
+  if (sdkPromise) return sdkPromise;
+  sdkPromise = new Promise((resolve) => {
+    (window as any).onSpotifyWebPlaybackSDKReady = () => resolve();
+    const s = document.createElement("script");
+    s.src = "https://sdk.scdn.co/spotify-player.js";
+    s.async = true;
+    document.body.appendChild(s);
+  });
+  return sdkPromise;
+}
+
 export function MusicPlayer() {
   const [prefs, setPrefs] = useState<Persisted>(loadPrefs);
   const [term, setTerm] = useState("");
@@ -116,6 +142,28 @@ export function MusicPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; w: number; h: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
+
+  // ---- Spotify state ----
+  const [spConnected, setSpConnected] = useState(spotifyLoggedIn);
+  const [spDevice, setSpDevice] = useState<string | null>(null);
+  const [spError, setSpError] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [cidInput, setCidInput] = useState(() => getSpotifyClientId());
+  const spPlayerRef = useRef<any>(null);
+  const spTokenRef = useRef<string | null>(null);
+  const spDeviceRef = useRef<string | null>(null);
+  const spStateRef = useRef<{ position: number; duration: number; paused: boolean; uri: string | null } | null>(null);
+  const spInitRef = useRef(false);
+  const modeRef = useRef<"audius" | "spotify">("audius");
+  const queueRef = useRef<Track[]>(queue);
+  const idxRef = useRef<number>(idx);
+  const repeatRef = useRef<RepeatMode>(repeat);
+  const shuffleRef = useRef<boolean>(shuffle);
+  queueRef.current = queue;
+  idxRef.current = idx;
+  repeatRef.current = repeat;
+  shuffleRef.current = shuffle;
+  spDeviceRef.current = spDevice;
 
   const view = prefs.view;
   const setView = (v: View) => setPrefs((p) => ({ ...p, view: v }));
@@ -158,28 +206,59 @@ export function MusicPlayer() {
     };
   }, []);
 
-  const playIndex = (i: number) => {
+  /** next track index — respects shuffle + repeat, wraps on "all" */
+  const nextIndex = (from: number, auto: boolean): number => {
+    const n = queueRef.current.length;
+    if (n === 0) return -1;
+    if (auto && repeatRef.current === "one") return from;
+    if (shuffleRef.current) return Math.floor(Math.random() * n);
+    if (from + 1 < n) return from + 1;
+    return auto && repeatRef.current === "all" ? 0 : -1;
+  };
+
+  const playIndex = async (i: number) => {
+    if (i < 0 || i >= queueRef.current.length) return;
+    const t = queueRef.current[i];
+    if (t.uri) {
+      // ---- Spotify full playback (Web Playback SDK device) ----
+      const token = spTokenRef.current || (await spotifyToken());
+      if (!token) { setSpError("Spotify session expired — reconnect"); setPlaying(false); return; }
+      spTokenRef.current = token;
+      const dev = spDeviceRef.current;
+      if (!dev) { setSpError("Spotify player is still connecting — try again in a second"); setIdx(i); return; }
+      const uris = queueRef.current.slice(i, i + 50).filter((x) => x.uri).map((x) => x.uri!);
+      try {
+        const res = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${dev}`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ uris }),
+        });
+        if (res.status === 403) { setSpError("Spotify Premium is required for full-track playback"); setPlaying(false); return; }
+        if (res.status === 401) { setSpError("Spotify session expired — reconnect"); setPlaying(false); return; }
+        if (!res.ok && res.status !== 202 && res.status !== 204) { setSpError("Spotify playback failed — try again"); return; }
+        modeRef.current = "spotify";
+        setSpError(null);
+        setIdx(i);
+        setCur(0);
+        setDur(t.duration || 0);
+        setPlaying(true);
+      } catch {
+        setSpError("Network error talking to Spotify");
+      }
+      return;
+    }
+    // ---- Audius stream (plain audio element) ----
+    modeRef.current = "audius";
     const el = audioRef.current;
     if (!el) return;
-    if (i < 0 || i >= queue.length) { el.pause(); return; }
     setIdx(i);
     setCur(0);
-    setDur(queue[i].duration || 0);
-    el.src = queue[i].url;
+    setDur(t.duration || 0);
+    el.src = t.url;
     el.play().catch(() => setPlaying(false));
   };
 
-  /** next track index — respects shuffle + repeat, wraps on "all" */
-  const nextIndex = (from: number, auto: boolean): number => {
-    const n = queue.length;
-    if (n === 0) return -1;
-    if (auto && repeat === "one") return from;
-    if (shuffle) return Math.floor(Math.random() * n);
-    if (from + 1 < n) return from + 1;
-    return auto && repeat === "all" ? 0 : -1;
-  };
-
-  // audio element wiring (single persistent element)
+  // audio element wiring (single persistent element — Audius path)
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
@@ -189,16 +268,16 @@ export function MusicPlayer() {
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onEnd = () => {
-      const i = nextIndex(idx, true);
+      const i = nextIndex(idxRef.current, true);
       if (i >= 0) {
-        if (i === idx) { el.currentTime = 0; el.play().catch(() => {}); }
+        if (i === idxRef.current) { el.currentTime = 0; el.play().catch(() => {}); }
         else playIndex(i);
       }
     };
     const onError = () => {
       // broken stream (Audius node hiccup) — skip forward, never hang
-      const i = nextIndex(idx, false);
-      if (i >= 0 && i !== idx) playIndex(i);
+      const i = nextIndex(idxRef.current, false);
+      if (i >= 0 && i !== idxRef.current) playIndex(i);
       else setPlaying(false);
     };
     el.addEventListener("timeupdate", onTime);
@@ -218,13 +297,117 @@ export function MusicPlayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idx, prefs.volume, shuffle, repeat, queue]);
 
+  // Spotify Web Playback SDK init (once, when a session exists)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const redirected = await spotifyHandleRedirect();
+      if (redirected && alive) setSpConnected(true);
+      if (!spotifyLoggedIn()) {
+        if (redirected && alive) setSpError("Could not finish Spotify login — check the Client ID and Redirect URI (Setup)");
+        return;
+      }
+      setSpConnected(true);
+      const token = await spotifyToken();
+      if (!token || !alive || spInitRef.current) return;
+      spInitRef.current = true;
+      spTokenRef.current = token;
+      try {
+        await loadSpotifySdk();
+        const player = new (window as any).Spotify.Player({
+          name: "InspireTrade",
+          volume: prefs.volume,
+          getOAuthToken: (cb: (t: string) => void) => {
+            spotifyToken().then((t) => {
+              if (t) { spTokenRef.current = t; cb(t); }
+            });
+          },
+        });
+        player.addListener("ready", ({ device_id }: any) => {
+          if (alive) { setSpDevice(device_id); setSpError(null); }
+        });
+        player.addListener("not_ready", () => { if (alive) setSpDevice(null); });
+        player.addListener("player_state_changed", (state: any) => {
+          if (!state || !alive) return;
+          const cw = state.track_window?.current_track;
+          spStateRef.current = { position: state.position, duration: state.duration, paused: state.paused, uri: cw?.uri ?? null };
+          setDur((state.duration || 0) / 1000);
+          if (state.paused) {
+            setPlaying(false);
+            setCur((state.position || 0) / 1000);
+            const ended = state.duration > 0 && state.position >= state.duration - 60;
+            if (ended) {
+              if (repeatRef.current === "one") {
+                try { spPlayerRef.current?.seek(0); spPlayerRef.current?.resume(); } catch { /* ignore */ }
+              } else {
+                const i = nextIndex(idxRef.current, true);
+                if (i >= 0) playIndex(i);
+              }
+            }
+          } else {
+            setPlaying(true);
+            const qi = queueRef.current.findIndex((t) => t.uri === cw?.uri);
+            if (qi >= 0 && qi !== idxRef.current) setIdx(qi);
+            setCur((state.position || 0) / 1000);
+          }
+        });
+        player.addListener("initialization_error", ({ message }: any) => { if (alive) setSpError(message); });
+        player.addListener("authentication_error", ({ message }: any) => { if (alive) setSpError(message); });
+        player.addListener("account_error", () => { if (alive) setSpError("Spotify Premium is required for full-track playback"); });
+        player.addListener("playback_error", ({ message }: any) => { if (alive) setSpError(message); });
+        await player.connect();
+        spPlayerRef.current = player;
+      } catch (e: any) {
+        if (alive) setSpError(e?.message || "Spotify SDK failed to load");
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Spotify position ticker (SDK only pushes state on change)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const s = spStateRef.current;
+      if (!s || s.paused || !s.duration) return;
+      s.position = Math.min(s.duration, s.position + 500);
+      setCur(s.position / 1000);
+    }, 500);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // volume → both Audius element and Spotify SDK
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = prefs.volume;
+    try { spPlayerRef.current?.setVolume?.(prefs.volume); } catch { /* not ready yet */ }
+  }, [prefs.volume, spDevice]);
+
   const search = async () => {
     const q = term.trim();
     if (!q) return;
     setSearching(true);
     try {
-      // Audius only — every result is a FULL-LENGTH track (no 30s previews).
-      // Up to 100 tracks load into the playback queue; the first one plays.
+      // Spotify first — the full world catalog, full-length playback.
+      const token = await spotifyToken();
+      if (token) {
+        spTokenRef.current = token;
+        const metas = await spotifySearch(q, token);
+        if (metas.length) {
+          setQueue(metas.map((m) => ({
+            id: `s_${m.uri}`,
+            title: m.name,
+            artist: m.artist,
+            art: m.art,
+            url: "",
+            duration: Math.round(m.durationMs / 1000),
+            uri: m.uri,
+          })));
+          setIdx(-1);
+          playIndex(0);
+          return;
+        }
+      }
+      // Free fallback: Audius full-length tracks (no login needed).
       const list = await audiusSearch(q);
       if (list.length > 0) { setQueue(list); setIdx(-1); playIndex(0); }
     } finally {
@@ -232,7 +415,31 @@ export function MusicPlayer() {
     }
   };
 
-  const toggle = () => {
+  const connect = async () => {
+    const ok = await spotifyLogin();
+    if (!ok) { setSetupOpen(true); setSpError("Add your Spotify Client ID first (Setup below)"); }
+  };
+
+  const disconnect = () => {
+    try { spPlayerRef.current?.pause?.(); } catch { /* ignore */ }
+    spotifyLogout();
+    setSpConnected(false);
+    setSpDevice(null);
+    spDeviceRef.current = null;
+    setSpError(null);
+  };
+
+  const toggle = async () => {
+    if (modeRef.current === "spotify" && spPlayerRef.current) {
+      const s = spStateRef.current;
+      if (s?.paused) {
+        try { await spPlayerRef.current.resume(); setPlaying(true); } catch { /* ignore */ }
+      } else {
+        try { await spPlayerRef.current.pause(); } catch { /* ignore */ }
+        setPlaying(false);
+      }
+      return;
+    }
     const el = audioRef.current;
     if (!el || !track) return;
     if (el.paused) el.play().catch(() => {});
@@ -240,11 +447,47 @@ export function MusicPlayer() {
   };
 
   const seek = (frac: number) => {
+    if (modeRef.current === "spotify" && spPlayerRef.current && dur > 0) {
+      try { spPlayerRef.current.seek(Math.round(frac * dur * 1000)); } catch { /* ignore */ }
+      setCur(frac * dur);
+      return;
+    }
     const el = audioRef.current;
     if (el && dur > 0) el.currentTime = frac * dur;
   };
 
+  const skip = (dir: 1 | -1) => {
+    if (modeRef.current === "spotify" && spPlayerRef.current) {
+      try { dir === 1 ? spPlayerRef.current.next() : spPlayerRef.current.previous(); } catch { /* ignore */ }
+      return;
+    }
+    playIndex(idx + dir);
+  };
+
   const seekFrac = dur > 0 ? cur / dur : 0;
+
+  const trackRow = (t: Track, i: number) => (
+    <button
+      key={t.id}
+      onClick={() => { setQueue(queue); playIndex(i); }}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-white/5",
+        i === idx && "bg-emerald-500/10",
+      )}
+    >
+      {t.art ? (
+        <img src={t.art} alt="" className="h-8 w-8 rounded-md object-cover" loading="lazy" />
+      ) : (
+        <span className="flex h-8 w-8 items-center justify-center rounded-md bg-white/5"><Music className="h-3.5 w-3.5 text-muted-foreground" /></span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[11px] font-semibold text-foreground">{t.title}</span>
+        <span className="block truncate text-[10px] text-muted-foreground">
+          {t.artist} · {t.uri ? "Spotify" : "Audius"} {t.duration ? `· ${fmt(t.duration)}` : ""}
+        </span>
+      </span>
+    </button>
+  );
 
   // ---------- dot (1%) ----------
   if (view === "dot") {
@@ -301,7 +544,7 @@ export function MusicPlayer() {
                   value={term}
                   onChange={(e) => setTerm(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") search(); }}
-                  placeholder="Search full songs…"
+                  placeholder="Search any song…"
                   className="h-7 w-full rounded-lg border border-white/10 bg-white/5 pl-7 pr-2 text-[11px] text-foreground outline-none placeholder:text-muted-foreground focus:border-emerald-500/50"
                 />
                 {searching && <Loader2 className="absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 animate-spin text-muted-foreground" />}
@@ -320,9 +563,54 @@ export function MusicPlayer() {
             </button>
           </div>
 
+          {/* Spotify row (bar only) — world catalog login / status / setup */}
+          {wide && (
+            <div className="flex items-center gap-1.5 border-t border-white/10 px-2.5 py-1.5 text-[10px]">
+              {spConnected ? (
+                <>
+                  <span className={cn("font-semibold", spDevice ? "text-emerald-400" : "text-amber-400/90")}>
+                    {spDevice ? "● Spotify connected" : "○ Spotify connecting…"}
+                  </span>
+                  <button onClick={disconnect} className="ml-auto shrink-0 text-muted-foreground hover:text-foreground">Disconnect</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={connect} className="shrink-0 font-semibold text-emerald-400 hover:underline">Connect Spotify</button>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">full world catalog · Premium</span>
+                  <button onClick={() => setSetupOpen((v) => !v)} className="ml-auto shrink-0 rounded border border-white/10 px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground hover:text-foreground">
+                    Setup
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Spotify one-time setup (owner) — Client ID + Redirect URI */}
+          {wide && setupOpen && (
+            <div className="space-y-1.5 border-t border-white/10 px-2.5 py-2 text-[10px] leading-relaxed text-muted-foreground">
+              <p>1. Create an app at developer.spotify.com/dashboard (enable Web API + Web Playback SDK).</p>
+              <p>2. Add this exact Redirect URI in the app settings:</p>
+              <p className="truncate rounded bg-white/5 px-1.5 py-1 font-mono text-emerald-400">{`${window.location.origin}${window.location.pathname}`}</p>
+              <div className="flex gap-1.5">
+                <input
+                  value={cidInput}
+                  onChange={(e) => setCidInput(e.target.value)}
+                  placeholder="Paste Client ID"
+                  className="h-6 min-w-0 flex-1 rounded border border-white/10 bg-white/5 px-2 text-[10px] text-foreground outline-none focus:border-emerald-500/50"
+                />
+                <button
+                  onClick={() => { setSpotifyClientId(cidInput); setSetupOpen(false); }}
+                  className="shrink-0 rounded bg-emerald-500/20 px-2 text-[10px] font-bold text-emerald-400"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* now playing — cover art + info (bar only) */}
           {wide && track && (
-            <div className="flex items-center gap-3 px-3 pb-2">
+            <div className="flex items-center gap-3 px-3 pb-2 pt-2">
               {track.art ? (
                 <img src={track.art} alt="" className="h-20 w-20 rounded-xl object-cover shadow-lg" />
               ) : (
@@ -334,7 +622,7 @@ export function MusicPlayer() {
                 <p className="truncate text-sm font-bold text-foreground">{track.title}</p>
                 <p className="truncate text-xs text-muted-foreground">{track.artist}</p>
                 <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-emerald-400/80">
-                  Full track · Audius
+                  {track.uri ? "Spotify · Full track" : "Full track · Audius"}
                 </p>
               </div>
             </div>
@@ -362,7 +650,7 @@ export function MusicPlayer() {
                 >
                   <Shuffle className="h-3.5 w-3.5" />
                 </button>
-                <button onClick={() => playIndex(idx - 1)} className="text-foreground/80 hover:text-foreground" title="Previous">
+                <button onClick={() => skip(-1)} className="text-foreground/80 hover:text-foreground" title="Previous">
                   <SkipBack className="h-4 w-4" />
                 </button>
                 <button
@@ -372,7 +660,7 @@ export function MusicPlayer() {
                 >
                   {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                 </button>
-                <button onClick={() => playIndex(idx + 1)} className="text-foreground/80 hover:text-foreground" title="Next">
+                <button onClick={() => skip(1)} className="text-foreground/80 hover:text-foreground" title="Next">
                   <SkipForward className="h-4 w-4" />
                 </button>
                 <button
@@ -404,6 +692,27 @@ export function MusicPlayer() {
                 />
                 <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{Math.round(prefs.opacity * 100)}%</span>
               </div>
+            </div>
+          )}
+
+          {/* song list — visible whenever nothing is playing, hides ONLY
+              while a track is actually playing (pause → it comes back) */}
+          {wide && !playing && (
+            <div className="max-h-52 overflow-y-auto border-t border-white/10 px-2 py-1.5">
+              {spError && <div className="px-1.5 py-1 text-[10px] leading-relaxed text-amber-400">{spError}</div>}
+              {searching && (
+                <div className="flex items-center justify-center gap-2 py-3 text-[11px] text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
+                </div>
+              )}
+              {!searching && !queue.length && !spError && (
+                <div className="py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
+                  Search any song — results stay here.<br />
+                  Connect Spotify for the full world catalog,<br />
+                  or enjoy free full-length Audius tracks.
+                </div>
+              )}
+              {queue.map(trackRow)}
             </div>
           )}
         </div>
