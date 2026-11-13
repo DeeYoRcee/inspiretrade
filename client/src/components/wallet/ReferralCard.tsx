@@ -86,14 +86,10 @@ export function ReferralCard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2">
               <div className="rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-center">
                 <p className="font-number text-2xl font-bold text-primary">{data.invited}</p>
                 <p className="text-[11px] text-muted-foreground">{t("referralInvited")}</p>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-center">
-                <p className="font-number text-2xl font-bold text-amber-400">{data.earned}</p>
-                <p className="text-[11px] text-muted-foreground">{t("referralEarned")}</p>
               </div>
             </div>
 

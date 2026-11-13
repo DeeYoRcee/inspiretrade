@@ -4,8 +4,8 @@
  * Flow: a visitor lands on `/?ref=CODE` → the code is captured into
  * localStorage (and cleaned from the URL). After the visitor creates a NEW
  * account (< 15 min old) the ReferralApplier posts it to
- * /api/referral?action=apply, which credits +100 INSP to the new user and
- * +250 INSP to the referrer (server-side, atomic).
+ * /api/referral?action=apply, which only RECORDS who invited whom —
+ * no INSP or cases are granted (rewards disabled by product decision).
  */
 
 const REF_KEY = "inspire_ref";

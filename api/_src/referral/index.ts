@@ -3,22 +3,21 @@
  *
  * Referral system. Each user gets a unique referral code (created lazily on
  * first `info` call). A NEW account can apply a code exactly once:
- *   new user  → +100 INSP welcome bonus
- *   referrer  → +1 Inspire Case per invited friend
+ *   NO rewards are granted — the code only records who invited whom
+ *   (per product decision: neither INSP nor cases for referrals).
  *
  * All writes go through the Admin SDK (clients never touch referral nodes —
- * no database.rules.json changes needed). Economy updates use value-returning
- * transactions only (never undefined — see decrementCounter gotcha note).
+ * no database.rules.json changes needed).
  *
  * RTDB layout:
- *   referrals/{uid} = { code, createdAt, count, earned, lastInviteAt,
+ *   referrals/{uid} = { code, createdAt, count, lastInviteAt,
  *                       referredBy?, referredByCode?, referredAt? }
  *   refCodes/{CODE} = uid            (code → owner lookup)
  */
 import { handle, requireUser, rtdb, HttpError, logLedger } from "../lib/firebase";
 
-const BONUS_NEW = 100; // INSP for the invited (new) user
-const REFERRAL_CASES = 1; // Inspire Cases granted to the referrer per invited friend
+const BONUS_NEW = 0; // disabled — no INSP for the invited user
+const REFERRAL_CASES = 0; // disabled — no Inspire Cases for the referrer
 
 // Unambiguous alphabet (no 0/O, 1/I/L confusion) — codes are shown in URLs.
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -117,24 +116,13 @@ export default handle(async (req, res) => {
       throw new HttpError(409, "ALREADY_REFERRED", "This account already has a referrer");
     }
 
-    // Bonuses (each an independent atomic grant; logged for audit).
-    await rtdb()
-      .ref(`economy/${user.uid}`)
-      .transaction((cur: any) => ({
-        ...(cur || { coins: 0, cases: 0, goldCases: 0 }),
-        coins: (cur?.coins || 0) + BONUS_NEW,
-        updatedAt: now,
-      }));
-    // Referrer reward: +1 Inspire Case per invited friend (atomic grant).
-    await rtdb()
-      .ref(`economy/${referrerUid}/cases`)
-      .transaction((c: any) => (c || 0) + REFERRAL_CASES);
+    // NO bonuses — rewards are disabled. Only the relationship is recorded
+    // (referredBy on the new user's node + count on the referrer's node).
     await rtdb()
       .ref(`referrals/${referrerUid}`)
       .transaction((cur: any) => ({
         ...(cur || {}),
         count: (cur?.count || 0) + 1,
-        earned: (cur?.earned || 0) + REFERRAL_CASES,
         lastInviteAt: now,
       }));
     await logLedger({
