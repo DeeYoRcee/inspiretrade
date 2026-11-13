@@ -22,7 +22,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Music, Play, Pause, SkipBack, SkipForward, Search, X, Volume2,
-  ChevronDown, Repeat, Repeat1, Shuffle, Loader2,
+  ChevronDown, Repeat, Repeat1, Shuffle, Loader2, ListMusic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { loadYtIframeApi, ytSearch } from "@/lib/youtube";
@@ -122,6 +122,11 @@ export function MusicPlayer() {
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [note, setNote] = useState<string | null>(null);
+  // song list visibility: auto-hidden WHILE a track plays, auto-returns on
+  // pause — and the header List button / the X inside the list override it
+  // manually (open the list even while playing to switch songs on demand)
+  const [showList, setShowList] = useState(true);
+  useEffect(() => { setShowList(!playing); }, [playing]);
   const audioRef = useRef<HTMLAudioElement>(null);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; w: number; h: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
@@ -195,63 +200,72 @@ export function MusicPlayer() {
   };
 
   // ---- YouTube IFrame player (created lazily on first YouTube track) ----
-  const ytEnsure = async (): Promise<any> => {
-    if (ytRef.current) return ytRef.current;
-    try {
-      await loadYtIframeApi();
-    } catch {
-      return null;
-    }
-    const YT = (window as any).YT;
-    const mount = ytMountRef.current;
-    if (!YT?.Player || !mount) return null;
-    // The host div is created imperatively: YT replaces it with an iframe,
-    // so React must not own that node (avoids reconciliation crashes).
-    const host = document.createElement("div");
-    mount.appendChild(host);
-    ytRef.current = new YT.Player(host, {
-      width: "100%",
-      height: "100%",
-      playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
-      events: {
-        onReady: () => {
-          ytReadyRef.current = true;
-          try { ytRef.current?.setVolume(Math.round(prefsRef.current.volume * 100)); } catch { /* ignore */ }
-          if (ytPendingRef.current) {
-            const id = ytPendingRef.current;
-            ytPendingRef.current = null;
-            try { ytRef.current?.loadVideoById(id); } catch { /* ignore */ }
-          }
-        },
-        onStateChange: (e: any) => {
-          const S = (window as any).YT.PlayerState;
-          if (e.data === S.PLAYING) {
-            modeRef.current = "youtube";
-            setPlaying(true);
-          } else if (e.data === S.PAUSED) {
-            setPlaying(false);
-          } else if (e.data === 0) {
-            // ended → advance (respects shuffle / repeat)
-            const i = nextIndex(idxRef.current, true);
-            if (i >= 0) playIndex(i);
+  const ytEnsuringRef = useRef<Promise<any> | null>(null);
+  const ytEnsure = (): Promise<any> => {
+    if (ytRef.current) return Promise.resolve(ytRef.current);
+    // single-flight: never create two players when playIndex fires twice fast
+    if (ytEnsuringRef.current) return ytEnsuringRef.current;
+    ytEnsuringRef.current = (async () => {
+      try {
+        await loadYtIframeApi();
+      } catch {
+        return null;
+      }
+      const YT = (window as any).YT;
+      const mount = ytMountRef.current;
+      if (!YT?.Player || !mount) return null;
+      // The host div is created imperatively: YT replaces it with an iframe,
+      // so React must not own that node (avoids reconciliation crashes).
+      const host = document.createElement("div");
+      mount.appendChild(host);
+      ytRef.current = new YT.Player(host, {
+        width: "100%",
+        height: "100%",
+        playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
+        events: {
+          onReady: () => {
+            ytReadyRef.current = true;
+            try { ytRef.current?.setVolume(Math.round(prefsRef.current.volume * 100)); } catch { /* ignore */ }
+            if (ytPendingRef.current) {
+              const id = ytPendingRef.current;
+              ytPendingRef.current = null;
+              try { ytRef.current?.loadVideoById(id); } catch { /* ignore */ }
+            }
+          },
+          onStateChange: (e: any) => {
+            const S = (window as any).YT.PlayerState;
+            if (e.data === S.PLAYING) {
+              modeRef.current = "youtube";
+              setPlaying(true);
+            } else if (e.data === S.PAUSED) {
+              setPlaying(false);
+            } else if (e.data === 0) {
+              // ended → advance (respects shuffle / repeat)
+              const i = nextIndex(idxRef.current, true);
+              if (i >= 0) playIndex(i);
+              else setPlaying(false);
+            }
+          },
+          onError: () => {
+            // embedding disabled / region-locked → skip to the next result
+            setNote("That video can't be embedded — skipping to the next one…");
+            const i = nextIndex(idxRef.current, false);
+            if (i >= 0 && i !== idxRef.current) playIndex(i);
             else setPlaying(false);
-          }
+          },
         },
-        onError: () => {
-          // embedding disabled / region-locked → skip to the next result
-          setNote("That video can't be embedded — skipping to the next one…");
-          const i = nextIndex(idxRef.current, false);
-          if (i >= 0 && i !== idxRef.current) playIndex(i);
-          else setPlaying(false);
-        },
-      },
-    });
-    return ytRef.current;
+      });
+      return ytRef.current;
+    })().finally(() => { ytEnsuringRef.current = null; });
+    return ytEnsuringRef.current;
   };
 
-  const playIndex = async (i: number) => {
-    if (i < 0 || i >= queueRef.current.length) return;
-    const t = queueRef.current[i];
+  const playIndex = async (i: number, list?: Track[]) => {
+    // explicit list beats the (possibly stale) ref — the "wrong song" bug
+    if (list) queueRef.current = list;
+    const q = queueRef.current;
+    if (i < 0 || i >= q.length) return;
+    const t = q[i];
     setIdx(i);
     setCur(0);
     setDur(t.duration || 0);
@@ -259,6 +273,9 @@ export function MusicPlayer() {
     if (t.yt) {
       // ---- YouTube full playback (official IFrame player) ----
       modeRef.current = "youtube";
+      ytPendingRef.current = null;
+      // cross-source stop — never let two songs play at once
+      try { audioRef.current?.pause(); } catch { /* ignore */ }
       setPlaying(true);
       const p = await ytEnsure();
       if (!p) { setPlaying(false); setNote("YouTube player could not load — try Audius results"); return; }
@@ -271,6 +288,9 @@ export function MusicPlayer() {
     }
     // ---- Audius stream (plain audio element) ----
     modeRef.current = "audius";
+    ytPendingRef.current = null;
+    // cross-source stop — pause any YouTube video still sounding
+    try { ytRef.current?.pauseVideo?.(); } catch { /* ignore */ }
     const el = audioRef.current;
     if (!el) return;
     el.src = t.url;
@@ -356,7 +376,7 @@ export function MusicPlayer() {
       // 1) YouTube Music — the FULL WORLD CATALOG, full-length, no login.
       const yt = await ytSearch(q);
       if (yt.length) {
-        setQueue(yt.map((m) => ({
+        const list: Track[] = yt.map((m) => ({
           id: `y_${m.videoId}`,
           title: m.title,
           artist: m.artist,
@@ -364,14 +384,16 @@ export function MusicPlayer() {
           url: "",
           duration: m.duration,
           yt: m.videoId,
-        })));
+        }));
+        setQueue(list);
         setIdx(-1);
-        playIndex(0);
+        // pass the NEW list explicitly — never play a track from the old queue
+        playIndex(0, list);
         return;
       }
       // 2) Free fallback: Audius full-length tracks.
       const list = await audiusSearch(q);
-      if (list.length > 0) { setQueue(list); setIdx(-1); playIndex(0); }
+      if (list.length > 0) { setQueue(list); setIdx(-1); playIndex(0, list); }
     } finally {
       setSearching(false);
     }
@@ -421,7 +443,7 @@ export function MusicPlayer() {
   const trackRow = (t: Track, i: number) => (
     <button
       key={t.id}
-      onClick={() => { setQueue(queue); playIndex(i); }}
+      onClick={() => { setQueue(queue); playIndex(i, queue); }}
       className={cn(
         "flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-white/5",
         i === idx && "bg-emerald-500/10",
@@ -496,6 +518,15 @@ export function MusicPlayer() {
                   <span className="block truncate text-[11px] font-semibold text-foreground">{track?.title ?? "Music"}</span>
                   <span className="block truncate text-[10px] text-muted-foreground">{track?.artist ?? ""}</span>
                 </span>
+              )}
+              {wide && (
+                <button
+                  onClick={() => setShowList((v) => !v)}
+                  className={cn("shrink-0 text-muted-foreground hover:text-foreground", showList && "text-emerald-400")}
+                  title="Song list — open/close (works while playing)"
+                >
+                  <ListMusic className="h-4 w-4" />
+                </button>
               )}
               <button onClick={() => setView(wide ? "mini" : "bar")} className="shrink-0 text-muted-foreground hover:text-foreground" title={wide ? "Minimize" : "Expand"}>
                 {wide ? <ChevronDown className="h-4 w-4" /> : <Search className="h-4 w-4" />}
@@ -598,10 +629,19 @@ export function MusicPlayer() {
               </div>
             )}
 
-            {/* song list — visible whenever nothing is playing, hides ONLY
-                while a track is actually playing (pause → it comes back) */}
-            {wide && !playing && (
+            {/* song list ("Songs" section) — auto-hidden ONLY while a track
+                is playing; the header List button or this section's own X
+                open/close it manually (switch songs without pausing) */}
+            {wide && showList && (
               <div className="max-h-52 overflow-y-auto border-t border-white/10 px-2 py-1.5">
+                <div className="flex items-center justify-between px-1.5 pb-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                    Songs {queue.length > 0 && `(${queue.length})`}
+                  </span>
+                  <button onClick={() => setShowList(false)} className="text-muted-foreground hover:text-foreground" title="Close the list">
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
                 {note && <div className="px-1.5 py-1 text-[10px] leading-relaxed text-amber-400">{note}</div>}
                 {searching && (
                   <div className="flex items-center justify-center gap-2 py-3 text-[11px] text-muted-foreground">

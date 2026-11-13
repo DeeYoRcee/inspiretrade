@@ -45,6 +45,12 @@ export const CHART_THEMES: { id: string; label: string; colors: ChartColors }[] 
   { id: "nord", label: "Nord", colors: { up: "#a3be8c", down: "#bf616a", accent: "#88c0d0", grid: "rgba(216, 222, 233, 0.08)", bg: "#2e3440", text: "#d8dee9" } },
   { id: "carbon", label: "Carbon", colors: { up: "#4ade80", down: "#f87171", accent: "#fbbf24", grid: "rgba(255, 255, 255, 0.06)", bg: "#16181d", text: "#9ca3af" } },
   { id: "ocean", label: "Ocean", colors: { up: "#22d3ee", down: "#fb7185", accent: "#818cf8", grid: "rgba(148, 163, 184, 0.10)", bg: "#0c1a2b", text: "#94a3b8" } },
+  { id: "aurora", label: "Aurora", colors: { up: "#34d399", down: "#f472b6", accent: "#a78bfa", grid: "rgba(167, 139, 250, 0.10)", bg: "#0b1020", text: "#a5b4fc" } },
+  { id: "cyber", label: "Cyber", colors: { up: "#00e5ff", down: "#ff2d78", accent: "#a855f7", grid: "rgba(0, 229, 255, 0.09)", bg: "#070b16", text: "#67e8f9" } },
+  { id: "sunset", label: "Sunset", colors: { up: "#fbbf24", down: "#fb7185", accent: "#f97316", grid: "rgba(251, 146, 60, 0.10)", bg: "#190d09", text: "#fdba74" } },
+  { id: "matrix", label: "Matrix", colors: { up: "#00e676", down: "#ff5252", accent: "#00c853", grid: "rgba(0, 230, 118, 0.10)", bg: "#050a06", text: "#69f0ae" } },
+  { id: "gold", label: "Royal Gold", colors: { up: "#eab308", down: "#f87171", accent: "#facc15", grid: "rgba(250, 204, 21, 0.09)", bg: "#0d0b05", text: "#e7c66b" } },
+  { id: "arctic", label: "Arctic (light)", colors: { up: "#059669", down: "#e11d48", accent: "#0284c7", grid: "rgba(148, 163, 184, 0.35)", bg: "#f1f5f9", text: "#0f172a" } },
 ];
 
 const PALETTE = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#22d3ee", "#f87171", "#34d399"];
@@ -104,6 +110,8 @@ interface Props {
   magnet?: boolean;
   /** increment to trigger a PNG download of the chart (screenshot) */
   screenshotSignal?: number;
+  /** user photo rendered BEHIND the candles (transparent chart background) */
+  bgImage?: string | null;
 }
 
 export interface ReplayTradeMarker {
@@ -125,6 +133,7 @@ export function TerminalChart({
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
   tradeMarkers, priceLines, onReplayMenu, priceScaleMode, magnet, screenshotSignal,
+  bgImage,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -157,6 +166,8 @@ export function TerminalChart({
   overlayCfgRef.current = overlayCfg ?? null;
   const onReplayBarRef = useRef(onReplayBar);
   onReplayBarRef.current = onReplayBar;
+  const bgImageRef = useRef<string | null>(bgImage ?? null);
+  bgImageRef.current = bgImage ?? null;
   const [dataVersion, setDataVersion] = useState(0);
 
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("connecting");
@@ -183,7 +194,7 @@ export function TerminalChart({
     const chart = createChart(mainRef.current, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: colors.bg },
+        background: { type: ColorType.Solid, color: bgImage ? "transparent" : colors.bg },
         textColor: colors.text,
         fontSize: compact ? 10 : 11,
         attributionLogo: false,
@@ -313,13 +324,66 @@ export function TerminalChart({
   }, []);
 
   // ---- theme updates ---------------------------------------------------------
-
+  // Repaints EVERYTHING on theme change: chart bg/grid/text, the price series
+  // (candles/bars/line/area/baseline), volume bars, pane charts and overlay
+  // indicator lines — no rebuild needed.
   useEffect(() => {
-    chartRef.current?.applyOptions({
-      layout: { background: { type: ColorType.Solid, color: colors.bg }, textColor: colors.text },
+    const bg = bgImageRef.current ? "transparent" : colors.bg;
+    const opts = {
+      layout: { background: { type: ColorType.Solid, color: bg }, textColor: colors.text },
       grid: { vertLines: { color: colors.grid, visible: gridOn }, horzLines: { color: colors.grid, visible: gridOn } },
-    });
-  }, [colors, gridOn]);
+    };
+    chartRef.current?.applyOptions(opts as any);
+
+    // price series colors (created once in renderData — repaint in place)
+    const s = seriesRef.current as any;
+    try {
+      if (s?.applyOptions) {
+        if (chartType === "line") s.applyOptions({ color: colors.accent });
+        else if (chartType === "area") s.applyOptions({ lineColor: colors.accent, topColor: withAlpha(colors.accent, 0.28), bottomColor: withAlpha(colors.accent, 0.02) });
+        else if (chartType === "baseline") s.applyOptions({
+          topLineColor: colors.up, topFillColor1: withAlpha(colors.up, 0.28), topFillColor2: withAlpha(colors.up, 0.05),
+          bottomLineColor: colors.down, bottomFillColor1: withAlpha(colors.down, 0.05), bottomFillColor2: withAlpha(colors.down, 0.28),
+        });
+        else if (chartType === "bars") s.applyOptions({ upColor: colors.up, downColor: colors.down });
+        else if (chartType === "hollow") s.applyOptions({
+          upColor: "rgba(0,0,0,0)", downColor: colors.down,
+          borderUpColor: colors.up, borderDownColor: colors.down,
+          wickUpColor: colors.up, wickDownColor: colors.down,
+        });
+        else s.applyOptions({
+          upColor: colors.up, downColor: colors.down,
+          borderUpColor: colors.up, borderDownColor: colors.down,
+          wickUpColor: colors.up, wickDownColor: colors.down,
+        });
+      }
+    } catch { /* series not created yet */ }
+
+    // volume bars (per-point colors → re-set data with the new palette)
+    try {
+      volSeriesRef.current?.setData(barsRef.current
+        .filter((b) => b.volume != null)
+        .map((b) => ({
+          time: b.time as UTCTimestamp,
+          value: b.volume!,
+          color: b.close >= b.open ? withAlpha(colors.up, 0.45) : withAlpha(colors.down, 0.45),
+        })));
+    } catch { /* series not created yet */ }
+
+    // pane indicator charts — bg/text/grid + line colors
+    for (const p of paneChartsRef.current) {
+      try { p.chart.applyOptions(opts as any); } catch { /* gone */ }
+      p.series.forEach((ps, psi) => {
+        try { ps.applyOptions({ color: indicatorColor(indicators.findIndex((a) => a.id === p.defId), psi) }); } catch { /* gone */ }
+      });
+    }
+
+    // overlay indicator lines
+    overlayGroupsRef.current.forEach((g, gi) => g.series.forEach((ls, li) => {
+      try { ls.applyOptions({ color: indicatorColor(gi, li) }); } catch { /* gone */ }
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colors, gridOn, chartType, bgImage]);
 
   // ---- tool binding -----------------------------------------------------------
 
@@ -622,7 +686,7 @@ export function TerminalChart({
       const h = Math.max(90, Math.min(160, (height ?? 420) * 0.24));
       const sub = createChart(container, {
         autoSize: true,
-        layout: { background: { type: ColorType.Solid, color: colors.bg }, textColor: colors.text, fontSize: 10, attributionLogo: false },
+        layout: { background: { type: ColorType.Solid, color: bgImageRef.current ? "transparent" : colors.bg }, textColor: colors.text, fontSize: 10, attributionLogo: false },
         grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
         rightPriceScale: { borderColor: "rgba(42,46,54,0.8)" },
         timeScale: { borderColor: "rgba(42,46,54,0.8)", timeVisible: true, secondsVisible: false, visible: true },
@@ -888,6 +952,14 @@ export function TerminalChart({
       onDoubleClick={resetView}
       onMouseDown={() => menu && setMenu(null)}
     >
+      {/* user photo BEHIND the chart — candles/grid draw on a transparent bg */}
+      {bgImage && (
+        <>
+          <img src={bgImage} alt="" className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover" />
+          <div className="pointer-events-none absolute inset-0 z-0 bg-black/30" />
+        </>
+      )}
+
       {/* legend bar — text follows the chart theme (visible on light backgrounds too) */}
       <div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] leading-none" style={{ color: colors.text }}>
         <span className="font-bold">{symbol}</span>

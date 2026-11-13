@@ -113,6 +113,28 @@ function playBeep() {
   } catch { /* autoplay blocked */ }
 }
 
+/** Downscale any picked photo to a ≤1600px JPEG data URL for the chart bg. */
+async function fileToChartBg(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("read-failed"));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("decode-failed"));
+    image.src = dataUrl;
+  });
+  const scale = Math.min(1, 1600 / img.width, 1600 / img.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.78);
+}
+
 export default function TerminalPage() {
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -246,6 +268,15 @@ export default function TerminalPage() {
   const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [objectsOpen, setObjectsOpen] = useState(false);
   const [themesOpen, setThemesOpen] = useState(false);
+  // chart background photo — rendered BEHIND the candles (chart only, never site-wide)
+  const [bgImage, setBgImage] = useState<string | null>(() => {
+    try { return localStorage.getItem("terminalBg"); } catch { return null; }
+  });
+  const [bgOpen, setBgOpen] = useState(false);
+  const bgFileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    try { bgImage == null ? localStorage.removeItem("terminalBg") : localStorage.setItem("terminalBg", bgImage); } catch { /* quota */ }
+  }, [bgImage]);
   // instrument search combo (toolbar, top-left)
   const [symQuery, setSymQuery] = useState("");
   const [symOpen, setSymOpen] = useState(false);
@@ -365,6 +396,7 @@ export default function TerminalPage() {
       priceScaleMode={settings.priceScale}
       magnet={settings.magnet}
       screenshotSignal={i === 0 ? screenshotSignal : 0}
+      bgImage={bgImage}
       overlayCfg={overlay}
       anchoredVwapTime={anchor}
       compareSymbol={compare}
@@ -572,6 +604,52 @@ export default function TerminalPage() {
           )}
         </div>
 
+        {/* chart background photo — behind the CANDLES (chart only, never the site) */}
+        <div className="relative">
+          <button
+            onClick={() => setBgOpen((v) => !v)}
+            className={cn("relative flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold", bgOpen || bgImage ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
+            title="Chart background photo"
+          >
+            <ImagePlus className="h-3.5 w-3.5" /><span className="hidden sm:inline">BG</span>
+            {bgImage && <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-emerald-400" />}
+          </button>
+          {bgOpen && (
+            <div className="absolute right-0 top-9 z-50 w-56 rounded-xl border border-border/60 bg-[#0d1117] p-2 shadow-2xl">
+              <div className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Chart background</div>
+              <button
+                onClick={() => bgFileRef.current?.click()}
+                className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 py-1.5 text-[11px] font-bold text-emerald-400 hover:bg-emerald-500/20"
+              >
+                Upload photo…
+              </button>
+              <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">Shown behind the candles inside the chart only.</p>
+              {bgImage && <div className="mt-1.5 overflow-hidden rounded-lg border border-border/60"><img src={bgImage} alt="" className="h-14 w-full object-cover" /></div>}
+              {bgImage && (
+                <button
+                  onClick={() => { setBgImage(null); setBgOpen(false); }}
+                  className="mt-1.5 w-full rounded-lg border border-red-500/40 py-1 text-[10px] font-bold text-red-400 hover:bg-red-500/10"
+                >
+                  Remove background
+                </button>
+              )}
+            </div>
+          )}
+          <input
+            ref={bgFileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              try { setBgImage(await fileToChartBg(file)); } catch { toast({ title: "Could not load that image" }); }
+              setBgOpen(false);
+            }}
+          />
+        </div>
+
         {/* chart theme picker — one-click presets, persisted per user */}
         <div className="relative">
           <button
@@ -673,8 +751,9 @@ export default function TerminalPage() {
             <Minimize className="h-3 w-3" />Exit full view (Esc)
           </button>
         )}
-        {/* drawing toolbar — TradingView-style grouped sections */}
-        <div className="flex w-12 shrink-0 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-border/50 bg-card/60 py-1.5">
+        {/* drawing toolbar — grouped sections, floats INSIDE the chart
+            area (TradingView-style), overlaying the first chart's left edge */}
+        <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-12 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
           {TOOL_GROUPS.map((g) => (
             <div key={g.label} className="flex w-full flex-col items-center gap-0.5">
               <span className={cn("mt-1 select-none text-[6px] font-bold tracking-widest", g.accent ? "text-amber-400/80" : "text-muted-foreground/70")}>{g.label}</span>
@@ -682,7 +761,7 @@ export default function TerminalPage() {
                 <button
                   key={id}
                   onClick={() => setActiveTool(id)}
-                  className={cn("flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:text-foreground hover:bg-card")}
+                  className={cn("flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
                   title={title}
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -690,15 +769,15 @@ export default function TerminalPage() {
               ))}
             </div>
           ))}
-          <div className="my-1 h-px w-6 shrink-0 bg-border/60" />
-          <button onClick={() => drawingsBus.emit({ cmd: "undo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Undo"><Undo2 className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "redo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Redo"><Redo2 className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "lock" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Lock selected"><Lock className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "hide" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Hide selected"><Eye className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-red-400" title="Delete selected"><Trash2 className="h-3.5 w-3.5" /></button>
-          <div className="my-1 h-px w-6 shrink-0 bg-border/60" />
+          <div className="my-1 h-px w-6 shrink-0 bg-white/10" />
+          <button onClick={() => drawingsBus.emit({ cmd: "undo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Undo"><Undo2 className="h-3.5 w-3.5" /></button>
+          <button onClick={() => drawingsBus.emit({ cmd: "redo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Redo"><Redo2 className="h-3.5 w-3.5" /></button>
+          <button onClick={() => drawingsBus.emit({ cmd: "lock" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Lock selected"><Lock className="h-3.5 w-3.5" /></button>
+          <button onClick={() => drawingsBus.emit({ cmd: "hide" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Hide selected"><Eye className="h-3.5 w-3.5" /></button>
+          <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-red-400" title="Delete selected"><Trash2 className="h-3.5 w-3.5" /></button>
+          <div className="my-1 h-px w-6 shrink-0 bg-white/10" />
           <input type="color" defaultValue={settings.colors.accent} onChange={(e) => drawingsBus.emit({ cmd: "style", arg: { color: e.target.value } })} className="h-6 w-7 shrink-0 cursor-pointer rounded" title="Color" />
-          <select defaultValue="2" onChange={(e) => drawingsBus.emit({ cmd: "style", arg: { width: Number(e.target.value) } })} className="h-6 w-9 shrink-0 rounded border border-border/60 bg-transparent text-[10px] text-muted-foreground" title="Width">
+          <select defaultValue="2" onChange={(e) => drawingsBus.emit({ cmd: "style", arg: { width: Number(e.target.value) } })} className="h-6 w-9 shrink-0 rounded border border-white/10 bg-transparent text-[10px] text-muted-foreground" title="Width">
             {[1, 2, 3, 4].map((w) => <option key={w} value={w}>{w}</option>)}
           </select>
         </div>
