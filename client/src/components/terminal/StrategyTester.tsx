@@ -8,7 +8,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Play, Plus, Trash2 } from "lucide-react";
-import { INSTRUMENTS, TIMEFRAMES, type Bar, type Timeframe } from "@shared/terminal";
+import { TIMEFRAMES, type Bar, type Timeframe } from "@shared/terminal";
+import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import { loadBarsCached } from "@/lib/terminal/data-feeds";
 import { RULE_CATALOG, runBacktest, DEFAULT_BACKTEST, type BacktestConfig, type BacktestResult, type Rule, type RuleKind } from "@/lib/terminal/backtest";
 import { Stat, Sparkline } from "./ToolDrawer";
@@ -70,7 +71,7 @@ export function StrategyTester({ symbol: currentSymbol }: { symbol: string }) {
         <div className="grid grid-cols-2 gap-1.5">
           <label className="space-y-0.5">
             <span className="text-[9px] uppercase text-muted-foreground">Instrument</span>
-            <select value={cfg.symbol} onChange={(e) => patch({ symbol: e.target.value })} className="num-input h-7 w-full">{INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}</select>
+            <select value={cfg.symbol} onChange={(e) => patch({ symbol: e.target.value })} className="num-input h-7 w-full"><GroupedOptions /></select>
           </label>
           <label className="space-y-0.5">
             <span className="text-[9px] uppercase text-muted-foreground">Timeframe</span>

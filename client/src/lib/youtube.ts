@@ -36,6 +36,7 @@ async function fetchJson(url: string, timeoutMs = 6000): Promise<any | null> {
 export async function ytSearch(q: string): Promise<YtTrack[]> {
   for (const base of PIPED_HOSTS) {
     const j = await fetchJson(`${base}/search?q=${encodeURIComponent(q)}&filter=music_songs`);
+    const seen = new Set<string>();
     const list: YtTrack[] = (j?.items ?? [])
       .filter((it: any) => it?.type === "stream" && typeof it?.url === "string" && it.url.includes("v="))
       .map((it: any) => {
@@ -48,7 +49,13 @@ export async function ytSearch(q: string): Promise<YtTrack[]> {
           thumb: videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "",
         };
       })
-      .filter((t: YtTrack) => !!t.videoId);
+      // dedupe by videoId — duplicate React keys would make row clicks fire
+      // the WRONG row's handler (a real "clicked A, B played" bug)
+      .filter((t: YtTrack) => {
+        if (!t.videoId || seen.has(t.videoId)) return false;
+        seen.add(t.videoId);
+        return true;
+      });
     if (list.length) return list;
   }
   return [];

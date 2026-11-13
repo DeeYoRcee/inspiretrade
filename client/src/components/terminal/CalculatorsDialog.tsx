@@ -7,7 +7,8 @@
  */
 import { useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { INSTRUMENTS, getInstrument } from "@shared/terminal";
+import { getInstrument } from "@shared/terminal";
+import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import { pipValue, positionSize, margin, profitLoss, fibonacci, drawdown, compounding, riskReward } from "@/lib/terminal/calculators";
 import { cn } from "@/lib/utils";
 
@@ -98,7 +99,7 @@ export function CalculatorsDialog({ open, onOpenChange, symbol: currentSymbol, p
           {tab !== "fib" && tab !== "dd" && tab !== "compound" && (
             <Row label="Instrument">
               <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="num-input h-7 w-32">
-                {INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}
+                <GroupedOptions />
               </select>
             </Row>
           )}

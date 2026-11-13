@@ -112,6 +112,8 @@ interface Props {
   screenshotSignal?: number;
   /** user photo rendered BEHIND the candles (transparent chart background) */
   bgImage?: string | null;
+  /** dark veil over the photo (0–0.9) so candles stay readable */
+  bgDim?: number;
 }
 
 export interface ReplayTradeMarker {
@@ -133,7 +135,7 @@ export function TerminalChart({
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
   tradeMarkers, priceLines, onReplayMenu, priceScaleMode, magnet, screenshotSignal,
-  bgImage,
+  bgImage, bgDim,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -956,7 +958,7 @@ export function TerminalChart({
       {bgImage && (
         <>
           <img src={bgImage} alt="" className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover" />
-          <div className="pointer-events-none absolute inset-0 z-0 bg-black/30" />
+          <div className="pointer-events-none absolute inset-0 z-0" style={{ background: `rgba(0,0,0,${bgDim ?? 0.3})` }} />
         </>
       )}
 

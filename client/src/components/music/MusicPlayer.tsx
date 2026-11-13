@@ -199,6 +199,24 @@ export function MusicPlayer() {
     return auto && repeatRef.current === "all" ? 0 : -1;
   };
 
+  // videos YouTube refuses to embed (UMG blocks) — skipped with a VISIBLE note
+  const blockedRef = useRef<Set<string>>(new Set());
+  // consecutive auto-skips since the last real user action / successful play
+  const autoSkipRef = useRef(0);
+
+  /** first index after `from` (wrapping) whose video is not embed-blocked */
+  const nextPlayable = (from: number): number => {
+    const q = queueRef.current;
+    for (let s = 1; s <= q.length; s++) {
+      const j = (from + s) % q.length;
+      if (j === from) return -1;
+      const t = q[j];
+      if (t.yt && blockedRef.current.has(t.yt)) continue;
+      return j;
+    }
+    return -1;
+  };
+
   // ---- YouTube IFrame player (created lazily on first YouTube track) ----
   const ytEnsuringRef = useRef<Promise<any> | null>(null);
   const ytEnsure = (): Promise<any> => {
@@ -235,7 +253,13 @@ export function MusicPlayer() {
           onStateChange: (e: any) => {
             const S = (window as any).YT.PlayerState;
             if (e.data === S.PLAYING) {
-              modeRef.current = "youtube";
+              // ghost-video guard: the user switched to Audius while this
+              // video was still loading — silence it IMMEDIATELY
+              if (modeRef.current !== "youtube") {
+                try { ytRef.current?.pauseVideo?.(); } catch { /* ignore */ }
+                return;
+              }
+              autoSkipRef.current = 0;
               setPlaying(true);
             } else if (e.data === S.PAUSED) {
               setPlaying(false);
@@ -247,11 +271,30 @@ export function MusicPlayer() {
             }
           },
           onError: () => {
-            // embedding disabled / region-locked → skip to the next result
-            setNote("That video can't be embedded — skipping to the next one…");
-            const i = nextIndex(idxRef.current, false);
-            if (i >= 0 && i !== idxRef.current) playIndex(i);
-            else setPlaying(false);
+            // stale error from a video we already abandoned → ignore
+            if (modeRef.current !== "youtube") return;
+            // Embed-blocked / region-locked. NEVER silently wander off —
+            // remember the video, tell the user, move on at most twice.
+            const curTrack = queueRef.current[idxRef.current];
+            if (curTrack?.yt) blockedRef.current.add(curTrack.yt);
+            if (autoSkipRef.current >= 2) {
+              setPlaying(false);
+              setNote(`"${curTrack?.title ?? "This song"}" can't be played (embedding blocked) — pick another one from the list`);
+              return;
+            }
+            const skipCount = autoSkipRef.current + 1;
+            const next = nextPlayable(idxRef.current);
+            if (next >= 0) {
+              const t = queueRef.current[next];
+              setNote(`"${curTrack?.title ?? "It"}" can't be embedded — playing "${t.title}" instead`);
+              playIndex(next);
+              // playIndex resets the counter as a "user action" — this skip
+              // is NOT one, so restore the cascade count (bounded retries)
+              autoSkipRef.current = skipCount;
+            } else {
+              setPlaying(false);
+              setNote("No playable results for this search — try another song");
+            }
           },
         },
       });
@@ -270,6 +313,7 @@ export function MusicPlayer() {
     setCur(0);
     setDur(t.duration || 0);
     setNote(null);
+    autoSkipRef.current = 0; // a real user action — reset the skip cascade
     if (t.yt) {
       // ---- YouTube full playback (official IFrame player) ----
       modeRef.current = "youtube";
@@ -289,8 +333,10 @@ export function MusicPlayer() {
     // ---- Audius stream (plain audio element) ----
     modeRef.current = "audius";
     ytPendingRef.current = null;
-    // cross-source stop — pause any YouTube video still sounding
-    try { ytRef.current?.pauseVideo?.(); } catch { /* ignore */ }
+    // cross-source stop — hard-stop any YouTube video still sounding
+    // (stopVideo, not pauseVideo: mid-load videos ignore pause and would
+    // auto-start later → the "two songs / wrong song" bug)
+    try { ytRef.current?.stopVideo?.(); } catch { /* ignore */ }
     const el = audioRef.current;
     if (!el) return;
     el.src = t.url;
@@ -304,7 +350,11 @@ export function MusicPlayer() {
     el.volume = prefs.volume;
     const onTime = () => setCur(el.currentTime);
     const onMeta = () => setDur(el.duration || 0);
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      // ghost-audio guard: a YouTube track owns playback right now — silence it
+      if (modeRef.current !== "audius") { try { el.pause(); } catch { /* ignore */ } return; }
+      setPlaying(true);
+    };
     const onPause = () => setPlaying(false);
     const onEnd = () => {
       const i = nextIndex(idxRef.current, true);
@@ -372,6 +422,7 @@ export function MusicPlayer() {
     if (!q) return;
     setSearching(true);
     setNote(null);
+    blockedRef.current = new Set(); // fresh search → fresh blocking info
     try {
       // 1) YouTube Music — the FULL WORLD CATALOG, full-length, no login.
       const yt = await ytSearch(q);
@@ -535,6 +586,14 @@ export function MusicPlayer() {
                 <X className="h-4 w-4" />
               </button>
             </div>
+
+            {/* visible notice — shown EVEN while playing (embed-blocked skips,
+                player failures) so the user always knows why a song changed */}
+            {wide && note && (
+              <div className="mx-3 mb-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] leading-relaxed text-amber-400">
+                {note}
+              </div>
+            )}
 
             {/* now playing — cover art (Audius) */}
             {wide && track && !track.yt && (

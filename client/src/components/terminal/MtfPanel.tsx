@@ -6,7 +6,8 @@
  */
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { INSTRUMENTS, type Timeframe } from "@shared/terminal";
+import { type Timeframe } from "@shared/terminal";
+import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import { loadBarsMany } from "@/lib/terminal/data-feeds";
 import { mtfTable, mtfVerdict, DEFAULT_MTF, type MtfConfig, type MtfRow } from "@/lib/terminal/mtf";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,7 @@ export function MtfPanel({ symbol, onSelect }: { symbol: string; onSelect?: (s: 
       <div className="flex items-center justify-between">
         <div className="font-bold">Multi-Timeframe — {symbol}</div>
         <select value={symbol} onChange={(e) => onSelect?.(e.target.value)} className="num-input h-7 w-28">
-          {INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}
+          <GroupedOptions />
         </select>
       </div>
 

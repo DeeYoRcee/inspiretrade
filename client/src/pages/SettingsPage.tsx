@@ -6,7 +6,8 @@ import { Check, Globe2, Palette, Volume2, BarChart2 } from "lucide-react";
 import { useLanguage, LANGUAGE_LABELS, type Language } from "@/lib/language-context";
 import { useTheme, THEMES, THEME_LABELS, type Theme } from "@/lib/theme-context";
 import { useTerminalWorkspace } from "@/hooks/use-terminal-workspace";
-import { TIMEFRAMES, CHART_TYPES, INSTRUMENTS, type Timeframe, type ChartType } from "@shared/terminal";
+import { TIMEFRAMES, CHART_TYPES, type Timeframe, type ChartType } from "@shared/terminal";
+import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
@@ -69,7 +70,7 @@ export default function SettingsPage() {
           <label className="block">
             <span className="mb-1 block text-xs text-muted-foreground">{t("setInstrument")}</span>
             <select value={settings.symbol} onChange={(e) => update({ symbol: e.target.value })} className="num-input h-9">
-              {INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}
+              <GroupedOptions />
             </select>
           </label>
           <label className="block">

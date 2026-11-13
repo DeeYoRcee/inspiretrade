@@ -15,7 +15,8 @@ import { ref, get, set, remove, update } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/lib/language-context";
-import { INSTRUMENTS, TIMEFRAMES, type Timeframe } from "@shared/terminal";
+import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
+import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import type { TerminalAlertV2, AlertKind } from "@/lib/terminal/alert-engine";
 import { cn } from "@/lib/utils";
 
@@ -128,7 +129,7 @@ export function AlertsPanel({ prices, drawings, className }: {
       </select>
       <div className="grid grid-cols-3 gap-1.5">
         <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="num-input" aria-label="Alert instrument">
-          {INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}
+          <GroupedOptions />
         </select>
         {needsTf ? (
           <select value={timeframe} onChange={(e) => setTimeframe(e.target.value as Timeframe)} className="num-input">

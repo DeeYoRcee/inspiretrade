@@ -4,7 +4,8 @@
  * math for DEMO trading; a broker adapter must use the broker's own specs.
  */
 import { useMemo, useState } from "react";
-import { INSTRUMENTS, getInstrument } from "@shared/terminal";
+import { getInstrument } from "@shared/terminal";
+import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import { useLanguage } from "@/lib/language-context";
 
 export function RiskCalculator({
@@ -51,7 +52,7 @@ export function RiskCalculator({
         <label className="block">
           <span className="mb-0.5 block text-[10px] text-muted-foreground">{t("rcInstrument")}</span>
           <select value={sym} onChange={(e) => setSym(e.target.value)} className="num-input">
-            {INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}
+            <GroupedOptions />
           </select>
         </label>
         <label className="block">

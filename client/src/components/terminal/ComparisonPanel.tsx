@@ -4,8 +4,8 @@
  * instrument B on the main chart.
  */
 import { useMemo, useState } from "react";
+import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import { useQuery } from "@tanstack/react-query";
-import { INSTRUMENTS } from "@shared/terminal";
 import { loadBarsCached } from "@/lib/terminal/data-feeds";
 import { Stat } from "./ToolDrawer";
 import { cn } from "@/lib/utils";
@@ -67,7 +67,7 @@ export function ComparisonPanel({ symbol, compare, setCompare, onSelect }: {
       <div className="flex items-center gap-1.5">
         <b>Compare</b>
         <select value={base} onChange={(e) => setBase(e.target.value)} className="num-input ml-auto h-7 w-28">
-          {INSTRUMENTS.map((i) => <option key={i.symbol} value={i.symbol}>{i.symbol}</option>)}
+          <GroupedOptions />
         </select>
         <button onClick={() => setCompare(base === compare ? null : base)}
           className={cn("rounded-lg border px-2 py-1 text-[10px] font-bold", base === compare ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}>
