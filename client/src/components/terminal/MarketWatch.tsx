@@ -4,7 +4,7 @@
  * favorites, sorting and click-to-load. Data source is labeled per row.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Star, Search } from "lucide-react";
+import { Star } from "lucide-react";
 import { INSTRUMENTS, getInstrument, type AssetClass } from "@shared/terminal";
 import { fetchLastPrices } from "@/lib/terminal/data-feeds";
 import { cn } from "@/lib/utils";
@@ -26,7 +26,6 @@ export function MarketWatch({
   className?: string;
 }) {
   const [rows, setRows] = useState<Record<string, Row>>({});
-  const [search, setSearch] = useState("");
   const [sort, setSort] = useState<"symbol" | "change">("symbol");
   const [favs, setFavs] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("terminal.favs") || "[]"); } catch { return []; }
@@ -81,16 +80,14 @@ export function MarketWatch({
   }, []);
 
   const list = useMemo(() => {
-    let arr = INSTRUMENTS.filter(
-      (i) => i.symbol.toLowerCase().includes(search.toLowerCase()) || i.name.toLowerCase().includes(search.toLowerCase()),
-    );
+    let arr = [...INSTRUMENTS];
     if (sort === "change") {
       arr = [...arr].sort((a, b) => (rows[b.symbol]?.changePct ?? -999) - (rows[a.symbol]?.changePct ?? -999));
     } else {
       arr = [...arr].sort((a, b) => (favs.includes(b.symbol) ? 1 : 0) - (favs.includes(a.symbol) ? 1 : 0) || a.symbol.localeCompare(b.symbol));
     }
     return arr;
-  }, [search, sort, rows, favs]);
+  }, [sort, rows, favs]);
 
   const groups: { label: string; items: typeof INSTRUMENTS }[] = useMemo(() => {
     const favItems = list.filter((i) => favs.includes(i.symbol));
@@ -108,15 +105,6 @@ export function MarketWatch({
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
       <div className="flex items-center gap-1.5 border-b border-border/40 p-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search…"
-            className="h-8 w-full rounded-lg border border-border/60 bg-card/60 pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground focus:border-emerald-500/50"
-          />
-        </div>
         <button
           onClick={() => setSort(sort === "symbol" ? "change" : "symbol")}
           className="h-8 rounded-lg border border-border/60 px-2 text-[10px] font-semibold text-muted-foreground hover:text-foreground"

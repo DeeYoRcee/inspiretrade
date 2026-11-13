@@ -2,10 +2,11 @@
  * MusicPlayer — site-wide floating music widget (top-left, under the navbar).
  *
  * Windows-11-Media-Player style: big cover art, seek bar with times,
- * shuffle/repeat, volume, queue. Full-length songs stream FREE from Audius
- * (decentralized music platform, public API, no key — CORS verified). When
- * Audius has few results, the iTunes Search API (JSONP, no key) adds 30s
- * previews. Nothing touches the Vercel serverless budget.
+ * shuffle/repeat, volume, queue, adjustable panel transparency.
+ * ALL songs are FULL-LENGTH, streamed FREE from Audius (decentralized music
+ * platform, public API, no key — CORS verified). No 30-second previews —
+ * if Audius has no match, the search simply returns no results.
+ * Nothing touches the Vercel serverless budget.
  *
  * Three sizes, persisted in localStorage:
  *   bar  — full player (~320px)
@@ -26,7 +27,6 @@ interface Track {
   art: string;
   url: string;
   duration: number;
-  source: "audius" | "itunes";
 }
 
 type View = "bar" | "mini" | "dot";
@@ -35,6 +35,8 @@ type RepeatMode = "off" | "all" | "one";
 interface Persisted {
   view: View;
   volume: number;
+  /** panel transparency, 0.2 (mostly see-through) … 1 (solid) */
+  opacity: number;
 }
 
 const STORE_KEY = "inspire_music";
@@ -45,9 +47,10 @@ function loadPrefs(): Persisted {
     return {
       view: raw.view === "mini" || raw.view === "dot" || raw.view === "bar" ? raw.view : "dot",
       volume: typeof raw.volume === "number" ? raw.volume : 0.8,
+      opacity: typeof raw.opacity === "number" ? Math.min(1, Math.max(0.2, raw.opacity)) : 1,
     };
   } catch {
-    return { view: "dot", volume: 0.8 };
+    return { view: "dot", volume: 0.8, opacity: 1 };
   }
 }
 
@@ -85,40 +88,11 @@ async function audiusSearch(q: string): Promise<Track[]> {
           art: t.artwork?.["480x480"] ?? t.artwork?.["150x150"] ?? "",
           url: `${host}/v1/tracks/${t.id}/stream?app_name=InspireTrade`,
           duration: Number(t.duration) || 0,
-          source: "audius" as const,
         }));
       if (list.length) return list;
     } catch { /* try the next discovery node */ }
   }
   return [];
-}
-
-/** 30-second previews from the iTunes Search API via JSONP (no CORS headers). */
-function itunesSearch(q: string): Promise<Track[]> {
-  return new Promise((resolve) => {
-    const cb = `itcb_${Math.random().toString(36).slice(2)}`;
-    const s = document.createElement("script");
-    const done = (list: Track[]) => { clearTimeout(timer); delete (window as any)[cb]; s.remove(); resolve(list); };
-    const timer = setTimeout(() => done([]), 9000);
-    (window as any)[cb] = (data: any) => {
-      done(
-        (data?.results || [])
-          .filter((r: any) => r.previewUrl)
-          .map((r: any) => ({
-            id: `i_${r.trackId}`,
-            title: r.trackName,
-            artist: r.artistName,
-            art: (r.artworkUrl100 || "").replace("100x100", "200x200"),
-            url: r.previewUrl,
-            duration: 30,
-            source: "itunes" as const,
-          })),
-      );
-    };
-    s.src = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=25&callback=${cb}`;
-    s.onerror = () => done([]);
-    document.body.appendChild(s);
-  });
 }
 
 export function MusicPlayer() {
@@ -208,8 +182,8 @@ export function MusicPlayer() {
     if (!q) return;
     setSearching(true);
     try {
-      const aud = await audiusSearch(q);
-      const list = aud.length >= 3 ? aud : [...aud, ...(await itunesSearch(q))];
+      // Audius only — every result is a FULL-LENGTH track (no 30s previews).
+      const list = await audiusSearch(q);
       setResults(list);
       if (list.length > 0) { setQueue(list); setIdx(-1); playIndex(0); setView("bar"); }
     } finally {
@@ -248,7 +222,7 @@ export function MusicPlayer() {
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[11px] font-semibold text-foreground">{t.title}</span>
         <span className="block truncate text-[10px] text-muted-foreground">
-          {t.artist}{t.source === "itunes" ? " · preview" : ""} {t.duration ? `· ${fmt(t.duration)}` : ""}
+          {t.artist} {t.duration ? `· ${fmt(t.duration)}` : ""}
         </span>
       </span>
       {i === idx && playing && <Pause className="h-3 w-3 shrink-0 text-emerald-400" />}
@@ -281,7 +255,10 @@ export function MusicPlayer() {
     <>
       <audio ref={audioRef} className="hidden" />
       <div className={cn("fixed left-2 top-[7rem] z-40 sm:left-3 sm:top-[4.25rem]", wide ? "w-80" : "w-56")}>
-        <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#101418]/95 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.8)] backdrop-blur-xl">
+        <div
+          className="overflow-hidden rounded-2xl border border-white/10 bg-[#101418]/95 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.8)] backdrop-blur-xl"
+          style={{ opacity: prefs.opacity }}
+        >
           {/* header: search (bar) / title (mini) + view switches */}
           <div className="flex items-center gap-1.5 px-2.5 py-2">
             <Music className="h-4 w-4 shrink-0 text-emerald-400" />
@@ -325,7 +302,7 @@ export function MusicPlayer() {
                 <p className="truncate text-sm font-bold text-foreground">{track.title}</p>
                 <p className="truncate text-xs text-muted-foreground">{track.artist}</p>
                 <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-emerald-400/80">
-                  {track.source === "audius" ? "Full track · Audius" : "30s preview · iTunes"}
+                  Full track · Audius
                 </p>
               </div>
             </div>
@@ -384,6 +361,17 @@ export function MusicPlayer() {
                   title="Volume"
                 />
               </div>
+              {/* panel transparency — lower % = more see-through */}
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span className="shrink-0 text-[10px] font-semibold text-muted-foreground">Transparency</span>
+                <input
+                  type="range" min={20} max={100} step={5} value={Math.round(prefs.opacity * 100)}
+                  onChange={(e) => setPrefs((p) => ({ ...p, opacity: Number(e.target.value) / 100 }))}
+                  className="h-1 flex-1 cursor-pointer accent-emerald-400"
+                  title="Panel transparency"
+                />
+                <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{Math.round(prefs.opacity * 100)}%</span>
+              </div>
             </div>
           )}
 
@@ -393,7 +381,7 @@ export function MusicPlayer() {
               {searching && <div className="flex items-center justify-center gap-2 py-3 text-[11px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching Audius…</div>}
               {!searching && !results.length && (
                 <div className="py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
-                  Search any song, press Enter.<br />Full-length free tracks from Audius,<br />30s previews from iTunes.
+                  Search any song, press Enter.<br />All results are full-length<br />free tracks from Audius.
                 </div>
               )}
               {results.map(trackRow)}
