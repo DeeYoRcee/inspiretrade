@@ -7,21 +7,27 @@
  */
 import { createRoot } from "react-dom/client";
 import "@/index.css"; // real app styles (Tailwind) — mandatory for layout classes
-import { TerminalChart, DEFAULT_COLORS } from "@/components/terminal/TerminalChart";
+import { TerminalChart, DEFAULT_COLORS, CHART_THEMES } from "@/components/terminal/TerminalChart";
 import type { Drawing } from "@/lib/terminal/drawings";
 
 function Harness() {
   const drawings: Drawing[] = [];
+  const params = new URLSearchParams(location.search);
   // ?tool=trendline|fib|fibext|channel|rect|measure… — activate a drawing tool
-  const tool = (new URLSearchParams(location.search).get("tool") ?? "cursor") as any;
+  const tool = (params.get("tool") ?? "cursor") as any;
   // ?replay=200 — bar replay mode showing the first 200 real bars
-  const replayN = Number(new URLSearchParams(location.search).get("replay") ?? 0) || null;
+  const replayN = Number(params.get("replay") ?? 0) || null;
   // ?overlay=1 — session boxes + prev day/week levels + volume profile
-  const overlay = new URLSearchParams(location.search).has("overlay");
+  const overlay = params.has("overlay");
+  // ?theme=paper|tvdark|nord|carbon|ocean — chart theme preset
+  const colors = CHART_THEMES.find((th) => th.id === params.get("theme"))?.colors ?? DEFAULT_COLORS;
+  // ?scale=log|percent — price scale mode; ?magnet=1 — magnet crosshair
+  const scale = (params.get("scale") ?? "normal") as "normal" | "log" | "percent";
+  const magnet = params.has("magnet");
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 12, boxSizing: "border-box", gap: 10 }}>
       <div style={{ color: "#9aa4b2", fontSize: 12 }}>
-        Chart harness — BTCUSD (live Binance) · 15m · EMA overlay + RSI pane + volume · tool={tool}{replayN ? ` · replay=${replayN}` : ""}{overlay ? " · overlay=on" : ""}
+        Chart harness — BTCUSD (live Binance) · 15m · EMA overlay + RSI pane + volume · tool={tool}{replayN ? ` · replay=${replayN}` : ""}{overlay ? " · overlay=on" : ""}{scale !== "normal" ? ` · scale=${scale}` : ""}{magnet ? " · magnet=on" : ""}
       </div>
       {/* definite height container mirrors the fixed terminal layout chain */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -34,11 +40,13 @@ function Harness() {
             { id: "rsi", params: { period: 14 }, color: "#a78bfa" },
           ]}
           showVolume
-          colors={DEFAULT_COLORS}
+          colors={colors}
           drawings={drawings}
           onDrawingsChange={() => {}}
           activeTool={tool}
           height={600}
+          priceScaleMode={scale}
+          magnet={magnet}
           replay={replayN ? { active: true, upToTime: Math.floor(Date.now() / 1000) - replayN * 900 } : null}
           tradeMarkers={replayN ? [
             { time: Math.floor(Date.now() / 1000) - (replayN + 30) * 900, side: "buy", kind: "entry" },

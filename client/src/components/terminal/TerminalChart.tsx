@@ -36,6 +36,17 @@ export const DEFAULT_COLORS: ChartColors = {
   grid: "rgba(42, 46, 54, 0.5)", bg: "#0b0e13", text: "#9aa4b2",
 };
 
+/** One-click chart themes (TradingView-style) — applies to candles, lines,
+ *  grid, background and text of every chart in the workspace. */
+export const CHART_THEMES: { id: string; label: string; colors: ChartColors }[] = [
+  { id: "midnight", label: "Midnight", colors: DEFAULT_COLORS },
+  { id: "tvdark", label: "TradingView Dark", colors: { up: "#26a69a", down: "#ef5350", accent: "#2962ff", grid: "rgba(42, 46, 54, 0.5)", bg: "#131722", text: "#b2b5be" } },
+  { id: "paper", label: "Paper (light)", colors: { up: "#089981", down: "#f23645", accent: "#2962ff", grid: "rgba(150, 160, 175, 0.35)", bg: "#ffffff", text: "#131722" } },
+  { id: "nord", label: "Nord", colors: { up: "#a3be8c", down: "#bf616a", accent: "#88c0d0", grid: "rgba(216, 222, 233, 0.08)", bg: "#2e3440", text: "#d8dee9" } },
+  { id: "carbon", label: "Carbon", colors: { up: "#4ade80", down: "#f87171", accent: "#fbbf24", grid: "rgba(255, 255, 255, 0.06)", bg: "#16181d", text: "#9ca3af" } },
+  { id: "ocean", label: "Ocean", colors: { up: "#22d3ee", down: "#fb7185", accent: "#818cf8", grid: "rgba(148, 163, 184, 0.10)", bg: "#0c1a2b", text: "#94a3b8" } },
+];
+
 const PALETTE = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#22d3ee", "#f87171", "#34d399"];
 
 /** hex/known-color → rgba with alpha (for indicator shade variants). */
@@ -755,7 +766,10 @@ export function TerminalChart({
       const remain = tf - (Math.floor(Date.now() / 1000) - last.time);
       if (remain <= 0 || remain > tf) { el.style.display = "none"; return; }
       el.style.display = "";
-      el.textContent = `${String(Math.floor(remain / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`;
+      // h:mm:ss for daily+ timeframes, mm:ss otherwise
+      el.textContent = remain >= 3600
+        ? `${Math.floor(remain / 3600)}:${String(Math.floor((remain % 3600) / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`
+        : `${String(Math.floor(remain / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`;
     };
     tick();
     const id = setInterval(tick, 1000);
@@ -864,23 +878,24 @@ export function TerminalChart({
   return (
     <div
       ref={wrapRef}
-      className="relative flex h-full min-h-[300px] flex-col overflow-hidden rounded-xl border border-border/50 bg-[#0b0e13]"
+      className="relative flex h-full min-h-[300px] flex-col overflow-hidden rounded-xl border border-border/50"
+      style={{ background: colors.bg }}
       onContextMenu={onContextMenu}
       onDoubleClick={resetView}
       onMouseDown={() => menu && setMenu(null)}
     >
-      {/* legend bar */}
-      <div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] leading-none text-muted-foreground">
-        <span className="font-bold text-foreground">{symbol}</span>
-        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold">{timeframe}</span>
+      {/* legend bar — text follows the chart theme (visible on light backgrounds too) */}
+      <div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] leading-none" style={{ color: colors.text }}>
+        <span className="font-bold">{symbol}</span>
+        <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold" style={{ background: withAlpha(colors.text, 0.12) }}>{timeframe}</span>
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${feedColor}`} title={feedMsg}>{feedLabel}</span>
         {replaying && <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">REPLAY {new Date(replay!.upToTime * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
         {compareSymbol && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">vs {compareSymbol}</span>}
         {shown && feedStatus !== "error" && (
           <span className="font-number hidden items-center gap-1.5 sm:flex">
-            <span>O <b className="text-foreground">{shown.o?.toFixed(d)}</b></span>
-            <span>H <b className="text-foreground">{shown.h?.toFixed(d)}</b></span>
-            <span>L <b className="text-foreground">{shown.l?.toFixed(d)}</b></span>
+            <span>O <b>{shown.o?.toFixed(d)}</b></span>
+            <span>H <b>{shown.h?.toFixed(d)}</b></span>
+            <span>L <b>{shown.l?.toFixed(d)}</b></span>
             <span>C <b className={legChange >= 0 ? "text-emerald-400" : "text-red-400"}>{shown.c?.toFixed(d)}</b></span>
             <b className={legChange >= 0 ? "text-emerald-400" : "text-red-400"}>{legChange >= 0 ? "+" : ""}{legChange.toFixed(2)}%</b>
           </span>

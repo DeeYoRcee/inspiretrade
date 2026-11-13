@@ -15,7 +15,7 @@ import {
   Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity, LineChart,
-  Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Scan, Shapes,
+  Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Scan, Shapes, Palette,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -23,7 +23,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTerminalWorkspace, useDrawingsStore, type TerminalSettings } from "@/hooks/use-terminal-workspace";
 import { useTerminalTrading } from "@/hooks/use-terminal-trading";
-import { TerminalChart, type ActiveIndicator } from "@/components/terminal/TerminalChart";
+import { TerminalChart, CHART_THEMES, type ActiveIndicator } from "@/components/terminal/TerminalChart";
 import { MarketWatch } from "@/components/terminal/MarketWatch";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
 import { ChallengeDashboard } from "@/components/terminal/ChallengeDashboard";
@@ -241,6 +241,18 @@ export default function TerminalPage() {
   const immersive = fullscreen || focusMode;
   const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [objectsOpen, setObjectsOpen] = useState(false);
+  const [themesOpen, setThemesOpen] = useState(false);
+
+  // "F" hotkey toggles focus/maximize mode (TradingView-style), ignored while typing
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.key === "f" || e.key === "F") setFocusMode((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // ESC exits focus mode (browser fullscreen exits natively)
   useEffect(() => {
@@ -474,6 +486,38 @@ export default function TerminalPage() {
                   Remove all
                 </button>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* chart theme picker — one-click presets, persisted per user */}
+        <div className="relative">
+          <button
+            onClick={() => setThemesOpen((v) => !v)}
+            className={cn("flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold", themesOpen ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
+            title="Chart theme"
+          >
+            <Palette className="h-3.5 w-3.5" />{CHART_THEMES.find((th) => JSON.stringify(th.colors) === JSON.stringify(settings.colors))?.label ?? "Custom"}
+          </button>
+          {themesOpen && (
+            <div className="absolute right-0 top-9 z-50 w-56 rounded-xl border border-border/60 bg-[#0d1117] p-2 shadow-2xl">
+              <div className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Chart themes</div>
+              <div className="space-y-0.5">
+                {CHART_THEMES.map((th) => (
+                  <button
+                    key={th.id}
+                    onClick={() => { update({ colors: th.colors }); setThemesOpen(false); }}
+                    className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] font-semibold hover:bg-card/60", JSON.stringify(settings.colors) === JSON.stringify(th.colors) ? "text-emerald-400" : "text-muted-foreground")}
+                  >
+                    <span className="flex h-5 w-9 items-center justify-center gap-1 rounded border border-border/60" style={{ background: th.colors.bg }}>
+                      <span className="h-2.5 w-1 rounded-sm" style={{ background: th.colors.up }} />
+                      <span className="h-2.5 w-1 rounded-sm" style={{ background: th.colors.down }} />
+                      <span className="h-2.5 w-1 rounded-sm" style={{ background: th.colors.accent }} />
+                    </span>
+                    {th.label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
