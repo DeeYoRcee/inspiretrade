@@ -14,8 +14,8 @@ import {
   Maximize, Minimize, BarChart2, LayoutGrid, Columns2, Square,
   Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
-  Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity, LineChart,
-  Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Scan, Shapes, Palette,
+  Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
+  Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Shapes, Palette,
   PanelRight, PanelRightClose, ChevronDown, ImagePlus,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
@@ -25,7 +25,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useTerminalWorkspace, useDrawingsStore, type TerminalSettings } from "@/hooks/use-terminal-workspace";
 import { useTerminalTrading } from "@/hooks/use-terminal-trading";
 import { TerminalChart, CHART_THEMES, type ActiveIndicator } from "@/components/terminal/TerminalChart";
-import { MarketWatch } from "@/components/terminal/MarketWatch";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
 import { ChallengeDashboard } from "@/components/terminal/ChallengeDashboard";
 import { CalendarPanel } from "@/components/terminal/CalendarPanel";
@@ -58,23 +57,32 @@ import { drawingsBus } from "@/lib/terminal/drawings-bus";
 import type { DrawingTool } from "@/lib/terminal/drawings";
 import { cn } from "@/lib/utils";
 
-const TOOLS: { id: DrawingTool; icon: any; title: string }[] = [
-  { id: "cursor", icon: MousePointer2, title: "Cursor" },
-  { id: "trendline", icon: MoveUpRight, title: "Trend line" },
-  { id: "hline", icon: Minus, title: "Horizontal line" },
-  { id: "vline", icon: MoveUp, title: "Vertical line" },
-  { id: "ray", icon: MoveUpRight, title: "Ray" },
-  { id: "extline", icon: MoveUpRight, title: "Extended line" },
-  { id: "rect", icon: SquareDashed, title: "Rectangle" },
-  { id: "fib", icon: GitCompareArrows, title: "Fibonacci retracement" },
-  { id: "fibext", icon: Spline, title: "Fibonacci extension" },
-  { id: "channel", icon: MoveDiagonal, title: "Parallel channel" },
-  { id: "brush", icon: Pencil, title: "Brush" },
-  { id: "text", icon: Type, title: "Text" },
-  { id: "arrow", icon: ArrowRight, title: "Arrow" },
-  { id: "long", icon: TrendingUp, title: "Long position" },
-  { id: "short", icon: TrendingDown, title: "Short position" },
-  { id: "measure", icon: Ruler, title: "Measure" },
+/** Drawing tools grouped TradingView-style: each section has its own label. */
+const TOOL_GROUPS: { label: string; accent?: boolean; tools: { id: DrawingTool; icon: any; title: string }[] }[] = [
+  { label: "CURSOR", tools: [{ id: "cursor", icon: MousePointer2, title: "Cursor" }] },
+  { label: "LINES", tools: [
+    { id: "trendline", icon: MoveUpRight, title: "Trend line" },
+    { id: "hline", icon: Minus, title: "Horizontal line" },
+    { id: "vline", icon: MoveUp, title: "Vertical line" },
+    { id: "ray", icon: MoveUpRight, title: "Ray" },
+    { id: "extline", icon: MoveUpRight, title: "Extended line" },
+    { id: "channel", icon: MoveDiagonal, title: "Parallel channel" },
+  ] },
+  { label: "FIB", accent: true, tools: [
+    { id: "fib", icon: GitCompareArrows, title: "Fibonacci retracement" },
+    { id: "fibext", icon: Spline, title: "Fibonacci extension" },
+  ] },
+  { label: "SHAPES", tools: [
+    { id: "rect", icon: SquareDashed, title: "Rectangle" },
+    { id: "brush", icon: Pencil, title: "Brush" },
+    { id: "arrow", icon: ArrowRight, title: "Arrow" },
+  ] },
+  { label: "TEXT", tools: [{ id: "text", icon: Type, title: "Text" }] },
+  { label: "TRADE", tools: [
+    { id: "long", icon: TrendingUp, title: "Long position" },
+    { id: "short", icon: TrendingDown, title: "Short position" },
+    { id: "measure", icon: Ruler, title: "Measure" },
+  ] },
 ];
 
 type SideTab = "trade" | "challenge" | "calendar" | "alerts" | "risk" | "replay";
@@ -117,7 +125,6 @@ export default function TerminalPage() {
   const [indDialog, setIndDialog] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>("trade");
   const [mobilePanel, setMobilePanel] = useState(false);
-  const [mobileWatch, setMobileWatch] = useState(false);
   const [prices, setPrices] = useState<Record<string, number>>({});
   const [fullscreen, setFullscreen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -138,7 +145,6 @@ export default function TerminalPage() {
   const rs = useReplaySession(settings.symbol, settings.timeframe);
   const [replayOpen, setReplayOpen] = useState(false);
   const [journalDraft, setJournalDraft] = useState<JournalDraft | null>(null);
-  const [focusMode, setFocusMode] = useState(false);
   const [screenshotSignal, setScreenshotSignal] = useState(0);
   const replaySymbolRef = useRef(settings.symbol);
   useEffect(() => {
@@ -228,18 +234,15 @@ export default function TerminalPage() {
   const toggleFullscreen = () => {
     const el = gridRef.current?.parentElement;
     if (!document.fullscreenElement) {
-      // browser fullscreen (whole screen, site chrome hidden); fall back to
-      // in-page focus mode when the API is unavailable or denied (iframes)
-      const req = el?.requestFullscreen?.();
-      if (req && typeof req.catch === "function") req.catch(() => setFocusMode(true));
-      else if (!req) setFocusMode(true);
+      // browser fullscreen (whole screen, site chrome hidden)
+      el?.requestFullscreen?.();
     } else {
       document.exitFullscreen?.().catch(() => {});
     }
   };
 
   // immersive = browser fullscreen OR in-page focus/maximize mode
-  const immersive = fullscreen || focusMode;
+  const immersive = fullscreen;
   const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [objectsOpen, setObjectsOpen] = useState(false);
   const [themesOpen, setThemesOpen] = useState(false);
@@ -289,7 +292,6 @@ export default function TerminalPage() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      if (e.key === "f" || e.key === "F") setFocusMode((v) => !v);
       // "/" opens the searchable tools palette (replay, backtest, sessions…)
       if (e.key === "/") {
         e.preventDefault();
@@ -299,14 +301,6 @@ export default function TerminalPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  // ESC exits focus mode (browser fullscreen exits natively)
-  useEffect(() => {
-    if (!focusMode) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFocusMode(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [focusMode]);
 
   // keep the fullscreen button in sync (F11-style exit, ESC)
   useEffect(() => {
@@ -656,9 +650,6 @@ export default function TerminalPage() {
               {l === 1 ? <Square className="h-3.5 w-3.5" /> : l === 2 ? <Columns2 className="h-3.5 w-3.5" /> : <LayoutGrid className="h-3.5 w-3.5" />}
             </button>
           ))}
-          <button onClick={() => setFocusMode((v) => !v)} className={cn("flex h-8 w-8 items-center justify-center rounded-lg border", focusMode ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")} title="Maximize chart — hide panels (Esc to exit)">
-            <Scan className="h-3.5 w-3.5" />
-          </button>
           <button onClick={toggleFullscreen} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground" title="Fullscreen (whole screen)">
             {fullscreen ? <Minimize className="h-3.5 w-3.5" /> : <Maximize className="h-3.5 w-3.5" />}
           </button>
@@ -675,24 +666,29 @@ export default function TerminalPage() {
         {/* exit chip in focus / fullscreen mode */}
         {immersive && (
           <button
-            onClick={() => (document.fullscreenElement ? document.exitFullscreen?.().catch(() => {}) : setFocusMode(false))}
+            onClick={() => document.exitFullscreen?.().catch(() => {})}
             className="absolute right-2 top-2 z-[70] flex items-center gap-1 rounded-lg border border-border/60 bg-[#0d1117]/90 px-2 py-1 text-[10px] font-bold text-muted-foreground hover:text-foreground"
             title="Exit full view"
           >
             <Minimize className="h-3 w-3" />Exit full view (Esc)
           </button>
         )}
-        {/* drawing toolbar */}
-        <div className="flex w-11 shrink-0 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-border/50 bg-card/60 py-1.5">
-          {TOOLS.map(({ id, icon: Icon, title }) => (
-            <button
-              key={id}
-              onClick={() => setActiveTool(id)}
-              className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:text-foreground hover:bg-card")}
-              title={title}
-            >
-              <Icon className="h-3.5 w-3.5" />
-            </button>
+        {/* drawing toolbar — TradingView-style grouped sections */}
+        <div className="flex w-12 shrink-0 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-border/50 bg-card/60 py-1.5">
+          {TOOL_GROUPS.map((g) => (
+            <div key={g.label} className="flex w-full flex-col items-center gap-0.5">
+              <span className={cn("mt-1 select-none text-[6px] font-bold tracking-widest", g.accent ? "text-amber-400/80" : "text-muted-foreground/70")}>{g.label}</span>
+              {g.tools.map(({ id, icon: Icon, title }) => (
+                <button
+                  key={id}
+                  onClick={() => setActiveTool(id)}
+                  className={cn("flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:text-foreground hover:bg-card")}
+                  title={title}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              ))}
+            </div>
           ))}
           <div className="my-1 h-px w-6 shrink-0 bg-border/60" />
           <button onClick={() => drawingsBus.emit({ cmd: "undo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Undo"><Undo2 className="h-3.5 w-3.5" /></button>
@@ -718,24 +714,13 @@ export default function TerminalPage() {
               {sidePanel("h-full")}
             </div>
           )}
-          {mobileWatch && (
-            <div className="h-64 overflow-hidden rounded-xl border border-border/50 bg-card">
-              <MarketWatch active={settings.symbol} onSelect={(s) => update({ symbol: s })} className="h-full" />
-            </div>
-          )}
           <div className="flex shrink-0 gap-1.5">
             <button
-              onClick={() => { setMobilePanel((v) => !v); setMobileWatch(false); }}
+              onClick={() => setMobilePanel((v) => !v)}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 py-2 text-xs font-bold text-emerald-400"
             >
               <Activity className="h-4 w-4" />
               {mobilePanel ? t("hidePanel") : t("showPanel")} ({openCount})
-            </button>
-            <button
-              onClick={() => { setMobileWatch((v) => !v); setMobilePanel(false); }}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border/60 bg-card/60 py-2 text-xs font-bold text-muted-foreground"
-            >
-              <LineChart className="h-4 w-4" />{t("marketWatch")}
             </button>
           </div>
         </div>
@@ -794,11 +779,6 @@ export default function TerminalPage() {
           {tool === "replayChallenge" && <ReplayChallengePanel rs={rs} />}
           {tool === "replayMissions" && <ReplayMissionsPanel rs={rs} />}
         </ToolDrawer>
-      </div>
-
-      {/* ===== market watch strip (desktop) ===== */}
-      <div className="hidden h-40 shrink-0 overflow-hidden rounded-xl border border-border/50 bg-card/60 md:block">
-        <MarketWatch active={settings.symbol} onSelect={(s) => update({ symbol: s })} className="h-full" />
       </div>
 
       <IndicatorDialog open={indDialog} onOpenChange={setIndDialog} active={settings.indicators} onChange={(list: ActiveIndicator[]) => update({ indicators: list })} />

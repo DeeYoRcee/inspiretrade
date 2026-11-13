@@ -1,11 +1,12 @@
 /**
- * MusicPlayer — site-wide floating music widget (top-left, under the navbar).
+ * MusicPlayer — site-wide floating music widget. DRAG it anywhere by the
+ * green music-icon handle (or the dot itself) — position is persisted.
  *
  * Windows-11-Media-Player style: big cover art, seek bar with times,
- * shuffle/repeat, volume, queue, adjustable panel transparency.
+ * shuffle/repeat, volume, adjustable panel transparency.
  * ALL songs are FULL-LENGTH, streamed FREE from Audius (decentralized music
  * platform, public API, no key — CORS verified). No 30-second previews —
- * if Audius has no match, the search simply returns no results.
+ * searches return up to 100 full-length tracks; no match → nothing plays.
  * Nothing touches the Vercel serverless budget.
  *
  * Three sizes, persisted in localStorage:
@@ -37,6 +38,8 @@ interface Persisted {
   volume: number;
   /** panel transparency, 0.2 (mostly see-through) … 1 (solid) */
   opacity: number;
+  /** dragged position (viewport px); null = default top-left spot */
+  pos: { x: number; y: number } | null;
 }
 
 const STORE_KEY = "inspire_music";
@@ -48,9 +51,13 @@ function loadPrefs(): Persisted {
       view: raw.view === "mini" || raw.view === "dot" || raw.view === "bar" ? raw.view : "dot",
       volume: typeof raw.volume === "number" ? raw.volume : 0.8,
       opacity: typeof raw.opacity === "number" ? Math.min(1, Math.max(0.2, raw.opacity)) : 1,
+      pos:
+        raw.pos && typeof raw.pos.x === "number" && typeof raw.pos.y === "number"
+          ? { x: raw.pos.x, y: raw.pos.y }
+          : null,
     };
   } catch {
-    return { view: "dot", volume: 0.8, opacity: 1 };
+    return { view: "dot", volume: 0.8, opacity: 1, pos: null };
   }
 }
 
@@ -73,7 +80,7 @@ async function audiusSearch(q: string): Promise<Track[]> {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 7000);
-      const res = await fetch(`${host}/v1/tracks/search?query=${encodeURIComponent(q)}&app_name=InspireTrade`, {
+      const res = await fetch(`${host}/v1/tracks/search?query=${encodeURIComponent(q)}&limit=100&app_name=InspireTrade`, {
         signal: controller.signal,
       });
       clearTimeout(timer);
@@ -98,7 +105,6 @@ async function audiusSearch(q: string): Promise<Track[]> {
 export function MusicPlayer() {
   const [prefs, setPrefs] = useState<Persisted>(loadPrefs);
   const [term, setTerm] = useState("");
-  const [results, setResults] = useState<Track[]>([]);
   const [searching, setSearching] = useState(false);
   const [queue, setQueue] = useState<Track[]>([]);
   const [idx, setIdx] = useState(-1);
@@ -108,6 +114,8 @@ export function MusicPlayer() {
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const audioRef = useRef<HTMLAudioElement>(null);
+  const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; w: number; h: number; moved: boolean } | null>(null);
+  const suppressClick = useRef(false);
 
   const view = prefs.view;
   const setView = (v: View) => setPrefs((p) => ({ ...p, view: v }));
@@ -116,6 +124,39 @@ export function MusicPlayer() {
   useEffect(() => {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
   }, [prefs]);
+
+  // ---- drag-to-move (pointer events, viewport-clamped, persisted) ----
+  const startDrag = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const r = (e.currentTarget as HTMLElement).closest("[data-music-panel]")?.getBoundingClientRect();
+    if (!r) return;
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, w: r.width, h: r.height, moved: false };
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const dx = e.clientX - d.sx;
+      const dy = e.clientY - d.sy;
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) > 6) d.moved = true;
+      if (!d.moved) return;
+      const x = Math.min(window.innerWidth - d.w - 4, Math.max(4, d.ox + dx));
+      const y = Math.min(window.innerHeight - d.h - 4, Math.max(8, d.oy + dy));
+      setPrefs((p) => ({ ...p, pos: { x, y } }));
+    };
+    const onUp = () => {
+      if (dragRef.current?.moved) suppressClick.current = true;
+      dragRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
 
   const playIndex = (i: number) => {
     const el = audioRef.current;
@@ -183,9 +224,9 @@ export function MusicPlayer() {
     setSearching(true);
     try {
       // Audius only — every result is a FULL-LENGTH track (no 30s previews).
+      // Up to 100 tracks load into the playback queue; the first one plays.
       const list = await audiusSearch(q);
-      setResults(list);
-      if (list.length > 0) { setQueue(list); setIdx(-1); playIndex(0); setView("bar"); }
+      if (list.length > 0) { setQueue(list); setIdx(-1); playIndex(0); }
     } finally {
       setSearching(false);
     }
@@ -205,40 +246,21 @@ export function MusicPlayer() {
 
   const seekFrac = dur > 0 ? cur / dur : 0;
 
-  const trackRow = (t: Track, i: number) => (
-    <button
-      key={t.id}
-      onClick={() => { setQueue(results); playIndex(i); }}
-      className={cn(
-        "flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-white/5",
-        i === idx && "bg-emerald-500/10",
-      )}
-    >
-      {t.art ? (
-        <img src={t.art} alt="" className="h-8 w-8 rounded-md object-cover" loading="lazy" />
-      ) : (
-        <span className="flex h-8 w-8 items-center justify-center rounded-md bg-white/5"><Music className="h-3.5 w-3.5 text-muted-foreground" /></span>
-      )}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[11px] font-semibold text-foreground">{t.title}</span>
-        <span className="block truncate text-[10px] text-muted-foreground">
-          {t.artist} {t.duration ? `· ${fmt(t.duration)}` : ""}
-        </span>
-      </span>
-      {i === idx && playing && <Pause className="h-3 w-3 shrink-0 text-emerald-400" />}
-    </button>
-  );
-
   // ---------- dot (1%) ----------
   if (view === "dot") {
     return (
       <>
         <audio ref={audioRef} className="hidden" />
-        <div className="fixed left-2 top-[7rem] z-40 sm:left-3 sm:top-[4.25rem]">
+        <div
+          data-music-panel
+          className="fixed left-2 top-[7rem] z-40 sm:left-3 sm:top-[4.25rem]"
+          style={prefs.pos ? { left: prefs.pos.x, top: prefs.pos.y } : undefined}
+        >
           <button
-            onClick={() => setView("bar")}
-            className="relative flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-[#0d1117]/90 shadow-lg backdrop-blur transition-colors hover:border-emerald-500/50"
-            title="Music player"
+            onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } setView("bar"); }}
+            onPointerDown={startDrag}
+            className="relative flex h-9 w-9 touch-none items-center justify-center rounded-full border border-border/60 bg-[#0d1117]/90 shadow-lg backdrop-blur transition-colors hover:border-emerald-500/50 active:cursor-grabbing"
+            title="Music player — drag to move"
           >
             <Music className="h-4 w-4 text-emerald-400" />
             {playing && <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />}
@@ -254,14 +276,24 @@ export function MusicPlayer() {
   return (
     <>
       <audio ref={audioRef} className="hidden" />
-      <div className={cn("fixed left-2 top-[7rem] z-40 sm:left-3 sm:top-[4.25rem]", wide ? "w-80" : "w-56")}>
+      <div
+        data-music-panel
+        className={cn("fixed left-2 top-[7rem] z-40 sm:left-3 sm:top-[4.25rem]", wide ? "w-80" : "w-56")}
+        style={prefs.pos ? { left: prefs.pos.x, top: prefs.pos.y } : undefined}
+      >
         <div
           className="overflow-hidden rounded-2xl border border-white/10 bg-[#101418]/95 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.8)] backdrop-blur-xl"
           style={{ opacity: prefs.opacity }}
         >
-          {/* header: search (bar) / title (mini) + view switches */}
+          {/* header: drag handle + search (bar) / title (mini) + view switches */}
           <div className="flex items-center gap-1.5 px-2.5 py-2">
-            <Music className="h-4 w-4 shrink-0 text-emerald-400" />
+            <div
+              onPointerDown={startDrag}
+              className="flex h-7 w-7 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-emerald-400 hover:bg-white/5 active:cursor-grabbing"
+              title="Drag to move"
+            >
+              <Music className="h-4 w-4" />
+            </div>
             {wide ? (
               <div className="relative min-w-0 flex-1">
                 <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
@@ -372,19 +404,6 @@ export function MusicPlayer() {
                 />
                 <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{Math.round(prefs.opacity * 100)}%</span>
               </div>
-            </div>
-          )}
-
-          {/* queue / search results */}
-          {wide && (
-            <div className="max-h-52 overflow-y-auto border-t border-white/10 px-2 py-1.5">
-              {searching && <div className="flex items-center justify-center gap-2 py-3 text-[11px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching Audius…</div>}
-              {!searching && !results.length && (
-                <div className="py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
-                  Search any song, press Enter.<br />All results are full-length<br />free tracks from Audius.
-                </div>
-              )}
-              {results.map(trackRow)}
             </div>
           )}
         </div>
