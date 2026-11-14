@@ -61,6 +61,24 @@ export async function ytSearch(q: string): Promise<YtTrack[]> {
   return [];
 }
 
+/**
+ * THE GUARANTEED PLAYBACK PATH — proxied AUDIO stream for a video via the
+ * open Piped `streams` endpoint. This bypasses YouTube's embed-blocking
+ * entirely (UMG-blocked songs included): the browser plays the audio bytes
+ * directly, no iframe, no embed permission needed. Returns the
+ * highest-bitrate audio URL or null when every host fails.
+ */
+export async function ytAudioStream(videoId: string): Promise<{ url: string; duration: number } | null> {
+  for (const base of PIPED_HOSTS) {
+    const j = await fetchJson(`${base}/streams/${encodeURIComponent(videoId)}`, 8000);
+    const best = (j?.audioStreams ?? [])
+      .filter((s: any) => s && typeof s.url === "string")
+      .sort((a: any, b: any) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0))[0];
+    if (best?.url) return { url: String(best.url), duration: Number(j?.duration) || 0 };
+  }
+  return null;
+}
+
 /** Official IFrame API loader (script tag + ready promise, loaded once). */
 let apiPromise: Promise<void> | null = null;
 export function loadYtIframeApi(): Promise<void> {

@@ -16,7 +16,7 @@ import {
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
   Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Shapes, Palette,
-  PanelRight, PanelRightClose, ChevronDown, ImagePlus,
+  PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -144,6 +144,8 @@ export default function TerminalPage() {
   const { account, positions } = useTerminalTrading();
 
   const [activeTool, setActiveTool] = useState<DrawingTool>("cursor");
+  // which drawing-tool GROUP's flyout menu is open (TradingView-style)
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [indDialog, setIndDialog] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>("trade");
   const [mobilePanel, setMobilePanel] = useState(false);
@@ -727,24 +729,45 @@ export default function TerminalPage() {
             <Minimize className="h-3 w-3" />Exit full view (Esc)
           </button>
         )}
-        {/* drawing toolbar — grouped sections, floats INSIDE the chart
-            area (TradingView-style), overlaying the first chart's left edge */}
-        <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-12 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
-          {TOOL_GROUPS.map((g) => (
-            <div key={g.label} className="flex w-full flex-col items-center gap-0.5">
-              <span className={cn("mt-1 select-none text-[6px] font-bold tracking-widest", g.accent ? "text-amber-400/80" : "text-muted-foreground/70")}>{g.label}</span>
-              {g.tools.map(({ id, icon: Icon, title }) => (
+        {/* click-away layer for the open tool-group flyout */}
+        {openGroup && <div className="fixed inset-0 z-40" onMouseDown={() => setOpenGroup(null)} />}
+        {/* drawing toolbar — compact GROUP buttons, floats INSIDE the chart
+            area (TradingView-style); clicking a group opens a flyout menu
+            with that group's tools listed by name, like TradingView's */}
+        <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
+          {TOOL_GROUPS.map((g) => {
+            const active = g.tools.some((t) => t.id === activeTool);
+            const current = g.tools.find((t) => t.id === activeTool) ?? g.tools[0];
+            const GIcon = current.icon;
+            const open = openGroup === g.label;
+            return (
+              <div key={g.label} className="relative w-full">
                 <button
-                  key={id}
-                  onClick={() => setActiveTool(id)}
-                  className={cn("flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
-                  title={title}
+                  onClick={() => setOpenGroup(open ? null : g.label)}
+                  className={cn("mx-auto flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", active || open ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
+                  title={`${g.label} — click to open the tool list`}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <GIcon className="h-3.5 w-3.5" />
                 </button>
-              ))}
-            </div>
-          ))}
+                {open && (
+                  <div className="absolute left-9 top-0 z-50 w-44 rounded-xl border border-white/10 bg-[#0d1117]/95 p-1 shadow-2xl backdrop-blur">
+                    <div className={cn("select-none px-2 py-1 text-[8px] font-bold uppercase tracking-widest", g.accent ? "text-amber-400/80" : "text-muted-foreground/70")}>{g.label}</div>
+                    {g.tools.map(({ id, icon: Icon, title }) => (
+                      <button
+                        key={id}
+                        onClick={() => { setActiveTool(id); setOpenGroup(null); }}
+                        className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-white/5", activeTool === id ? "text-emerald-400" : "text-muted-foreground")}
+                      >
+                        <Icon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{title}</span>
+                        {activeTool === id && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           <div className="my-1 h-px w-6 shrink-0 bg-white/10" />
           <button onClick={() => drawingsBus.emit({ cmd: "undo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Undo"><Undo2 className="h-3.5 w-3.5" /></button>
           <button onClick={() => drawingsBus.emit({ cmd: "redo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Redo"><Redo2 className="h-3.5 w-3.5" /></button>

@@ -302,6 +302,110 @@ async function fetchCalendar(): Promise<{ events: CalEvent[]; ok: boolean }> {
   }
 }
 
+// ---- full article reader (?article=<url>) -----------------------------------
+// Server-side extraction: no CORS problems, cached 30 min. Used by the
+// in-site news reader so users read the WHOLE story without leaving.
+
+const ART_TTL = 30 * 60 * 1000;
+const artCache = new Map<string, { at: number; data: ArticleData }>();
+
+interface ArticleData {
+  ok: boolean;
+  title?: string;
+  paragraphs: string[];
+  link: string;
+  error?: string;
+}
+
+/** Google News wraps real publisher URLs — pull the target out of the page. */
+function resolveGoogleNews(html: string): string | null {
+  const m =
+    html.match(/data-n-au="(https?:\/\/[^"]+)"/i) ||
+    html.match(/href="(https?:\/\/(?!news\.google|www\.google|accounts|policies|support)[^"]{25,})"/i);
+  return m ? m[1].replace(/&amp;/g, "&") : null;
+}
+
+async function extractArticle(rawUrl: string): Promise<ArticleData> {
+  let target = "";
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("bad protocol");
+    target = u.toString();
+  } catch {
+    return { ok: false, paragraphs: [], link: rawUrl, error: "BAD_URL" };
+  }
+  const hit = artCache.get(target);
+  if (hit && Date.now() - hit.at < ART_TTL) return hit.data;
+
+  const fail = (error: string): ArticleData => ({ ok: false, paragraphs: [], link: target, error });
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9000);
+    let res = await fetch(target, {
+      signal: controller.signal,
+      headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8", "Accept-Language": "en,ru;q=0.9" },
+      redirect: "follow",
+    });
+    if (!res.ok) return fail(`HTTP_${res.status}`);
+    let raw = (await res.text()).slice(0, 700_000);
+
+    // Google News interstitial → find the real publisher URL and refetch it
+    if (/news\.google\.com/i.test(new URL(target).hostname)) {
+      const real = resolveGoogleNews(raw);
+      if (real) {
+        const res2 = await fetch(real, {
+          signal: controller.signal,
+          headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
+          redirect: "follow",
+        });
+        if (res2.ok) {
+          raw = (await res2.text()).slice(0, 700_000);
+          target = real;
+        }
+      }
+    }
+    clearTimeout(timer);
+
+    const tMatch =
+      raw.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([\s\S]*?)["']/i) ||
+      raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = tMatch ? decodeEntities(tMatch[1]).replace(/\s+/g, " ").trim().slice(0, 220) : undefined;
+
+    let body = raw
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<(nav|footer|header|aside|form|noscript|svg)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ");
+    const out: string[] = [];
+    const re = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) && out.length < 200) {
+      const text = decodeEntities(m[1].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+      if (text.length < 60) continue; // skip captions / share prompts
+      if (out.length && out[out.length - 1] === text) continue;
+      out.push(text);
+    }
+    // JS-heavy pages: fall back to JSON-LD articleBody
+    if (out.length < 3) {
+      const ld = raw.match(/"articleBody"\s*:\s*"([\s\S]*?)"\s*[,}]/i);
+      if (ld) {
+        const text = decodeEntities(
+          ld[1].replace(/\\n/g, " ").replace(/\\"/g, '"').replace(/\\u([\dA-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+        ).replace(/\s+/g, " ").trim();
+        if (text.length > 120) out.push(text.slice(0, 20_000));
+      }
+    }
+    if (out.length === 0) return fail("NO_CONTENT");
+
+    const data: ArticleData = { ok: true, title, paragraphs: out.slice(0, 120), link: target };
+    if (artCache.size > 300) artCache.clear();
+    artCache.set(target, { at: Date.now(), data });
+    return data;
+  } catch (e: any) {
+    return fail(e?.name === "AbortError" ? "TIMEOUT" : "FETCH_FAILED");
+  }
+}
+
 // ---- handler ----------------------------------------------------------------
 
 export default async function handler(req: any, res: any) {
@@ -311,6 +415,13 @@ export default async function handler(req: any, res: any) {
 
   const url = new URL(req.url || "/", "http://localhost");
   const lang = (url.searchParams.get("lang") || "en").toLowerCase();
+
+  // single-article reader mode
+  const articleParam = url.searchParams.get("article");
+  if (articleParam) {
+    res.setHeader("Cache-Control", "public, max-age=600, s-maxage=600");
+    return res.status(200).json(await extractArticle(articleParam));
+  }
 
   const [settled, calendar] = await Promise.all([
     Promise.allSettled(FEEDS.map((f) => fetchFeed(f.url, f))),

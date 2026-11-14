@@ -25,7 +25,7 @@ import {
   ChevronDown, Repeat, Repeat1, Shuffle, Loader2, ListMusic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { loadYtIframeApi, ytSearch } from "@/lib/youtube";
+import { loadYtIframeApi, ytSearch, ytAudioStream } from "@/lib/youtube";
 
 interface Track {
   id: string;
@@ -122,6 +122,9 @@ export function MusicPlayer() {
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [note, setNote] = useState<string | null>(null);
+  // true while a song plays as a Piped AUDIO stream (YouTube refused to embed
+  // it) — hides the video box and routes stream errors to the skip logic
+  const [audioOnly, setAudioOnly] = useState(false);
   // song list visibility: auto-hidden WHILE a track plays, auto-returns on
   // pause — and the header List button / the X inside the list override it
   // manually (open the list even while playing to switch songs on demand)
@@ -175,7 +178,14 @@ export function MusicPlayer() {
       if (!d.moved) return;
       const x = Math.min(window.innerWidth - d.w - 4, Math.max(4, d.ox + dx));
       const y = Math.min(window.innerHeight - d.h - 4, Math.max(8, d.oy + dy));
-      setPrefs((p) => ({ ...p, pos: { x, y } }));
+      // 8px grid snap — the widget moves in precise steps, never drifts
+      let sx = Math.round(x / 8) * 8;
+      const sy = Math.round(y / 8) * 8;
+      // edge docking — near the left/right border it snaps flush and STAYS
+      // reachable (a favourite spot won't get half-cut by the screen edge)
+      if (sx <= 24) sx = 4;
+      if (window.innerWidth - (sx + d.w) <= 24) sx = Math.max(4, window.innerWidth - d.w - 4);
+      setPrefs((p) => ({ ...p, pos: { x: sx, y: sy } }));
     };
     const onUp = () => {
       if (dragRef.current?.moved) suppressClick.current = true;
@@ -187,6 +197,23 @@ export function MusicPlayer() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
+  }, []);
+
+  // keep the widget reachable: clamp the saved position into the viewport on
+  // load and on every window resize (fixes the "the icon disappeared" bug —
+  // a spot saved on a bigger screen could end up outside a smaller one)
+  useEffect(() => {
+    const clamp = () => {
+      setPrefs((p) => {
+        if (!p.pos) return p;
+        const x = Math.min(window.innerWidth - 38, Math.max(4, p.pos.x));
+        const y = Math.min(window.innerHeight - 38, Math.max(8, p.pos.y));
+        return x === p.pos.x && y === p.pos.y ? p : { ...p, pos: { x, y } };
+      });
+    };
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
   }, []);
 
   /** next track index — respects shuffle + repeat, wraps on "all" */
@@ -203,6 +230,10 @@ export function MusicPlayer() {
   const blockedRef = useRef<Set<string>>(new Set());
   // consecutive auto-skips since the last real user action / successful play
   const autoSkipRef = useRef(0);
+  // watchdog timer: iframe never started after 9s → audio fallback
+  const ytWatchRef = useRef<number | null>(null);
+  // the CURRENT audio-element stream is a YouTube fallback stream
+  const ytAudioRef = useRef(false);
 
   /** first index after `from` (wrapping) whose video is not embed-blocked */
   const nextPlayable = (from: number): number => {
@@ -215,6 +246,55 @@ export function MusicPlayer() {
       return j;
     }
     return -1;
+  };
+
+  const clearWatch = () => {
+    if (ytWatchRef.current != null) { clearTimeout(ytWatchRef.current); ytWatchRef.current = null; }
+  };
+
+  /** last resort: nothing plays for this song → move on (bounded, with a note) */
+  const skipBlocked = (curTrack: Track | null) => {
+    if (curTrack?.yt) blockedRef.current.add(curTrack.yt);
+    if (autoSkipRef.current >= 2) {
+      setPlaying(false);
+      setNote(`"${curTrack?.title ?? "This song"}" can't be played — pick another one from the list`);
+      return;
+    }
+    const skipCount = autoSkipRef.current + 1;
+    const next = nextPlayable(idxRef.current);
+    if (next >= 0) {
+      const t = queueRef.current[next];
+      setNote(`"${curTrack?.title ?? "It"}" can't be played — playing "${t.title}" instead`);
+      playIndex(next);
+      // playIndex resets the counter as a "user action" — this skip is NOT
+      // one, so restore the cascade count (bounded retries)
+      autoSkipRef.current = skipCount;
+    } else {
+      setPlaying(false);
+      setNote("No playable results for this search — try another song");
+    }
+  };
+
+  /** THE GUARANTEED PATH: play this YouTube song as a proxied AUDIO stream.
+   *  Bypasses embed-blocking entirely — works for UMG-blocked videos. */
+  const attemptYtAudio = async (track: Track, fromSec = 0) => {
+    clearWatch();
+    setAudioOnly(true);
+    ytAudioRef.current = true;
+    modeRef.current = "audius"; // the audio element owns playback now
+    ytPendingRef.current = null;
+    try { ytRef.current?.stopVideo?.(); } catch { /* ignore */ }
+    setPlaying(true);
+    setNote(`"${track.title}" is embed-blocked — playing the audio version`);
+    const el = audioRef.current;
+    if (!el || !track.yt) return;
+    const streams = await ytAudioStream(track.yt);
+    // the user may have clicked another song while we were fetching
+    if (queueRef.current[idxRef.current]?.id !== track.id) return;
+    if (!streams?.url) { skipBlocked(track); return; }
+    el.src = streams.url;
+    try { if (fromSec > 1) el.currentTime = fromSec; } catch { /* ignore */ }
+    el.play().catch(() => setPlaying(false));
   };
 
   // ---- YouTube IFrame player (created lazily on first YouTube track) ----
@@ -259,7 +339,10 @@ export function MusicPlayer() {
                 try { ytRef.current?.pauseVideo?.(); } catch { /* ignore */ }
                 return;
               }
+              clearWatch(); // iframe actually started — no fallback needed
               autoSkipRef.current = 0;
+              setAudioOnly(false);
+              ytAudioRef.current = false;
               setPlaying(true);
             } else if (e.data === S.PAUSED) {
               setPlaying(false);
@@ -273,27 +356,14 @@ export function MusicPlayer() {
           onError: () => {
             // stale error from a video we already abandoned → ignore
             if (modeRef.current !== "youtube") return;
-            // Embed-blocked / region-locked. NEVER silently wander off —
-            // remember the video, tell the user, move on at most twice.
+            clearWatch();
+            // Embed-blocked / region-locked → THE GUARANTEED PATH: keep the
+            // SAME song as a proxied audio stream (no embed limits)
             const curTrack = queueRef.current[idxRef.current];
-            if (curTrack?.yt) blockedRef.current.add(curTrack.yt);
-            if (autoSkipRef.current >= 2) {
-              setPlaying(false);
-              setNote(`"${curTrack?.title ?? "This song"}" can't be played (embedding blocked) — pick another one from the list`);
-              return;
-            }
-            const skipCount = autoSkipRef.current + 1;
-            const next = nextPlayable(idxRef.current);
-            if (next >= 0) {
-              const t = queueRef.current[next];
-              setNote(`"${curTrack?.title ?? "It"}" can't be embedded — playing "${t.title}" instead`);
-              playIndex(next);
-              // playIndex resets the counter as a "user action" — this skip
-              // is NOT one, so restore the cascade count (bounded retries)
-              autoSkipRef.current = skipCount;
-            } else {
-              setPlaying(false);
-              setNote("No playable results for this search — try another song");
+            if (curTrack?.yt) {
+              let from = 0;
+              try { from = ytRef.current?.getCurrentTime?.() || 0; } catch { /* ignore */ }
+              attemptYtAudio(curTrack, from);
             }
           },
         },
@@ -317,6 +387,8 @@ export function MusicPlayer() {
     if (t.yt) {
       // ---- YouTube full playback (official IFrame player) ----
       modeRef.current = "youtube";
+      setAudioOnly(false);
+      ytAudioRef.current = false;
       ytPendingRef.current = null;
       // cross-source stop — never let two songs play at once
       try { audioRef.current?.pause(); } catch { /* ignore */ }
@@ -328,10 +400,27 @@ export function MusicPlayer() {
       } else {
         ytPendingRef.current = t.yt;
       }
+      // watchdog: if the iframe hasn't started within 9s (blocked silently,
+      // throttled network) → switch to the guaranteed audio path
+      clearWatch();
+      ytWatchRef.current = window.setTimeout(() => {
+        ytWatchRef.current = null;
+        if (modeRef.current !== "youtube" || !ytReadyRef.current) return;
+        let s = -1;
+        try { s = ytRef.current?.getPlayerState?.() ?? -1; } catch { /* ignore */ }
+        // 1=playing 3=buffering 2=paused (user paused — respect it)
+        if (s !== 1 && s !== 3 && s !== 2) {
+          const track = queueRef.current[idxRef.current];
+          if (track?.id === t.id) attemptYtAudio(track, 0);
+        }
+      }, 9000);
       return;
     }
     // ---- Audius stream (plain audio element) ----
     modeRef.current = "audius";
+    setAudioOnly(false);
+    ytAudioRef.current = false;
+    clearWatch();
     ytPendingRef.current = null;
     // cross-source stop — hard-stop any YouTube video still sounding
     // (stopVideo, not pauseVideo: mid-load videos ignore pause and would
@@ -364,7 +453,10 @@ export function MusicPlayer() {
       }
     };
     const onError = () => {
-      // broken stream (Audius node hiccup) — skip forward, never hang
+      // a YouTube audio-fallback stream broke → bounded skip forward;
+      // an Audius stream broke → skip forward too, never hang
+      const cur = queueRef.current[idxRef.current];
+      if (cur && cur.yt && ytAudioRef.current) { skipBlocked(cur); return; }
       const i = nextIndex(idxRef.current, false);
       if (i >= 0 && i !== idxRef.current) playIndex(i);
       else setPlaying(false);
@@ -415,6 +507,7 @@ export function MusicPlayer() {
   // destroy the YouTube player on final unmount
   useEffect(() => () => {
     try { ytRef.current?.destroy?.(); } catch { /* ignore */ }
+    if (ytWatchRef.current != null) clearTimeout(ytWatchRef.current);
   }, []);
 
   const search = async () => {
@@ -617,7 +710,7 @@ export function MusicPlayer() {
 
             {/* YouTube host — ALWAYS mounted (player must never be destroyed);
                 visible only while a YouTube song plays in bar view */}
-            <div className={cn("mx-3 overflow-hidden rounded-xl bg-black", wide && track?.yt ? "mb-2 block aspect-video" : "hidden")}>
+            <div className={cn("mx-3 overflow-hidden rounded-xl bg-black", wide && track?.yt && !audioOnly ? "mb-2 block aspect-video" : "hidden")}>
               <div ref={ytMountRef} className="h-full w-full" />
             </div>
 

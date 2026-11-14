@@ -1,23 +1,46 @@
 /**
- * In-app news reader (TradingView style): the full story opens right here on
- * the site instead of bouncing to an external page. Shows the (server-side
- * translated) title + full summary, lets the user switch back to the original
- * English title, and keeps a secondary link to the source site.
+ * In-app news reader (TradingView style): the FULL story is extracted
+ * server-side (/api/news?article=…) and rendered right here on the site —
+ * not just the 10-word summary from the feed. Falls back to the summary +
+ * a source link when the publisher page can't be parsed (paywall / JS-only).
  */
-import { useState } from "react";
-import { Globe2, Clock3, ExternalLink, Languages, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Globe2, Clock3, ExternalLink, Languages, X, Loader2, FileText } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SYMBOL_COLOR, type NewsItem } from "@/lib/news-api";
 import { useLanguage } from "@/lib/language-context";
 
+interface ArticleData {
+  ok: boolean;
+  title?: string;
+  paragraphs: string[];
+  error?: string;
+}
+
 export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClose: () => void }) {
   const { language } = useLanguage();
   const [showOriginal, setShowOriginal] = useState(false);
+  const [art, setArt] = useState<{ loading: boolean; data: ArticleData | null }>({ loading: false, data: null });
+
+  // fetch the full article text every time a story is opened
+  useEffect(() => {
+    if (!item) { setArt({ loading: false, data: null }); return; }
+    let dead = false;
+    setArt({ loading: true, data: null });
+    setShowOriginal(false);
+    fetch(`/api/news?article=${encodeURIComponent(item.link)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: ArticleData) => { if (!dead) setArt({ loading: false, data: d }); })
+      .catch(() => { if (!dead) setArt({ loading: false, data: null }); });
+    return () => { dead = true; };
+  }, [item]);
+
   if (!item) return null;
 
   const translated = language !== "en" && !!item.titleEn;
+  const full = art.data?.ok && art.data.paragraphs.length > 0;
 
   return (
     <Dialog open={!!item} onOpenChange={(v) => !v && onClose()}>
@@ -61,8 +84,29 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
           </div>
         )}
 
-        <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-foreground/90">
-          {item.summary || "—"}
+        <div className="mt-3 text-sm leading-relaxed text-foreground/90">
+          {art.loading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span className="text-xs">Loading the full article…</span>
+            </div>
+          ) : full ? (
+            <div className="max-h-[52vh] space-y-3 overflow-y-auto pr-1">
+              {art.data!.paragraphs.map((p, i) => (
+                <p key={i} className="leading-relaxed">{p}</p>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="whitespace-pre-line">{item.summary || "—"}</div>
+              {art.data && !art.data.ok && (
+                <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                  <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  The publisher doesn't allow this story to be displayed here — read it on the source site below.
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
