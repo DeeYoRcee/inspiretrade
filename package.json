@@ -48,6 +48,7 @@
     "firebase": "^12.9.0",
     "firebase-admin": "^12.7.0",
     "framer-motion": "^11.13.1",
+    "hls.js": "^1.7.4",
     "html-to-image": "^1.11.13",
     "input-otp": "^1.4.2",
     "jspdf": "^4.2.1",

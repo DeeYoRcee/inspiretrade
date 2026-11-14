@@ -103,11 +103,16 @@ async function scStream(scNumericId) {
   const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7e3);
   const tr = t?.media?.transcodings ?? [];
   const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url);
-  if (!prog) return null;
-  const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
-  const url = r?.url ? String(r.url) : null;
-  if (!url || !await audioOk(url)) return null;
-  return url;
+  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
+  if (prog) {
+    const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
+    if (r?.url && await audioOk(String(r.url))) return String(r.url);
+  }
+  if (hls) {
+    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
+    if (r?.url && String(r.url).includes("m3u8")) return String(r.url);
+  }
+  return null;
 }
 async function musicSearch(q) {
   const piped = PIPED_HOSTS.map(async (h) => {

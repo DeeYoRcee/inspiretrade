@@ -201,6 +201,8 @@ export function MusicPlayer() {
   useEffect(() => { setShowList(!playing); }, [playing]);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  // hls.js instance for SoundCloud HLS streams (m3u8) — destroyed on every switch
+  const hlsRef = useRef<{ destroy: () => void } | null>(null);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; w: number; h: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const queueRef = useRef<Track[]>(queue);
@@ -312,6 +314,34 @@ export function MusicPlayer() {
   };
 
   /** 30s-preview rescue for a track whose full version failed to load */
+  /** play a resolved URL — SoundCloud HLS (m3u8) goes through hls.js (lazy
+   *  import, code-split); everything else (mp3/m4a) plays natively */
+  const playUrl = (url: string) => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (url.includes(".m3u8")) {
+      void import("hls.js")
+        .then(({ default: Hls }) => {
+          if (!Hls.isSupported()) {
+            // Safari plays m3u8 natively
+            el.src = url;
+            el.play().catch(() => setPlaying(false));
+            return;
+          }
+          hlsRef.current?.destroy();
+          const h = new Hls({ maxBufferLength: 30 });
+          hlsRef.current = h;
+          h.attachMedia(el);
+          h.loadSource(url);
+          el.play().catch(() => setPlaying(false));
+        })
+        .catch(() => setNote("Stream loader failed — try another song"));
+      return;
+    }
+    el.src = url;
+    el.play().catch(() => setPlaying(false));
+  };
+
   const playPreviewFor = async (t: Track): Promise<boolean> => {
     if (previewTriedRef.current.has(t.id)) return false;
     previewTriedRef.current.add(t.id);
@@ -339,16 +369,14 @@ export function MusicPlayer() {
     try { el.pause(); } catch { /* ignore */ }
     setLoading(true);
     if (t.url) {
-      // direct URL (Audius / iTunes preview) — play immediately
-      el.src = t.url;
-      el.play().catch(() => setPlaying(false));
+      // direct URL (Audius / iTunes preview / SoundCloud mp3) — play now
+      playUrl(t.url);
     } else {
-      // full-length YouTube track — resolve the stream server-side first
+      // full-length YouTube/SoundCloud track — resolve the stream first
       void resolveYtStream(t.id).then((url) => {
         if (idxRef.current !== i) return; // the user picked another song meanwhile
         if (url) {
-          el.src = url;
-          el.play().catch(() => setPlaying(false));
+          playUrl(url);
         } else {
           void playPreviewFor(t).then((ok) => {
             if (ok) return;
@@ -407,6 +435,8 @@ export function MusicPlayer() {
     el.addEventListener("ended", onEnd);
     el.addEventListener("error", onError);
     return () => {
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
       el.removeEventListener("timeupdate", onTime);
       el.removeEventListener("loadedmetadata", onMeta);
       el.removeEventListener("play", onPlay);

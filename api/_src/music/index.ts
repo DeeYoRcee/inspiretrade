@@ -125,16 +125,21 @@ async function scSearch(q: string): Promise<MusicItem[]> {
 async function scStream(scNumericId: string): Promise<string | null> {
   const id = await soundcloudClientId();
   if (!id) return null;
-  // the /tracks/{id}/streams endpoint is gone — the track object carries
-  // media.transcodings; the progressive one resolves to a direct mp3 URL
   const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7000);
   const tr = (t?.media?.transcodings ?? []) as any[];
+  // progressive = plain mp3 (free/older uploads); hls = licensed full tracks —
+  // the client plays those through hls.js, exactly like SoundCloud's own web app
   const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url);
-  if (!prog) return null;
-  const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
-  const url = r?.url ? String(r.url) : null;
-  if (!url || !(await audioOk(url))) return null;
-  return url;
+  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
+  if (prog) {
+    const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
+    if (r?.url && (await audioOk(String(r.url)))) return String(r.url);
+  }
+  if (hls) {
+    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
+    if (r?.url && String(r.url).includes("m3u8")) return String(r.url);
+  }
+  return null;
 }
 
 export async function musicSearch(q: string): Promise<MusicItem[]> {
