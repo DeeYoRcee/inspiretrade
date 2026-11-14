@@ -250,7 +250,12 @@ export function MusicPlayer() {
       setPrefs((p) => ({ ...p, pos: { x: sx, y: sy } }));
     };
     const onUp = () => {
-      if (dragRef.current?.moved) suppressClick.current = true;
+      if (dragRef.current?.moved) {
+        suppressClick.current = true;
+        // the click event lands right after pointerup — auto-clear so a stuck
+        // flag can never make the widget permanently unclickable
+        setTimeout(() => { suppressClick.current = false; }, 400);
+      }
       dragRef.current = null;
     };
     window.addEventListener("pointermove", onMove);
@@ -262,20 +267,29 @@ export function MusicPlayer() {
   }, []);
 
   // keep the widget reachable: clamp the saved position into the viewport on
-  // load and on every window resize
+  // load, on every resize/orientation change and after view switches — using
+  // the panel's REAL size, so a wide bar can never stick out of the screen
   useEffect(() => {
     const clamp = () => {
+      const el = document.querySelector("[data-music-panel]") as HTMLElement | null;
+      const w = el?.offsetWidth ?? 36;
+      const h = el?.offsetHeight ?? 36;
       setPrefs((p) => {
         if (!p.pos) return p;
-        const x = Math.min(window.innerWidth - 38, Math.max(4, p.pos.x));
-        const y = Math.min(window.innerHeight - 38, Math.max(8, p.pos.y));
+        const x = Math.min(window.innerWidth - w - 4, Math.max(4, p.pos.x));
+        const y = Math.min(window.innerHeight - h - 8, Math.max(8, p.pos.y));
         return x === p.pos.x && y === p.pos.y ? p : { ...p, pos: { x, y } };
       });
     };
-    clamp();
+    const t = setTimeout(clamp, 60); // after first paint — real size available
     window.addEventListener("resize", clamp);
-    return () => window.removeEventListener("resize", clamp);
-  }, []);
+    window.addEventListener("orientationchange", clamp);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", clamp);
+      window.removeEventListener("orientationchange", clamp);
+    };
+  }, [prefs.view]);
 
   // ---- playback core: one audio element, direct URLs only ----------------
 
@@ -453,7 +467,8 @@ export function MusicPlayer() {
   const snapV = (to: "top" | "bottom") => {
     const r = (document.querySelector("[data-music-panel]") as HTMLElement | null)?.getBoundingClientRect();
     if (!r) return;
-    const y = to === "top" ? 8 : Math.max(8, window.innerHeight - r.height - 8);
+    // 72px = below the 64px sticky navbar — pinned flush under it, never hidden
+    const y = to === "top" ? 72 : Math.max(8, window.innerHeight - r.height - 8);
     const x = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - r.width - 4));
     setPrefs((p) => ({ ...p, pos: { x, y } }));
   };
@@ -507,7 +522,7 @@ export function MusicPlayer() {
       <audio ref={audioRef} className="hidden" />
       <div
         data-music-panel
-        className="fixed left-2 top-[7rem] z-40 sm:left-3 sm:top-[4.25rem]"
+        className="fixed left-2 top-[7rem] z-[80] sm:left-3 sm:top-[4.25rem]"
         style={prefs.pos ? { left: prefs.pos.x, top: prefs.pos.y } : undefined}
       >
         {/* dot (1%) — only in dot view */}
