@@ -27,6 +27,8 @@ export interface NewsItem {
   publishedAt: number;
   summary: string;
   symbols: string[];
+  /** full article text (feeds that ship content:encoded) — reader shortcut */
+  fullText?: string;
 }
 
 export interface CalEvent {

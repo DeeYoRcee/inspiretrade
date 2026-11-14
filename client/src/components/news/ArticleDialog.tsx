@@ -40,7 +40,8 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
   if (!item) return null;
 
   const translated = language !== "en" && !!item.titleEn;
-  const full = art.data?.ok && art.data.paragraphs.length > 0;
+  const fromFeed = !!item.fullText && item.fullText.length > item.summary.length + 100;
+  const full = fromFeed || (art.data?.ok === true && art.data.paragraphs.length > 0);
 
   return (
     <Dialog open={!!item} onOpenChange={(v) => !v && onClose()}>
@@ -85,7 +86,9 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
         )}
 
         <div className="mt-3 text-sm leading-relaxed text-foreground/90">
-          {art.loading ? (
+          {fromFeed ? (
+            <div className="max-h-[52vh] overflow-y-auto whitespace-pre-line pr-1">{item.fullText}</div>
+          ) : art.loading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-xs">Loading the full article…</span>

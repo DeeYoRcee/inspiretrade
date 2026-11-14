@@ -16,6 +16,13 @@ var FEEDS = [
   { url: "https://cointelegraph.com/rss", source: "Cointelegraph", google: false },
   { url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", source: "CNBC", google: false },
   // economy
+  // Yahoo Finance ticker feeds — longer summaries + server-fetchable links
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // gold
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=BTC-USD&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // bitcoin
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5ENDX&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // Nasdaq 100
   // Per-symbol Google News searches — give the 7-day history the direct
   // feeds can't. Source is taken from the <source> tag inside each item.
   { url: GOOGLE_NEWS("gold price OR XAUUSD"), source: "Google News", google: true },
@@ -81,9 +88,16 @@ function parseFeed(xml, feed) {
     const pubRaw = pick(body, "pubDate") || pick(body, "published") || pick(body, "updated");
     const publishedAt = pubRaw ? new Date(pubRaw.trim()).getTime() || Date.now() : Date.now();
     const summary = feed.google ? "" : cleanText(pick(body, "description"), 220);
+    const contentRaw = pick(body, "content:encoded") || pick(body, "content");
+    let fullText;
+    if (contentRaw) {
+      const paras = contentRaw.split(/<\/(p|h2|h3|li)>/i).filter((_, i) => i % 2 === 0).map((chunk) => decodeEntities(chunk.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim()).filter((t) => t.length > 40);
+      const joined = paras.join("\n\n");
+      if (joined.length > 300) fullText = joined.slice(0, 12e3);
+    }
     const haystack = `${title} ${summary}`;
     const symbols = TAG_RULES.filter((rule) => rule.keywords.test(haystack)).map((r) => r.symbol);
-    items.push({ title, link, source, publishedAt, summary, symbols });
+    items.push({ title, link, source, publishedAt, summary, symbols, fullText });
   }
   return items;
 }
@@ -241,31 +255,6 @@ function htmlToArticle(raw) {
   }
   return out.length ? { title, paragraphs: out.slice(0, 120) } : null;
 }
-async function fetchViaJina(target) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 14e3);
-  try {
-    const res = await fetch(`https://r.jina.ai/${target}`, {
-      headers: { "User-Agent": UA, Accept: "text/plain" },
-      signal: controller.signal
-    });
-    if (!res.ok) return null;
-    const md = (await res.text()).slice(0, 5e5);
-    const t = md.match(/^Title:\s*(.+)$/m)?.[1]?.trim().slice(0, 220);
-    const body = md.split(/^Markdown Content:\s*$/m)[1] ?? "";
-    const paras = body.split(/\n\s*\n/).map(
-      (chunk) => chunk.split("\n").map(
-        (l) => l.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/^[#>\-*\s]+/, "").trim()
-      ).filter(Boolean).join(" ")
-    ).map((s) => s.replace(/\s+/g, " ").trim()).filter((s) => s.length > 60);
-    if (!paras.length) return null;
-    return { title: t, paragraphs: paras.slice(0, 120) };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 async function extractArticle(rawUrl) {
   let target = "";
   try {
@@ -308,7 +297,6 @@ async function extractArticle(rawUrl) {
     } catch {
     }
     clearTimeout(timer);
-    if (!parsed) parsed = await fetchViaJina(target);
     if (!parsed) return { ok: false, paragraphs: [], link: target, error: "NO_CONTENT" };
     const data = { ok: true, title: parsed.title, paragraphs: parsed.paragraphs, link: target };
     if (artCache.size > 300) artCache.clear();
@@ -339,7 +327,11 @@ async function handler(req, res) {
     if (r.status !== "fulfilled") continue;
     for (const item of r.value) {
       const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 90);
-      if (seen.has(key)) continue;
+      if (seen.has(key)) {
+        const at = merged.findIndex((x) => x.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 90) === key);
+        if (at >= 0 && !merged[at].fullText && item.fullText) merged[at] = item;
+        continue;
+      }
       seen.add(key);
       merged.push(item);
     }

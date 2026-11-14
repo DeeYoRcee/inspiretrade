@@ -33,6 +33,10 @@ const FEEDS: { url: string; source: string; google: boolean }[] = [
   { url: "https://www.forexlive.com/feed/news", source: "ForexLive", google: false },
   { url: "https://cointelegraph.com/rss", source: "Cointelegraph", google: false },
   { url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", source: "CNBC", google: false }, // economy
+  // Yahoo Finance ticker feeds — longer summaries + server-fetchable links
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // gold
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=BTC-USD&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // bitcoin
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5ENDX&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // Nasdaq 100
   // Per-symbol Google News searches — give the 7-day history the direct
   // feeds can't. Source is taken from the <source> tag inside each item.
   { url: GOOGLE_NEWS("gold price OR XAUUSD"), source: "Google News", google: true },
@@ -61,6 +65,8 @@ interface NewsItem {
   publishedAt: number;
   summary: string;
   symbols: string[];
+  /** full article text from <content:encoded> feeds (reader shortcut) */
+  fullText?: string;
 }
 
 interface CalEvent {
@@ -142,9 +148,23 @@ function parseFeed(xml: string, feed: { source: string; google: boolean }): News
     const publishedAt = pubRaw ? new Date(pubRaw.trim()).getTime() || Date.now() : Date.now();
     // Google News descriptions are just boilerplate link HTML — skip them.
     const summary = feed.google ? "" : cleanText(pick(body, "description"), 220);
+    // Some feeds (Cointelegraph etc.) carry the FULL article in
+    // <content:encoded> — keep it so the in-app reader can show the whole
+    // story with zero extra fetching.
+    const contentRaw = pick(body, "content:encoded") || pick(body, "content");
+    let fullText: string | undefined;
+    if (contentRaw) {
+      const paras = contentRaw
+        .split(/<\/(p|h2|h3|li)>/i)
+        .filter((_, i) => i % 2 === 0)
+        .map((chunk) => decodeEntities(chunk.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim())
+        .filter((t) => t.length > 40);
+      const joined = paras.join("\n\n");
+      if (joined.length > 300) fullText = joined.slice(0, 12_000);
+    }
     const haystack = `${title} ${summary}`;
     const symbols = TAG_RULES.filter((rule) => rule.keywords.test(haystack)).map((r) => r.symbol);
-    items.push({ title, link, source, publishedAt, summary, symbols });
+    items.push({ title, link, source, publishedAt, summary, symbols, fullText });
   }
   return items;
 }
@@ -362,45 +382,10 @@ function htmlToArticle(raw: string): { title?: string; paragraphs: string[] } | 
 /**
  * Second chance via the public Jina reader (r.jina.ai) — their infra fetches
  * pages that block datacenter IPs (Cloudflare 403: investing.com etc.).
- * Returns markdown → cleaned paragraphs.
+ * DISABLED: r.jina.ai now requires an API key (401 without one) and the
+ * free CORS proxies are dead (522) — the reader falls back to the summary
+ * + source link instead.
  */
-async function fetchViaJina(target: string): Promise<{ title?: string; paragraphs: string[] } | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 14_000);
-  try {
-    const res = await fetch(`https://r.jina.ai/${target}`, {
-      headers: { "User-Agent": UA, Accept: "text/plain" },
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const md = (await res.text()).slice(0, 500_000);
-    const t = md.match(/^Title:\s*(.+)$/m)?.[1]?.trim().slice(0, 220);
-    const body = md.split(/^Markdown Content:\s*$/m)[1] ?? "";
-    const paras = body
-      .split(/\n\s*\n/)
-      .map((chunk) =>
-        chunk
-          .split("\n")
-          .map((l) =>
-            l
-              .replace(/!\[[^\]]*\]\([^)]*\)/g, "") // images
-              .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links → text
-              .replace(/^[#>\-*\s]+/, "")
-              .trim()
-          )
-          .filter(Boolean)
-          .join(" ")
-      )
-      .map((s) => s.replace(/\s+/g, " ").trim())
-      .filter((s) => s.length > 60);
-    if (!paras.length) return null;
-    return { title: t, paragraphs: paras.slice(0, 120) };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 async function extractArticle(rawUrl: string): Promise<ArticleData> {
   let target = "";
@@ -445,11 +430,8 @@ async function extractArticle(rawUrl: string): Promise<ArticleData> {
         }
         parsed = htmlToArticle(raw);
       }
-    } catch { /* fall through to the reader proxy */ }
+    } catch { /* fall through to the summary+link fallback */ }
     clearTimeout(timer);
-
-    // 2) reader proxy — rescues pages that block datacenter IPs
-    if (!parsed) parsed = await fetchViaJina(target);
 
     if (!parsed) return { ok: false, paragraphs: [], link: target, error: "NO_CONTENT" };
 
@@ -491,7 +473,12 @@ export default async function handler(req: any, res: any) {
     for (const item of r.value) {
       // dedupe by normalized title (same story across feeds)
       const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 90);
-      if (seen.has(key)) continue;
+      if (seen.has(key)) {
+        // duplicate story — keep the copy that carries the FULL text
+        const at = merged.findIndex((x) => x.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 90) === key);
+        if (at >= 0 && !merged[at].fullText && item.fullText) merged[at] = item;
+        continue;
+      }
       seen.add(key);
       merged.push(item);
     }
