@@ -162,6 +162,12 @@ function parseFeed(xml: string, feed: { source: string; google: boolean }): News
       const joined = paras.join("\n\n");
       if (joined.length > 300) fullText = joined.slice(0, 12_000);
     }
+    // No content:encoded? Long descriptions (Yahoo Finance press feeds ship
+    // 500+ chars) still beat the 10-word list summary — promote them.
+    if (!fullText && !feed.google) {
+      const dText = decodeEntities(pick(body, "description").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+      if (dText.length > 300) fullText = dText.slice(0, 12_000);
+    }
     const haystack = `${title} ${summary}`;
     const symbols = TAG_RULES.filter((rule) => rule.keywords.test(haystack)).map((r) => r.symbol);
     items.push({ title, link, source, publishedAt, summary, symbols, fullText });

@@ -95,6 +95,10 @@ function parseFeed(xml, feed) {
       const joined = paras.join("\n\n");
       if (joined.length > 300) fullText = joined.slice(0, 12e3);
     }
+    if (!fullText && !feed.google) {
+      const dText = decodeEntities(pick(body, "description").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+      if (dText.length > 300) fullText = dText.slice(0, 12e3);
+    }
     const haystack = `${title} ${summary}`;
     const symbols = TAG_RULES.filter((rule) => rule.keywords.test(haystack)).map((r) => r.symbol);
     items.push({ title, link, source, publishedAt, summary, symbols, fullText });
