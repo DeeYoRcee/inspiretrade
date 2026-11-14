@@ -24,7 +24,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Music, Play, Pause, SkipBack, SkipForward, Search, X, Volume2,
-  ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic, RotateCcw, Heart,
+  ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic, RotateCcw, Heart, Minus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -420,18 +420,29 @@ export function MusicPlayer() {
       playUrl(t.url);
     } else {
       // full-length YouTube/SoundCloud track — resolve the stream first
-      void resolveYtStream(t.id, t.hint).then((url) => {
-        if (idxRef.current !== i) return; // the user picked another song meanwhile
-        if (url) {
-          playUrl(url);
-        } else {
+      void resolveYtStream(t.id, t.hint)
+        .then((url) => {
+          if (idxRef.current !== i) return; // the user picked another song meanwhile
+          if (url) {
+            playUrl(url);
+          } else {
+            void rescueTrack(t).then((ok) => {
+              if (ok) return;
+              setLoading(false);
+              setNote("Couldn't load that song — try another one");
+            });
+          }
+        })
+        .catch(() => {
+          // resolver itself failed (network) — same rescue path, never a
+          // stuck loading spinner
+          if (idxRef.current !== i) return;
           void rescueTrack(t).then((ok) => {
             if (ok) return;
             setLoading(false);
             setNote("Couldn't load that song — try another one");
           });
-        }
-      });
+        });
     }
   };
 
