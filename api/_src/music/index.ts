@@ -93,17 +93,24 @@ async function soundcloudClientId(): Promise<string | null> {
   if (scIdCache && Date.now() - scIdCache.at < 3600_000) return scIdCache.id;
   try {
     const r = await fetch("https://soundcloud.com/", { headers: { "user-agent": UA } });
-    if (!r.ok) return null;
-    const html = await r.text();
-    const assets = [...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"']+\.js/g)].map((m) => m[0]).slice(-4);
-    for (const a of assets) {
-      const j = await fetch(a, { headers: { "user-agent": UA } });
-      if (!j.ok) continue;
-      const js = await j.text();
-      const m = js.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{28,36})"/);
-      if (m) {
-        scIdCache = { id: m[1], at: Date.now() };
-        return m[1];
+    if (r.ok) {
+      const html = await r.text();
+      // the homepage HTML itself often embeds a client_id — cheapest check
+      const inline = html.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{28,36})"/);
+      if (inline) {
+        scIdCache = { id: inline[1], at: Date.now() };
+        return inline[1];
+      }
+      const assets = [...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"']+\.js/g)].map((m) => m[0]).slice(-8);
+      for (const a of assets) {
+        const j = await fetch(a, { headers: { "user-agent": UA } });
+        if (!j.ok) continue;
+        const js = await j.text();
+        const m = js.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{28,36})"/);
+        if (m) {
+          scIdCache = { id: m[1], at: Date.now() };
+          return m[1];
+        }
       }
     }
   } catch { /* network hiccup — retry next call */ }
@@ -198,9 +205,13 @@ export async function musicSearch(q: string): Promise<MusicItem[]> {
     firstOk<MusicItem[]>([...piped, ...inv]),
     scSearch(q),
   ]);
+  // SoundCloud's full-length rows are the ones that ACTUALLY resolve at play
+  // time, so they lead the list; YouTube-mirror rows follow (their stream
+  // path is PO-token gated from datacenter IPs and mostly ends in the 30s
+  // preview rescue — they only fill gaps when SoundCloud finds nothing).
   const seen = new Set<string>();
   const merged: MusicItem[] = [];
-  for (const item of [...(raced ?? []), ...sc]) {
+  for (const item of [...sc, ...(raced ?? [])]) {
     const key = `${item.title.toLowerCase()}|${item.author.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -209,14 +220,26 @@ export async function musicSearch(q: string): Promise<MusicItem[]> {
   return merged;
 }
 
-/** HEAD-check that a URL actually serves AUDIO (rejects HTML error/consent pages) */
+/** HEAD-check that a URL actually serves AUDIO (rejects HTML error/consent
+ *  pages). Some CDNs reject HEAD outright — fall back to a 2-byte GET, which
+ *  they can't refuse, before giving up on a perfectly streamable mp3. */
 async function audioOk(url: string): Promise<boolean> {
+  const isAudio = (r: Response) => {
+    const ct = String(r.headers.get("content-type") ?? "").toLowerCase();
+    return r.ok && (ct.startsWith("audio") || ct.includes("mpegurl") || ct === "application/octet-stream" || ct === "");
+  };
   try {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), 5000);
     const r = await fetch(url, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA } });
     clearTimeout(t);
-    return r.ok && String(r.headers.get("content-type") ?? "").toLowerCase().startsWith("audio");
+    if (isAudio(r)) return true;
+    // 403/405 on HEAD ≠ broken audio — retry with a tiny ranged GET
+    const c2 = new AbortController();
+    const t2 = setTimeout(() => c2.abort(), 5000);
+    const r2 = await fetch(url, { redirect: "follow", headers: { "user-agent": UA, Range: "bytes=0-1" }, signal: c2.signal });
+    clearTimeout(t2);
+    return isAudio(r2);
   } catch {
     return false;
   }

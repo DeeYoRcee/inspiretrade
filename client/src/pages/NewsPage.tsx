@@ -162,7 +162,10 @@ function MarketNewsPanel() {
   });
 
   const items = data?.items ?? [];
-  const filtered = filter === "All" ? items : items.filter((item) => item.symbols.includes(filter));
+  // "All" view deliberately shows ONLY instrument-relevant stories (the feed
+  // already drops anything that isn't tagged USD/XAU/EUR/GBP/NASDAQ/BTC).
+  const filtered =
+    filter === "All" ? items.filter((item) => item.symbols.length > 0) : items.filter((item) => item.symbols.includes(filter));
   const visible = filtered.slice(0, limit);
 
   return (
@@ -203,30 +206,12 @@ function MarketNewsPanel() {
             </button>
           </div>
         </div>
-        {/* symbol filter chips — every chip keeps its symbol color in ALL view */}
+        {/* symbol filter chips — every chip keeps its symbol color; the
+            default (no chip) shows only instrument-relevant stories —
+            "All news" was removed as requested (extra noise) */}
         <div className="flex flex-wrap gap-1.5">
-          {(["All", ...SYMBOLS] as const).map((sym) => {
+          {SYMBOLS.map((sym) => {
             const active = filter === sym;
-            if (sym === "All") {
-              return (
-                <button
-                  key={sym}
-                  onClick={() => {
-                    setFilter(sym);
-                    setLimit(30);
-                  }}
-                  aria-pressed={active}
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-xs font-bold transition-colors",
-                    active
-                      ? "border-transparent bg-primary text-primary-foreground"
-                      : "border-border/60 bg-card/60 text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {t("newsFilterAll")}
-                </button>
-              );
-            }
             const color = SYMBOL_COLOR[sym];
             return (
               <button

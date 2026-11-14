@@ -35,25 +35,39 @@ const FEEDS: { url: string; source: string; google: boolean }[] = [
   { url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", source: "CNBC", google: false }, // economy
   // Yahoo Finance ticker feeds — longer summaries + server-fetchable links
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // gold
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // silver / gold complex
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=EURUSD%3DX&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // euro/dollar
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GBPUSD%3DX&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // pound/dollar
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=BTC-USD&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // bitcoin
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5ENDX&region=US&lang=en-US", source: "Yahoo Finance", google: false }, // Nasdaq 100
   // Per-symbol Google News searches — give the 7-day history the direct
   // feeds can't. Source is taken from the <source> tag inside each item.
   { url: GOOGLE_NEWS("gold price OR XAUUSD"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("gold bullion market"), source: "Google News", google: true },
   { url: GOOGLE_NEWS("EURUSD OR \"euro dollar\""), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("ECB interest rate eurozone"), source: "Google News", google: true },
   { url: GOOGLE_NEWS("GBPUSD OR \"pound sterling dollar\""), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("Bank of England rate pound sterling"), source: "Google News", google: true },
   { url: GOOGLE_NEWS("NASDAQ stocks"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("\"nasdaq 100\" OR \"wall street\" tech stocks"), source: "Google News", google: true },
   { url: GOOGLE_NEWS("\"federal reserve\" OR \"us dollar\" rates"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("dollar index OR nonfarm payrolls OR cpi inflation"), source: "Google News", google: true },
   { url: GOOGLE_NEWS("bitcoin OR crypto market"), source: "Google News", google: true },
 ];
 
-/** Keyword → symbol tagging. A story can carry several symbols. */
+/** Keyword → symbol tagging. A story can carry several symbols. Stories that
+ *  match NOTHING are dropped — the feed only carries the instruments the
+ *  journal actually trades. */
 const TAG_RULES: { symbol: string; keywords: RegExp }[] = [
-  { symbol: "XAUUSD", keywords: /\b(gold|xau|bullion|silver|xag)\b/i },
-  { symbol: "EURUSD", keywords: /\b(eurusd|eur\/usd|euro|ecb|european central bank)\b/i },
-  { symbol: "GBPUSD", keywords: /\b(gbpusd|gbp\/usd|pound|sterling|boe|bank of england)\b/i },
-  { symbol: "NASDAQ", keywords: /\b(nasdaq|nas100|us100|tech stocks|big tech|magnificent seven)\b/i },
-  { symbol: "USD", keywords: /\b(usd|dollar|greenback|fed|fomc|powell|federal reserve|treasury yields?|us indices)\b/i },
+  { symbol: "XAUUSD", keywords: /\b(gold|xau|bullion|silver|xag|precious metals?|platinum|palladium)\b/i },
+  { symbol: "EURUSD", keywords: /\b(eurusd|eur\/usd|euro|ecb|european central bank|eurozone|eur)\b/i },
+  { symbol: "GBPUSD", keywords: /\b(gbpusd|gbp\/usd|pound|sterling|boe|bank of england|gbp)\b/i },
+  { symbol: "NASDAQ", keywords: /\b(nasdaq|nas100|us100|ndx|qqq|tech stocks|big tech|magnificent seven|wall street|stock market)\b/i },
+  {
+    symbol: "USD",
+    keywords:
+      /\b(usd|dollar|greenback|fed|fomc|powell|federal reserve|treasury yields?|us indices|dxy|dollar index|nonfarm|payrolls|cpi|inflation|interest rates?)\b/i,
+  },
   { symbol: "BTC", keywords: /\b(btc|bitcoin|crypto|ethereum|stablecoin|altcoin|blockchain)\b/i },
 ];
 
@@ -481,11 +495,27 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({ url: streamUrl });
   }
 
-  // single-article reader mode
+  // single-article reader mode — ?article=<url> extracts the full story,
+  // and ?article=<url>&lang=ru|uz|ar ALSO translates the extracted text
+  // (batched + cached; capped at 40 paragraphs to keep the reply snappy)
   const articleParam = url.searchParams.get("article");
   if (articleParam) {
+    const data = await extractArticle(articleParam);
+    let out = data;
+    if (TRANSLATE_LANGS.has(lang) && data.ok && data.paragraphs.length > 0) {
+      const capped = data.paragraphs.slice(0, 40);
+      const [tp, tt] = await Promise.all([
+        translateTexts(capped, lang),
+        data.title ? translateTexts([data.title], lang) : Promise.resolve([] as string[]),
+      ]);
+      out = {
+        ...data,
+        title: tt[0] ?? data.title,
+        paragraphs: [...tp, ...data.paragraphs.slice(40)],
+      };
+    }
     res.setHeader("Cache-Control", "public, max-age=600, s-maxage=600");
-    return res.status(200).json(await extractArticle(articleParam));
+    return res.status(200).json(out);
   }
 
   const [settled, calendar] = await Promise.all([
@@ -512,10 +542,13 @@ export default async function handler(req: any, res: any) {
   }
 
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  // Stories that match NO instrument (sponsored picks, tech gossip, oil
+  // politics…) are dropped entirely — the feed carries only what the
+  // journal's symbols need, so the list stays dense and relevant.
   const items = merged
-    .filter((i) => i.publishedAt >= weekAgo)
+    .filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0)
     .sort((a, b) => b.publishedAt - a.publishedAt)
-    .slice(0, 250);
+    .slice(0, 300);
 
   // Translate titles + summaries in one pass (English fallback per batch).
   let outItems = items;

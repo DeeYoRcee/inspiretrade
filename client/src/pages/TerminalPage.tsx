@@ -150,6 +150,9 @@ export default function TerminalPage() {
   // selected drawing (broadcast by the chart engines via the bus) — powers
   // the floating object toolbar: color, per-timeframe visibility, size, label
   const [drawSel, setDrawSel] = useState<{ id: string; tool: string; text: string; width: number; color?: string; tfs?: string[] | null } | null>(null);
+  // id of the drawing whose separate Colors section is open (colors never
+  // pop up on plain selection — the palette button opens them on demand)
+  const [colorOpenFor, setColorOpenFor] = useState<string | null>(null);
   useEffect(() => drawingsBus.subscribe(({ cmd, arg }) => {
     if (cmd === "sel") setDrawSel((arg as { info?: { id: string; tool: string; text: string; width: number; color?: string; tfs?: string[] | null } | null })?.info ?? null);
   }), []);
@@ -780,53 +783,82 @@ export default function TerminalPage() {
         {/* click-away layer for the open tool-group flyout */}
         {flyout && <div className="fixed inset-0 z-40" onMouseDown={() => setFlyout(null)} />}
         {/* floating object toolbar — a drawing was clicked on the chart:
-            shrink / grow, label text, delete (locked shapes ignore edits) */}
+            shrink / grow, label text, delete (locked shapes ignore edits).
+            Colors do NOT pop up on selection — they open as a separate
+            section via the palette button. */}
         {drawSel && (
-          <div data-draw-sel-bar className="absolute bottom-3 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-1 rounded-xl border border-emerald-500/40 bg-[#0d1117]/95 px-2 py-1.5 shadow-2xl backdrop-blur">
-            <span className="px-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400">{drawSel.tool}</span>
-            <span className="mx-0.5 h-4 w-px bg-white/10" />
-            {/* line color — applies to the selected drawing only */}
-            {["#4ade80", "#f87171", "#60a5fa", "#fbbf24", "#c084fc", "#22d3ee", "#f472b6", "#e5e7eb"].map((c) => (
+          <div data-draw-sel-bar className="absolute bottom-3 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-1 rounded-xl border border-emerald-500/40 bg-[#0d1117]/95 px-2 py-1.5 shadow-2xl backdrop-blur">
+            <div className="flex items-center gap-1">
+              <span className="px-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400">{drawSel.tool}</span>
+              <span className="mx-0.5 h-4 w-px bg-white/10" />
+              {/* per-timeframe visibility — TradingView "show on" chips */}
+              {DRAWING_TFS.map((tf) => {
+                const active = !drawSel.tfs || drawSel.tfs.length === 0 || drawSel.tfs.includes(tf);
+                return (
+                  <button
+                    key={tf}
+                    onClick={() => drawingsBus.emit({ cmd: "tfs", arg: { tf } })}
+                    className={cn("h-6 shrink-0 rounded-md px-1.5 text-[10px] font-bold", active ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5")}
+                    title={`${tf} — toggle visibility on this timeframe`}
+                  >{tf}</button>
+                );
+              })}
+              <span className="mx-0.5 h-4 w-px bg-white/10" />
+              <button onClick={() => drawingsBus.emit({ cmd: "shrink" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make smaller"><Minus className="h-3.5 w-3.5" /></button>
+              <span className="num-input w-8 text-center text-[11px] font-bold">{Math.round(drawSel.width * 10) / 10}</span>
+              <button onClick={() => drawingsBus.emit({ cmd: "grow" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make bigger"><Plus className="h-3.5 w-3.5" /></button>
+              <span className="mx-0.5 h-4 w-px bg-white/10" />
               <button
-                key={c}
-                onClick={() => drawingsBus.emit({ cmd: "style", arg: { color: c } })}
-                className={cn("h-4 w-4 shrink-0 rounded-full border", drawSel.color === c ? "border-foreground ring-1 ring-foreground/60" : "border-white/25 hover:scale-110")}
-                style={{ background: c }}
-                title={`Line color ${c}`}
-              />
-            ))}
-            <span className="mx-0.5 h-4 w-px bg-white/10" />
-            {/* per-timeframe visibility — TradingView "show on" chips */}
-            {DRAWING_TFS.map((tf) => {
-              const active = !drawSel.tfs || drawSel.tfs.length === 0 || drawSel.tfs.includes(tf);
-              return (
-                <button
-                  key={tf}
-                  onClick={() => drawingsBus.emit({ cmd: "tfs", arg: { tf } })}
-                  className={cn("h-6 shrink-0 rounded-md px-1.5 text-[10px] font-bold", active ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5")}
-                  title={`${tf} — toggle visibility on this timeframe`}
-                >{tf}</button>
-              );
-            })}
-            <span className="mx-0.5 h-4 w-px bg-white/10" />
-            <button onClick={() => drawingsBus.emit({ cmd: "shrink" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make smaller"><Minus className="h-3.5 w-3.5" /></button>
-            <span className="num-input w-8 text-center text-[11px] font-bold">{Math.round(drawSel.width * 10) / 10}</span>
-            <button onClick={() => drawingsBus.emit({ cmd: "grow" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make bigger"><Plus className="h-3.5 w-3.5" /></button>
-            <span className="mx-0.5 h-4 w-px bg-white/10" />
-            <button
-              onClick={() => {
-                const t = window.prompt("Label text (empty = remove):", drawSel.text);
-                if (t != null) drawingsBus.emit({ cmd: "label", arg: { text: t } });
-              }}
-              className={cn("flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-semibold", drawSel.text ? "text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
-              title="Add / edit the label written on this drawing"
-            >
-              <Type className="h-3.5 w-3.5" />Text
-            </button>
-            <span className="mx-0.5 h-4 w-px bg-white/10" />
-            <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-red-400" title="Delete this drawing"><Trash2 className="h-3.5 w-3.5" /></button>
-            <span className="mx-0.5 h-4 w-px bg-white/10" />
-            <button onClick={() => setDrawSel(null)} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Close — click an empty chart spot to deselect too"><X className="h-3.5 w-3.5" /></button>
+                onClick={() => {
+                  const t = window.prompt("Label text (empty = remove):", drawSel.text);
+                  if (t != null) drawingsBus.emit({ cmd: "label", arg: { text: t } });
+                }}
+                className={cn("flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-semibold", drawSel.text ? "text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
+                title="Add / edit the label written on this drawing"
+              >
+                <Type className="h-3.5 w-3.5" />Text
+              </button>
+              <span className="mx-0.5 h-4 w-px bg-white/10" />
+              {/* palette toggle — colors live in a SEPARATE section below the
+                  toolbar row (open on demand, never on plain selection) */}
+              <button
+                onClick={() => setColorOpenFor(colorOpenFor === drawSel.id ? null : drawSel.id)}
+                className={cn(
+                  "flex h-6 items-center gap-1 rounded-md px-1.5 transition-colors",
+                  colorOpenFor === drawSel.id ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
+                )}
+                title="Colors — open the color section"
+              >
+                <Palette className="h-3.5 w-3.5" />
+                <span className="h-3 w-3 rounded-full border border-white/25" style={{ background: drawSel.color ?? "#4ade80" }} />
+              </button>
+              <span className="mx-0.5 h-4 w-px bg-white/10" />
+              <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-red-400" title="Delete this drawing"><Trash2 className="h-3.5 w-3.5" /></button>
+              <span className="mx-0.5 h-4 w-px bg-white/10" />
+              <button onClick={() => { setDrawSel(null); setColorOpenFor(null); }} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Close — click an empty chart spot to deselect too"><X className="h-3.5 w-3.5" /></button>
+            </div>
+            {/* the separate Colors section — 8 presets + a custom picker */}
+            {colorOpenFor === drawSel.id && (
+              <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
+                <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Color</span>
+                {["#4ade80", "#f87171", "#60a5fa", "#fbbf24", "#c084fc", "#22d3ee", "#f472b6", "#e5e7eb"].map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => drawingsBus.emit({ cmd: "style", arg: { color: c } })}
+                    className={cn("h-4 w-4 shrink-0 rounded-full border transition-transform hover:scale-110", drawSel.color === c ? "border-foreground ring-1 ring-foreground/60" : "border-white/25")}
+                    style={{ background: c }}
+                    title={`Line color ${c}`}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={drawSel.color ?? "#4ade80"}
+                  onChange={(e) => drawingsBus.emit({ cmd: "style", arg: { color: e.target.value } })}
+                  className="h-5 w-7 cursor-pointer rounded border-0 bg-transparent"
+                  title="Custom color"
+                />
+              </div>
+            )}
           </div>
         )}
         {/* drawing toolbar — compact GROUP buttons, floats INSIDE the chart
@@ -874,11 +906,9 @@ export default function TerminalPage() {
           <button onClick={() => drawingsBus.emit({ cmd: "lock" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Lock selected"><Lock className="h-3.5 w-3.5" /></button>
           <button onClick={() => drawingsBus.emit({ cmd: "hide" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Hide selected"><Eye className="h-3.5 w-3.5" /></button>
           <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-red-400" title="Delete selected"><Trash2 className="h-3.5 w-3.5" /></button>
-          <div className="my-1 h-px w-6 shrink-0 bg-white/10" />
-          <input type="color" defaultValue={settings.colors.accent} onChange={(e) => drawingsBus.emit({ cmd: "style", arg: { color: e.target.value } })} className="h-6 w-7 shrink-0 cursor-pointer rounded" title="Color" />
-          <select defaultValue="2" onChange={(e) => drawingsBus.emit({ cmd: "style", arg: { width: Number(e.target.value) } })} className="h-6 w-9 shrink-0 rounded border border-white/10 bg-transparent text-[10px] text-muted-foreground" title="Width">
-            {[1, 2, 3, 4].map((w) => <option key={w} value={w}>{w}</option>)}
-          </select>
+          {/* the bottom color/width row was REMOVED — colors now live only in
+              the selected-object toolbar's separate Colors section, so clicking
+              a tool never spills the palette */}
         </div>
 
         {/* the flyout itself — FIXED to the viewport at the anchor button's

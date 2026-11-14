@@ -234,6 +234,11 @@ export function MusicPlayer() {
   const failRef = useRef(0);
   // track ids already retried as a 30s preview (avoid loops)
   const previewTriedRef = useRef<Set<string>>(new Set());
+  // track ids whose FULL version already failed once — the same-song retry
+  // (a second row of the same track) must not loop back onto them
+  const fullTriedRef = useRef<Set<string>>(new Set());
+  // top/bottom pin state — highlights the position-dock arrow in use
+  const [snap, setSnap] = useState<null | "top" | "bottom">(null);
   queueRef.current = queue;
   idxRef.current = idx;
   repeatRef.current = repeat;
@@ -287,6 +292,7 @@ export function MusicPlayer() {
       // reachable
       if (sx <= 24) sx = 4;
       if (window.innerWidth - (sx + d.w) <= 24) sx = Math.max(4, window.innerWidth - d.w - 4);
+      setSnap(null); // free-dragged — no pin arrow is active anymore
       setPrefs((p) => ({ ...p, pos: { x: sx, y: sy } }));
     };
     const onUp = () => {
@@ -307,8 +313,9 @@ export function MusicPlayer() {
   }, []);
 
   // keep the widget reachable: clamp the saved position into the viewport on
-  // load, on every resize/orientation change and after view switches — using
-  // the panel's REAL size, so a wide bar can never stick out of the screen
+  // load, on every resize/orientation change, after view switches AND when
+  // the song list opens/closes (the panel height changes) — using the
+  // panel's REAL size, so a wide bar can never stick out of the screen
   useEffect(() => {
     const clamp = () => {
       const el = document.querySelector("[data-music-panel]") as HTMLElement | null;
@@ -329,7 +336,7 @@ export function MusicPlayer() {
       window.removeEventListener("resize", clamp);
       window.removeEventListener("orientationchange", clamp);
     };
-  }, [prefs.view]);
+  }, [prefs.view, showList]);
 
   // ---- playback core: one audio element, direct URLs only ----------------
 
@@ -373,6 +380,10 @@ export function MusicPlayer() {
         .catch(() => setNote("Stream loader failed — try another song"));
       return;
     }
+    // leaving HLS mode: a stale hls.js instance keeps the MediaSource
+    // attached and silently breaks plain mp3/m4a playback — always detach
+    hlsRef.current?.destroy();
+    hlsRef.current = null;
     el.src = url;
     el.play().catch(() => setPlaying(false));
   };
@@ -399,6 +410,7 @@ export function MusicPlayer() {
     setCur(0);
     setDur(t.duration || 0);
     setNote(null);
+    fullTriedRef.current.add(t.id); // this full version gets one shot
     const el = audioRef.current;
     if (!el) return;
     try { el.pause(); } catch { /* ignore */ }
@@ -413,7 +425,7 @@ export function MusicPlayer() {
         if (url) {
           playUrl(url);
         } else {
-          void playPreviewFor(t).then((ok) => {
+          void rescueTrack(t).then((ok) => {
             if (ok) return;
             setLoading(false);
             setNote("Couldn't load that song — try another one");
@@ -421,6 +433,38 @@ export function MusicPlayer() {
         }
       });
     }
+  };
+
+  /**
+   * Rescue chain when a track's full version fails — the 30s preview is the
+   * LAST resort, not the first:
+   *   1. another row of the SAME song with a full-length source we haven't
+   *      tried (duplicate uploads, an official upload + a remix/cover …)
+   *   2. the same song's iTunes 30s preview (always works)
+   * Returns true when something started playing.
+   */
+  const rescueTrack = async (t: Track): Promise<boolean> => {
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/\(.*?\)|\[.*?\]|official|video|audio|lyrics?|hd|4k|feat\..*$/g, "").replace(/[^a-z0-9]+/g, "").slice(0, 44);
+    const target = norm(`${t.title} ${t.artist}`);
+    const alt = queueRef.current.find((x) => {
+      if (x.id === t.id || fullTriedRef.current.has(x.id)) return false;
+      // must be a full-capable row: direct URL longer than a preview, or a
+      // resolvable stream (sc_/hint) — never another dead-end row
+      const fullCapable = (x.url && x.duration > 60) || (!x.url && (x.hint || x.id.startsWith("sc_")));
+      if (!fullCapable) return false;
+      // same song? tolerate small title/artist formatting differences
+      return norm(`${x.title} ${x.artist}`) === target || norm(x.title) === norm(t.title);
+    });
+    if (alt) {
+      const j = queueRef.current.indexOf(alt);
+      if (j >= 0) {
+        setNote("Trying another full-length source for this song…");
+        playIndex(j);
+        return true;
+      }
+    }
+    return playPreviewFor(t);
   };
 
   useEffect(() => {
@@ -444,9 +488,10 @@ export function MusicPlayer() {
     const onError = () => {
       const t = queueRef.current[idxRef.current];
       if (!t) return;
-      // first line of defense: the same song as a short preview (async,
-      // fire-and-forget — the audio element may keep firing events meanwhile)
-      void playPreviewFor(t).then((ok) => {
+      // first line of defense: the same song from another source / as a
+      // short preview (async, fire-and-forget — the audio element may keep
+      // firing events meanwhile)
+      void rescueTrack(t).then((ok) => {
         if (ok) return;
         const i = nextIndex(idxRef.current, false);
         if (i >= 0 && i !== idxRef.current && failRef.current < 3) {
@@ -497,6 +542,7 @@ export function MusicPlayer() {
     setNote(null);
     failRef.current = 0;
     previewTriedRef.current = new Set();
+    fullTriedRef.current = new Set();
     try {
       // full-length sources first: our serverless YouTube resolver, then
       // Audius — the mainstream index ALWAYS follows so the exact song is
@@ -539,6 +585,7 @@ export function MusicPlayer() {
     const y = to === "top" ? 72 : Math.max(8, window.innerHeight - r.height - 8);
     const x = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - r.width - 4));
     setPrefs((p) => ({ ...p, pos: { x, y } }));
+    setSnap(to); // highlight the active pin in the position dock
   };
 
   const toggle = () => {
@@ -554,8 +601,11 @@ export function MusicPlayer() {
   };
 
   const skip = (dir: 1 | -1) => {
-    const i = dir === 1 ? nextIndex(idx, false) : idx + dir < 0 ? queue.length - 1 : idx + dir;
-    if (i >= 0) playIndex(i);
+    // bounds from queueRef — the ACTUAL list being played (it can be the
+    // favorites list while the `queue` state still holds the search results)
+    const len = queueRef.current.length;
+    const i = dir === 1 ? nextIndex(idx, false) : idx + dir < 0 ? len - 1 : idx + dir;
+    if (i >= 0 && i < len) playIndex(i);
   };
 
   const wide = view === "bar";
@@ -649,25 +699,41 @@ export function MusicPlayer() {
                   <ListMusic className="h-4 w-4" />
                 </button>
               )}
-              {/* vertical pins — snap the floating widget to the top/bottom edge */}
-              <button onClick={() => snapV("top")} className="shrink-0 text-muted-foreground hover:text-foreground" title="Pin to top">
-                <ChevronUp className="h-3.5 w-3.5" />
-              </button>
-              <button onClick={() => snapV("bottom")} className="shrink-0 text-muted-foreground hover:text-foreground" title="Pin to bottom">
-                <ChevronDown className="h-3.5 w-3.5" />
-              </button>
-              {/* escape hatch: forget the dragged position, back to the default corner */}
-              {wide && (
+              {/* position dock — its OWN bordered group, separated from the
+                  view buttons: pin to top / pin to bottom / reset (the pin
+                  arrows used to be mixed into the header with no state and
+                  reset existed only in the wide view). Active pin glows. */}
+              <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border/60 bg-muted/30 px-0.5 py-0.5" role="group" aria-label="Panel position">
                 <button
-                  onClick={() => setPrefs((p) => ({ ...p, pos: null }))}
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => snapV("top")}
+                  className={cn(
+                    "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    snap === "top" ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
+                  )}
+                  title="Pin to top — snap under the navbar"
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => snapV("bottom")}
+                  className={cn(
+                    "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    snap === "bottom" ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
+                  )}
+                  title="Pin to bottom — snap above the bottom edge"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => { setPrefs((p) => ({ ...p, pos: null })); setSnap(null); }}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
                   title="Reset position — back to the default corner"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
+                  <RotateCcw className="h-3 w-3" />
                 </button>
-              )}
+              </div>
               <button onClick={() => setView(wide ? "mini" : "bar")} className="shrink-0 text-muted-foreground hover:text-foreground" title={wide ? "Minimize" : "Expand"}>
-                {wide ? <ChevronDown className="h-4 w-4" /> : <Search className="h-4 w-4" />}
+                {wide ? <Minus className="h-4 w-4" /> : <Search className="h-4 w-4" />}
               </button>
               <button onClick={() => setView("dot")} className="shrink-0 text-muted-foreground hover:text-foreground" title="Hide (keep playing)">
                 <X className="h-4 w-4" />
@@ -823,7 +889,16 @@ export function MusicPlayer() {
                 )}
                 {listTab === "queue" ? queue.map(trackRow) : favs.map((t, i) => (
                   <div key={`${t.id}-${i}`} className="flex items-center gap-1 rounded-lg px-1.5 py-1 transition-colors hover:bg-muted/60">
-                    <button onClick={() => { playIndex(i, favs); }} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                    <button
+                      onClick={() => {
+                        // switch the ACTIVE QUEUE to the favorites list, state
+                        // AND ref — before, only the ref swapped (prev/next and
+                        // the now-playing title kept reading the search queue)
+                        setQueue(favs);
+                        playIndex(i, favs);
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
                       {t.art ? (
                         <img src={t.art} alt="" className="h-8 w-8 rounded-md object-cover" loading="lazy" />
                       ) : (

@@ -171,6 +171,18 @@
         ".write": false
       }
     },
+    "terminalSettings": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "terminalDrawings": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
     "admins": {
       "$uid": {
         ".read": "$uid === auth.uid",

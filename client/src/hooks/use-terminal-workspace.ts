@@ -28,6 +28,10 @@ export interface TerminalSettings {
   priceScale: "normal" | "log" | "percent";
   /** magnet crosshair — snaps to OHLC values */
   magnet: boolean;
+  /** last-change timestamp of THIS settings copy — the freshest copy (local
+   *  mirror vs Firebase) always wins, so a cloud write that never landed
+   *  (debounce cut off / rules hiccup) can never resurrect older colors */
+  savedAt?: number;
 }
 
 export const DEFAULT_SETTINGS: TerminalSettings = {
@@ -70,20 +74,27 @@ export function useTerminalWorkspace() {
         const snap = await get(ref(db, `terminalSettings/${user.uid}/terminal`));
         if (snap.exists()) {
           const saved = snap.val();
-          setSettings((s) => ({
-            ...s, ...saved,
-            colors: { ...s.colors, ...(saved.colors || {}) },
-            indicators: Array.isArray(saved.indicators) ? saved.indicators : s.indicators,
-          }));
+          setSettings((s) => {
+            // Only apply the cloud copy when it is NEWER than the local
+            // mirror: the last change of a session lives in localStorage
+            // even when its debounced Firebase write was cut off — that
+            // fresh local copy must win over a stale cloud snapshot.
+            if ((saved?.savedAt ?? 0) <= (s.savedAt ?? 0)) return s;
+            return {
+              ...s, ...saved,
+              colors: { ...s.colors, ...(saved.colors || {}) },
+              indicators: Array.isArray(saved.indicators) ? saved.indicators : s.indicators,
+            };
+          });
         }
-      } catch { /* first visit */ }
+      } catch { /* first visit, offline or rules not yet deployed */ }
       setLoaded(true);
     })();
   }, [user]);
 
   const update = (patch: Partial<TerminalSettings>) => {
     setSettings((s) => {
-      const next = { ...s, ...patch };
+      const next = { ...s, ...patch, savedAt: Date.now() };
       try { localStorage.setItem("inspire_terminal_settings", JSON.stringify(next)); } catch { /* quota */ }
       if (user) {
         if (saveTimer.current) clearTimeout(saveTimer.current);

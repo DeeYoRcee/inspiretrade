@@ -16,8 +16,9 @@ export const SYMBOL_COLOR: Record<string, string> = {
   BTC: "#f7931a",
 };
 
-/** Currencies the calendar alert picker offers (matches the journal's pairs). */
-export const CALENDAR_CURRENCIES = ["USD", "EUR", "GBP", "CNY", "JPY"] as const;
+/** Currencies the calendar alert picker offers — gold (XAU) included, the
+ *  metals row the journal trades. */
+export const CALENDAR_CURRENCIES = ["USD", "EUR", "GBP", "XAU", "JPY", "CNY"] as const;
 
 export interface NewsItem {
   title: string;
