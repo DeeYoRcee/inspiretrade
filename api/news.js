@@ -76,48 +76,65 @@ async function scSearch(q) {
   const id = await soundcloudClientId();
   if (!id) return [];
   const j = await jget(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&limit=24&client_id=${id}`, 7e3);
-  return (j?.collection ?? []).filter((t) => t?.kind === "track" && t?.streamable && t?.policy !== "SNIPPET" && Number(t?.duration) > 9e4).map((t) => ({
-    id: `sc_${t.id}`,
-    title: String(t.title ?? ""),
-    author: String(t.user?.username ?? ""),
-    duration: Math.round((Number(t.duration) || 0) / 1e3),
-    art: String(t.artwork_url ?? "").replace("-large", "-t500x500")
-  })).filter((x) => x.id.length > 3 && x.title);
+  const out = [];
+  for (const t of j?.collection ?? []) {
+    if (t?.kind !== "track" || !t?.streamable || t?.policy === "SNIPPET" || Number(t?.duration) <= 9e4) continue;
+    const tr = t?.media?.transcodings ?? [];
+    const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url)?.url ?? null;
+    const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url)?.url ?? null;
+    const hint = prog ?? hls;
+    if (!hint) continue;
+    out.push({
+      id: `sc_${t.id}`,
+      title: String(t.title ?? ""),
+      author: String(t.user?.username ?? ""),
+      duration: Math.round((Number(t.duration) || 0) / 1e3),
+      art: String(t.artwork_url ?? "").replace("-large", "-t500x500"),
+      hint: String(hint)
+    });
+  }
+  return out;
+}
+async function resolveScHint(hint) {
+  const id = await soundcloudClientId();
+  if (!id) return null;
+  const sep = hint.includes("?") ? "&" : "?";
+  const r = await jget(`${hint}${sep}client_id=${id}`, 7e3);
+  const url = r?.url ? String(r.url) : null;
+  if (!url) return null;
+  if (url.includes("m3u8")) return url;
+  if (await audioOk(url)) return url;
+  return null;
 }
 async function scStream(scNumericId) {
   const id = await soundcloudClientId();
   if (!id) return null;
   const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7e3);
   const tr = t?.media?.transcodings ?? [];
-  const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url);
-  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
-  if (prog) {
-    const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
-    if (r?.url && await audioOk(String(r.url))) return String(r.url);
-  }
-  if (hls) {
-    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
-    if (r?.url && String(r.url).includes("m3u8")) return String(r.url);
-  }
+  const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url)?.url ?? null;
+  if (prog && await resolveScHint(String(prog))) return resolveScHint(String(prog));
+  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url)?.url ?? null;
+  if (hls) return resolveScHint(String(hls));
   return null;
 }
 async function scDebug(scNumericId) {
   const id = await soundcloudClientId();
-  const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7e3);
-  const tr = t?.media?.transcodings ?? [];
-  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
-  let hlsResolved = null;
-  if (hls?.url) {
-    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
-    hlsResolved = r?.url ? String(r.url).slice(0, 80) : `resolve failed: ${r === null ? "non-JSON/error" : JSON.stringify(r).slice(0, 80)}`;
+  const r = await fetch(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, { headers: { "user-agent": UA } });
+  const text = await r.text();
+  let j = null;
+  try {
+    j = JSON.parse(text);
+  } catch {
   }
+  const tr = j?.media?.transcodings ?? [];
   return {
     clientId: id ? `${id.slice(0, 6)}\u2026(${id.length})` : null,
-    policy: t?.policy ?? null,
-    streamable: t?.streamable ?? null,
-    gotTrack: !!t,
-    transcodings: tr.map((x) => ({ protocol: x?.format?.protocol, preset: x?.preset, quality: x?.quality })),
-    hlsResolved
+    status: r.status,
+    contentType: r.headers.get("content-type"),
+    bodyHead: text.slice(0, 120),
+    gotTrack: !!j,
+    policy: j?.policy ?? null,
+    transcodings: tr.map((x) => x?.format?.protocol)
   };
 }
 async function musicSearch(q) {
@@ -171,8 +188,13 @@ async function audioOk(url) {
     return false;
   }
 }
-async function musicStream(id) {
-  if (id.startsWith("sc_")) return scStream(id.slice(3));
+async function musicStream(id, hint) {
+  if (id.startsWith("sc_")) {
+    if (hint && /^https:\/\/api-v2\.soundcloud\.com\/media\/upload\/[A-Za-z0-9/_-]+$/.test(hint)) {
+      return resolveScHint(hint);
+    }
+    return scStream(id.slice(3));
+  }
   const tube = ["ANDROID", "IOS", "TV"].map(async (clientName) => {
     const r = await fetch("https://www.youtube.com/youtubei/v1/player", {
       method: "POST",
@@ -566,7 +588,7 @@ async function handler(req, res) {
   if (musicParam === "stream") {
     const id = url.searchParams.get("id") || "";
     if (!/^[\w-]{6,20}$/.test(id)) return res.status(400).json({ error: "bad id" });
-    const streamUrl = await musicStream(id);
+    const streamUrl = await musicStream(id, url.searchParams.get("hint"));
     if (!streamUrl) return res.status(502).json({ error: "no stream" });
     res.setHeader("Cache-Control", "public, max-age=1800");
     return res.status(200).json({ url: streamUrl });

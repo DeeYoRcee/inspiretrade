@@ -479,7 +479,7 @@ export default async function handler(req: any, res: any) {
   if (musicParam === "stream") {
     const id = url.searchParams.get("id") || "";
     if (!/^[\w-]{6,20}$/.test(id)) return res.status(400).json({ error: "bad id" });
-    const streamUrl = await musicStream(id);
+    const streamUrl = await musicStream(id, url.searchParams.get("hint"));
     if (!streamUrl) return res.status(502).json({ error: "no stream" });
     res.setHeader("Cache-Control", "public, max-age=1800");
     return res.status(200).json({ url: streamUrl });

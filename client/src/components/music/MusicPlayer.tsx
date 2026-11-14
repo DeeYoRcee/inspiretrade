@@ -36,6 +36,9 @@ interface Track {
   /** direct, always-playable audio URL */
   url: string;
   duration: number;
+  /** SoundCloud media transcodings URL from the search row — resolved
+   *  server-side at play time (the track endpoint is datacenter-blocked) */
+  hint?: string;
 }
 
 type View = "bar" | "mini" | "dot";
@@ -134,18 +137,21 @@ async function ytApiSearch(q: string): Promise<Track[]> {
         art: String(v.art ?? ""),
         url: "", // resolved at play time via ?music=stream
         duration: Number(v.duration) || 0,
+        hint: typeof v.hint === "string" ? v.hint : undefined,
       }));
   } catch {
     return [];
   }
 }
 
-/** resolve the playable audio URL for a full-length YouTube track */
-async function resolveYtStream(id: string): Promise<string | null> {
+/** resolve the playable audio URL for a full-length track (server-side) */
+async function resolveYtStream(id: string, hint?: string): Promise<string | null> {
   try {
+    const q = new URLSearchParams({ id });
+    if (hint) q.set("hint", hint.slice(0, 400));
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), 6000); // fail fast → preview path
-    const r = await fetch(`/api/news?music=stream&id=${encodeURIComponent(id)}`, { signal: c.signal });
+    const r = await fetch(`/api/news?music=stream&${q.toString()}`, { signal: c.signal });
     clearTimeout(t);
     if (!r.ok) return null;
     const j = await r.json();
@@ -373,7 +379,7 @@ export function MusicPlayer() {
       playUrl(t.url);
     } else {
       // full-length YouTube/SoundCloud track — resolve the stream first
-      void resolveYtStream(t.id).then((url) => {
+      void resolveYtStream(t.id, t.hint).then((url) => {
         if (idxRef.current !== i) return; // the user picked another song meanwhile
         if (url) {
           playUrl(url);

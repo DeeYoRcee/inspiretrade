@@ -77,6 +77,10 @@ export interface MusicItem {
   author: string;
   duration: number;
   art: string;
+  /** SoundCloud media transcodings URL — resolved server-side at play time
+   *  (the /tracks/{id} endpoint is datacenter-blocked, so search rows carry
+   *  their own resolution hint through the client) */
+  hint?: string;
 }
 
 // ---- SoundCloud ------------------------------------------------------------
@@ -110,16 +114,39 @@ async function scSearch(q: string): Promise<MusicItem[]> {
   const id = await soundcloudClientId();
   if (!id) return [];
   const j = await jget(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&limit=24&client_id=${id}`, 7000);
-  return ((j?.collection ?? []) as any[])
-    .filter((t) => t?.kind === "track" && t?.streamable && t?.policy !== "SNIPPET" && Number(t?.duration) > 90_000)
-    .map((t) => ({
+  const out: MusicItem[] = [];
+  for (const t of ((j?.collection ?? []) as any[])) {
+    if (t?.kind !== "track" || !t?.streamable || t?.policy === "SNIPPET" || Number(t?.duration) <= 90_000) continue;
+    const tr = (t?.media?.transcodings ?? []) as any[];
+    // prefer progressive (plain mp3); fall back to hls (licensed full tracks —
+    // the client plays m3u8 through hls.js)
+    const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url)?.url ?? null;
+    const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url)?.url ?? null;
+    const hint = prog ?? hls;
+    if (!hint) continue;
+    out.push({
       id: `sc_${t.id}`,
       title: String(t.title ?? ""),
       author: String(t.user?.username ?? ""),
       duration: Math.round((Number(t.duration) || 0) / 1000),
       art: String(t.artwork_url ?? "").replace("-large", "-t500x500"),
-    }))
-    .filter((x) => x.id.length > 3 && x.title);
+      hint: String(hint),
+    });
+  }
+  return out;
+}
+
+/** resolve a SoundCloud media transcodings URL into a playable stream URL */
+async function resolveScHint(hint: string): Promise<string | null> {
+  const id = await soundcloudClientId();
+  if (!id) return null;
+  const sep = hint.includes("?") ? "&" : "?";
+  const r = await jget(`${hint}${sep}client_id=${id}`, 7000);
+  const url = r?.url ? String(r.url) : null;
+  if (!url) return null;
+  if (url.includes("m3u8")) return url; // playlist for hls.js — no audio HEAD
+  if (await audioOk(url)) return url;
+  return null;
 }
 
 async function scStream(scNumericId: string): Promise<string | null> {
@@ -127,39 +154,29 @@ async function scStream(scNumericId: string): Promise<string | null> {
   if (!id) return null;
   const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7000);
   const tr = (t?.media?.transcodings ?? []) as any[];
-  // progressive = plain mp3 (free/older uploads); hls = licensed full tracks —
-  // the client plays those through hls.js, exactly like SoundCloud's own web app
-  const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url);
-  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
-  if (prog) {
-    const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
-    if (r?.url && (await audioOk(String(r.url)))) return String(r.url);
-  }
-  if (hls) {
-    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
-    if (r?.url && String(r.url).includes("m3u8")) return String(r.url);
-  }
+  const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url)?.url ?? null;
+  if (prog && (await resolveScHint(String(prog)))) return resolveScHint(String(prog));
+  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url)?.url ?? null;
+  if (hls) return resolveScHint(String(hls));
   return null;
 }
 
 /** temporary diagnostics for the SoundCloud resolver (deployed once, then removed) */
 export async function scDebug(scNumericId: string) {
   const id = await soundcloudClientId();
-  const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7000);
-  const tr = (t?.media?.transcodings ?? []) as any[];
-  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
-  let hlsResolved: string | null = null;
-  if (hls?.url) {
-    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
-    hlsResolved = r?.url ? String(r.url).slice(0, 80) : `resolve failed: ${r === null ? "non-JSON/error" : JSON.stringify(r).slice(0, 80)}`;
-  }
+  const r = await fetch(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, { headers: { "user-agent": UA } });
+  const text = await r.text();
+  let j: any = null;
+  try { j = JSON.parse(text); } catch { /* not JSON */ }
+  const tr = (j?.media?.transcodings ?? []) as any[];
   return {
     clientId: id ? `${id.slice(0, 6)}…(${id.length})` : null,
-    policy: t?.policy ?? null,
-    streamable: t?.streamable ?? null,
-    gotTrack: !!t,
-    transcodings: tr.map((x) => ({ protocol: x?.format?.protocol, preset: x?.preset, quality: x?.quality })),
-    hlsResolved,
+    status: r.status,
+    contentType: r.headers.get("content-type"),
+    bodyHead: text.slice(0, 120),
+    gotTrack: !!j,
+    policy: j?.policy ?? null,
+    transcodings: tr.map((x) => x?.format?.protocol),
   };
 }
 
@@ -224,9 +241,15 @@ async function audioOk(url: string): Promise<boolean> {
   }
 }
 
-export async function musicStream(id: string): Promise<string | null> {
-  // SoundCloud full-length tracks (sc_ prefix) — direct progressive mp3
-  if (id.startsWith("sc_")) return scStream(id.slice(3));
+export async function musicStream(id: string, hint?: string | null): Promise<string | null> {
+  // SoundCloud full-length tracks (sc_ prefix): resolve the transcodings hint
+  // that came with the search row (stateless — /tracks/{id} is datacenter-blocked)
+  if (id.startsWith("sc_")) {
+    if (hint && /^https:\/\/api-v2\.soundcloud\.com\/media\/upload\/[A-Za-z0-9/_-]+$/.test(hint)) {
+      return resolveScHint(hint);
+    }
+    return scStream(id.slice(3));
+  }
   // YouTube's own player API with three clients raced — cheap POSTs (~1-2s).
   // Piped/Invidious stream extraction is REMOVED here: verified dead from
   // Vercel egress (13+10 hosts), they only added 9s of latency before the
