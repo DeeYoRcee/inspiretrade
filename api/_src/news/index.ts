@@ -472,6 +472,10 @@ export default async function handler(req: any, res: any) {
     res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
     return res.status(200).json({ items });
   }
+  if (musicParam === "debugsc") {
+    const mod = await import("../music/index");
+    return res.status(200).json(await mod.scDebug(url.searchParams.get("id") || ""));
+  }
   if (musicParam === "stream") {
     const id = url.searchParams.get("id") || "";
     if (!/^[\w-]{6,20}$/.test(id)) return res.status(400).json({ error: "bad id" });

@@ -142,6 +142,27 @@ async function scStream(scNumericId: string): Promise<string | null> {
   return null;
 }
 
+/** temporary diagnostics for the SoundCloud resolver (deployed once, then removed) */
+export async function scDebug(scNumericId: string) {
+  const id = await soundcloudClientId();
+  const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7000);
+  const tr = (t?.media?.transcodings ?? []) as any[];
+  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
+  let hlsResolved: string | null = null;
+  if (hls?.url) {
+    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
+    hlsResolved = r?.url ? String(r.url).slice(0, 80) : `resolve failed: ${r === null ? "non-JSON/error" : JSON.stringify(r).slice(0, 80)}`;
+  }
+  return {
+    clientId: id ? `${id.slice(0, 6)}…(${id.length})` : null,
+    policy: t?.policy ?? null,
+    streamable: t?.streamable ?? null,
+    gotTrack: !!t,
+    transcodings: tr.map((x) => ({ protocol: x?.format?.protocol, preset: x?.preset, quality: x?.quality })),
+    hlsResolved,
+  };
+}
+
 export async function musicSearch(q: string): Promise<MusicItem[]> {
   const piped = PIPED_HOSTS.map(async (h) => {
     const j = await jget(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`);

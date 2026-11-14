@@ -1,32 +1,20 @@
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
 // api/_src/music/index.ts
-var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-var PIPED_HOSTS = [
-  "https://pipedapi.kavin.rocks",
-  "https://api.piped.private.coffee",
-  "https://pipedapi.drgns.space",
-  "https://pipedapi.adminforge.de",
-  "https://pipedapi.leptons.xyz",
-  "https://piped-api.lunar.icu",
-  "https://pipedapi.ducks.party",
-  "https://pipedapi.reallyaweso.me",
-  "https://pipedapi.nosebs.ru",
-  "https://pipedapi.orangenet.cc",
-  "https://api.piped.privacydev.net",
-  "https://pipedapi.owo.si",
-  "https://pipedapi.phoenixthrush.com"
-];
-var INV_HOSTS = [
-  "https://inv.nadeko.net",
-  "https://invidious.nerdvpn.de",
-  "https://yewtu.be",
-  "https://invidious.private.coffee",
-  "https://iv.datura.network",
-  "https://invidious.f5.si",
-  "https://iv.ggtyler.dev",
-  "https://invidious.jing.rocks",
-  "https://iv.melmac.space",
-  "https://invidious.fdn.fr"
-];
+var music_exports = {};
+__export(music_exports, {
+  musicSearch: () => musicSearch,
+  musicStream: () => musicStream,
+  scDebug: () => scDebug
+});
 async function jget(url, ms = 5e3) {
   try {
     const c = new AbortController();
@@ -63,7 +51,6 @@ async function firstOk(jobs) {
     }
   });
 }
-var scIdCache = null;
 async function soundcloudClientId() {
   if (scIdCache && Date.now() - scIdCache.at < 36e5) return scIdCache.id;
   try {
@@ -113,6 +100,25 @@ async function scStream(scNumericId) {
     if (r?.url && String(r.url).includes("m3u8")) return String(r.url);
   }
   return null;
+}
+async function scDebug(scNumericId) {
+  const id = await soundcloudClientId();
+  const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7e3);
+  const tr = t?.media?.transcodings ?? [];
+  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url);
+  let hlsResolved = null;
+  if (hls?.url) {
+    const r = await jget(`${hls.url}${String(hls.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
+    hlsResolved = r?.url ? String(r.url).slice(0, 80) : `resolve failed: ${r === null ? "non-JSON/error" : JSON.stringify(r).slice(0, 80)}`;
+  }
+  return {
+    clientId: id ? `${id.slice(0, 6)}\u2026(${id.length})` : null,
+    policy: t?.policy ?? null,
+    streamable: t?.streamable ?? null,
+    gotTrack: !!t,
+    transcodings: tr.map((x) => ({ protocol: x?.format?.protocol, preset: x?.preset, quality: x?.quality })),
+    hlsResolved
+  };
 }
 async function musicSearch(q) {
   const piped = PIPED_HOSTS.map(async (h) => {
@@ -190,8 +196,44 @@ async function musicStream(id) {
   });
   return firstOk(tube);
 }
+var UA, PIPED_HOSTS, INV_HOSTS, scIdCache;
+var init_music = __esm({
+  "api/_src/music/index.ts"() {
+    "use strict";
+    UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    PIPED_HOSTS = [
+      "https://pipedapi.kavin.rocks",
+      "https://api.piped.private.coffee",
+      "https://pipedapi.drgns.space",
+      "https://pipedapi.adminforge.de",
+      "https://pipedapi.leptons.xyz",
+      "https://piped-api.lunar.icu",
+      "https://pipedapi.ducks.party",
+      "https://pipedapi.reallyaweso.me",
+      "https://pipedapi.nosebs.ru",
+      "https://pipedapi.orangenet.cc",
+      "https://api.piped.privacydev.net",
+      "https://pipedapi.owo.si",
+      "https://pipedapi.phoenixthrush.com"
+    ];
+    INV_HOSTS = [
+      "https://inv.nadeko.net",
+      "https://invidious.nerdvpn.de",
+      "https://yewtu.be",
+      "https://invidious.private.coffee",
+      "https://iv.datura.network",
+      "https://invidious.f5.si",
+      "https://iv.ggtyler.dev",
+      "https://invidious.jing.rocks",
+      "https://iv.melmac.space",
+      "https://invidious.fdn.fr"
+    ];
+    scIdCache = null;
+  }
+});
 
 // api/_src/news/index.ts
+init_music();
 var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var GOOGLE_NEWS = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:7d")}&hl=en-US&gl=US&ceid=US:en`;
 var FEEDS = [
@@ -516,6 +558,10 @@ async function handler(req, res) {
     const items2 = await musicSearch(q);
     res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
     return res.status(200).json({ items: items2 });
+  }
+  if (musicParam === "debugsc") {
+    const mod = await Promise.resolve().then(() => (init_music(), music_exports));
+    return res.status(200).json(await mod.scDebug(url.searchParams.get("id") || ""));
   }
   if (musicParam === "stream") {
     const id = url.searchParams.get("id") || "";
