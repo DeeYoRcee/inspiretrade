@@ -248,10 +248,17 @@ export class DrawingEngine {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
+  // live cursor position (canvas CSS px) — powers the rubber-band preview
+  private cursorXY: { x: number; y: number } | null = null;
+  // where the current press started — detects drag-to-draw gestures
+  private downXY: { x: number; y: number } | null = null;
+
   private onDown = (e: PointerEvent) => {
     const { x, y } = this.evPos(e);
     const time = this.timeFor(x), price = this.priceFor(y);
     if (time == null || price == null) return;
+    this.cursorXY = { x, y };
+    this.downXY = { x, y };
 
     if (this.tool === "cursor") {
       const hit = this.hitTest(x, y);
@@ -267,24 +274,29 @@ export class DrawingEngine {
     // click-to-place tools
     this.pending.push({ time, price });
     const needed = this.neededPoints(this.tool);
-    if (needed !== Infinity && this.pending.length >= needed) {
-      this.pushUndo();
-      this.drawings.push({
-        id: uid(),
-        tool: this.tool as Exclude<DrawingTool, "cursor">,
-        points: [...this.pending],
-        color: this.style.color,
-        width: this.style.width,
-      });
-      this.pending = [];
-      // drawing finished — deactivate the tool so the next click doesn't
-      // start another one (arrow "never stops" bug)
-      this.tool = "cursor";
-      this.onToolDone("cursor");
-      this.onChange();
-    }
+    if (needed !== Infinity && this.pending.length >= needed) this.finishPending();
     this.render();
   };
+
+  /** finalize the pending points into a real drawing — shared by the
+   *  click-click flow AND the drag-release flow */
+  private finishPending() {
+    this.pushUndo();
+    this.drawings.push({
+      id: uid(),
+      tool: this.tool as Exclude<DrawingTool, "cursor">,
+      points: [...this.pending],
+      color: this.style.color,
+      width: this.style.width,
+    });
+    this.pending = [];
+    // drawing finished — deactivate the tool so the next click doesn't
+    // start another one (arrow "never stops" bug)
+    this.tool = "cursor";
+    this.cursorXY = null;
+    this.onToolDone("cursor");
+    this.onChange();
+  }
 
   private neededPoints(tool: Exclude<DrawingTool, "cursor">): number {
     switch (tool) {
@@ -297,6 +309,8 @@ export class DrawingEngine {
 
   private onMove = (e: PointerEvent) => {
     const { x, y } = this.evPos(e);
+    this.cursorXY = { x, y };
+    if (this.tool !== "cursor") this.canvas.style.cursor = "crosshair";
     if (this.dragging) {
       const d = this.drawings.find((z) => z.id === this.dragging!.id);
       if (!d) return;
@@ -324,7 +338,7 @@ export class DrawingEngine {
     }
   };
 
-  private onUp = () => {
+  private onUp = (e: PointerEvent) => {
     if (this.dragging) {
       this.pushUndo();
       this.dragging = null;
@@ -338,7 +352,22 @@ export class DrawingEngine {
       this.tool = "cursor";
       this.onToolDone("cursor");
       this.onChange();
+    } else if (this.pending.length && this.downXY) {
+      // drag-to-draw: pressed at point 1, dragged, released — finish the
+      // shape on release (a plain click without movement still waits for
+      // the second click, so the click-click flow is untouched)
+      const { x, y } = this.evPos(e);
+      const moved = Math.hypot(x - this.downXY.x, y - this.downXY.y) > 6;
+      const needed = this.neededPoints(this.tool as Exclude<DrawingTool, "cursor">);
+      if (moved && needed !== Infinity && this.pending.length < needed) {
+        const time = this.timeFor(x), price = this.priceFor(y);
+        if (time != null && price != null) {
+          this.pending.push({ time, price });
+          if (this.pending.length >= needed) this.finishPending();
+        }
+      }
     }
+    this.downXY = null;
     this.render();
   };
 
@@ -621,21 +650,55 @@ export class DrawingEngine {
       }
     }
 
-    // in-progress tool preview (current tool)
-    if (this.pending.length) {
+    // in-progress tool preview — rubber-band from the placed points to the
+    // LIVE cursor so the shape is visible WHILE dragging, not only after
+    if (this.pending.length && this.cursorXY) {
       const pts = this.pending.map(toXY);
-      const last = pts[pts.length - 1];
-      if (last.x != null && last.y != null) {
-        this.ctx.strokeStyle = this.style.color;
-        this.ctx.lineWidth = this.style.width;
-        if (this.tool === "brush") {
-          this.ctx.beginPath(); this.ctx.moveTo(pts[0].x!, pts[0].y!);
-          for (let i = 1; i < pts.length; i++) this.ctx.lineTo(pts[i].x!, pts[i].y!);
-          this.ctx.stroke();
-        } else if (pts.length === 1) {
-          this.ctx.beginPath(); this.ctx.moveTo(pts[0].x!, pts[0].y!); this.ctx.lineTo(last.x, last.y); this.ctx.stroke();
+      const cx = this.cursorXY.x, cy = this.cursorXY.y;
+      const solid = pts.filter((p) => p.x != null && p.y != null) as { x: number; y: number }[];
+      this.ctx.strokeStyle = this.style.color;
+      this.ctx.fillStyle = this.style.color;
+      this.ctx.lineWidth = this.style.width;
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.85;
+      if (this.tool === "brush") {
+        // freehand: polyline so far + a live tail to the cursor
+        this.ctx.beginPath();
+        if (solid.length) this.ctx.moveTo(solid[0].x, solid[0].y);
+        for (const p of solid) this.ctx.lineTo(p.x, p.y);
+        this.ctx.lineTo(cx, cy);
+        this.ctx.stroke();
+      } else if (solid.length === 1) {
+        const p0 = solid[0];
+        if (["rect", "long", "short", "measure", "fib"].includes(this.tool)) {
+          // box-style tools: translucent rubber rectangle + outline
+          const x = Math.min(p0.x, cx), y = Math.min(p0.y, cy);
+          const rw = Math.abs(cx - p0.x), rh = Math.abs(cy - p0.y);
+          this.ctx.globalAlpha = 0.12;
+          this.ctx.fillRect(x, y, rw, rh);
+          this.ctx.globalAlpha = 0.9;
+          this.ctx.strokeRect(x, y, rw, rh);
+        } else {
+          // line-style tools: rubber-band line to the cursor
+          this.ctx.beginPath(); this.ctx.moveTo(p0.x, p0.y); this.ctx.lineTo(cx, cy); this.ctx.stroke();
+        }
+      } else if (solid.length === 2) {
+        // 3-point tools (channel / fibext): both legs drawn live
+        const [p0, p1] = solid;
+        this.ctx.beginPath(); this.ctx.moveTo(p0.x, p0.y); this.ctx.lineTo(p1.x, p1.y); this.ctx.stroke();
+        this.ctx.beginPath(); this.ctx.moveTo(p1.x, p1.y); this.ctx.lineTo(cx, cy); this.ctx.stroke();
+        if (this.tool === "channel") {
+          // the second parallel line follows the cursor offset live
+          const ox = cx - p0.x, oy = cy - p0.y;
+          this.ctx.globalAlpha = 0.4;
+          this.ctx.beginPath(); this.ctx.moveTo(p0.x + ox, p0.y + oy); this.ctx.lineTo(p1.x + ox, p1.y + oy); this.ctx.stroke();
         }
       }
+      // anchor dots on the placed points
+      this.ctx.globalAlpha = 0.9;
+      this.ctx.lineWidth = 1;
+      for (const p of solid) { this.ctx.beginPath(); this.ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); this.ctx.stroke(); }
+      this.ctx.restore();
     }
 
     // crosshair-sync vertical line (hover on another chart of the layout)
