@@ -92,6 +92,8 @@ export class DrawingEngine {
   /** in-progress drawing points (chart coords) */
   private pending: DrawingPoint[] = [];
   private dragging: { id: string; startX: number; startY: number; orig: DrawingPoint[] } | null = null;
+  /** grabbing an endpoint of the SELECTED shape → resize/rotate that end only */
+  private dragEndpoint: { id: string; idx: number; moved: boolean } | null = null;
   private selectedId: string | null = null;
   private hoverId: string | null = null;
 
@@ -123,6 +125,12 @@ export class DrawingEngine {
     canvas.addEventListener("pointerleave", this.onUp);
     canvas.addEventListener("dblclick", this.onDblClick);
     window.addEventListener("keydown", this.onKey);
+    // cursor-mode clickability: in cursor mode the canvas is pointer-events:none
+    // so the chart below stays fully interactive (pan/zoom/crosshair) — these
+    // window listeners flip the canvas to auto ONLY when the pointer is over a
+    // drawing or its endpoint handles (see syncPointer / onWinDown)
+    window.addEventListener("pointermove", this.syncPointer);
+    window.addEventListener("pointerdown", this.onWinDown, true);
   }
 
   destroy() {
@@ -133,6 +141,8 @@ export class DrawingEngine {
     this.canvas.removeEventListener("pointerleave", this.onUp);
     this.canvas.removeEventListener("dblclick", this.onDblClick);
     window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("pointermove", this.syncPointer);
+    window.removeEventListener("pointerdown", this.onWinDown, true);
   }
 
   /** Esc — cancel the in-progress drawing and go back to the cursor. */
@@ -302,14 +312,7 @@ export class DrawingEngine {
     this.downXY = { x, y };
 
     if (this.tool === "cursor") {
-      const hit = this.hitTest(x, y);
-      this.selectedId = hit?.id ?? null;
-      this.fireSel();
-      if (hit && !hit.d.locked) {
-        this.dragging = { id: hit.id, startX: x, startY: y, orig: JSON.parse(JSON.stringify(hit.d.points)) };
-      }
-      this.render();
-      this.onChange(); // selection may change toolbar state
+      this.selectAt(x, y);
       return;
     }
 
@@ -353,6 +356,19 @@ export class DrawingEngine {
     const { x, y } = this.evPos(e);
     this.cursorXY = { x, y };
     if (this.tool !== "cursor") this.canvas.style.cursor = "crosshair";
+    if (this.dragEndpoint) {
+      // TradingView-style endpoint drag — resize / rotate / extend one end,
+      // the other end (and the whole shape) stays put
+      const d = this.drawings.find((z) => z.id === this.dragEndpoint!.id);
+      if (!d) return;
+      const time = this.timeFor(x), price = this.priceFor(y);
+      if (time != null && price != null) {
+        d.points[this.dragEndpoint.idx] = { time, price };
+        this.dragEndpoint.moved = true;
+        this.render();
+      }
+      return;
+    }
     if (this.dragging) {
       const d = this.drawings.find((z) => z.id === this.dragging!.id);
       if (!d) return;
@@ -369,18 +385,24 @@ export class DrawingEngine {
       return;
     }
     if (this.tool === "cursor") {
-      const hit = this.hitTest(x, y);
+      const ep = this.hitEndpoint(x, y);
+      const hit = ep ?? this.hitTest(x, y);
       if ((hit?.id ?? null) !== this.hoverId) {
         this.hoverId = hit?.id ?? null;
-        this.canvas.style.cursor = hit ? "pointer" : "default";
         this.render();
       }
+      this.canvas.style.cursor = ep ? "nwse-resize" : hit ? "pointer" : "default";
     } else if (this.pending.length) {
       this.render(); // preview line to cursor
     }
   };
 
   private onUp = (e: PointerEvent) => {
+    if (this.dragEndpoint) {
+      const moved = this.dragEndpoint.moved;
+      this.dragEndpoint = null;
+      if (moved) { this.pushUndo(); this.onChange(); }
+    }
     if (this.dragging) {
       this.pushUndo();
       this.dragging = null;
@@ -421,6 +443,82 @@ export class DrawingEngine {
       if (t != null) { d.text = t; this.pushUndo(); this.onChange(); this.render(); }
     }
   };
+
+  // ---- selection & cursor-mode pointer routing ------------------------------
+
+  /** shared click-selection: endpoint grab vs whole-shape select/move */
+  private selectAt(x: number, y: number) {
+    const ep = this.hitEndpoint(x, y);
+    if (ep) {
+      this.dragEndpoint = { id: ep.id, idx: ep.idx, moved: false };
+      this.render();
+      this.onChange();
+      return;
+    }
+    const hit = this.hitTest(x, y);
+    this.selectedId = hit?.id ?? null;
+    this.fireSel();
+    if (hit && !hit.d.locked) {
+      this.dragging = { id: hit.id, startX: x, startY: y, orig: JSON.parse(JSON.stringify(hit.d.points)) };
+    }
+    this.render();
+    this.onChange();
+  }
+
+  /** flips the drawing canvas between pointer-events none/auto depending on
+   *  whether the cursor is over a drawing — chart stays interactive elsewhere */
+  private syncPointer = (e: PointerEvent) => {
+    if (this.tool !== "cursor") return; // active tools keep the canvas auto
+    if (this.dragging || this.dragEndpoint) {
+      this.canvas.style.pointerEvents = "auto"; // drag continues outside too
+      return;
+    }
+    const r = this.canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const over = x >= 0 && y >= 0 && x <= r.width && y <= r.height
+      && (!!this.hitEndpoint(x, y) || !!this.hitTest(x, y));
+    this.canvas.style.pointerEvents = over ? "auto" : "none";
+    if (!over && this.hoverId) {
+      this.hoverId = null;
+      this.render();
+    }
+  };
+
+  /** window-level pointerdown (capture): selects on touch taps (no prior
+   *  mousemove → the canvas never saw the event) and deselects when the user
+   *  clicks anywhere outside the drawings */
+  private onWinDown = (e: PointerEvent) => {
+    if (this.tool !== "cursor" || this.dragging || this.dragEndpoint) return;
+    const r = this.canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const inside = x >= 0 && y >= 0 && x <= r.width && y <= r.height;
+    if (inside && e.target !== this.canvas) {
+      if (this.hitEndpoint(x, y) || this.hitTest(x, y)) {
+        this.canvas.style.pointerEvents = "auto";
+        this.selectAt(x, y);
+        e.stopPropagation(); // the chart must not pan on this tap
+        return;
+      }
+    }
+    const t = e.target as HTMLElement | null;
+    if (this.selectedId && e.target !== this.canvas && !t?.closest?.("[data-draw-sel-bar]")) {
+      this.selectedId = null;
+      this.fireSel();
+      this.render();
+    }
+  };
+
+  /** endpoint handles of the SELECTED shape (the amber dots) */
+  private hitEndpoint(px: number, py: number): { id: string; idx: number; d: Drawing } | null {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d || d.hidden || d.locked || d.tool === "brush") return null;
+    for (let i = 0; i < d.points.length; i++) {
+      const x = this.xFor(d.points[i].time), y = this.yFor(d.points[i].price);
+      if (x == null || y == null) continue;
+      if (Math.hypot(px - x, py - y) <= 7) return { id: d.id, idx: i, d };
+    }
+    return null;
+  }
 
   // ---- hit testing ----------------------------------------------------------
 
@@ -693,11 +791,12 @@ export class DrawingEngine {
         }
       }
 
-      // pending preview
+      // pending preview — amber FILLED endpoint handles on the selected shape
       if (selected) {
         this.ctx.strokeStyle = "#fbbf24";
+        this.ctx.fillStyle = "#fbbf24";
         this.ctx.lineWidth = 1;
-        for (const p of P) { if (p.x == null) continue; this.ctx.beginPath(); this.ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); this.ctx.stroke(); }
+        for (const p of P) { if (p.x == null) continue; this.ctx.beginPath(); this.ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); this.ctx.fill(); this.ctx.stroke(); }
       }
       if (this.hoverId === d.id && !selected) {
         this.ctx.save(); this.ctx.globalAlpha = 0.9; this.ctx.strokeStyle = "#fbbf24";

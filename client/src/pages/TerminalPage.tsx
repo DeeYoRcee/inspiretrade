@@ -782,7 +782,7 @@ export default function TerminalPage() {
         {/* floating object toolbar — a drawing was clicked on the chart:
             shrink / grow, label text, delete (locked shapes ignore edits) */}
         {drawSel && (
-          <div className="absolute bottom-3 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-1 rounded-xl border border-emerald-500/40 bg-[#0d1117]/95 px-2 py-1.5 shadow-2xl backdrop-blur">
+          <div data-draw-sel-bar className="absolute bottom-3 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-1 rounded-xl border border-emerald-500/40 bg-[#0d1117]/95 px-2 py-1.5 shadow-2xl backdrop-blur">
             <span className="px-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400">{drawSel.tool}</span>
             <span className="mx-0.5 h-4 w-px bg-white/10" />
             <button onClick={() => drawingsBus.emit({ cmd: "shrink" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make smaller"><Minus className="h-3.5 w-3.5" /></button>

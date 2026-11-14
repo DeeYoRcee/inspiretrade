@@ -63,6 +63,48 @@ async function firstOk(jobs) {
     }
   });
 }
+var scIdCache = null;
+async function soundcloudClientId() {
+  if (scIdCache && Date.now() - scIdCache.at < 36e5) return scIdCache.id;
+  try {
+    const r = await fetch("https://soundcloud.com/", { headers: { "user-agent": UA } });
+    if (!r.ok) return null;
+    const html = await r.text();
+    const assets = [...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"']+\.js/g)].map((m) => m[0]).slice(-4);
+    for (const a of assets) {
+      const j = await fetch(a, { headers: { "user-agent": UA } });
+      if (!j.ok) continue;
+      const js = await j.text();
+      const m = js.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{28,36})"/);
+      if (m) {
+        scIdCache = { id: m[1], at: Date.now() };
+        return m[1];
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+async function scSearch(q) {
+  const id = await soundcloudClientId();
+  if (!id) return [];
+  const j = await jget(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&limit=24&client_id=${id}`, 7e3);
+  return (j?.collection ?? []).filter((t) => t?.kind === "track" && t?.streamable && t?.policy !== "SNIPPET" && Number(t?.duration) > 9e4).map((t) => ({
+    id: `sc_${t.id}`,
+    title: String(t.title ?? ""),
+    author: String(t.user?.username ?? ""),
+    duration: Math.round((Number(t.duration) || 0) / 1e3),
+    art: String(t.artwork_url ?? "").replace("-large", "-t500x500")
+  })).filter((x) => x.id.length > 3 && x.title);
+}
+async function scStream(scNumericId) {
+  const id = await soundcloudClientId();
+  if (!id) return null;
+  const j = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}/streams?client_id=${id}`, 7e3);
+  const url = j?.http_mp3 ? String(j.http_mp3) : null;
+  if (!url || !await audioOk(url)) return null;
+  return url;
+}
 async function musicSearch(q) {
   const piped = PIPED_HOSTS.map(async (h) => {
     const j = await jget(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`);
@@ -89,7 +131,19 @@ async function musicSearch(q) {
     if (!out.length) throw new Error("empty");
     return out;
   });
-  return await firstOk([...piped, ...inv]) ?? [];
+  const [raced, sc] = await Promise.all([
+    firstOk([...piped, ...inv]),
+    scSearch(q)
+  ]);
+  const seen = /* @__PURE__ */ new Set();
+  const merged = [];
+  for (const item of [...raced ?? [], ...sc]) {
+    const key = `${item.title.toLowerCase()}|${item.author.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
 }
 async function audioOk(url) {
   try {
@@ -103,6 +157,7 @@ async function audioOk(url) {
   }
 }
 async function musicStream(id) {
+  if (id.startsWith("sc_")) return scStream(id.slice(3));
   const tube = ["ANDROID", "IOS", "TV"].map(async (clientName) => {
     const r = await fetch("https://www.youtube.com/youtubei/v1/player", {
       method: "POST",

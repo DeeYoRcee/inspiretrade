@@ -79,6 +79,58 @@ export interface MusicItem {
   art: string;
 }
 
+// ---- SoundCloud ------------------------------------------------------------
+// FULL-LENGTH tracks wherever artists/labels allow streaming (policy!=="SNIPPET").
+// The web client_id is scraped from SoundCloud's own JS bundles and cached 1h.
+
+let scIdCache: { id: string; at: number } | null = null;
+
+async function soundcloudClientId(): Promise<string | null> {
+  if (scIdCache && Date.now() - scIdCache.at < 3600_000) return scIdCache.id;
+  try {
+    const r = await fetch("https://soundcloud.com/", { headers: { "user-agent": UA } });
+    if (!r.ok) return null;
+    const html = await r.text();
+    const assets = [...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"']+\.js/g)].map((m) => m[0]).slice(-4);
+    for (const a of assets) {
+      const j = await fetch(a, { headers: { "user-agent": UA } });
+      if (!j.ok) continue;
+      const js = await j.text();
+      const m = js.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{28,36})"/);
+      if (m) {
+        scIdCache = { id: m[1], at: Date.now() };
+        return m[1];
+      }
+    }
+  } catch { /* network hiccup — retry next call */ }
+  return null;
+}
+
+async function scSearch(q: string): Promise<MusicItem[]> {
+  const id = await soundcloudClientId();
+  if (!id) return [];
+  const j = await jget(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&limit=24&client_id=${id}`, 7000);
+  return ((j?.collection ?? []) as any[])
+    .filter((t) => t?.kind === "track" && t?.streamable && t?.policy !== "SNIPPET" && Number(t?.duration) > 90_000)
+    .map((t) => ({
+      id: `sc_${t.id}`,
+      title: String(t.title ?? ""),
+      author: String(t.user?.username ?? ""),
+      duration: Math.round((Number(t.duration) || 0) / 1000),
+      art: String(t.artwork_url ?? "").replace("-large", "-t500x500"),
+    }))
+    .filter((x) => x.id.length > 3 && x.title);
+}
+
+async function scStream(scNumericId: string): Promise<string | null> {
+  const id = await soundcloudClientId();
+  if (!id) return null;
+  const j = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}/streams?client_id=${id}`, 7000);
+  const url = j?.http_mp3 ? String(j.http_mp3) : null; // direct progressive mp3
+  if (!url || !(await audioOk(url))) return null;
+  return url;
+}
+
 export async function musicSearch(q: string): Promise<MusicItem[]> {
   const piped = PIPED_HOSTS.map(async (h) => {
     const j = await jget(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`);
@@ -110,7 +162,21 @@ export async function musicSearch(q: string): Promise<MusicItem[]> {
     if (!out.length) throw new Error("empty");
     return out;
   });
-  return (await firstOk<MusicItem[]>([...piped, ...inv])) ?? [];
+  // SoundCloud runs alongside the YouTube-mirror race — its full-length,
+  // streamable catalog is a real (if smaller) mainstream source
+  const [raced, sc] = await Promise.all([
+    firstOk<MusicItem[]>([...piped, ...inv]),
+    scSearch(q),
+  ]);
+  const seen = new Set<string>();
+  const merged: MusicItem[] = [];
+  for (const item of [...(raced ?? []), ...sc]) {
+    const key = `${item.title.toLowerCase()}|${item.author.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
 }
 
 /** HEAD-check that a URL actually serves AUDIO (rejects HTML error/consent pages) */
@@ -127,6 +193,8 @@ async function audioOk(url: string): Promise<boolean> {
 }
 
 export async function musicStream(id: string): Promise<string | null> {
+  // SoundCloud full-length tracks (sc_ prefix) — direct progressive mp3
+  if (id.startsWith("sc_")) return scStream(id.slice(3));
   // YouTube's own player API with three clients raced — cheap POSTs (~1-2s).
   // Piped/Invidious stream extraction is REMOVED here: verified dead from
   // Vercel egress (13+10 hosts), they only added 9s of latency before the
