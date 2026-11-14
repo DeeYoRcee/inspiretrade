@@ -213,18 +213,6 @@ export function MusicPlayer() {
     try { const r = JSON.parse(localStorage.getItem(FAVS_KEY) || "[]"); return Array.isArray(r) ? r : []; } catch { return []; }
   });
   const [listTab, setListTab] = useState<"queue" | "favs">("queue");
-  const isFav = !!track && favs.some((f) => f.id === track.id && f.title === track.title);
-  const toggleFav = () => {
-    if (!track) return;
-    setFavs((list) => {
-      const exists = list.some((f) => f.id === track.id);
-      const next = exists
-        ? list.filter((f) => f.id !== track.id)
-        : [{ id: track.id, title: track.title, artist: track.artist, art: track.art, url: track.url, duration: track.duration, hint: track.hint }, ...list].slice(0, 200);
-      try { localStorage.setItem(FAVS_KEY, JSON.stringify(next)); } catch { /* quota */ }
-      return next;
-    });
-  };
   const removeFav = (i: number) => {
     setFavs((list) => {
       const next = list.filter((_, j) => j !== i);
@@ -254,6 +242,20 @@ export function MusicPlayer() {
   const view = prefs.view;
   const setView = (v: View) => setPrefs((p) => ({ ...p, view: v }));
   const track = idx >= 0 && idx < queue.length ? queue[idx] : null;
+
+  // favorite the CURRENT track (needs `track`, declared above)
+  const isFav = !!track && favs.some((f) => f.id === track.id && f.title === track.title);
+  const toggleFav = () => {
+    if (!track) return;
+    setFavs((list) => {
+      const exists = list.some((f) => f.id === track.id);
+      const next = exists
+        ? list.filter((f) => f.id !== track.id)
+        : [{ id: track.id, title: track.title, artist: track.artist, art: track.art, url: track.url, duration: track.duration, hint: track.hint }, ...list].slice(0, 200);
+      try { localStorage.setItem(FAVS_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
