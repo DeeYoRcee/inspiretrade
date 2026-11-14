@@ -15,7 +15,7 @@ import {
   Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
-  Spline, MoveDiagonal, Wrench, Calculator, Camera, Magnet, Shapes, Palette,
+  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal,
   PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
@@ -49,7 +49,6 @@ import { VolumePanel } from "@/components/terminal/VolumePanel";
 import { TemplatesPanel } from "@/components/terminal/TemplatesPanel";
 import { ComparisonPanel } from "@/components/terminal/ComparisonPanel";
 import { PropAnalyticsPanel } from "@/components/terminal/PropAnalyticsPanel";
-import { CalculatorsDialog } from "@/components/terminal/CalculatorsDialog";
 import { evaluateAlert, type AlertContext } from "@/lib/terminal/alert-engine";
 import { loadBarsCached } from "@/lib/terminal/data-feeds";
 import { DEFAULT_OVERLAY, type OverlayConfig } from "@/lib/terminal/chart-overlay";
@@ -162,7 +161,10 @@ export default function TerminalPage() {
   // advanced tools
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tool, setTool] = useState<ToolId | null>(null);
-  const [calcOpen, setCalcOpen] = useState(false);
+  // draggable instruments panel (stays inside the terminal frame)
+  const [symPos, setSymPos] = useState<{ x: number; y: number } | null>(null);
+  const symDragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; w: number; h: number } | null>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
   const [overlay, setOverlay] = useState<OverlayConfig>(() => {
     try { return { ...DEFAULT_OVERLAY, ...(JSON.parse(localStorage.getItem("terminalOverlay") ?? "null") ?? {}) }; } catch { return DEFAULT_OVERLAY; }
   });
@@ -319,6 +321,25 @@ export default function TerminalPage() {
     return INSTRUMENTS.filter((i) => i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q));
   }, [symQuery]);
 
+  // drag the instruments panel around — clamped INSIDE the terminal frame
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const d = symDragRef.current;
+      if (!d || !pageRef.current) return;
+      const r = pageRef.current.getBoundingClientRect();
+      const x = Math.min(r.right - d.w - 4, Math.max(r.left + 4, d.ox + (e.clientX - d.sx)));
+      const y = Math.min(r.bottom - d.h - 4, Math.max(r.top + 4, d.oy + (e.clientY - d.sy)));
+      setSymPos({ x, y });
+    };
+    const up = () => { symDragRef.current = null; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, []);
+
   // "F" hotkey toggles focus/maximize mode (TradingView-style), ignored while typing
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -447,7 +468,7 @@ export default function TerminalPage() {
   );
 
   return (
-    <div className="relative flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5">
+    <div className="relative flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5" ref={pageRef}>
       {/* ===== toolbar (hidden in focus/maximize mode) ===== */}
       {!immersive && (
       <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/50 bg-card/60 p-1.5">
@@ -463,7 +484,24 @@ export default function TerminalPage() {
             <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
           </button>
           {symOpen && (
-            <div className="absolute left-0 top-9 z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-1.5 shadow-2xl">
+            <div
+              className={cn("z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-1.5 shadow-2xl", symPos ? "fixed" : "absolute left-0 top-9")}
+              style={symPos ? { left: symPos.x, top: symPos.y } : undefined}
+            >
+              {/* drag handle — the panel never leaves the terminal frame */}
+              <div
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  const r = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+                  symDragRef.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, w: r.width, h: r.height };
+                  e.preventDefault();
+                }}
+                className="mb-0.5 flex cursor-grab items-center justify-between rounded-md bg-white/5 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-muted-foreground/80 active:cursor-grabbing"
+                title="Drag — stays inside the terminal"
+              >
+                <span>Instruments</span>
+                <GripHorizontal className="h-3 w-3" />
+              </div>
               <input
                 autoFocus
                 value={symQuery}
@@ -544,25 +582,8 @@ export default function TerminalPage() {
         >
           <Wrench className="h-3.5 w-3.5" /><span className="hidden sm:inline">Tools</span>
         </button>
-        <button
-          onClick={() => setCalcOpen(true)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground"
-          title="Trading calculators"
-        >
-          <Calculator className="h-3.5 w-3.5" />
-        </button>
 
-        {/* TradingView-style view controls — scale, magnet, screenshot, objects */}
-        <button
-          onClick={() => update({ priceScale: settings.priceScale === "log" ? "normal" : "log" })}
-          className={cn("h-8 rounded-lg border px-2 text-[11px] font-bold", settings.priceScale === "log" ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
-          title="Logarithmic price scale"
-        >LOG</button>
-        <button
-          onClick={() => update({ priceScale: settings.priceScale === "percent" ? "normal" : "percent" })}
-          className={cn("h-8 rounded-lg border px-2 text-[11px] font-bold", settings.priceScale === "percent" ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
-          title="Percent price scale"
-        >%</button>
+        {/* TradingView-style view controls — magnet, screenshot, objects */}
         <button
           onClick={() => update({ magnet: !settings.magnet })}
           className={cn("flex h-8 w-8 items-center justify-center rounded-lg border", settings.magnet ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
@@ -735,6 +756,21 @@ export default function TerminalPage() {
             <Minimize className="h-3 w-3" />Exit full view (Esc)
           </button>
         )}
+        {/* floating timeframe switcher — compact, top-center, full view only */}
+        {immersive && (
+          <div className="absolute left-1/2 top-2 z-[70] flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-border/60 bg-[#0d1117]/90 px-1 py-0.5 backdrop-blur">
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf}
+                onClick={() => update({ timeframe: tf as Timeframe })}
+                className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold transition-colors", settings.timeframe === tf ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:text-foreground")}
+                title={`Timeframe ${tf}`}
+              >
+                {tf.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        )}
         {/* click-away layer for the open tool-group flyout */}
         {flyout && <div className="fixed inset-0 z-40" onMouseDown={() => setFlyout(null)} />}
         {/* drawing toolbar — compact GROUP buttons, floats INSIDE the chart
@@ -895,7 +931,6 @@ export default function TerminalPage() {
 
       <IndicatorDialog open={indDialog} onOpenChange={setIndDialog} active={settings.indicators} onChange={(list: ActiveIndicator[]) => update({ indicators: list })} />
       <ToolsDialog open={toolsOpen} onOpenChange={setToolsOpen} onLaunch={launchTool} />
-      <CalculatorsDialog open={calcOpen} onOpenChange={setCalcOpen} symbol={settings.symbol} prices={prices} />
       <ReplayJournalDialog draft={journalDraft} onClose={() => setJournalDraft(null)} />
     </div>
   );

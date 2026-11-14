@@ -1,5 +1,130 @@
-// api/_src/news/index.ts
+// api/_src/music/index.ts
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+var PIPED_HOSTS = [
+  "https://pipedapi.kavin.rocks",
+  "https://api.piped.private.coffee",
+  "https://pipedapi.drgns.space",
+  "https://pipedapi.adminforge.de",
+  "https://pipedapi.leptons.xyz",
+  "https://piped-api.lunar.icu",
+  "https://pipedapi.ducks.party",
+  "https://pipedapi.reallyaweso.me",
+  "https://pipedapi.nosebs.ru",
+  "https://pipedapi.orangenet.cc"
+];
+var INV_HOSTS = [
+  "https://inv.nadeko.net",
+  "https://invidious.nerdvpn.de",
+  "https://yewtu.be",
+  "https://invidious.private.coffee",
+  "https://iv.datura.network",
+  "https://invidious.f5.si"
+];
+async function jget(url, ms = 5e3) {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    const r = await fetch(url, { signal: c.signal, headers: { "user-agent": UA } });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+async function firstOk(jobs) {
+  return new Promise((resolve) => {
+    let pending = jobs.length;
+    let done = false;
+    if (!pending) {
+      resolve(null);
+      return;
+    }
+    for (const job of jobs) {
+      job.then(
+        (v) => {
+          if (!done) {
+            done = true;
+            resolve(v);
+          }
+        },
+        () => {
+          pending -= 1;
+          if (pending === 0 && !done) resolve(null);
+        }
+      );
+    }
+  });
+}
+async function musicSearch(q) {
+  const piped = PIPED_HOSTS.map(async (h) => {
+    const j = await jget(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`);
+    const items = Array.isArray(j?.items) ? j.items : Array.isArray(j) ? j : [];
+    const out = items.filter((x) => typeof x?.url === "string" && x.url.includes("watch?v=")).map((x) => ({
+      id: String(x.url).split("watch?v=")[1]?.split("&")[0] ?? "",
+      title: String(x.title ?? ""),
+      author: String(x.uploaderName ?? x.author ?? ""),
+      duration: Number(x.duration) || 0,
+      art: String(x.thumbnail ?? "")
+    })).filter((x) => x.id && x.title);
+    if (!out.length) throw new Error("empty");
+    return out;
+  });
+  const inv = INV_HOSTS.map(async (h) => {
+    const j = await jget(`${h}/api/v1/search?q=${encodeURIComponent(q)}&type=video`);
+    const out = (Array.isArray(j) ? j : []).map((x) => ({
+      id: String(x?.videoId ?? ""),
+      title: String(x?.title ?? ""),
+      author: String(x?.author ?? ""),
+      duration: Number(x?.lengthSeconds) || 0,
+      art: String(x?.videoThumbnails?.[1]?.url ?? x?.videoThumbnails?.[0]?.url ?? "")
+    })).filter((x) => x.id && x.title);
+    if (!out.length) throw new Error("empty");
+    return out;
+  });
+  return await firstOk([...piped, ...inv]) ?? [];
+}
+async function musicStream(id) {
+  const piped = PIPED_HOSTS.map(async (h) => {
+    const j = await jget(`${h}/streams/${id}`);
+    const all = j?.audioStreams ?? [];
+    const m4a = all.filter((s) => s?.url && String(s.mimeType ?? "").includes("mp4"));
+    m4a.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
+    const url = m4a[0]?.url ?? all.find((s) => s?.url)?.url ?? null;
+    if (!url) throw new Error("no audio");
+    return String(url);
+  });
+  const tube = (async () => {
+    const r = await fetch("https://www.youtube.com/youtubei/v1/player", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip" },
+      body: JSON.stringify({
+        videoId: id,
+        contentCheckOk: true,
+        racyCheckOk: true,
+        context: { client: { clientName: "ANDROID", clientVersion: "19.09.37", androidSdkVersion: 30, hl: "en", gl: "US" } }
+      })
+    });
+    if (!r.ok) throw new Error("player fail");
+    const j = await r.json();
+    const f = j?.streamingData?.adaptiveFormats ?? [];
+    const aud = f.filter((x) => x?.url && String(x.mimeType ?? "").startsWith("audio/"));
+    aud.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
+    const url = aud[0]?.url ?? null;
+    if (!url) throw new Error("no formats");
+    return String(url);
+  })();
+  const inv = INV_HOSTS.map(async (h) => {
+    const target = `${h}/latest_version?id=${id}&itag=140&local=true`;
+    const r = await fetch(target, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA } });
+    if (!r.ok) throw new Error("no stream");
+    return r.url || target;
+  });
+  return firstOk([...piped, tube, ...inv]);
+}
+
+// api/_src/news/index.ts
+var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var GOOGLE_NEWS = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:7d")}&hl=en-US&gl=US&ceid=US:en`;
 var FEEDS = [
   { url: "https://www.investing.com/rss/news_1.rss", source: "Investing", google: false },
@@ -114,7 +239,7 @@ async function fetchFeed(url, feed) {
   const timer = setTimeout(() => controller.abort(), 8e3);
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/rss+xml, application/xml, text/xml, */*" },
+      headers: { "User-Agent": UA2, Accept: "application/rss+xml, application/xml, text/xml, */*" },
       signal: controller.signal
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -134,7 +259,7 @@ async function translateBatch(texts, lang) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8e3);
   try {
-    const res = await fetch(url, { headers: { "User-Agent": UA }, signal: controller.signal });
+    const res = await fetch(url, { headers: { "User-Agent": UA2 }, signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (Array.isArray(data) && data.length === texts.length && data.every((x) => typeof x === "string")) {
@@ -196,7 +321,7 @@ async function fetchCalendar() {
     const timer = setTimeout(() => controller.abort(), 8e3);
     const res = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
       headers: {
-        "User-Agent": UA,
+        "User-Agent": UA2,
         Accept: "application/json, text/plain, */*",
         Referer: "https://www.forexfactory.com/calendar"
       },
@@ -277,7 +402,7 @@ async function extractArticle(rawUrl) {
     try {
       let res = await fetch(target, {
         signal: controller.signal,
-        headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8", "Accept-Language": "en,ru;q=0.9" },
+        headers: { "User-Agent": UA2, Accept: "text/html,application/xhtml+xml,*/*;q=0.8", "Accept-Language": "en,ru;q=0.9" },
         redirect: "follow"
       });
       if (res.ok) {
@@ -287,7 +412,7 @@ async function extractArticle(rawUrl) {
           if (real) {
             const res2 = await fetch(real, {
               signal: controller.signal,
-              headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
+              headers: { "User-Agent": UA2, Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
               redirect: "follow"
             });
             if (res2.ok) {
@@ -316,6 +441,22 @@ async function handler(req, res) {
   }
   const url = new URL(req.url || "/", "http://localhost");
   const lang = (url.searchParams.get("lang") || "en").toLowerCase();
+  const musicParam = url.searchParams.get("music");
+  if (musicParam === "search") {
+    const q = (url.searchParams.get("q") || "").slice(0, 80);
+    if (!q) return res.status(400).json({ error: "q required" });
+    const items2 = await musicSearch(q);
+    res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
+    return res.status(200).json({ items: items2 });
+  }
+  if (musicParam === "stream") {
+    const id = url.searchParams.get("id") || "";
+    if (!/^[\w-]{6,20}$/.test(id)) return res.status(400).json({ error: "bad id" });
+    const streamUrl = await musicStream(id);
+    if (!streamUrl) return res.status(502).json({ error: "no stream" });
+    res.setHeader("Cache-Control", "public, max-age=1800");
+    return res.status(200).json({ url: streamUrl });
+  }
   const articleParam = url.searchParams.get("article");
   if (articleParam) {
     res.setHeader("Cache-Control", "public, max-age=600, s-maxage=600");

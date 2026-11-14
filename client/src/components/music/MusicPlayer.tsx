@@ -24,7 +24,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Music, Play, Pause, SkipBack, SkipForward, Search, X, Volume2,
-  ChevronDown, Repeat, Repeat1, Shuffle, Loader2, ListMusic,
+  ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -108,6 +108,45 @@ async function audiusSearch(q: string): Promise<Track[]> {
     } catch { /* try the next discovery node */ }
   }
   return [];
+}
+
+/**
+ * FULL-LENGTH YouTube catalog through our own serverless resolver
+ * (/api/news?music=… — Vercel egress, browser CORS never involved).
+ * Rows carry no URL — the stream is resolved at play time; if the resolver
+ * fails the same song is retried as a 30s preview (never silence).
+ */
+async function ytApiSearch(q: string): Promise<Track[]> {
+  try {
+    const r = await fetch(`/api/news?music=search&q=${encodeURIComponent(q)}`);
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j?.items ?? [])
+      .filter((v: any) => v?.id)
+      .slice(0, 30)
+      .map((v: any) => ({
+        id: String(v.id),
+        title: String(v.title ?? ""),
+        artist: String(v.author ?? "YouTube"),
+        art: String(v.art ?? ""),
+        url: "", // resolved at play time via ?music=stream
+        duration: Number(v.duration) || 0,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** resolve the playable audio URL for a full-length YouTube track */
+async function resolveYtStream(id: string): Promise<string | null> {
+  try {
+    const r = await fetch(`/api/news?music=stream&id=${encodeURIComponent(id)}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j?.url ? String(j.url) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Mainstream catalog index — iTunes Search API (CORS-open, no key). */
@@ -279,8 +318,26 @@ export function MusicPlayer() {
     if (!el) return;
     try { el.pause(); } catch { /* ignore */ }
     setLoading(true);
-    el.src = t.url;
-    el.play().catch(() => setPlaying(false));
+    if (t.url) {
+      // direct URL (Audius / iTunes preview) — play immediately
+      el.src = t.url;
+      el.play().catch(() => setPlaying(false));
+    } else {
+      // full-length YouTube track — resolve the stream server-side first
+      void resolveYtStream(t.id).then((url) => {
+        if (idxRef.current !== i) return; // the user picked another song meanwhile
+        if (url) {
+          el.src = url;
+          el.play().catch(() => setPlaying(false));
+        } else {
+          void playPreviewFor(t).then((ok) => {
+            if (ok) return;
+            setLoading(false);
+            setNote("Couldn't load that song — try another one");
+          });
+        }
+      });
+    }
   };
 
   useEffect(() => {
@@ -356,9 +413,11 @@ export function MusicPlayer() {
     failRef.current = 0;
     previewTriedRef.current = new Set();
     try {
-      // full-length catalog first, mainstream previews after — one list,
-      // durations tell them apart; NO autoplay (the user picks the song)
-      let au = await audiusSearch(q);
+      // full-length sources first: our serverless YouTube resolver, then
+      // Audius — the mainstream index ALWAYS follows so the exact song is
+      // in the list (0:30 preview rows). NO autoplay: the user picks.
+      const [yt, au0, it] = await Promise.all([ytApiSearch(q), audiusSearch(q), itunesSearch(q)]);
+      let au = au0;
       if (au.length < 3) {
         // broader second look for remix/cover coverage
         const short = q.split(/\s+/).slice(0, 3).join(" ");
@@ -367,11 +426,8 @@ export function MusicPlayer() {
           au = [...au, ...extra.filter((x) => !au.some((y) => y.id === x.id))];
         }
       }
-      // mainstream index ALWAYS included so the exact song is in the list
-      // (0:30 preview rows); full-length Audius matches sit on top
-      const it = await itunesSearch(q);
       const seen = new Set<string>();
-      const list = [...au, ...it].filter((t) => {
+      const list = [...yt, ...au, ...it].filter((t) => {
         const k = `${t.title}|${t.artist}`.toLowerCase();
         if (seen.has(k)) return false;
         seen.add(k);
@@ -388,6 +444,15 @@ export function MusicPlayer() {
     } finally {
       setSearching(false);
     }
+  };
+
+  /** snap the widget flush to the top / bottom edge of the screen (x kept) */
+  const snapV = (to: "top" | "bottom") => {
+    const r = (document.querySelector("[data-music-panel]") as HTMLElement | null)?.getBoundingClientRect();
+    if (!r) return;
+    const y = to === "top" ? 8 : Math.max(8, window.innerHeight - r.height - 8);
+    const x = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - r.width - 4));
+    setPrefs((p) => ({ ...p, pos: { x, y } }));
   };
 
   const toggle = () => {
@@ -498,6 +563,13 @@ export function MusicPlayer() {
                   <ListMusic className="h-4 w-4" />
                 </button>
               )}
+              {/* vertical pins — snap the floating widget to the top/bottom edge */}
+              <button onClick={() => snapV("top")} className="shrink-0 text-muted-foreground hover:text-foreground" title="Pin to top">
+                <ChevronUp className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => snapV("bottom")} className="shrink-0 text-muted-foreground hover:text-foreground" title="Pin to bottom">
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
               <button onClick={() => setView(wide ? "mini" : "bar")} className="shrink-0 text-muted-foreground hover:text-foreground" title={wide ? "Minimize" : "Expand"}>
                 {wide ? <ChevronDown className="h-4 w-4" /> : <Search className="h-4 w-4" />}
               </button>

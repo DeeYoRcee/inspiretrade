@@ -450,6 +450,8 @@ async function extractArticle(rawUrl: string): Promise<ArticleData> {
   }
 }
 
+import { musicSearch, musicStream } from "../music/index";
+
 // ---- handler ----------------------------------------------------------------
 
 export default async function handler(req: any, res: any) {
@@ -459,6 +461,25 @@ export default async function handler(req: any, res: any) {
 
   const url = new URL(req.url || "/", "http://localhost");
   const lang = (url.searchParams.get("lang") || "en").toLowerCase();
+
+  // music player dispatch (search + stream resolver) — lives here because
+  // the Hobby plan is at its 12-function cap; see api/_src/music/index.ts
+  const musicParam = url.searchParams.get("music");
+  if (musicParam === "search") {
+    const q = (url.searchParams.get("q") || "").slice(0, 80);
+    if (!q) return res.status(400).json({ error: "q required" });
+    const items = await musicSearch(q);
+    res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
+    return res.status(200).json({ items });
+  }
+  if (musicParam === "stream") {
+    const id = url.searchParams.get("id") || "";
+    if (!/^[\w-]{6,20}$/.test(id)) return res.status(400).json({ error: "bad id" });
+    const streamUrl = await musicStream(id);
+    if (!streamUrl) return res.status(502).json({ error: "no stream" });
+    res.setHeader("Cache-Control", "public, max-age=1800");
+    return res.status(200).json({ url: streamUrl });
+  }
 
   // single-article reader mode
   const articleParam = url.searchParams.get("article");
