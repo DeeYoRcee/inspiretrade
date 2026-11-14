@@ -55,6 +55,52 @@ export const CHART_THEMES: { id: string; label: string; colors: ChartColors }[] 
 
 const PALETTE = ["#4ade80", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#22d3ee", "#f87171", "#34d399"];
 
+/** Line-style picker values (JSON-friendly) → lightweight-charts LineStyle. */
+export type LineStyleKind = "solid" | "dashed" | "dotted" | "large-dashed" | "sparse-dotted";
+
+export function lineStyleOf(kind: LineStyleKind): number {
+  return kind === "dashed" ? LineStyle.Dashed
+    : kind === "dotted" ? LineStyle.Dotted
+    : kind === "large-dashed" ? LineStyle.LargeDashed
+    : kind === "sparse-dotted" ? LineStyle.SparseDotted
+    : LineStyle.Solid;
+}
+
+/** TradingView-style chart settings — grid, scales, candle anatomy, crosshair,
+ *  status line and watermark. Persisted per user in TerminalSettings.chartPrefs
+ *  and applied to EVERY chart in the workspace in place (no rebuild). */
+export interface ChartPrefs {
+  gridVert: boolean;
+  gridHorz: boolean;
+  gridStyle: LineStyleKind;
+  priceScale: boolean;   // right axis
+  timeScale: boolean;    // bottom axis
+  leftScale: boolean;    // mirrored left axis
+  marginTop: number;     // 0..0.5 empty space above the price series
+  marginBottom: number;  // 0..0.5 empty space below
+  candleBorder: boolean; // candle body borders
+  candleWick: boolean;   // high/low wicks
+  volumeOpacity: number; // 0.05..0.9 alpha of the volume overlay bars
+  crossVert: boolean;
+  crossHorz: boolean;
+  crossStyle: LineStyleKind;
+  crossColor: string;
+  crossLabelBg: string;  // axis label pill background
+  legend: boolean;       // OHLC values in the legend bar
+  countdown: boolean;    // bar-close timer
+  watermark: string;     // faint text behind the chart ("" = off)
+}
+
+export const DEFAULT_CHART_PREFS: ChartPrefs = {
+  gridVert: true, gridHorz: true, gridStyle: "solid",
+  priceScale: true, timeScale: true, leftScale: false,
+  marginTop: 0.08, marginBottom: 0.12,
+  candleBorder: true, candleWick: true, volumeOpacity: 0.45,
+  crossVert: true, crossHorz: true, crossStyle: "large-dashed",
+  crossColor: "rgba(154,164,178,0.4)", crossLabelBg: "#1f2937",
+  legend: true, countdown: true, watermark: "",
+};
+
 /** hex/known-color → rgba with alpha (for indicator shade variants). */
 function withAlpha(color: string, alpha: number): string {
   if (color.startsWith("#") && (color.length === 7 || color.length === 4)) {
@@ -114,6 +160,12 @@ interface Props {
   bgImage?: string | null;
   /** dark veil over the photo (0–0.9) so candles stay readable */
   bgDim?: number;
+  /** TradingView-style chart settings — grid/scales/candles/crosshair/status */
+  prefs?: ChartPrefs;
+  /** patch a chart setting from inside the chart (right-click menu) */
+  onPrefsChange?: (patch: Partial<ChartPrefs>) => void;
+  /** right-click menu → "Chart settings…" (TerminalPage opens the dialog) */
+  onOpenSettings?: () => void;
 }
 
 export interface ReplayTradeMarker {
@@ -135,7 +187,7 @@ export function TerminalChart({
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
   tradeMarkers, priceLines, onReplayMenu, priceScaleMode, magnet, screenshotSignal,
-  bgImage, bgDim,
+  bgImage, bgDim, prefs, onPrefsChange, onOpenSettings,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -170,6 +222,9 @@ export function TerminalChart({
   onReplayBarRef.current = onReplayBar;
   const bgImageRef = useRef<string | null>(bgImage ?? null);
   bgImageRef.current = bgImage ?? null;
+  // latest chart settings without re-creating series (read inside callbacks)
+  const prefsRef = useRef<ChartPrefs>(prefs ?? DEFAULT_CHART_PREFS);
+  prefsRef.current = prefs ?? DEFAULT_CHART_PREFS;
   const [dataVersion, setDataVersion] = useState(0);
 
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("connecting");
@@ -179,7 +234,6 @@ export function TerminalChart({
   const [reloadKey, setReloadKey] = useState(0);
   const [legend, setLegend] = useState<{ o: number; h: number; l: number; c: number } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; price: number; time: number } | null>(null);
-  const [gridOn, setGridOn] = useState(true);
 
   const inst = getInstrument(symbol);
 
@@ -335,12 +389,13 @@ export function TerminalChart({
   // ---- theme updates ---------------------------------------------------------
   // Repaints EVERYTHING on theme change: chart bg/grid/text, the price series
   // (candles/bars/line/area/baseline), volume bars, pane charts and overlay
-  // indicator lines — no rebuild needed.
+  // indicator lines — no rebuild needed. Grid VISIBILITY/STYLE live in the
+  // prefs effect below (deep-merged on top of this).
   useEffect(() => {
     const bg = bgImageRef.current ? "transparent" : colors.bg;
     const opts = {
       layout: { background: { type: ColorType.Solid, color: bg }, textColor: colors.text },
-      grid: { vertLines: { color: colors.grid, visible: gridOn }, horzLines: { color: colors.grid, visible: gridOn } },
+      grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
     };
     chartRef.current?.applyOptions(opts as any);
 
@@ -375,7 +430,7 @@ export function TerminalChart({
         .map((b) => ({
           time: b.time as UTCTimestamp,
           value: b.volume!,
-          color: b.close >= b.open ? withAlpha(colors.up, 0.45) : withAlpha(colors.down, 0.45),
+          color: b.close >= b.open ? withAlpha(colors.up, prefsRef.current.volumeOpacity) : withAlpha(colors.down, prefsRef.current.volumeOpacity),
         })));
     } catch { /* series not created yet */ }
 
@@ -392,7 +447,31 @@ export function TerminalChart({
       try { ls.applyOptions({ color: indicatorColor(gi, li) }); } catch { /* gone */ }
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colors, gridOn, chartType, bgImage]);
+  }, [colors, chartType, bgImage]);
+
+  // ---- chart settings (TradingView-style) --------------------------------------
+  // Grid / scales / crosshair from ChartPrefs — applied to the main chart and
+  // every pane chart in place. Colors come from the theme effect above.
+  useEffect(() => {
+    const p = prefsRef.current;
+    const opts = {
+      grid: {
+        vertLines: { visible: p.gridVert, style: lineStyleOf(p.gridStyle) },
+        horzLines: { visible: p.gridHorz, style: lineStyleOf(p.gridStyle) },
+      },
+      crosshair: {
+        vertLine: { visible: p.crossVert, style: lineStyleOf(p.crossStyle), color: p.crossColor, labelBackgroundColor: p.crossLabelBg },
+        horzLine: { visible: p.crossHorz, style: lineStyleOf(p.crossStyle), color: p.crossColor, labelBackgroundColor: p.crossLabelBg },
+      },
+      rightPriceScale: { visible: p.priceScale, scaleMargins: { top: p.marginTop, bottom: p.marginBottom } },
+      leftPriceScale: { visible: p.leftScale },
+      timeScale: { visible: p.timeScale },
+    };
+    try { chartRef.current?.applyOptions(opts as any); } catch { /* gone */ }
+    for (const pc of paneChartsRef.current) {
+      try { pc.chart.applyOptions(opts as any); } catch { /* gone */ }
+    }
+  }, [prefs]);
 
   // ---- tool binding -----------------------------------------------------------
 
@@ -552,7 +631,10 @@ export function TerminalChart({
         s = chart.addCandlestickSeries({
           upColor: "rgba(0,0,0,0)", downColor: colors.down,
           borderUpColor: colors.up, borderDownColor: colors.down,
-          wickUpColor: colors.up, wickDownColor: colors.down, priceFormat,
+          wickUpColor: colors.up, wickDownColor: colors.down,
+          // hollow bodies READ as bodies only while the border is visible —
+          // keep it on regardless of the setting, wick follows the setting
+          borderVisible: true, wickVisible: prefsRef.current.candleWick, priceFormat,
         });
         s.setData(bars.map((b) => ({ time: t(b), open: b.open, high: b.high, low: b.low, close: b.close })));
         break;
@@ -560,7 +642,8 @@ export function TerminalChart({
         s = chart.addCandlestickSeries({
           upColor: colors.up, downColor: colors.down,
           borderUpColor: colors.up, borderDownColor: colors.down,
-          wickUpColor: colors.up, wickDownColor: colors.down, priceFormat,
+          wickUpColor: colors.up, wickDownColor: colors.down,
+          borderVisible: prefsRef.current.candleBorder, wickVisible: prefsRef.current.candleWick, priceFormat,
         });
         s.setData(bars.map((b) => ({ time: t(b), open: b.open, high: b.high, low: b.low, close: b.close })));
     }
@@ -568,10 +651,11 @@ export function TerminalChart({
 
     // volume overlay (bottom band)
     if (showVolume) {
+      const vo = prefsRef.current.volumeOpacity;
       const v = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
       v.setData(bars.filter((b) => b.volume != null).map((b) => ({
         time: t(b), value: b.volume!,
-        color: b.close >= b.open ? withAlpha(colors.up, 0.45) : withAlpha(colors.down, 0.45),
+        color: b.close >= b.open ? withAlpha(colors.up, vo) : withAlpha(colors.down, vo),
       })));
       chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
       volSeriesRef.current = v;
@@ -621,7 +705,7 @@ export function TerminalChart({
       (s as ISeriesApi<"Candlestick">).update({ time: t, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
     }
     if (volSeriesRef.current && bar.volume != null) {
-      volSeriesRef.current.update({ time: t, value: bar.volume, color: bar.close >= bar.open ? withAlpha(colors.up, 0.45) : withAlpha(colors.down, 0.45) });
+      volSeriesRef.current.update({ time: t, value: bar.volume, color: bar.close >= bar.open ? withAlpha(colors.up, prefsRef.current.volumeOpacity) : withAlpha(colors.down, prefsRef.current.volumeOpacity) });
     }
 
     // indicators: recompute and update their last points
@@ -702,10 +786,13 @@ export function TerminalChart({
       const sub = createChart(container, {
         autoSize: true,
         layout: { background: { type: ColorType.Solid, color: bgImageRef.current ? "transparent" : colors.bg }, textColor: colors.text, fontSize: 10, attributionLogo: false },
-        grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
+        grid: {
+          vertLines: { color: colors.grid, visible: prefsRef.current.gridVert, style: lineStyleOf(prefsRef.current.gridStyle) },
+          horzLines: { color: colors.grid, visible: prefsRef.current.gridHorz, style: lineStyleOf(prefsRef.current.gridStyle) },
+        },
         rightPriceScale: { borderColor: "rgba(42,46,54,0.8)" },
         timeScale: { borderColor: "rgba(42,46,54,0.8)", timeVisible: true, secondsVisible: false, visible: true },
-        crosshair: { mode: CrosshairMode.Normal },
+        crosshair: { mode: CrosshairMode.Normal, vertLine: { color: prefsRef.current.crossColor, style: lineStyleOf(prefsRef.current.crossStyle) }, horzLine: { color: prefsRef.current.crossColor, style: lineStyleOf(prefsRef.current.crossStyle) } },
         handleScroll: { mouseWheel: false, pressedMouseMove: false },
         handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: false },
       });
@@ -982,7 +1069,7 @@ export function TerminalChart({
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${feedColor}`} title={feedMsg}>{feedLabel}</span>
         {replaying && <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">REPLAY {new Date(replay!.upToTime * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
         {compareSymbol && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">vs {compareSymbol}</span>}
-        {shown && feedStatus !== "error" && (
+        {prefsRef.current.legend && shown && feedStatus !== "error" && (
           <span className="font-number hidden items-center gap-1.5 sm:flex">
             <span>O <b>{shown.o?.toFixed(d)}</b></span>
             <span>H <b>{shown.h?.toFixed(d)}</b></span>
@@ -999,12 +1086,20 @@ export function TerminalChart({
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="relative min-h-0 flex-1">
           <div ref={mainRef} className="absolute inset-0" />
+          {/* faint watermark text behind the drawing layer ("" = off) */}
+          {prefsRef.current.watermark && (
+            <div className="pointer-events-none absolute inset-0 z-[8] flex items-center justify-center overflow-hidden" aria-hidden>
+              <span className="font-number max-w-full truncate px-4 text-6xl font-black tracking-tight sm:text-8xl" style={{ color: colors.text, opacity: 0.07 }}>{prefsRef.current.watermark}</span>
+            </div>
+          )}
           <canvas ref={overlayCanvasRef} className="pointer-events-none absolute inset-0 z-[9]" />
           <canvas ref={drawCanvasRef} className="absolute inset-0 z-10" style={{ touchAction: "none" }} />
           {/* bar-close countdown (bottom-right, above the time axis) */}
-          <span ref={countdownRef} style={{ display: "none" }}
-            className="pointer-events-none absolute bottom-[34px] right-[74px] z-[12] rounded bg-[#131a24]/90 px-1.5 py-0.5 font-number text-[11px] font-bold text-emerald-400 shadow"
-            title="Time until this candle closes" />
+          {prefsRef.current.countdown && (
+            <span ref={countdownRef} style={{ display: "none" }}
+              className="pointer-events-none absolute bottom-[34px] right-[74px] z-[12] rounded bg-[#131a24]/90 px-1.5 py-0.5 font-number text-[11px] font-bold text-emerald-400 shadow"
+              title="Time until this candle closes" />
+          )}
 
           {/* loading state */}
           {loading && (
@@ -1049,6 +1144,7 @@ export function TerminalChart({
         >
           <MenuItem onClick={resetView}>Reset view</MenuItem>
           <MenuItem onClick={() => { chartRef.current?.timeScale().scrollToRealTime(); setMenu(null); }}>Scroll to real-time</MenuItem>
+          {onOpenSettings && <MenuItem onClick={() => { onOpenSettings(); setMenu(null); }}>Chart settings…</MenuItem>}
           <div className="my-1 h-px bg-border/50" />
           <MenuItem onClick={() => addLineAt("hline", menu.price, menu.time)}>Horizontal line @ {menu.price.toFixed(d)}</MenuItem>
           <MenuItem onClick={() => addLineAt("vline", menu.price, menu.time)}>Vertical line here</MenuItem>
@@ -1058,7 +1154,7 @@ export function TerminalChart({
           {onAnchorVwap && <MenuItem onClick={() => { onAnchorVwap(Number.isFinite(menu.time) ? menu.time : null); setMenu(null); }}>{anchoredVwapTime != null ? "Clear anchored VWAP" : "Anchor VWAP here"}</MenuItem>}
           <div className="my-1 h-px bg-border/50" />
           <MenuItem onClick={() => { engineRef.current?.clearAll(); setMenu(null); }}>Clear drawings</MenuItem>
-          <MenuItem onClick={() => { setGridOn((v) => !v); setMenu(null); }}>{gridOn ? "Hide" : "Show"} grid</MenuItem>
+          <MenuItem onClick={() => { onPrefsChange?.({ gridVert: !prefsRef.current.gridVert, gridHorz: !prefsRef.current.gridHorz }); setMenu(null); }}>{prefsRef.current.gridVert || prefsRef.current.gridHorz ? "Hide grid" : "Show grid"}</MenuItem>
           {onToggleVolume && <MenuItem onClick={() => { onToggleVolume(); setMenu(null); }}>{showVolume ? "Hide" : "Show"} volume</MenuItem>}
           {onRequestFullscreen && <MenuItem onClick={() => { onRequestFullscreen(); setMenu(null); }}>Fullscreen</MenuItem>}
         </div>

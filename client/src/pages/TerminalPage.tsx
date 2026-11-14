@@ -17,6 +17,7 @@ import {
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
   Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal,
   PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check, Plus, X,
+  Settings2,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -31,6 +32,7 @@ import { CalendarPanel } from "@/components/terminal/CalendarPanel";
 import { AlertsPanel, useTerminalAlerts } from "@/components/terminal/AlertsPanel";
 import { RiskCalculator } from "@/components/terminal/RiskCalculator";
 import { IndicatorDialog } from "@/components/terminal/IndicatorDialog";
+import { ChartSettingsDialog } from "@/components/terminal/ChartSettingsDialog";
 import { ToolDrawer } from "@/components/terminal/ToolDrawer";
 import { ToolsDialog, type ToolId } from "@/components/terminal/ToolsDialog";
 import { useReplaySession } from "@/hooks/use-replay";
@@ -161,6 +163,7 @@ export default function TerminalPage() {
   // showing the horizontal-line icon
   const [lastTool, setLastTool] = useState<Partial<Record<string, DrawingTool>>>({});
   const [indDialog, setIndDialog] = useState(false);
+  const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>("trade");
   const [mobilePanel, setMobilePanel] = useState(false);
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -417,6 +420,9 @@ export default function TerminalPage() {
       indicators={settings.indicators}
       showVolume={settings.showVolume}
       colors={settings.colors}
+      prefs={settings.chartPrefs}
+      onPrefsChange={(patch) => update({ chartPrefs: { ...settings.chartPrefs, ...patch } })}
+      onOpenSettings={() => setChartSettingsOpen(true)}
       drawings={drawingsHidden ? [] : drawings}
       onDrawingsChange={save}
       activeTool={activeTool}
@@ -600,6 +606,14 @@ export default function TerminalPage() {
         ><Magnet className="h-3.5 w-3.5" /></button>
         <button onClick={() => setScreenshotSignal((n) => n + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground" title="Export chart image (PNG)">
           <Camera className="h-3.5 w-3.5" />
+        </button>
+        {/* TradingView-style chart settings — grid, scales, candles, crosshair… */}
+        <button
+          onClick={() => setChartSettingsOpen(true)}
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground"
+          title="Chart settings — grid, scales, candles, crosshair, status line"
+        >
+          <Settings2 className="h-3.5 w-3.5" />
         </button>
         <div className="relative">
           <button
@@ -1016,6 +1030,12 @@ export default function TerminalPage() {
       </div>
 
       <IndicatorDialog open={indDialog} onOpenChange={setIndDialog} active={settings.indicators} onChange={(list: ActiveIndicator[]) => update({ indicators: list })} />
+      <ChartSettingsDialog
+        open={chartSettingsOpen}
+        onOpenChange={setChartSettingsOpen}
+        prefs={settings.chartPrefs}
+        onChange={(patch) => update({ chartPrefs: { ...settings.chartPrefs, ...patch } })}
+      />
       <ToolsDialog open={toolsOpen} onOpenChange={setToolsOpen} onLaunch={launchTool} />
       <ReplayJournalDialog draft={journalDraft} onClose={() => setJournalDraft(null)} />
     </div>

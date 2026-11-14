@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { ref, get, set } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "./use-auth";
-import { DEFAULT_COLORS, type ChartColors } from "@/components/terminal/TerminalChart";
+import { DEFAULT_COLORS, type ChartColors, DEFAULT_CHART_PREFS, type ChartPrefs } from "@/components/terminal/TerminalChart";
 import type { ActiveIndicator } from "@/components/terminal/TerminalChart";
 import type { ChartType, Timeframe } from "@shared/terminal";
 import type { DrawingTool } from "@/lib/terminal/drawings";
@@ -23,6 +23,9 @@ export interface TerminalSettings {
   showVolume: boolean;
   sound: boolean;
   colors: ChartColors;
+  /** TradingView-style chart settings — grid, scales, candle anatomy,
+   *  crosshair, status line, watermark (applied to every chart slot) */
+  chartPrefs: ChartPrefs;
   defaultRiskPct: number;
   /** right price scale mode — TradingView-style log / percent toggles */
   priceScale: "normal" | "log" | "percent";
@@ -43,6 +46,7 @@ export const DEFAULT_SETTINGS: TerminalSettings = {
   showVolume: true,
   sound: true,
   colors: DEFAULT_COLORS,
+  chartPrefs: DEFAULT_CHART_PREFS,
   defaultRiskPct: 1,
   priceScale: "normal",
   magnet: false,
@@ -60,6 +64,7 @@ export function useTerminalWorkspace() {
       return {
         ...DEFAULT_SETTINGS, ...raw,
         colors: { ...DEFAULT_SETTINGS.colors, ...(raw.colors || {}) },
+        chartPrefs: { ...DEFAULT_CHART_PREFS, ...(raw.chartPrefs || {}) },
         indicators: Array.isArray(raw.indicators) ? raw.indicators : DEFAULT_SETTINGS.indicators,
       };
     } catch { return DEFAULT_SETTINGS; }
@@ -83,6 +88,7 @@ export function useTerminalWorkspace() {
             return {
               ...s, ...saved,
               colors: { ...s.colors, ...(saved.colors || {}) },
+              chartPrefs: { ...s.chartPrefs, ...(saved.chartPrefs || {}) },
               indicators: Array.isArray(saved.indicators) ? saved.indicators : s.indicators,
             };
           });
