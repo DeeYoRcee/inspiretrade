@@ -161,25 +161,6 @@ async function scStream(scNumericId: string): Promise<string | null> {
   return null;
 }
 
-/** temporary diagnostics for the SoundCloud resolver (deployed once, then removed) */
-export async function scDebug(scNumericId: string) {
-  const id = await soundcloudClientId();
-  const r = await fetch(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, { headers: { "user-agent": UA } });
-  const text = await r.text();
-  let j: any = null;
-  try { j = JSON.parse(text); } catch { /* not JSON */ }
-  const tr = (j?.media?.transcodings ?? []) as any[];
-  return {
-    clientId: id ? `${id.slice(0, 6)}…(${id.length})` : null,
-    status: r.status,
-    contentType: r.headers.get("content-type"),
-    bodyHead: text.slice(0, 120),
-    gotTrack: !!j,
-    policy: j?.policy ?? null,
-    transcodings: tr.map((x) => x?.format?.protocol),
-  };
-}
-
 export async function musicSearch(q: string): Promise<MusicItem[]> {
   const piped = PIPED_HOSTS.map(async (h) => {
     const j = await jget(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`);
