@@ -1,24 +1,25 @@
 /**
- * MusicPlayer — site-wide floating music widget. REBUILT v3: the previous
- * stack (Piped/Invidious proxied streams) is DEAD — every open host now
- * returns zero audio streams, which is why songs silently refused to play.
+ * MusicPlayer — site-wide floating music widget. v4.
  *
- * The new stack plays on the FIRST try, for any song, with zero proxying:
- *   1. iTunes Search API  — the full MAINSTREAM catalog (every famous
- *      artist), CORS-open, no key, no login. Direct Apple CDN audio URLs
- *      that always answer. Plays short previews (the only thing Apple's
- *      public API gives).
- *   2. Audius             — free FULL-LENGTH tracks, appended after the
- *      mainstream hits so longer versions are one click away.
+ * Ground truth from live probing (2026): every YouTube full-track path is
+ * closed off — Piped/Invidious proxies are dead and YouTube's own InnerTube
+ * player API is PO-token/SABR-gated on ALL clients (10 tried server-side).
+ * Apple's public catalog only carries 30s previews. So the player maximizes
+ * what actually WORKS, with zero autoplay and zero jargon:
  *
- * Everything is a plain direct <audio> URL — nothing can "embed-block" it,
- * no host rotation, no watchdogs. One code path: src → play.
+ *   1. Audius (free, decentralized) — FULL-LENGTH tracks, direct stream
+ *      URLs, CORS-open. Listed FIRST: whatever the query finds playable in
+ *      full comes on top (official artists + remixes/covers).
+ *   2. iTunes catalog — the full MAINSTREAM index (every famous artist).
+ *      Public API only exposes ~30s previews; those rows show 0:30 and are
+ *      listed after the full-length ones. Always playable (Apple CDN).
  *
- * The panel is fully theme-aware (bg-card / border / muted tokens) — light
- * and dark themes both style it correctly.
+ * NO AUTO-PLAY: search fills the list only — the user taps the song they
+ * want. If a tapped full track fails to load, the player silently retries
+ * with the same song's 30s preview rather than staying silent.
  *
- * Sizes, persisted in localStorage:
- *   bar  — full player (~320px)   mini — strip (~210px)   dot — 36px button
+ * The panel is fully theme-aware (bg-card / border / muted tokens).
+ * Sizes, persisted in localStorage: bar / mini / dot.
  */
 import { useEffect, useRef, useState } from "react";
 import {
@@ -32,7 +33,7 @@ interface Track {
   title: string;
   artist: string;
   art: string;
-  /** direct, always-playable audio URL (Apple CDN / Audius node) */
+  /** direct, always-playable audio URL */
   url: string;
   duration: number;
 }
@@ -75,33 +76,6 @@ const fmt = (sec: number) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-/** Mainstream world catalog — iTunes Search API (CORS-open, no key). */
-async function itunesSearch(q: string): Promise<Track[]> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(
-      `https://itunes.apple.com/search?media=music&limit=30&term=${encodeURIComponent(q)}`,
-      { signal: controller.signal },
-    );
-    clearTimeout(timer);
-    if (!res.ok) return [];
-    const json = await res.json();
-    return (json?.results ?? [])
-      .filter((r: any) => r?.previewUrl && r?.trackName)
-      .map((r: any) => ({
-        id: `i_${r.trackId}`,
-        title: String(r.trackName),
-        artist: String(r.artistName ?? "Unknown artist"),
-        art: String(r.artworkUrl100 ?? "").replace("100x100", "300x300"),
-        url: String(r.previewUrl),
-        duration: 30, // Apple previews are ~30s — honest value for the row
-      }));
-  } catch {
-    return [];
-  }
-}
-
 /** Full-length free tracks from Audius (public discovery nodes, CORS: *). */
 async function audiusSearch(q: string): Promise<Track[]> {
   const hosts = [
@@ -136,6 +110,33 @@ async function audiusSearch(q: string): Promise<Track[]> {
   return [];
 }
 
+/** Mainstream catalog index — iTunes Search API (CORS-open, no key). */
+async function itunesSearch(q: string): Promise<Track[]> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(
+      `https://itunes.apple.com/search?media=music&limit=30&term=${encodeURIComponent(q)}`,
+      { signal: controller.signal },
+    );
+    clearTimeout(timer);
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json?.results ?? [])
+      .filter((r: any) => r?.previewUrl && r?.trackName)
+      .map((r: any) => ({
+        id: `i_${r.trackId}`,
+        title: String(r.trackName),
+        artist: String(r.artistName ?? "Unknown artist"),
+        art: String(r.artworkUrl100 ?? "").replace("100x100", "300x300"),
+        url: String(r.previewUrl),
+        duration: 30, // Apple previews are ~30s — honest value for the row
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function MusicPlayer() {
   const [prefs, setPrefs] = useState<Persisted>(loadPrefs);
   const [term, setTerm] = useState("");
@@ -163,6 +164,8 @@ export function MusicPlayer() {
   const shuffleRef = useRef<boolean>(shuffle);
   // consecutive load failures — stop the auto-skip chain after too many
   const failRef = useRef(0);
+  // track ids already retried as a 30s preview (avoid loops)
+  const previewTriedRef = useRef<Set<string>>(new Set());
   queueRef.current = queue;
   idxRef.current = idx;
   repeatRef.current = repeat;
@@ -217,8 +220,7 @@ export function MusicPlayer() {
   }, []);
 
   // keep the widget reachable: clamp the saved position into the viewport on
-  // load and on every window resize (a spot saved on a bigger screen could
-  // otherwise end up outside a smaller one)
+  // load and on every window resize
   useEffect(() => {
     const clamp = () => {
       setPrefs((p) => {
@@ -248,6 +250,20 @@ export function MusicPlayer() {
     const j = from + 1;
     if (j >= q.length) return repeatRef.current !== "off" ? 0 : -1;
     return j;
+  };
+
+  /** 30s-preview rescue for a track whose full version failed to load */
+  const playPreviewFor = async (t: Track): Promise<boolean> => {
+    if (previewTriedRef.current.has(t.id)) return false;
+    previewTriedRef.current.add(t.id);
+    const hits = await itunesSearch(`${t.title} ${t.artist}`.slice(0, 90));
+    const hit = hits[0];
+    const el = audioRef.current;
+    if (!hit?.url || !el) return false;
+    el.src = hit.url;
+    el.play().catch(() => setPlaying(false));
+    setNote("Full version didn't load — playing a short preview");
+    return true;
   };
 
   const playIndex = (i: number, list?: Track[]) => {
@@ -286,16 +302,23 @@ export function MusicPlayer() {
       else setPlaying(false);
     };
     const onError = () => {
-      const i = nextIndex(idxRef.current, false);
-      if (i >= 0 && i !== idxRef.current && failRef.current < 5) {
-        failRef.current += 1;
-        setNote("That one didn't load — skipped to the next song");
-        playIndex(i);
-      } else {
-        setPlaying(false);
-        setLoading(false);
-        setNote("Couldn't load that song — try another one");
-      }
+      const t = queueRef.current[idxRef.current];
+      if (!t) return;
+      // first line of defense: the same song as a short preview (async,
+      // fire-and-forget — the audio element may keep firing events meanwhile)
+      void playPreviewFor(t).then((ok) => {
+        if (ok) return;
+        const i = nextIndex(idxRef.current, false);
+        if (i >= 0 && i !== idxRef.current && failRef.current < 3) {
+          failRef.current += 1;
+          setNote("That one didn't load — skipped to the next song");
+          playIndex(i);
+        } else {
+          setPlaying(false);
+          setLoading(false);
+          setNote("Couldn't load that song — try another one");
+        }
+      });
     };
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("loadedmetadata", onMeta);
@@ -331,12 +354,24 @@ export function MusicPlayer() {
     setSearching(true);
     setNote(null);
     failRef.current = 0;
+    previewTriedRef.current = new Set();
     try {
-      // BOTH catalogs at once: mainstream hits (short, guaranteed) first,
-      // full-length free tracks right after — deduped by title+artist
-      const [it, au] = await Promise.all([itunesSearch(q), audiusSearch(q)]);
+      // full-length catalog first, mainstream previews after — one list,
+      // durations tell them apart; NO autoplay (the user picks the song)
+      let au = await audiusSearch(q);
+      if (au.length < 3) {
+        // broader second look for remix/cover coverage
+        const short = q.split(/\s+/).slice(0, 3).join(" ");
+        if (short && short !== q) {
+          const extra = await audiusSearch(short);
+          au = [...au, ...extra.filter((x) => !au.some((y) => y.id === x.id))];
+        }
+      }
+      // mainstream index ALWAYS included so the exact song is in the list
+      // (0:30 preview rows); full-length Audius matches sit on top
+      const it = await itunesSearch(q);
       const seen = new Set<string>();
-      const list = [...it, ...au].filter((t) => {
+      const list = [...au, ...it].filter((t) => {
         const k = `${t.title}|${t.artist}`.toLowerCase();
         if (seen.has(k)) return false;
         seen.add(k);
@@ -345,7 +380,8 @@ export function MusicPlayer() {
       if (list.length) {
         setQueue(list);
         setIdx(-1);
-        playIndex(0, list);
+        setPlaying(false);
+        try { audioRef.current?.pause(); } catch { /* ignore */ }
       } else {
         setNote("Nothing found — try another spelling");
       }
@@ -585,8 +621,8 @@ export function MusicPlayer() {
                 )}
                 {!searching && !queue.length && !note && (
                   <div className="py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
-                    Type a song name and press Enter —<br />
-                    it plays right here, instantly.
+                    Type a song name and press Enter,<br />
+                    then tap the song you want.
                   </div>
                 )}
                 {queue.map(trackRow)}
