@@ -144,8 +144,10 @@ export default function TerminalPage() {
   const { account, positions } = useTerminalTrading();
 
   const [activeTool, setActiveTool] = useState<DrawingTool>("cursor");
-  // which drawing-tool GROUP's flyout menu is open (TradingView-style)
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  // open tool-group flyout: viewport coords of the anchor button (fixed
+  // positioning — MUST be outside the overflow-clipped toolbar container so
+  // the menu always appears to the RIGHT of the group, never clipped)
+  const [flyout, setFlyout] = useState<{ label: string; top: number; left: number } | null>(null);
   // last-picked tool PER GROUP — becomes that group button's icon, exactly
   // like TradingView: pick "Horizontal line" once and the LINES button keeps
   // showing the horizontal-line icon
@@ -734,51 +736,43 @@ export default function TerminalPage() {
           </button>
         )}
         {/* click-away layer for the open tool-group flyout */}
-        {openGroup && <div className="fixed inset-0 z-40" onMouseDown={() => setOpenGroup(null)} />}
+        {flyout && <div className="fixed inset-0 z-40" onMouseDown={() => setFlyout(null)} />}
         {/* drawing toolbar — compact GROUP buttons, floats INSIDE the chart
-            area (TradingView-style); clicking a group opens a flyout menu
-            with that group's tools listed by name, like TradingView's */}
+            area (TradingView-style); the corner arrow opens that group's
+            tool list to the RIGHT of the button */}
         <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
           {TOOL_GROUPS.map((g) => {
             const active = g.tools.some((t) => t.id === activeTool);
             // the group's FACE is whatever the user last picked in this group
             const current = g.tools.find((t) => t.id === lastTool[g.label]) ?? g.tools[0];
             const GIcon = current.icon;
-            const open = openGroup === g.label;
+            const open = flyout?.label === g.label;
             return (
               <div key={g.label} className="relative w-full">
                 {/* main part of the button — selects the group's current tool */}
                 <button
-                  onClick={() => { setActiveTool(current.id); setOpenGroup(null); }}
+                  onClick={() => { setActiveTool(current.id); setFlyout(null); }}
                   className={cn("mx-auto flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", active || open ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
                   title={`${current.title} — click to select`}
                 >
                   <GIcon className="h-3.5 w-3.5" />
                 </button>
-                {/* tiny corner button — opens THIS group's tool list */}
+                {/* corner arrow — opens THIS group's tool list to the right */}
                 <button
-                  onClick={() => setOpenGroup(open ? null : g.label)}
-                  className={cn("absolute bottom-0 right-0.5 flex h-2.5 w-3 items-center justify-center rounded-sm transition-colors", open ? "bg-emerald-500/40 text-emerald-300" : "bg-white/10 text-muted-foreground/80 hover:bg-white/20 hover:text-foreground")}
+                  onClick={(e) => {
+                    if (open) { setFlyout(null); return; }
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setFlyout({
+                      label: g.label,
+                      top: Math.max(8, Math.min(r.top, window.innerHeight - 320)),
+                      left: r.right + 6,
+                    });
+                  }}
+                  className={cn("absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded transition-colors", open ? "bg-emerald-500/40 text-emerald-300" : "bg-white/10 text-muted-foreground hover:bg-white/25 hover:text-foreground")}
                   title={`${g.label} tools — open the list`}
                 >
-                  <ChevronDown className="h-1.5 w-1.5" />
+                  <ChevronDown className="h-2.5 w-2.5" />
                 </button>
-                {open && (
-                  <div className="absolute left-9 top-0 z-50 w-44 rounded-xl border border-white/10 bg-[#0d1117]/95 p-1 shadow-2xl backdrop-blur">
-                    <div className={cn("select-none px-2 py-1 text-[8px] font-bold uppercase tracking-widest", g.accent ? "text-amber-400/80" : "text-muted-foreground/70")}>{g.label}</div>
-                    {g.tools.map(({ id, icon: Icon, title }) => (
-                      <button
-                        key={id}
-                        onClick={() => { setActiveTool(id); setLastTool((p) => ({ ...p, [g.label]: id })); setOpenGroup(null); }}
-                        className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-white/5", activeTool === id ? "text-emerald-400" : "text-muted-foreground")}
-                      >
-                        <Icon className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{title}</span>
-                        {activeTool === id && <Check className="ml-auto h-3 w-3 shrink-0" />}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -794,6 +788,32 @@ export default function TerminalPage() {
             {[1, 2, 3, 4].map((w) => <option key={w} value={w}>{w}</option>)}
           </select>
         </div>
+
+        {/* the flyout itself — FIXED to the viewport at the anchor button's
+            right side, OUTSIDE the clipped toolbar container */}
+        {flyout && (() => {
+          const g = TOOL_GROUPS.find((x) => x.label === flyout.label);
+          if (!g) return null;
+          return (
+            <div
+              className="fixed z-50 max-h-[70vh] w-44 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/95 p-1 shadow-2xl backdrop-blur"
+              style={{ left: flyout.left, top: flyout.top }}
+            >
+              <div className={cn("select-none px-2 py-1 text-[8px] font-bold uppercase tracking-widest", g.accent ? "text-amber-400/80" : "text-muted-foreground/70")}>{g.label}</div>
+              {g.tools.map(({ id, icon: Icon, title }) => (
+                <button
+                  key={id}
+                  onClick={() => { setActiveTool(id); setLastTool((p) => ({ ...p, [g.label]: id })); setFlyout(null); }}
+                  className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-white/5", activeTool === id ? "text-emerald-400" : "text-muted-foreground")}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{title}</span>
+                  {activeTool === id && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* charts (desktop) — flex-col so the grid gets a DEFINITE height. */}
         <div className="hidden min-h-0 min-w-0 flex-1 md:flex md:flex-col">{chartGrid}</div>

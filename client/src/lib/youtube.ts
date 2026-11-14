@@ -92,12 +92,15 @@ export async function ytSearch(q: string): Promise<YtTrack[]> {
 /**
  * THE GUARANTEED PLAYBACK PATH — proxied AUDIO stream for a video via the
  * open Piped `streams` endpoint. This bypasses YouTube's embed-blocking
- * entirely (UMG-blocked songs included): the browser plays the audio bytes
- * directly, no iframe, no embed permission needed. Returns the
- * highest-bitrate audio URL or null when every host fails.
+ * entirely: the browser plays the audio bytes directly, no iframe, no embed
+ * permission needed. Returns the highest-bitrate audio URL or null when
+ * every host fails. `attempt` rotates the host order — when a stream breaks
+ * mid-song the player retries the SAME video on the next host.
  */
-export async function ytAudioStream(videoId: string): Promise<{ url: string; duration: number } | null> {
-  for (const base of PIPED_HOSTS) {
+export async function ytAudioStream(videoId: string, attempt = 0): Promise<{ url: string; duration: number } | null> {
+  const off = ((attempt % PIPED_HOSTS.length) + PIPED_HOSTS.length) % PIPED_HOSTS.length;
+  const hosts = [...PIPED_HOSTS.slice(off), ...PIPED_HOSTS.slice(0, off)];
+  for (const base of hosts) {
     const j = await fetchJson(`${base}/streams/${encodeURIComponent(videoId)}`, 8000);
     const best = (j?.audioStreams ?? [])
       .filter((s: any) => s && typeof s.url === "string")
