@@ -16,7 +16,7 @@ import {
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
   Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal,
-  PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check,
+  PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check, Plus, X,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -147,6 +147,12 @@ export default function TerminalPage() {
   // positioning — MUST be outside the overflow-clipped toolbar container so
   // the menu always appears to the RIGHT of the group, never clipped)
   const [flyout, setFlyout] = useState<{ label: string; top: number; left: number } | null>(null);
+  // selected drawing (broadcast by the chart engines via the bus) — powers
+  // the floating object toolbar: shrink/grow, label text, delete
+  const [drawSel, setDrawSel] = useState<{ id: string; tool: string; text: string; width: number } | null>(null);
+  useEffect(() => drawingsBus.subscribe(({ cmd, arg }) => {
+    if (cmd === "sel") setDrawSel((arg as { info?: { id: string; tool: string; text: string; width: number } | null })?.info ?? null);
+  }), []);
   // last-picked tool PER GROUP — becomes that group button's icon, exactly
   // like TradingView: pick "Horizontal line" once and the LINES button keeps
   // showing the horizontal-line icon
@@ -773,6 +779,32 @@ export default function TerminalPage() {
         )}
         {/* click-away layer for the open tool-group flyout */}
         {flyout && <div className="fixed inset-0 z-40" onMouseDown={() => setFlyout(null)} />}
+        {/* floating object toolbar — a drawing was clicked on the chart:
+            shrink / grow, label text, delete (locked shapes ignore edits) */}
+        {drawSel && (
+          <div className="absolute bottom-3 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-1 rounded-xl border border-emerald-500/40 bg-[#0d1117]/95 px-2 py-1.5 shadow-2xl backdrop-blur">
+            <span className="px-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400">{drawSel.tool}</span>
+            <span className="mx-0.5 h-4 w-px bg-white/10" />
+            <button onClick={() => drawingsBus.emit({ cmd: "shrink" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make smaller"><Minus className="h-3.5 w-3.5" /></button>
+            <span className="num-input w-8 text-center text-[11px] font-bold">{Math.round(drawSel.width * 10) / 10}</span>
+            <button onClick={() => drawingsBus.emit({ cmd: "grow" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make bigger"><Plus className="h-3.5 w-3.5" /></button>
+            <span className="mx-0.5 h-4 w-px bg-white/10" />
+            <button
+              onClick={() => {
+                const t = window.prompt("Label text (empty = remove):", drawSel.text);
+                if (t != null) drawingsBus.emit({ cmd: "label", arg: { text: t } });
+              }}
+              className={cn("flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-semibold", drawSel.text ? "text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
+              title="Add / edit the label written on this drawing"
+            >
+              <Type className="h-3.5 w-3.5" />Text
+            </button>
+            <span className="mx-0.5 h-4 w-px bg-white/10" />
+            <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-red-400" title="Delete this drawing"><Trash2 className="h-3.5 w-3.5" /></button>
+            <span className="mx-0.5 h-4 w-px bg-white/10" />
+            <button onClick={() => setDrawSel(null)} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Close — click an empty chart spot to deselect too"><X className="h-3.5 w-3.5" /></button>
+          </div>
+        )}
         {/* drawing toolbar — compact GROUP buttons, floats INSIDE the chart
             area (TradingView-style); the corner arrow opens that group's
             tool list to the RIGHT of the button */}

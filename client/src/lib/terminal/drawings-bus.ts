@@ -2,12 +2,17 @@
  * Tiny command bus for drawing-tool actions. The toolbar lives in
  * TerminalPage; DrawingEngine instances live inside each TerminalChart.
  * Commands broadcast to every mounted chart engine (layouts share drawings).
+ *
+ * "grow" / "shrink" / "label" — act on the SELECTED drawing (floating object
+ * toolbar). "sel" is an EVENT fired by the engines: arg = { info: SelInfo | null }
  */
 import type { DrawingStyle } from "./drawings";
 
-export type DrawingsCommand = "undo" | "redo" | "lock" | "hide" | "delete" | "style";
+export type DrawingsCommand =
+  | "undo" | "redo" | "lock" | "hide" | "delete" | "style"
+  | "grow" | "shrink" | "label" | "sel";
 
-interface BusMessage { cmd: DrawingsCommand; arg?: Partial<DrawingStyle> }
+interface BusMessage { cmd: DrawingsCommand; arg?: any }
 
 type Handler = (m: BusMessage) => void;
 

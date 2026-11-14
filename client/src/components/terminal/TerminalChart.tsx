@@ -274,6 +274,8 @@ export function TerminalChart({
       );
       engineRef.current = engine;
       engine.onToolDone = () => onToolDoneRef.current?.();
+      // selection changes broadcast on the bus → TerminalPage floating toolbar
+      engine.onSelection = (info) => drawingsBus.emit({ cmd: "sel", arg: { info } });
       engine.load(drawings);
       lastEmittedRef.current = JSON.stringify(drawings ?? []);
     }
@@ -288,6 +290,9 @@ export function TerminalChart({
       else if (cmd === "hide") e.toggleHideSelected();
       else if (cmd === "delete") e.deleteSelected();
       else if (cmd === "style") e.setStyle(arg ?? {});
+      else if (cmd === "grow") e.resizeSelected(1.4);
+      else if (cmd === "shrink") e.resizeSelected(1 / 1.4);
+      else if (cmd === "label") e.setTextSelected((arg as { text?: string })?.text ?? "");
     });
 
     // analysis overlay renderer (session boxes / prev levels / volume profile)

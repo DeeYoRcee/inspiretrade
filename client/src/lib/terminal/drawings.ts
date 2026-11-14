@@ -29,6 +29,9 @@ export interface Drawing {
 
 export interface DrawingStyle { color: string; width: number; }
 
+/** selection snapshot for the floating object toolbar in TerminalPage */
+export interface SelInfo { id: string; tool: string; text: string; width: number; locked: boolean; hidden: boolean }
+
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 const FIB_EXT_LEVELS = [0, 0.618, 1, 1.618, 2.618];
 const SELECT_RADIUS = 8;
@@ -50,6 +53,41 @@ export class DrawingEngine {
   syncTime: number | null = null;
   /** fired when a tool finishes its drawing (host resets the toolbar highlight) */
   onToolDone: (tool: DrawingTool) => void = () => {};
+
+  /** fired whenever the selection changes (null = nothing selected) */
+  onSelection: (info: SelInfo | null) => void = () => {};
+
+  getSelected(): SelInfo | null {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d) return null;
+    return { id: d.id, tool: d.tool, text: d.text ?? "", width: d.width, locked: !!d.locked, hidden: !!d.hidden };
+  }
+
+  private fireSel() {
+    try { this.onSelection(this.getSelected()); } catch { /* host must not break drawing */ }
+  }
+
+  /** scale the selected drawing's stroke size (floating toolbar − / +) */
+  resizeSelected(factor: number) {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d || d.locked) return;
+    d.width = Math.min(10, Math.max(1, Math.round(d.width * factor * 10) / 10));
+    this.pushUndo();
+    this.onChange();
+    this.render();
+    this.fireSel();
+  }
+
+  /** set / clear the text label of the selected drawing */
+  setTextSelected(text: string) {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d || d.locked) return;
+    d.text = text || undefined;
+    this.pushUndo();
+    this.onChange();
+    this.render();
+    this.fireSel();
+  }
 
   /** in-progress drawing points (chart coords) */
   private pending: DrawingPoint[] = [];
@@ -190,6 +228,7 @@ export class DrawingEngine {
     this.pushUndo();
     this.drawings = this.drawings.filter((x) => x.id !== this.selectedId);
     this.selectedId = null;
+    this.fireSel();
     this.onChange();
     this.render();
   }
@@ -229,6 +268,7 @@ export class DrawingEngine {
     this.redoStack.push(JSON.stringify(this.drawings));
     this.drawings = JSON.parse(this.undoStack.pop()!);
     this.selectedId = null;
+    this.fireSel();
     this.onChange();
     this.render();
   }
@@ -237,6 +277,7 @@ export class DrawingEngine {
     this.undoStack.push(JSON.stringify(this.drawings));
     this.drawings = JSON.parse(this.redoStack.pop()!);
     this.selectedId = null;
+    this.fireSel();
     this.onChange();
     this.render();
   }
@@ -263,6 +304,7 @@ export class DrawingEngine {
     if (this.tool === "cursor") {
       const hit = this.hitTest(x, y);
       this.selectedId = hit?.id ?? null;
+      this.fireSel();
       if (hit && !hit.d.locked) {
         this.dragging = { id: hit.id, startX: x, startY: y, orig: JSON.parse(JSON.stringify(hit.d.points)) };
       }
@@ -481,6 +523,21 @@ export class DrawingEngine {
       const P = pts as { x: number; y: number }[];
       const n = d.tool === "brush" ? Infinity : this.neededPoints(d.tool as Exclude<DrawingTool, "cursor">);
       const complete = d.points.length >= (n === Infinity ? 2 : n);
+
+      // user label on any shape ("Text" in the floating object toolbar) —
+      // drawn at the shape's midpoint, pill background for readability
+      if (d.text && d.tool !== "text" && d.tool !== "fib" && d.tool !== "fibext") {
+        const anchor = P.length >= 2 && d.tool !== "hline" && d.tool !== "vline"
+          ? { x: (P[0].x + P[1].x) / 2, y: (P[0].y + P[1].y) / 2 }
+          : P[0];
+        if (anchor && anchor.x != null) {
+          const tw = this.ctx.measureText(d.text).width;
+          this.ctx.fillStyle = "rgba(13,17,23,0.85)";
+          this.ctx.fillRect(anchor.x + 8, anchor.y - 20, tw + 12, 17);
+          this.ctx.fillStyle = col;
+          this.ctx.fillText(d.text, anchor.x + 14, anchor.y - 7);
+        }
+      }
 
       switch (d.tool) {
         case "trendline": case "arrow": {

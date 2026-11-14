@@ -24,7 +24,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Music, Play, Pause, SkipBack, SkipForward, Search, X, Volume2,
-  ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic,
+  ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -50,7 +50,10 @@ interface Persisted {
   pos: { x: number; y: number } | null;
 }
 
-const STORE_KEY = "inspire_music";
+// v2: the v1 key carried a saved position that could hide the widget (under
+// the navbar / offscreen) — bumping the key resets EVERYONE to the default,
+// always-visible spot. Only bump again if positions must be cleared.
+const STORE_KEY = "inspire_music_v2";
 
 function loadPrefs(): Persisted {
   try {
@@ -588,6 +591,16 @@ export function MusicPlayer() {
               <button onClick={() => snapV("bottom")} className="shrink-0 text-muted-foreground hover:text-foreground" title="Pin to bottom">
                 <ChevronDown className="h-3.5 w-3.5" />
               </button>
+              {/* escape hatch: forget the dragged position, back to the default corner */}
+              {wide && (
+                <button
+                  onClick={() => setPrefs((p) => ({ ...p, pos: null }))}
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  title="Reset position — back to the default corner"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </button>
+              )}
               <button onClick={() => setView(wide ? "mini" : "bar")} className="shrink-0 text-muted-foreground hover:text-foreground" title={wide ? "Minimize" : "Expand"}>
                 {wide ? <ChevronDown className="h-4 w-4" /> : <Search className="h-4 w-4" />}
               </button>
