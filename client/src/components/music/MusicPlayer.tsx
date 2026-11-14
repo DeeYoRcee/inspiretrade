@@ -66,6 +66,12 @@ interface Persisted {
 // the navbar / offscreen) — bumping the key resets EVERYONE to the default,
 // always-visible spot. Only bump again if positions must be cleared.
 const STORE_KEY = "inspire_music_v2";
+// 64px sticky navbar + 8px gap — the widget may NEVER sit inside the navbar
+// band: there it looks invisible (behind the bar) and cannot be grabbed
+// anymore (reported: dragged "above the dashboard" → lost until storage
+// cleared). Enforced while dragging AND on every load, so any old saved
+// position that slipped past the old y≥8 clamp heals itself to 72.
+const SAFE_TOP = 72;
 // favorited tracks — [{id,title,artist,art,url,duration,hint}]
 const FAVS_KEY = "inspire_music_favs";
 
@@ -352,7 +358,9 @@ export function MusicPlayer() {
       if (!d.moved && Math.abs(dx) + Math.abs(dy) > 6) d.moved = true;
       if (!d.moved) return;
       const x = Math.min(window.innerWidth - d.w - 4, Math.max(4, d.ox + dx));
-      const y = Math.min(window.innerHeight - d.h - 4, Math.max(8, d.oy + dy));
+      // SAFE_TOP floor: the widget stops flush under the navbar — dragging it
+      // "above the dashboard" can no longer park it somewhere unreachable
+      const y = Math.min(window.innerHeight - d.h - 4, Math.max(SAFE_TOP, d.oy + dy));
       // 8px grid snap — the widget moves in precise steps, never drifts
       let sx = Math.round(x / 8) * 8;
       const sy = Math.round(y / 8) * 8;
@@ -383,7 +391,9 @@ export function MusicPlayer() {
   // keep the widget reachable: clamp the saved position into the viewport on
   // load, on every resize/orientation change, after view switches AND when
   // the song list opens/closes (the panel height changes) — using the
-  // panel's REAL size, so a wide bar can never stick out of the screen
+  // panel's REAL size, so a wide bar can never stick out of the screen. The
+  // SAFE_TOP floor also AUTO-HEALS positions saved before the navbar-band
+  // existed: after a restart the widget reappears in a reachable spot.
   useEffect(() => {
     const clamp = () => {
       const el = document.querySelector("[data-music-panel]") as HTMLElement | null;
@@ -392,7 +402,7 @@ export function MusicPlayer() {
       setPrefs((p) => {
         if (!p.pos) return p;
         const x = Math.min(window.innerWidth - w - 4, Math.max(4, p.pos.x));
-        const y = Math.min(window.innerHeight - h - 8, Math.max(8, p.pos.y));
+        const y = Math.min(window.innerHeight - h - 8, Math.max(SAFE_TOP, p.pos.y));
         return x === p.pos.x && y === p.pos.y ? p : { ...p, pos: { x, y } };
       });
     };
@@ -661,7 +671,7 @@ export function MusicPlayer() {
     const r = (document.querySelector("[data-music-panel]") as HTMLElement | null)?.getBoundingClientRect();
     if (!r) return;
     // 72px = below the 64px sticky navbar — pinned flush under it, never hidden
-    const y = to === "top" ? 72 : Math.max(8, window.innerHeight - r.height - 8);
+    const y = to === "top" ? SAFE_TOP : Math.max(8, window.innerHeight - r.height - 8);
     const x = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - r.width - 4));
     setPrefs((p) => ({ ...p, pos: { x, y }, snap: to }));
   };
