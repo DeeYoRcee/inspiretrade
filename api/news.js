@@ -103,17 +103,7 @@ async function audioOk(url) {
   }
 }
 async function musicStream(id) {
-  const piped = PIPED_HOSTS.map(async (h) => {
-    const j = await jget(`${h}/streams/${id}`, 9e3);
-    const all = j?.audioStreams ?? [];
-    const m4a = all.filter((s) => s?.url && String(s.mimeType ?? "").includes("mp4"));
-    m4a.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
-    const url = m4a[0]?.url ?? all.find((s) => s?.url)?.url ?? null;
-    if (!url) throw new Error("no audio");
-    if (!await audioOk(String(url))) throw new Error("not audio");
-    return String(url);
-  });
-  const tube = (async () => {
+  const tube = ["ANDROID", "IOS", "TV"].map(async (clientName) => {
     const r = await fetch("https://www.youtube.com/youtubei/v1/player", {
       method: "POST",
       headers: { "content-type": "application/json", "user-agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip" },
@@ -121,7 +111,7 @@ async function musicStream(id) {
         videoId: id,
         contentCheckOk: true,
         racyCheckOk: true,
-        context: { client: { clientName: "ANDROID", clientVersion: "19.09.37", androidSdkVersion: 30, hl: "en", gl: "US" } }
+        context: { client: { clientName, clientVersion: "19.09.37", androidSdkVersion: 30, hl: "en", gl: "US" } }
       })
     });
     if (!r.ok) throw new Error("player fail");
@@ -133,18 +123,8 @@ async function musicStream(id) {
     if (!url) throw new Error("no formats");
     if (!await audioOk(url)) throw new Error("not audio");
     return url;
-  })();
-  const inv = INV_HOSTS.map(async (h) => {
-    const target = `${h}/latest_version?id=${id}&itag=140&local=true`;
-    const c = new AbortController();
-    const t = setTimeout(() => c.abort(), 8e3);
-    const r = await fetch(target, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA }, signal: c.signal });
-    clearTimeout(t);
-    const ct = String(r.headers.get("content-type") ?? "").toLowerCase();
-    if (!r.ok || !ct.startsWith("audio")) throw new Error("not audio");
-    return r.url || target;
   });
-  return firstOk([...piped, tube, ...inv]);
+  return firstOk(tube);
 }
 
 // api/_src/news/index.ts

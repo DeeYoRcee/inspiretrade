@@ -140,7 +140,10 @@ async function ytApiSearch(q: string): Promise<Track[]> {
 /** resolve the playable audio URL for a full-length YouTube track */
 async function resolveYtStream(id: string): Promise<string | null> {
   try {
-    const r = await fetch(`/api/news?music=stream&id=${encodeURIComponent(id)}`);
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 6000); // fail fast → preview path
+    const r = await fetch(`/api/news?music=stream&id=${encodeURIComponent(id)}`, { signal: c.signal });
+    clearTimeout(t);
     if (!r.ok) return null;
     const j = await r.json();
     return j?.url ? String(j.url) : null;
