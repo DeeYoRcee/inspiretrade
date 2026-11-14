@@ -125,8 +125,14 @@ async function scSearch(q: string): Promise<MusicItem[]> {
 async function scStream(scNumericId: string): Promise<string | null> {
   const id = await soundcloudClientId();
   if (!id) return null;
-  const j = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}/streams?client_id=${id}`, 7000);
-  const url = j?.http_mp3 ? String(j.http_mp3) : null; // direct progressive mp3
+  // the /tracks/{id}/streams endpoint is gone — the track object carries
+  // media.transcodings; the progressive one resolves to a direct mp3 URL
+  const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7000);
+  const tr = (t?.media?.transcodings ?? []) as any[];
+  const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url);
+  if (!prog) return null;
+  const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7000);
+  const url = r?.url ? String(r.url) : null;
   if (!url || !(await audioOk(url))) return null;
   return url;
 }

@@ -100,8 +100,12 @@ async function scSearch(q) {
 async function scStream(scNumericId) {
   const id = await soundcloudClientId();
   if (!id) return null;
-  const j = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}/streams?client_id=${id}`, 7e3);
-  const url = j?.http_mp3 ? String(j.http_mp3) : null;
+  const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7e3);
+  const tr = t?.media?.transcodings ?? [];
+  const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url);
+  if (!prog) return null;
+  const r = await jget(`${prog.url}${String(prog.url).includes("?") ? "&" : "?"}client_id=${id}`, 7e3);
+  const url = r?.url ? String(r.url) : null;
   if (!url || !await audioOk(url)) return null;
   return url;
 }
