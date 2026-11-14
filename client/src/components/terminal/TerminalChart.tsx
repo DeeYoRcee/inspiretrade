@@ -273,6 +273,7 @@ export function TerminalChart({
         },
       );
       engineRef.current = engine;
+      engine.tf = timeframe; // per-timeframe drawing visibility
       engine.onToolDone = () => onToolDoneRef.current?.();
       // selection changes broadcast on the bus → TerminalPage floating toolbar
       engine.onSelection = (info) => drawingsBus.emit({ cmd: "sel", arg: { info } });
@@ -293,6 +294,7 @@ export function TerminalChart({
       else if (cmd === "grow") e.resizeSelected(1.4);
       else if (cmd === "shrink") e.resizeSelected(1 / 1.4);
       else if (cmd === "label") e.setTextSelected((arg as { text?: string })?.text ?? "");
+      else if (cmd === "tfs") e.toggleTfSelected((arg as { tf?: string })?.tf ?? "");
     });
 
     // analysis overlay renderer (session boxes / prev levels / volume profile)
@@ -468,6 +470,12 @@ export function TerminalChart({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, timeframe, reloadKey]);
+
+  // per-timeframe drawing visibility — keep the engine's tf in sync when the
+  // user switches timeframes without remounting the chart
+  useEffect(() => {
+    engineRef.current?.setTf(timeframe);
+  }, [timeframe]);
 
   // ---- series build / live update ------------------------------------------------
 

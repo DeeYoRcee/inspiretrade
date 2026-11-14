@@ -51,13 +51,26 @@ export function AlertsEngine() {
     const seen = getNewsSeen();
 
     if (!newsBaseline.current) {
-      // First load after opening the site: mark everything as seen so the
-      // user only gets notified for items that arrive while they are here.
-      markNewsSeen(items.map((i) => i.link));
       newsBaseline.current = true;
+      // First load: don't swallow everything — gold/market items on the feeds
+      // are often 15-45 min old already, and the old "mark all seen" baseline
+      // meant XAUUSD alerts NEVER fired. Surface the newest relevant items
+      // (max 3) so the user sees alerts work, then mark the rest as seen.
+      if (settings.enabled && settings.symbols.length > 0) {
+        const recent = items.filter(
+          (i) => Date.now() - i.publishedAt < 45 * 60 * 1000 && i.symbols.some((s) => settings.symbols.includes(s)),
+        );
+        for (const item of recent.slice(0, 3).reverse()) {
+          const syms = item.symbols.filter((s) => settings.symbols.includes(s)).join(" · ");
+          toast({ title: syms || "News", description: item.title });
+          if (settings.browser) browserNotify(syms || "News", item.title);
+          appendAlertLog({ id: item.link, kind: "news", symbol: item.symbols[0], title: item.title });
+        }
+      }
+      markNewsSeen(items.map((i) => i.link));
     } else if (settings.enabled && settings.symbols.length > 0) {
       const fresh = items.filter(
-        (i) => !seen.has(i.link) && Date.now() - i.publishedAt < 10 * 60 * 1000 && i.symbols.some((s) => settings.symbols.includes(s)),
+        (i) => !seen.has(i.link) && Date.now() - i.publishedAt < 45 * 60 * 1000 && i.symbols.some((s) => settings.symbols.includes(s)),
       );
       for (const item of fresh.slice(0, 3)) {
         const syms = item.symbols.filter((s) => settings.symbols.includes(s)).join(" · ");

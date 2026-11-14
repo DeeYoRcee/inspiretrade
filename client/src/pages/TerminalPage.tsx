@@ -53,7 +53,7 @@ import { evaluateAlert, type AlertContext } from "@/lib/terminal/alert-engine";
 import { loadBarsCached } from "@/lib/terminal/data-feeds";
 import { DEFAULT_OVERLAY, type OverlayConfig } from "@/lib/terminal/chart-overlay";
 import { drawingsBus } from "@/lib/terminal/drawings-bus";
-import type { DrawingTool } from "@/lib/terminal/drawings";
+import { DRAWING_TFS, type DrawingTool } from "@/lib/terminal/drawings";
 import { cn } from "@/lib/utils";
 
 /** Drawing tools grouped TradingView-style: each section has its own label. */
@@ -148,10 +148,10 @@ export default function TerminalPage() {
   // the menu always appears to the RIGHT of the group, never clipped)
   const [flyout, setFlyout] = useState<{ label: string; top: number; left: number } | null>(null);
   // selected drawing (broadcast by the chart engines via the bus) — powers
-  // the floating object toolbar: shrink/grow, label text, delete
-  const [drawSel, setDrawSel] = useState<{ id: string; tool: string; text: string; width: number } | null>(null);
+  // the floating object toolbar: color, per-timeframe visibility, size, label
+  const [drawSel, setDrawSel] = useState<{ id: string; tool: string; text: string; width: number; color?: string; tfs?: string[] | null } | null>(null);
   useEffect(() => drawingsBus.subscribe(({ cmd, arg }) => {
-    if (cmd === "sel") setDrawSel((arg as { info?: { id: string; tool: string; text: string; width: number } | null })?.info ?? null);
+    if (cmd === "sel") setDrawSel((arg as { info?: { id: string; tool: string; text: string; width: number; color?: string; tfs?: string[] | null } | null })?.info ?? null);
   }), []);
   // last-picked tool PER GROUP — becomes that group button's icon, exactly
   // like TradingView: pick "Horizontal line" once and the LINES button keeps
@@ -784,6 +784,30 @@ export default function TerminalPage() {
         {drawSel && (
           <div data-draw-sel-bar className="absolute bottom-3 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-1 rounded-xl border border-emerald-500/40 bg-[#0d1117]/95 px-2 py-1.5 shadow-2xl backdrop-blur">
             <span className="px-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400">{drawSel.tool}</span>
+            <span className="mx-0.5 h-4 w-px bg-white/10" />
+            {/* line color — applies to the selected drawing only */}
+            {["#4ade80", "#f87171", "#60a5fa", "#fbbf24", "#c084fc", "#22d3ee", "#f472b6", "#e5e7eb"].map((c) => (
+              <button
+                key={c}
+                onClick={() => drawingsBus.emit({ cmd: "style", arg: { color: c } })}
+                className={cn("h-4 w-4 shrink-0 rounded-full border", drawSel.color === c ? "border-foreground ring-1 ring-foreground/60" : "border-white/25 hover:scale-110")}
+                style={{ background: c }}
+                title={`Line color ${c}`}
+              />
+            ))}
+            <span className="mx-0.5 h-4 w-px bg-white/10" />
+            {/* per-timeframe visibility — TradingView "show on" chips */}
+            {DRAWING_TFS.map((tf) => {
+              const active = !drawSel.tfs || drawSel.tfs.length === 0 || drawSel.tfs.includes(tf);
+              return (
+                <button
+                  key={tf}
+                  onClick={() => drawingsBus.emit({ cmd: "tfs", arg: { tf } })}
+                  className={cn("h-6 shrink-0 rounded-md px-1.5 text-[10px] font-bold", active ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5")}
+                  title={`${tf} — toggle visibility on this timeframe`}
+                >{tf}</button>
+              );
+            })}
             <span className="mx-0.5 h-4 w-px bg-white/10" />
             <button onClick={() => drawingsBus.emit({ cmd: "shrink" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make smaller"><Minus className="h-3.5 w-3.5" /></button>
             <span className="num-input w-8 text-center text-[11px] font-bold">{Math.round(drawSel.width * 10) / 10}</span>

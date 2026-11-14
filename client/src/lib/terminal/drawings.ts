@@ -25,14 +25,18 @@ export interface Drawing {
   locked?: boolean;
   hidden?: boolean;
   text?: string;
+  /** timeframes this drawing is visible on — undefined = ALL timeframes */
+  tfs?: string[];
 }
 
 export interface DrawingStyle { color: string; width: number; }
 
 /** selection snapshot for the floating object toolbar in TerminalPage */
-export interface SelInfo { id: string; tool: string; text: string; width: number; locked: boolean; hidden: boolean }
+export interface SelInfo { id: string; tool: string; text: string; width: number; locked: boolean; hidden: boolean; color: string; tfs: string[] | null }
 
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+/** timeframes shown as visibility chips in the floating object toolbar */
+export const DRAWING_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1W"] as const;
 const FIB_EXT_LEVELS = [0, 0.618, 1, 1.618, 2.618];
 const SELECT_RADIUS = 8;
 
@@ -47,6 +51,8 @@ export class DrawingEngine {
   private getSeries: () => ISeriesApi<"Candlestick"> | null;
 
   tool: DrawingTool = "cursor";
+  /** chart timeframe this engine renders — powers per-timeframe visibility */
+  tf: string = "15m";
   style: DrawingStyle = { color: "#4ade80", width: 2 };
   drawings: Drawing[] = [];
   /** crosshair-sync vertical line from other charts (UNIX seconds) */
@@ -60,7 +66,7 @@ export class DrawingEngine {
   getSelected(): SelInfo | null {
     const d = this.drawings.find((x) => x.id === this.selectedId);
     if (!d) return null;
-    return { id: d.id, tool: d.tool, text: d.text ?? "", width: d.width, locked: !!d.locked, hidden: !!d.hidden };
+    return { id: d.id, tool: d.tool, text: d.text ?? "", width: d.width, locked: !!d.locked, hidden: !!d.hidden, color: d.color, tfs: d.tfs && d.tfs.length ? d.tfs : null };
   }
 
   private fireSel() {
@@ -83,6 +89,27 @@ export class DrawingEngine {
     const d = this.drawings.find((x) => x.id === this.selectedId);
     if (!d || d.locked) return;
     d.text = text || undefined;
+    this.pushUndo();
+    this.onChange();
+    this.render();
+    this.fireSel();
+  }
+
+  /** chart timeframe changed — re-render (per-timeframe visibility filter) */
+  setTf(tf: string) {
+    if (this.tf === tf) return;
+    this.tf = tf;
+    this.render();
+  }
+
+  /** toggle one timeframe chip for the selected drawing (undefined = all).
+   *  An empty result reverts to "all" so a shape can never hide everywhere. */
+  toggleTfSelected(tf: string) {
+    const d = this.drawings.find((x) => x.id === this.selectedId);
+    if (!d || d.locked) return;
+    const cur = d.tfs ?? [...DRAWING_TFS];
+    const next = cur.includes(tf) ? cur.filter((t) => t !== tf) : [...cur, tf];
+    d.tfs = next.length >= DRAWING_TFS.length || next.length === 0 ? undefined : next;
     this.pushUndo();
     this.onChange();
     this.render();
@@ -206,7 +233,13 @@ export class DrawingEngine {
     this.style = { ...this.style, ...style };
     if (this.selectedId) {
       const d = this.drawings.find((x) => x.id === this.selectedId);
-      if (d) { d.color = this.style.color; d.width = this.style.width; this.pushUndo(); this.onChange(); }
+      if (d) {
+        // apply ONLY the keys that changed — a color click must not reset
+        // the line width back to the engine default
+        if (style.color !== undefined) d.color = style.color;
+        if (style.width !== undefined) d.width = style.width;
+        this.pushUndo(); this.onChange();
+      }
     }
     this.render();
   }
@@ -327,10 +360,17 @@ export class DrawingEngine {
    *  click-click flow AND the drag-release flow */
   private finishPending() {
     this.pushUndo();
+    const pts = [...this.pending];
+    // long/short position tool: derive the 2R target as a REAL third point so
+    // entry / stop / target are all individually draggable (TradingView-style)
+    if ((this.tool === "long" || this.tool === "short") && pts.length === 2) {
+      const entry = pts[0].price, stop = pts[1].price;
+      pts.push({ time: pts[1].time, price: entry + 2 * (entry - stop) });
+    }
     this.drawings.push({
       id: uid(),
       tool: this.tool as Exclude<DrawingTool, "cursor">,
-      points: [...this.pending],
+      points: pts,
       color: this.style.color,
       width: this.style.width,
     });
@@ -533,6 +573,7 @@ export class DrawingEngine {
   private hitTest(px: number, py: number): { id: string; d: Drawing } | null {
     for (const d of [...this.drawings].reverse()) {
       if (d.hidden) continue;
+      if (d.tfs && d.tfs.length && !d.tfs.includes(this.tf)) continue;
       const pts = d.points.map((p) => ({ x: this.xFor(p.time), y: this.yFor(p.price) }));
       if (pts.some((p) => p.x == null || p.y == null)) continue;
       const P = pts as { x: number; y: number }[];
@@ -545,11 +586,20 @@ export class DrawingEngine {
           hit = px >= P[0].x - 4 && px <= P[0].x + w + 8 && Math.abs(py - P[0].y) < 14;
           break;
         }
-        case "rect": case "long": case "short": case "measure": {
+        case "rect": case "measure": {
           const x1 = Math.min(P[0].x, P[1].x), x2 = Math.max(P[0].x, P[1].x);
           const y1 = Math.min(P[0].y, P[1].y), y2 = Math.max(P[0].y, P[1].y);
           hit = (Math.abs(py - y1) < SELECT_RADIUS || Math.abs(py - y2) < SELECT_RADIUS) && px >= x1 && px <= x2
             || (Math.abs(px - x1) < SELECT_RADIUS || Math.abs(px - x2) < SELECT_RADIUS) && py >= y1 && py <= y2;
+          break;
+        }
+        case "long": case "short": {
+          // hit the three horizontal lines (entry / stop / target)
+          const x1 = Math.min(P[0].x, P[1].x), x2 = Math.max(P[0].x, P[1].x);
+          const entry = d.points[0].price, stop = d.points[1]?.price ?? entry;
+          const target = d.points[2]?.price ?? entry + 2 * (entry - stop);
+          const ty2 = this.yFor(target) ?? P[0].y;
+          hit = [P[0].y, P[1]?.y ?? P[0].y, ty2].some((yy) => Math.abs(py - yy) < SELECT_RADIUS) && px >= x1 && px <= x2;
           break;
         }
         case "fib": {
@@ -605,6 +655,7 @@ export class DrawingEngine {
 
     for (const d of this.drawings) {
       if (d.hidden) continue;
+      if (d.tfs && d.tfs.length && !d.tfs.includes(this.tf)) continue;
       const pts = d.points.map(toXY);
       const selected = d.id === this.selectedId;
       const col = d.color;
@@ -756,22 +807,33 @@ export class DrawingEngine {
           if (P.length < 2) break;
           const isLong = d.tool === "long";
           const entry = d.points[0].price, stop = d.points[1].price;
-          const risk = Math.abs(entry - stop);
-          const target = isLong ? entry + 2 * risk : entry - 2 * risk;
+          const risk = entry - stop;
+          const target = d.points[2]?.price ?? entry + 2 * risk;
+          const rr = risk !== 0 ? Math.abs(target - entry) / Math.abs(risk) : 0;
           const ty = this.yFor(target);
           if (ty == null) break;
           const x = Math.min(P[0].x, P[1].x), rw = Math.max(Math.abs(P[1].x - P[0].x), 60);
           const ey = P[0].y, sy = P[1].y;
-          // risk zone (red)
+          // risk zone (red) + profit zone (green)
           this.ctx.fillStyle = "rgba(239,68,68,0.18)";
           this.ctx.fillRect(x, Math.min(ey, sy), rw, Math.abs(sy - ey));
-          // profit zone (green)
           this.ctx.fillStyle = "rgba(34,197,94,0.18)";
           this.ctx.fillRect(x, Math.min(ey, ty), rw, Math.abs(ty - ey));
           this.ctx.strokeStyle = col;
-          for (const yy of [ey, sy, ty]) { this.ctx.beginPath(); this.ctx.moveTo(x, yy); this.ctx.lineTo(x + rw, yy); this.ctx.stroke(); }
-          this.ctx.fillStyle = "rgba(34,197,94,0.9)";
-          this.ctx.fillText(`${isLong ? "LONG" : "SHORT"}  1:2`, x + 4, Math.min(ey, ty) + 12);
+          // TV-style price label pill on every line
+          const label = (yy: number, txt: string) => {
+            this.ctx.beginPath(); this.ctx.moveTo(x, yy); this.ctx.lineTo(x + rw, yy); this.ctx.stroke();
+            this.ctx.fillStyle = "rgba(13,17,23,0.85)";
+            const tw = this.ctx.measureText(txt).width;
+            this.ctx.fillRect(x + rw + 4, yy - 8, tw + 8, 15);
+            this.ctx.fillStyle = col;
+            this.ctx.fillText(txt, x + rw + 8, yy + 4);
+          };
+          label(ey, `Entry ${this.fmt(series, entry)}`);
+          label(sy, `Stop ${this.fmt(series, stop)}`);
+          label(ty, `Target ${this.fmt(series, target)}`);
+          this.ctx.fillStyle = isLong ? "rgba(34,197,94,0.95)" : "rgba(239,68,68,0.95)";
+          this.ctx.fillText(`${isLong ? "LONG" : "SHORT"}  1 : ${rr.toFixed(2)}`, x + 4, Math.min(ey, ty, sy) + 12);
           break;
         }
         case "measure": {

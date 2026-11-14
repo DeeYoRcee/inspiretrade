@@ -46,12 +46,25 @@ export const DEFAULT_SETTINGS: TerminalSettings = {
 
 export function useTerminalWorkspace() {
   const { user } = useAuth();
-  const [settings, setSettings] = useState<TerminalSettings>(DEFAULT_SETTINGS);
+  // localStorage mirror — Firebase only exists for signed-in users, but the
+  // workspace (chart colors, layout, indicators…) must survive reloads for
+  // anonymous visitors too (was resetting to defaults every visit)
+  const [settings, setSettings] = useState<TerminalSettings>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("inspire_terminal_settings") || "null");
+      if (!raw) return DEFAULT_SETTINGS;
+      return {
+        ...DEFAULT_SETTINGS, ...raw,
+        colors: { ...DEFAULT_SETTINGS.colors, ...(raw.colors || {}) },
+        indicators: Array.isArray(raw.indicators) ? raw.indicators : DEFAULT_SETTINGS.indicators,
+      };
+    } catch { return DEFAULT_SETTINGS; }
+  });
   const [loaded, setLoaded] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) { setLoaded(true); return; }
     (async () => {
       try {
         const snap = await get(ref(db, `terminalSettings/${user.uid}/terminal`));
@@ -71,6 +84,7 @@ export function useTerminalWorkspace() {
   const update = (patch: Partial<TerminalSettings>) => {
     setSettings((s) => {
       const next = { ...s, ...patch };
+      try { localStorage.setItem("inspire_terminal_settings", JSON.stringify(next)); } catch { /* quota */ }
       if (user) {
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(() => {
@@ -84,7 +98,8 @@ export function useTerminalWorkspace() {
   return { settings, update, loaded };
 }
 
-/** Drawings per symbol in RTDB: `terminalDrawings/{uid}/{symbol}` */
+/** Drawings per symbol in RTDB: `terminalDrawings/{uid}/{symbol}` — with a
+ *  localStorage mirror so anonymous visitors keep their drawings per symbol. */
 export function useDrawingsStore(uid?: string, symbol?: string) {
   const [drawings, setDrawings] = useState<DrawingList>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,19 +107,34 @@ export function useDrawingsStore(uid?: string, symbol?: string) {
   symbolRef.current = symbol;
 
   useEffect(() => {
-    if (!uid || !symbol) { setDrawings([]); return; }
+    if (!symbol) { setDrawings([]); return; }
     let alive = true;
+    const localKey = `terminalDrawingsLocal:${symbol}`;
     (async () => {
+      if (!uid) {
+        try {
+          const raw = JSON.parse(localStorage.getItem(localKey) || "null");
+          if (alive) setDrawings(Array.isArray(raw) ? raw : []);
+        } catch { if (alive) setDrawings([]); }
+        return;
+      }
       try {
         const snap = await get(ref(db, `terminalDrawings/${uid}/${symbol}`));
         if (alive) setDrawings(snap.exists() ? snap.val() : []);
-      } catch { if (alive) setDrawings([]); }
+      } catch {
+        try {
+          const raw = JSON.parse(localStorage.getItem(localKey) || "null");
+          if (alive) setDrawings(Array.isArray(raw) ? raw : []);
+        } catch { if (alive) setDrawings([]); }
+      }
     })();
     return () => { alive = false; };
   }, [uid, symbol]);
 
   const save = (list: DrawingList) => {
     setDrawings(list);
+    const localKey = `terminalDrawingsLocal:${symbolRef.current}`;
+    try { localStorage.setItem(localKey, JSON.stringify(list)); } catch { /* quota */ }
     if (uid && symbolRef.current) {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {

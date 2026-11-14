@@ -24,7 +24,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Music, Play, Pause, SkipBack, SkipForward, Search, X, Volume2,
-  ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic, RotateCcw,
+  ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic, RotateCcw, Heart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -57,6 +57,8 @@ interface Persisted {
 // the navbar / offscreen) — bumping the key resets EVERYONE to the default,
 // always-visible spot. Only bump again if positions must be cleared.
 const STORE_KEY = "inspire_music_v2";
+// favorited tracks — [{id,title,artist,art,url,duration,hint}]
+const FAVS_KEY = "inspire_music_favs";
 
 function loadPrefs(): Persisted {
   try {
@@ -205,6 +207,31 @@ export function MusicPlayer() {
   // the header List button / the X inside the list override it manually
   const [showList, setShowList] = useState(true);
   useEffect(() => { setShowList(!playing); }, [playing]);
+
+  // ---- favorites (localStorage — survives reloads) --------------------------
+  const [favs, setFavs] = useState<Track[]>(() => {
+    try { const r = JSON.parse(localStorage.getItem(FAVS_KEY) || "[]"); return Array.isArray(r) ? r : []; } catch { return []; }
+  });
+  const [listTab, setListTab] = useState<"queue" | "favs">("queue");
+  const isFav = !!track && favs.some((f) => f.id === track.id && f.title === track.title);
+  const toggleFav = () => {
+    if (!track) return;
+    setFavs((list) => {
+      const exists = list.some((f) => f.id === track.id);
+      const next = exists
+        ? list.filter((f) => f.id !== track.id)
+        : [{ id: track.id, title: track.title, artist: track.artist, art: track.art, url: track.url, duration: track.duration, hint: track.hint }, ...list].slice(0, 200);
+      try { localStorage.setItem(FAVS_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+  };
+  const removeFav = (i: number) => {
+    setFavs((list) => {
+      const next = list.filter((_, j) => j !== i);
+      try { localStorage.setItem(FAVS_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+  };
 
   const audioRef = useRef<HTMLAudioElement>(null);
   // hls.js instance for SoundCloud HLS streams (m3u8) — destroyed on every switch
@@ -695,8 +722,8 @@ export function MusicPlayer() {
                   >
                     <Shuffle className="h-3.5 w-3.5" />
                   </button>
-                  <button onClick={() => skip(-1)} className="text-foreground/80 hover:text-foreground" title="Previous">
-                    <SkipBack className="h-4 w-4" />
+                  <button onClick={() => skip(-1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-border/60 bg-white/5 text-foreground transition-colors hover:bg-white/10" title="Previous">
+                    <SkipBack className="h-5 w-5" />
                   </button>
                   <button
                     onClick={toggle}
@@ -705,8 +732,19 @@ export function MusicPlayer() {
                   >
                     {loading && !playing ? <Loader2 className="h-4 w-4 animate-spin" /> : playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                   </button>
-                  <button onClick={() => skip(1)} className="text-foreground/80 hover:text-foreground" title="Next">
-                    <SkipForward className="h-4 w-4" />
+                  <button onClick={() => skip(1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-border/60 bg-white/5 text-foreground transition-colors hover:bg-white/10" title="Next">
+                    <SkipForward className="h-5 w-5" />
+                  </button>
+                  {/* favorite the track that is playing right now */}
+                  <button
+                    onClick={toggleFav}
+                    className={cn(
+                      "flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-white/10",
+                      isFav ? "border-rose-400/50 bg-rose-500/10 text-rose-400" : "border-border/60 bg-white/5 text-foreground/70",
+                    )}
+                    title={isFav ? "Remove from favorites" : "Add to favorites"}
+                  >
+                    <Heart className={cn("h-5 w-5", isFav && "fill-current")} />
                   </button>
                   <button
                     onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))}
@@ -745,9 +783,20 @@ export function MusicPlayer() {
             {wide && showList && (
               <div className="max-h-52 overflow-y-auto border-t border-border/60 px-2 py-1.5">
                 <div className="flex items-center justify-between px-1.5 pb-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                    Songs {queue.length > 0 && `(${queue.length})`}
-                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setListTab("queue")}
+                      className={cn("rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide", listTab === "queue" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground")}
+                    >
+                      Songs {queue.length > 0 && `(${queue.length})`}
+                    </button>
+                    <button
+                      onClick={() => setListTab("favs")}
+                      className={cn("flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide", listTab === "favs" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground")}
+                    >
+                      <Heart className={cn("h-3 w-3", listTab === "favs" && "fill-current text-rose-400")} />Favorites {favs.length > 0 && `(${favs.length})`}
+                    </button>
+                  </div>
                   <button onClick={() => setShowList(false)} className="text-muted-foreground hover:text-foreground" title="Close the list">
                     <X className="h-3 w-3" />
                   </button>
@@ -758,13 +807,42 @@ export function MusicPlayer() {
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
                   </div>
                 )}
-                {!searching && !queue.length && !note && (
+                {!searching && listTab === "queue" && !queue.length && !note && (
                   <div className="py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
                     Type a song name and press Enter,<br />
                     then tap the song you want.
                   </div>
                 )}
-                {queue.map(trackRow)}
+                {!searching && listTab === "favs" && !favs.length && (
+                  <div className="py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
+                    No favorites yet — tap the ♥ button<br />
+                    on the playing song to save it here.
+                  </div>
+                )}
+                {listTab === "queue" ? queue.map(trackRow) : favs.map((t, i) => (
+                  <div key={`${t.id}-${i}`} className="flex items-center gap-1 rounded-lg px-1.5 py-1 transition-colors hover:bg-muted/60">
+                    <button onClick={() => { playIndex(i, favs); }} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                      {t.art ? (
+                        <img src={t.art} alt="" className="h-8 w-8 rounded-md object-cover" loading="lazy" />
+                      ) : (
+                        <span className="flex h-8 w-8 items-center justify-center rounded-md bg-muted"><Music className="h-3.5 w-3.5 text-muted-foreground" /></span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11px] font-semibold text-foreground">{t.title}</span>
+                        <span className="block truncate text-[10px] text-muted-foreground">
+                          {t.artist}{t.duration ? ` · ${fmt(t.duration)}` : ""}
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => removeFav(i)}
+                      className="shrink-0 p-1 text-muted-foreground hover:text-red-400"
+                      title="Remove from favorites"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -10,7 +10,7 @@ import type { DrawingStyle } from "./drawings";
 
 export type DrawingsCommand =
   | "undo" | "redo" | "lock" | "hide" | "delete" | "style"
-  | "grow" | "shrink" | "label" | "sel";
+  | "grow" | "shrink" | "label" | "tfs" | "sel";
 
 interface BusMessage { cmd: DrawingsCommand; arg?: any }
 
