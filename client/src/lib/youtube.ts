@@ -11,6 +11,14 @@ const PIPED_HOSTS = [
   "https://pipedapi.kavin.rocks",
 ];
 
+// different infrastructure entirely — rescues search when every Piped host
+// is down at once (they often share the same upstream)
+const INVIDIOUS_HOSTS = [
+  "https://inv.nadeko.net",
+  "https://invidious.nerdvpn.de",
+  "https://iv.melmac.space",
+];
+
 export interface YtTrack {
   videoId: string;
   title: string;
@@ -57,6 +65,26 @@ export async function ytSearch(q: string): Promise<YtTrack[]> {
         return true;
       });
     if (list.length) return list;
+  }
+  // every Piped host failed → try open Invidious instances
+  for (const base of INVIDIOUS_HOSTS) {
+    const j = await fetchJson(`${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video&sort_by=relevance`, 8000);
+    const seen = new Set<string>();
+    const list: YtTrack[] = (Array.isArray(j) ? j : [])
+      .filter((v: any) => v?.videoId && v?.title)
+      .map((v: any) => ({
+        videoId: String(v.videoId),
+        title: String(v.title).replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'"),
+        artist: String(v.author ?? "YouTube"),
+        duration: Number(v.lengthSeconds) || 0,
+        thumb: `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
+      }))
+      .filter((t: YtTrack) => {
+        if (!t.videoId || seen.has(t.videoId)) return false;
+        seen.add(t.videoId);
+        return true;
+      });
+    if (list.length) return list.slice(0, 20);
   }
   return [];
 }

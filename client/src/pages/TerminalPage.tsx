@@ -146,6 +146,10 @@ export default function TerminalPage() {
   const [activeTool, setActiveTool] = useState<DrawingTool>("cursor");
   // which drawing-tool GROUP's flyout menu is open (TradingView-style)
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  // last-picked tool PER GROUP — becomes that group button's icon, exactly
+  // like TradingView: pick "Horizontal line" once and the LINES button keeps
+  // showing the horizontal-line icon
+  const [lastTool, setLastTool] = useState<Partial<Record<string, DrawingTool>>>({});
   const [indDialog, setIndDialog] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>("trade");
   const [mobilePanel, setMobilePanel] = useState(false);
@@ -737,17 +741,27 @@ export default function TerminalPage() {
         <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
           {TOOL_GROUPS.map((g) => {
             const active = g.tools.some((t) => t.id === activeTool);
-            const current = g.tools.find((t) => t.id === activeTool) ?? g.tools[0];
+            // the group's FACE is whatever the user last picked in this group
+            const current = g.tools.find((t) => t.id === lastTool[g.label]) ?? g.tools[0];
             const GIcon = current.icon;
             const open = openGroup === g.label;
             return (
               <div key={g.label} className="relative w-full">
+                {/* main part of the button — selects the group's current tool */}
                 <button
-                  onClick={() => setOpenGroup(open ? null : g.label)}
+                  onClick={() => { setActiveTool(current.id); setOpenGroup(null); }}
                   className={cn("mx-auto flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", active || open ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
-                  title={`${g.label} — click to open the tool list`}
+                  title={`${current.title} — click to select`}
                 >
                   <GIcon className="h-3.5 w-3.5" />
+                </button>
+                {/* tiny corner button — opens THIS group's tool list */}
+                <button
+                  onClick={() => setOpenGroup(open ? null : g.label)}
+                  className={cn("absolute bottom-0 right-0.5 flex h-2.5 w-3 items-center justify-center rounded-sm transition-colors", open ? "bg-emerald-500/40 text-emerald-300" : "bg-white/10 text-muted-foreground/80 hover:bg-white/20 hover:text-foreground")}
+                  title={`${g.label} tools — open the list`}
+                >
+                  <ChevronDown className="h-1.5 w-1.5" />
                 </button>
                 {open && (
                   <div className="absolute left-9 top-0 z-50 w-44 rounded-xl border border-white/10 bg-[#0d1117]/95 p-1 shadow-2xl backdrop-blur">
@@ -755,7 +769,7 @@ export default function TerminalPage() {
                     {g.tools.map(({ id, icon: Icon, title }) => (
                       <button
                         key={id}
-                        onClick={() => { setActiveTool(id); setOpenGroup(null); }}
+                        onClick={() => { setActiveTool(id); setLastTool((p) => ({ ...p, [g.label]: id })); setOpenGroup(null); }}
                         className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-white/5", activeTool === id ? "text-emerald-400" : "text-muted-foreground")}
                       >
                         <Icon className="h-3.5 w-3.5 shrink-0" />

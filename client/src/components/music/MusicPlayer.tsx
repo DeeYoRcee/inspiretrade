@@ -22,6 +22,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Music, Play, Pause, SkipBack, SkipForward, Search, X, Volume2,
+  Youtube,
   ChevronDown, Repeat, Repeat1, Shuffle, Loader2, ListMusic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -538,9 +539,16 @@ export function MusicPlayer() {
       // 2) Free fallback: Audius full-length tracks.
       const list = await audiusSearch(q);
       if (list.length > 0) { setQueue(list); setIdx(-1); playIndex(0, list); }
+      else setNote("Nothing found — try another spelling or search on YouTube directly");
     } finally {
       setSearching(false);
     }
+  };
+
+  // literal "hand it to YouTube": open the search on youtube.com in a new tab
+  const ytHandoff = () => {
+    const q = term.trim();
+    if (q) window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`, "_blank", "noopener");
   };
 
   const toggle = () => {
@@ -662,6 +670,15 @@ export function MusicPlayer() {
                   <span className="block truncate text-[11px] font-semibold text-foreground">{track?.title ?? "Music"}</span>
                   <span className="block truncate text-[10px] text-muted-foreground">{track?.artist ?? ""}</span>
                 </span>
+              )}
+              {wide && (
+                <button
+                  onClick={ytHandoff}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-red-400/90 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                  title="Search this on YouTube — the song still plays right here"
+                >
+                  <Youtube className="h-4 w-4" />
+                </button>
               )}
               {wide && (
                 <button
@@ -804,7 +821,11 @@ export function MusicPlayer() {
                   <div className="py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
                     Search any song — the full world catalog<br />
                     plays in full, no login needed.<br />
-                    Free Audius tracks as fallback.
+                    Free Audius tracks as fallback.<br />
+                    <button onClick={ytHandoff} className="mt-1 inline-flex items-center gap-1 font-semibold text-red-400/90 hover:text-red-400">
+                      <Youtube className="h-3.5 w-3.5" />
+                      search on YouTube, play it here
+                    </button>
                   </div>
                 )}
                 {queue.map(trackRow)}
