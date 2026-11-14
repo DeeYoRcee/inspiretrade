@@ -19,13 +19,18 @@
  * with the same song's 30s preview rather than staying silent.
  *
  * The panel is fully theme-aware (bg-card / border / muted tokens).
- * Sizes, persisted in localStorage: bar / mini / dot.
+ * Sizes, position and pin state persist in localStorage for every visitor
+ * AND in the account's RTDB copy — the moved position follows the user
+ * across devices and survives browser-storage wipes.
  */
 import { useEffect, useRef, useState } from "react";
 import {
   Music, Play, Pause, SkipBack, SkipForward, Search, X, Volume2,
   ChevronDown, ChevronUp, Repeat, Repeat1, Shuffle, Loader2, ListMusic, RotateCcw, Heart, Minus,
 } from "lucide-react";
+import { get, ref, set } from "firebase/database";
+import { db } from "@/lib/firebase";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 interface Track {
@@ -51,6 +56,10 @@ interface Persisted {
   opacity: number;
   /** dragged position (viewport px); null = default top-left spot */
   pos: { x: number; y: number } | null;
+  /** active pin (top/bottom dock arrow highlight) */
+  snap: "top" | "bottom" | null;
+  /** last-change timestamp of THIS copy — the freshest copy (local vs cloud) wins */
+  savedAt?: number;
 }
 
 // v2: the v1 key carried a saved position that could hide the widget (under
@@ -60,21 +69,83 @@ const STORE_KEY = "inspire_music_v2";
 // favorited tracks — [{id,title,artist,art,url,duration,hint}]
 const FAVS_KEY = "inspire_music_favs";
 
+function sanitize(raw: any): Persisted {
+  return {
+    view: raw?.view === "mini" || raw?.view === "dot" || raw?.view === "bar" ? raw.view : "dot",
+    volume: typeof raw?.volume === "number" ? raw.volume : 0.8,
+    opacity: typeof raw?.opacity === "number" ? Math.min(1, Math.max(0.2, raw.opacity)) : 1,
+    pos:
+      raw?.pos && typeof raw.pos.x === "number" && typeof raw.pos.y === "number"
+        ? { x: raw.pos.x, y: raw.pos.y }
+        : null,
+    snap: raw?.snap === "top" || raw?.snap === "bottom" ? raw.snap : null,
+    savedAt: typeof raw?.savedAt === "number" ? raw.savedAt : undefined,
+  };
+}
+
 function loadPrefs(): Persisted {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    return {
-      view: raw.view === "mini" || raw.view === "dot" || raw.view === "bar" ? raw.view : "dot",
-      volume: typeof raw.volume === "number" ? raw.volume : 0.8,
-      opacity: typeof raw.opacity === "number" ? Math.min(1, Math.max(0.2, raw.opacity)) : 1,
-      pos:
-        raw.pos && typeof raw.pos.x === "number" && typeof raw.pos.y === "number"
-          ? { x: raw.pos.x, y: raw.pos.y }
-          : null,
-    };
+    return sanitize(JSON.parse(localStorage.getItem(STORE_KEY) || "{}"));
   } catch {
-    return { view: "dot", volume: 0.8, opacity: 1, pos: null };
+    return sanitize(null);
   }
+}
+
+/** change signature WITHOUT savedAt — clamping / normalizing writes nothing */
+const sigOf = (p: Persisted) =>
+  JSON.stringify([p.view, p.volume, p.opacity, p.pos, p.snap]);
+
+/**
+ * Prefs state with a cloud mirror. localStorage gives the instant restore for
+ * everyone (anonymous visitors too); the per-account RTDB copy
+ * (`musicPrefs/{uid}`) makes the widget position follow the USER — moving it
+ * on one device keeps it there on another, and a cleared browser storage can
+ * no longer reset it to the default spot. Same freshness rule as the terminal
+ * settings: the copy with the newest `savedAt` wins.
+ */
+function useMusicPrefs(): [Persisted, React.Dispatch<React.SetStateAction<Persisted>>] {
+  const { user } = useAuth();
+  const [prefs, setPrefs] = useState<Persisted>(loadPrefs);
+  const cloudReady = useRef(false);
+  const lastSig = useRef<string>("");
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // cloud copy → applied only when NEWER than the local mirror
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    get(ref(db, `musicPrefs/${user.uid}`))
+      .then((s) => {
+        if (!alive || !s.exists()) return;
+        const saved = s.val() as Persisted;
+        if ((saved?.savedAt ?? 0) <= (loadPrefs().savedAt ?? 0)) return;
+        setPrefs(sanitize(saved));
+      })
+      .catch(() => { /* first visit, offline or rules not yet deployed */ })
+      .finally(() => {
+        if (!alive) return;
+        cloudReady.current = true;
+        // remember what is already stored so mount-time clamping never
+        // triggers a pointless cloud write
+        lastSig.current = sigOf(loadPrefs());
+      });
+    return () => { alive = false; };
+  }, [user]);
+
+  // persist: localStorage always; RTDB debounced, real changes only
+  useEffect(() => {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
+    if (!user || !cloudReady.current) return;
+    const sig = sigOf(prefs);
+    if (sig === lastSig.current) return;
+    lastSig.current = sig;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      set(ref(db, `musicPrefs/${user.uid}`), { ...prefs, savedAt: Date.now() }).catch(() => {});
+    }, 800);
+  }, [prefs, user]);
+
+  return [prefs, setPrefs];
 }
 
 const fmt = (sec: number) => {
@@ -191,7 +262,7 @@ async function itunesSearch(q: string): Promise<Track[]> {
 }
 
 export function MusicPlayer() {
-  const [prefs, setPrefs] = useState<Persisted>(loadPrefs);
+  const [prefs, setPrefs] = useMusicPrefs();
   const [term, setTerm] = useState("");
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -237,8 +308,9 @@ export function MusicPlayer() {
   // track ids whose FULL version already failed once — the same-song retry
   // (a second row of the same track) must not loop back onto them
   const fullTriedRef = useRef<Set<string>>(new Set());
-  // top/bottom pin state — highlights the position-dock arrow in use
-  const [snap, setSnap] = useState<null | "top" | "bottom">(null);
+  // top/bottom pin state — derived from the persisted prefs so the active
+  // dock arrow survives reloads and follows the account
+  const snap = prefs.snap;
   queueRef.current = queue;
   idxRef.current = idx;
   repeatRef.current = repeat;
@@ -261,10 +333,6 @@ export function MusicPlayer() {
       return next;
     });
   };
-
-  useEffect(() => {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
-  }, [prefs]);
 
   // ---- drag-to-move (pointer events, viewport-clamped, persisted) ----
   const startDrag = (e: React.PointerEvent) => {
@@ -292,8 +360,8 @@ export function MusicPlayer() {
       // reachable
       if (sx <= 24) sx = 4;
       if (window.innerWidth - (sx + d.w) <= 24) sx = Math.max(4, window.innerWidth - d.w - 4);
-      setSnap(null); // free-dragged — no pin arrow is active anymore
-      setPrefs((p) => ({ ...p, pos: { x: sx, y: sy } }));
+      // free-dragged — no pin arrow is active anymore (persisted)
+      setPrefs((p) => ({ ...p, pos: { x: sx, y: sy }, snap: null }));
     };
     const onUp = () => {
       if (dragRef.current?.moved) {
@@ -595,8 +663,7 @@ export function MusicPlayer() {
     // 72px = below the 64px sticky navbar — pinned flush under it, never hidden
     const y = to === "top" ? 72 : Math.max(8, window.innerHeight - r.height - 8);
     const x = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - r.width - 4));
-    setPrefs((p) => ({ ...p, pos: { x, y } }));
-    setSnap(to); // highlight the active pin in the position dock
+    setPrefs((p) => ({ ...p, pos: { x, y }, snap: to }));
   };
 
   const toggle = () => {
@@ -736,7 +803,7 @@ export function MusicPlayer() {
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={() => { setPrefs((p) => ({ ...p, pos: null })); setSnap(null); }}
+                  onClick={() => { setPrefs((p) => ({ ...p, pos: null, snap: null })); }}
                   className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
                   title="Reset position — back to the default corner"
                 >
