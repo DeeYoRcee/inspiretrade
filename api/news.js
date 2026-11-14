@@ -217,6 +217,55 @@ function resolveGoogleNews(html) {
   const m = html.match(/data-n-au="(https?:\/\/[^"]+)"/i) || html.match(/href="(https?:\/\/(?!news\.google|www\.google|accounts|policies|support)[^"]{25,})"/i);
   return m ? m[1].replace(/&amp;/g, "&") : null;
 }
+function htmlToArticle(raw) {
+  const tMatch = raw.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([\s\S]*?)["']/i) || raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = tMatch ? decodeEntities(tMatch[1]).replace(/\s+/g, " ").trim().slice(0, 220) : void 0;
+  let body = raw.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<(nav|footer|header|aside|form|noscript|svg)[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
+  const out = [];
+  const re = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+  let m;
+  while ((m = re.exec(body)) && out.length < 200) {
+    const text = decodeEntities(m[1].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+    if (text.length < 60) continue;
+    if (out.length && out[out.length - 1] === text) continue;
+    out.push(text);
+  }
+  if (out.length < 3) {
+    const ld = raw.match(/"articleBody"\s*:\s*"([\s\S]*?)"\s*[,}]/i);
+    if (ld) {
+      const text = decodeEntities(
+        ld[1].replace(/\\n/g, " ").replace(/\\"/g, '"').replace(/\\u([\dA-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+      ).replace(/\s+/g, " ").trim();
+      if (text.length > 120) out.push(text.slice(0, 2e4));
+    }
+  }
+  return out.length ? { title, paragraphs: out.slice(0, 120) } : null;
+}
+async function fetchViaJina(target) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 14e3);
+  try {
+    const res = await fetch(`https://r.jina.ai/${target}`, {
+      headers: { "User-Agent": UA, Accept: "text/plain" },
+      signal: controller.signal
+    });
+    if (!res.ok) return null;
+    const md = (await res.text()).slice(0, 5e5);
+    const t = md.match(/^Title:\s*(.+)$/m)?.[1]?.trim().slice(0, 220);
+    const body = md.split(/^Markdown Content:\s*$/m)[1] ?? "";
+    const paras = body.split(/\n\s*\n/).map(
+      (chunk) => chunk.split("\n").map(
+        (l) => l.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/^[#>\-*\s]+/, "").trim()
+      ).filter(Boolean).join(" ")
+    ).map((s) => s.replace(/\s+/g, " ").trim()).filter((s) => s.length > 60);
+    if (!paras.length) return null;
+    return { title: t, paragraphs: paras.slice(0, 120) };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 async function extractArticle(rawUrl) {
   let target = "";
   try {
@@ -228,60 +277,45 @@ async function extractArticle(rawUrl) {
   }
   const hit = artCache.get(target);
   if (hit && Date.now() - hit.at < ART_TTL) return hit.data;
-  const fail = (error) => ({ ok: false, paragraphs: [], link: target, error });
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 9e3);
-    let res = await fetch(target, {
-      signal: controller.signal,
-      headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8", "Accept-Language": "en,ru;q=0.9" },
-      redirect: "follow"
-    });
-    if (!res.ok) return fail(`HTTP_${res.status}`);
-    let raw = (await res.text()).slice(0, 7e5);
-    if (/news\.google\.com/i.test(new URL(target).hostname)) {
-      const real = resolveGoogleNews(raw);
-      if (real) {
-        const res2 = await fetch(real, {
-          signal: controller.signal,
-          headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
-          redirect: "follow"
-        });
-        if (res2.ok) {
-          raw = (await res2.text()).slice(0, 7e5);
-          target = real;
+    let parsed = null;
+    try {
+      let res = await fetch(target, {
+        signal: controller.signal,
+        headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8", "Accept-Language": "en,ru;q=0.9" },
+        redirect: "follow"
+      });
+      if (res.ok) {
+        let raw = (await res.text()).slice(0, 7e5);
+        if (/news\.google\.com/i.test(new URL(target).hostname)) {
+          const real = resolveGoogleNews(raw);
+          if (real) {
+            const res2 = await fetch(real, {
+              signal: controller.signal,
+              headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
+              redirect: "follow"
+            });
+            if (res2.ok) {
+              raw = (await res2.text()).slice(0, 7e5);
+              target = real;
+            }
+          }
         }
+        parsed = htmlToArticle(raw);
       }
+    } catch {
     }
     clearTimeout(timer);
-    const tMatch = raw.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([\s\S]*?)["']/i) || raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const title = tMatch ? decodeEntities(tMatch[1]).replace(/\s+/g, " ").trim().slice(0, 220) : void 0;
-    let body = raw.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<(nav|footer|header|aside|form|noscript|svg)[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
-    const out = [];
-    const re = /<p[^>]*>([\s\S]*?)<\/p>/gi;
-    let m;
-    while ((m = re.exec(body)) && out.length < 200) {
-      const text = decodeEntities(m[1].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
-      if (text.length < 60) continue;
-      if (out.length && out[out.length - 1] === text) continue;
-      out.push(text);
-    }
-    if (out.length < 3) {
-      const ld = raw.match(/"articleBody"\s*:\s*"([\s\S]*?)"\s*[,}]/i);
-      if (ld) {
-        const text = decodeEntities(
-          ld[1].replace(/\\n/g, " ").replace(/\\"/g, '"').replace(/\\u([\dA-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
-        ).replace(/\s+/g, " ").trim();
-        if (text.length > 120) out.push(text.slice(0, 2e4));
-      }
-    }
-    if (out.length === 0) return fail("NO_CONTENT");
-    const data = { ok: true, title, paragraphs: out.slice(0, 120), link: target };
+    if (!parsed) parsed = await fetchViaJina(target);
+    if (!parsed) return { ok: false, paragraphs: [], link: target, error: "NO_CONTENT" };
+    const data = { ok: true, title: parsed.title, paragraphs: parsed.paragraphs, link: target };
     if (artCache.size > 300) artCache.clear();
     artCache.set(target, { at: Date.now(), data });
     return data;
   } catch (e) {
-    return fail(e?.name === "AbortError" ? "TIMEOUT" : "FETCH_FAILED");
+    return { ok: false, paragraphs: [], link: target, error: e?.name === "AbortError" ? "TIMEOUT" : "FETCH_FAILED" };
   }
 }
 async function handler(req, res) {
