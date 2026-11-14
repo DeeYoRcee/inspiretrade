@@ -10,7 +10,10 @@ var PIPED_HOSTS = [
   "https://pipedapi.ducks.party",
   "https://pipedapi.reallyaweso.me",
   "https://pipedapi.nosebs.ru",
-  "https://pipedapi.orangenet.cc"
+  "https://pipedapi.orangenet.cc",
+  "https://api.piped.privacydev.net",
+  "https://pipedapi.owo.si",
+  "https://pipedapi.phoenixthrush.com"
 ];
 var INV_HOSTS = [
   "https://inv.nadeko.net",
@@ -18,7 +21,11 @@ var INV_HOSTS = [
   "https://yewtu.be",
   "https://invidious.private.coffee",
   "https://iv.datura.network",
-  "https://invidious.f5.si"
+  "https://invidious.f5.si",
+  "https://iv.ggtyler.dev",
+  "https://invidious.jing.rocks",
+  "https://iv.melmac.space",
+  "https://invidious.fdn.fr"
 ];
 async function jget(url, ms = 5e3) {
   try {
@@ -84,14 +91,26 @@ async function musicSearch(q) {
   });
   return await firstOk([...piped, ...inv]) ?? [];
 }
+async function audioOk(url) {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 5e3);
+    const r = await fetch(url, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA } });
+    clearTimeout(t);
+    return r.ok && String(r.headers.get("content-type") ?? "").toLowerCase().startsWith("audio");
+  } catch {
+    return false;
+  }
+}
 async function musicStream(id) {
   const piped = PIPED_HOSTS.map(async (h) => {
-    const j = await jget(`${h}/streams/${id}`);
+    const j = await jget(`${h}/streams/${id}`, 9e3);
     const all = j?.audioStreams ?? [];
     const m4a = all.filter((s) => s?.url && String(s.mimeType ?? "").includes("mp4"));
     m4a.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
     const url = m4a[0]?.url ?? all.find((s) => s?.url)?.url ?? null;
     if (!url) throw new Error("no audio");
+    if (!await audioOk(String(url))) throw new Error("not audio");
     return String(url);
   });
   const tube = (async () => {
@@ -112,12 +131,17 @@ async function musicStream(id) {
     aud.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
     const url = aud[0]?.url ?? null;
     if (!url) throw new Error("no formats");
-    return String(url);
+    if (!await audioOk(url)) throw new Error("not audio");
+    return url;
   })();
   const inv = INV_HOSTS.map(async (h) => {
     const target = `${h}/latest_version?id=${id}&itag=140&local=true`;
-    const r = await fetch(target, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA } });
-    if (!r.ok) throw new Error("no stream");
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 8e3);
+    const r = await fetch(target, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA }, signal: c.signal });
+    clearTimeout(t);
+    const ct = String(r.headers.get("content-type") ?? "").toLowerCase();
+    if (!r.ok || !ct.startsWith("audio")) throw new Error("not audio");
     return r.url || target;
   });
   return firstOk([...piped, tube, ...inv]);

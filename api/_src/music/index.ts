@@ -25,6 +25,9 @@ const PIPED_HOSTS = [
   "https://pipedapi.reallyaweso.me",
   "https://pipedapi.nosebs.ru",
   "https://pipedapi.orangenet.cc",
+  "https://api.piped.privacydev.net",
+  "https://pipedapi.owo.si",
+  "https://pipedapi.phoenixthrush.com",
 ];
 
 const INV_HOSTS = [
@@ -34,6 +37,10 @@ const INV_HOSTS = [
   "https://invidious.private.coffee",
   "https://iv.datura.network",
   "https://invidious.f5.si",
+  "https://iv.ggtyler.dev",
+  "https://invidious.jing.rocks",
+  "https://iv.melmac.space",
+  "https://invidious.fdn.fr",
 ];
 
 async function jget(url: string, ms = 5000): Promise<any | null> {
@@ -106,14 +113,30 @@ export async function musicSearch(q: string): Promise<MusicItem[]> {
   return (await firstOk<MusicItem[]>([...piped, ...inv])) ?? [];
 }
 
+/** HEAD-check that a URL actually serves AUDIO (rejects HTML error/consent pages) */
+async function audioOk(url: string): Promise<boolean> {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 5000);
+    const r = await fetch(url, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA } });
+    clearTimeout(t);
+    return r.ok && String(r.headers.get("content-type") ?? "").toLowerCase().startsWith("audio");
+  } catch {
+    return false;
+  }
+}
+
 export async function musicStream(id: string): Promise<string | null> {
   const piped = PIPED_HOSTS.map(async (h) => {
-    const j = await jget(`${h}/streams/${id}`);
+    // /streams is slow (queries YouTube server-side) — 9s, still inside the
+    // 10s function budget because everything races in parallel
+    const j = await jget(`${h}/streams/${id}`, 9000);
     const all = (j?.audioStreams ?? []) as any[];
     const m4a = all.filter((s) => s?.url && String(s.mimeType ?? "").includes("mp4"));
     m4a.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
     const url = m4a[0]?.url ?? all.find((s) => s?.url)?.url ?? null;
     if (!url) throw new Error("no audio");
+    if (!(await audioOk(String(url)))) throw new Error("not audio");
     return String(url);
   });
   // YouTube's own player API, ANDROID client — sometimes still serves direct
@@ -136,14 +159,19 @@ export async function musicStream(id: string): Promise<string | null> {
     aud.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
     const url = aud[0]?.url ?? null;
     if (!url) throw new Error("no formats");
-    return String(url);
+    if (!(await audioOk(url))) throw new Error("not audio");
+    return url;
   })();
-  // Invidious proxied redirect — latest_version follows to the instance's
-  // own proxy, so the URL is NOT locked to the function's IP
+  // Invidious: proxied stream via latest_version — accepted ONLY when the
+  // final response is real audio (instances that can't extract return HTML)
   const inv = INV_HOSTS.map(async (h) => {
     const target = `${h}/latest_version?id=${id}&itag=140&local=true`;
-    const r = await fetch(target, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA } });
-    if (!r.ok) throw new Error("no stream");
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 8000);
+    const r = await fetch(target, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA }, signal: c.signal });
+    clearTimeout(t);
+    const ct = String(r.headers.get("content-type") ?? "").toLowerCase();
+    if (!r.ok || !ct.startsWith("audio")) throw new Error("not audio");
     return r.url || target;
   });
   return firstOk<string>([...piped, tube, ...inv]);
