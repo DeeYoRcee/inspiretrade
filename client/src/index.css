@@ -258,11 +258,13 @@ img[src="/logo.png"] {
 }
 
 /* Knight — iron night: moonlit sky, castle silhouette with battlements,
-   torch glow on the walls and slow drifting fog */
+   torch glow on the walls and slow drifting fog. These layers paint OVER the
+   ThemeBackdrop video (Steam-style looping background) as a subtle tint. */
 :root[data-theme="knight"] body::after {
   content: "";
   position: fixed; inset: 0;
   z-index: -2; pointer-events: none;
+  opacity: 0.4;
   background:
     /* moon halo */
     radial-gradient(30% 22% at 76% 14%, hsl(46 55% 70% / 0.16), transparent 72%),

@@ -8,7 +8,7 @@
  * Selection, dragging, lock, hide, delete, undo/redo and JSON serialization
  * for per-user Firebase persistence are included.
  */
-import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, Logical, Time } from "lightweight-charts";
 
 export type DrawingTool =
   | "cursor" | "trendline" | "hline" | "vline" | "ray" | "extline" | "rect"
@@ -44,6 +44,9 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+/** persisted tool style (color + stroke width) — new drawings inherit it */
+const STYLE_KEY = "it_drawing_style";
+
 export class DrawingEngine {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -57,6 +60,16 @@ export class DrawingEngine {
   drawings: Drawing[] = [];
   /** crosshair-sync vertical line from other charts (UNIX seconds) */
   syncTime: number | null = null;
+  /**
+   * Bar-grid info for VIRTUAL-TIME drawing: lets every tool draw, hit-test
+   * and drag in the EMPTY space right of the last bar (future times — e.g.
+   * a trendline onto tomorrow), exactly like TradingView's right margin.
+   * The host refreshes it whenever bars or the timeframe change.
+   */
+  seriesInfo: { lastTime: number; lastIdx: number; barSeconds: number } | null = null;
+  setSeriesInfo(info: { lastTime: number; lastIdx: number; barSeconds: number } | null) {
+    this.seriesInfo = info;
+  }
   /** fired when a tool finishes its drawing (host resets the toolbar highlight) */
   onToolDone: (tool: DrawingTool) => void = () => {};
 
@@ -81,15 +94,24 @@ export class DrawingEngine {
     try { this.onSelection(this.getSelected()); } catch { /* host must not break drawing */ }
   }
 
-  /** scale the selected drawing's stroke size (floating toolbar − / +) */
+  /** scale the selected drawing's stroke size (floating toolbar − / +).
+   *  ALSO becomes the default width for the NEXT drawings — the user's
+   *  "make it smaller and keep it that way" — and persists across reloads. */
   resizeSelected(factor: number) {
     const d = this.drawings.find((x) => x.id === this.selectedId);
     if (!d || d.locked) return;
     d.width = Math.min(10, Math.max(1, Math.round(d.width * factor * 10) / 10));
+    this.style.width = d.width;
+    this.persistStyle();
     this.pushUndo();
     this.onChange();
     this.render();
     this.fireSel();
+  }
+
+  /** persist the tool style so reloads and new drawings keep color / width */
+  private persistStyle() {
+    try { localStorage.setItem(STYLE_KEY, JSON.stringify(this.style)); } catch { /* private mode */ }
   }
 
   /** set / clear the text label of the selected drawing */
@@ -149,6 +171,12 @@ export class DrawingEngine {
     this.getChart = getChart;
     this.getSeries = getSeries;
     this.onChange = onChange;
+    // restore the last used style (color / stroke width) so a resized or
+    // recolored line STAYS that way for the next drawing and after reload
+    try {
+      const saved = JSON.parse(localStorage.getItem(STYLE_KEY) || "null");
+      if (saved && typeof saved === "object") this.style = { ...this.style, ...saved };
+    } catch { /* private mode */ }
 
     this.ro = new ResizeObserver(() => this.syncSize());
     this.ro.observe(canvas.parentElement ?? canvas);
@@ -195,7 +223,22 @@ export class DrawingEngine {
 
   private xFor(time: number): number | null {
     const chart = this.getChart();
-    return chart ? chart.timeScale().timeToCoordinate(time as Time) : null;
+    if (!chart) return null;
+    const ts = chart.timeScale();
+    const info = this.seriesInfo;
+    // time beyond the last bar (future margin) — extrapolate on the bar grid
+    // anchored to a VISIBLE bar so it works even when the last bar is scrolled off
+    if (info && time > info.lastTime) {
+      const spacing = ts.options().barSpacing || 8;
+      const vis = ts.getVisibleLogicalRange();
+      let ref = info.lastIdx;
+      if (vis) ref = Math.min(Math.max(info.lastIdx, Math.ceil(vis.from)), Math.floor(vis.to));
+      const refX = ts.logicalToCoordinate(ref as Logical);
+      if (refX == null) return null;
+      const refTime = info.lastTime + (ref - info.lastIdx) * info.barSeconds;
+      return refX + ((time - refTime) / info.barSeconds) * spacing;
+    }
+    return ts.timeToCoordinate(time as Time);
   }
   private yFor(price: number): number | null {
     const s = this.getSeries();
@@ -203,8 +246,21 @@ export class DrawingEngine {
   }
   private timeFor(x: number): number | null {
     const chart = this.getChart();
-    const t = chart?.timeScale().coordinateToTime(x);
+    if (!chart) return null;
+    const ts = chart.timeScale();
+    const L = ts.coordinateToLogical(x);
+    if (L == null) return null;
+    const li = Number(L);
+    const info = this.seriesInfo;
+    // inside the real data — exact time; beyond the last bar (empty right
+    // margin) coordinateToTime is null → extrapolate the future time
+    if (info && li > info.lastIdx) return Math.round(info.lastTime + (li - info.lastIdx) * info.barSeconds);
+    const t = ts.coordinateToTime(x);
     return t == null ? null : Number(t);
+  }
+  /** public wrapper for the host (context menu items in the future margin) */
+  timeAt(x: number): number | null {
+    return this.timeFor(x);
   }
   private priceFor(y: number): number | null {
     const s = this.getSeries();
@@ -239,6 +295,7 @@ export class DrawingEngine {
 
   setStyle(style: Partial<DrawingStyle>) {
     this.style = { ...this.style, ...style };
+    this.persistStyle();
     if (this.selectedId) {
       const d = this.drawings.find((x) => x.id === this.selectedId);
       if (d) {
@@ -649,10 +706,14 @@ export class DrawingEngine {
         case "hline": hit = Math.abs(P[0].y - py) < SELECT_RADIUS; break;
         case "vline": hit = Math.abs(P[0].x - px) < SELECT_RADIUS; break;
         case "text": {
-          // font scales with the stroke width — the floating +/− grows text
-          this.ctx.font = `${Math.max(10, Math.round(8 + d.width * 2.4))}px ui-sans-serif, system-ui`;
-          const w = this.ctx.measureText(d.text || "").width;
-          hit = px >= P[0].x - 4 && px <= P[0].x + w + 8 && Math.abs(py - P[0].y) < 14;
+          // font scales with the stroke width — the floating +/− grows text;
+          // the text renders ABOVE the anchor (bottom-left anchored, TV-style)
+          const fs = Math.max(10, Math.round(8 + d.width * 2.4));
+          this.ctx.font = `${fs}px ui-sans-serif, system-ui`;
+          const lines = (d.text || "").split("\n");
+          const widest = Math.max(...lines.map((ln) => this.ctx.measureText(ln).width));
+          const top = P[0].y - 4 - (lines.length - 1) * Math.round(fs * 1.25) - fs;
+          hit = px >= P[0].x - 4 && px <= P[0].x + widest + 8 && py >= top && py <= P[0].y + 2;
           break;
         }
         case "rect": case "measure": {
@@ -869,16 +930,23 @@ export class DrawingEngine {
         }
         case "text": {
           if (!P[0]) break;
-          // TradingView-style free text: scales with the stroke width, drawn
-          // in the tool color with a soft shadow so it reads on any bg
+          // TradingView-style free text: the clicked point anchors the
+          // BOTTOM-LEFT corner, so the text floats ABOVE the anchor — click
+          // above a line to label it from the top, below to label it from
+          // underneath. Scales with the stroke width, soft shadow for
+          // readability, multi-line via \n.
           const fs = Math.max(10, Math.round(8 + lw * 2.4));
           this.ctx.font = `${fs}px ui-sans-serif, system-ui`;
+          this.ctx.textBaseline = "bottom";
+          const lines = (d.text || "Text").split("\n");
+          const lh = Math.round(fs * 1.25);
           this.ctx.save();
           this.ctx.shadowColor = "rgba(0,0,0,0.55)";
           this.ctx.shadowBlur = 3;
           this.ctx.shadowOffsetY = 1;
-          this.ctx.fillText(d.text || "Text", P[0].x, P[0].y);
+          lines.forEach((ln, i) => this.ctx.fillText(ln, P[0].x, P[0].y - 4 - (lines.length - 1 - i) * lh));
           this.ctx.restore();
+          this.ctx.textBaseline = "alphabetic";
           break;
         }
         case "long": case "short": {

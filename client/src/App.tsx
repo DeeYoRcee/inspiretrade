@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ThemeProvider } from "@/lib/theme-context";
 import { LanguageProvider, useLanguage } from "@/lib/language-context";
 import { Navbar } from "@/components/layout/Navbar";
+import { ThemeBackdrop } from "@/components/layout/ThemeBackdrop";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import AuthPage from "@/pages/AuthPage";
@@ -124,6 +125,7 @@ function AppFooter() {
 function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col">
+      <ThemeBackdrop />
       <Navbar />
       <main className="flex-1">{children}</main>
       <AppFooter />

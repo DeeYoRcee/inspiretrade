@@ -19,7 +19,14 @@ const fmt = (t: number) => new Date(t * 1000).toLocaleString([], {
   year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
 });
 
-export function ReplayToolbar({ rs, onOpenStats }: { rs: ReplaySession; onOpenStats: () => void }) {
+export function ReplayToolbar({ rs, onOpenStats, onPickOnChart, picking }: {
+  rs: ReplaySession;
+  onOpenStats: () => void;
+  /** arm "pick the start bar on the chart" mode (click any candle) */
+  onPickOnChart?: () => void;
+  /** true while the chart-click pick mode is armed */
+  picking?: boolean;
+}) {
   const [showKeys, setShowKeys] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
   const [sessionName, setSessionName] = useState("");
@@ -63,6 +70,15 @@ export function ReplayToolbar({ rs, onOpenStats }: { rs: ReplaySession; onOpenSt
             className="flex items-center gap-1.5 rounded-lg bg-sky-500/25 px-3 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/35 disabled:opacity-40">
             <Play className="h-3.5 w-3.5" />{rs.loading ? "Loading history…" : `START REPLAY (${bars.length} real bars)`}
           </button>
+          {onPickOnChart && (
+            <button
+              onClick={onPickOnChart}
+              disabled={rs.loading}
+              className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold disabled:opacity-40", picking ? "border-amber-500/60 bg-amber-500/20 text-amber-300" : "border-sky-500/40 text-sky-300 hover:bg-sky-500/10")}
+              title="Click any candle on the chart — replay starts at that exact bar">
+              🎯 {picking ? "Click a candle on the chart…" : "Pick on chart"}
+            </button>
+          )}
           {rs.historyError && <span className="text-red-400">{rs.historyError.message}</span>}
         </div>
       )}

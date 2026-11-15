@@ -13,7 +13,7 @@ export const THEME_LABELS: Record<Theme, string> = {
   aurora: "Aurora",
   neon: "Neon Grid",
   cosmos: "Cosmos",
-  knight: "Knight",
+  knight: "Knight ⚔️",
 };
 
 function isTheme(value: string | null): value is Theme {

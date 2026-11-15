@@ -286,6 +286,14 @@ export default function TerminalPage() {
   const [replayOpen, setReplayOpen] = useState(false);
   const [journalDraft, setJournalDraft] = useState<JournalDraft | null>(null);
   const [screenshotSignal, setScreenshotSignal] = useState(0);
+  // replay must ALWAYS be stoppable: whenever a session goes active (whether
+  // started from the toolbar OR the chart's right-click "Replay from here")
+  // the control deck opens — EXIT is never out of reach
+  useEffect(() => {
+    if (rs.active) setReplayOpen(true);
+  }, [rs.active]);
+  // "pick the start bar on the chart" mode (armed from the replay toolbar)
+  const [pickStart, setPickStart] = useState(false);
   const replaySymbolRef = useRef(settings.symbol);
   useEffect(() => {
     if (replaySymbolRef.current !== settings.symbol) {
@@ -565,6 +573,13 @@ export default function TerminalPage() {
       onReplayStart={i === 0 && !rs.active ? (time) => {
         const idx = rs.bars.findIndex((b) => b.time >= time);
         rs.start(idx >= 0 ? idx : undefined);
+      } : undefined}
+      // toolbar "🎯 Pick on chart" — a plain chart click starts replay there
+      pickStartBar={i === 0 && pickStart && !rs.active}
+      onPickStartBar={i === 0 && !rs.active ? (time) => {
+        const idx = rs.bars.findIndex((b) => b.time >= time);
+        rs.start(idx >= 0 ? idx : undefined);
+        setPickStart(false);
       } : undefined}
       onReplayMenu={i === 0 && rs.active ? (price) => {
         const pos = rs.engine.positions.find((p) => p.symbol === settings.symbol);
@@ -904,7 +919,8 @@ export default function TerminalPage() {
 
       {/* ===== replay toolbar ===== */}
       {replayOpen && (
-        <ReplayToolbar rs={rs} onOpenStats={() => setTool("replayStats")} />
+        <ReplayToolbar rs={rs} onOpenStats={() => setTool("replayStats")}
+          onPickOnChart={() => setPickStart((v) => !v)} picking={pickStart && !rs.active} />
       )}
 
       {/* ===== workspace ===== */}

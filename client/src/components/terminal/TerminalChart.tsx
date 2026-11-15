@@ -153,6 +153,10 @@ interface Props {
   onReplayMenu?: (price: number, time: number) => { label: string; onClick: () => void }[];
   /** right-click any candle to start bar-replay from that bar (inactive replay) */
   onReplayStart?: (time: number) => void;
+  /** replay "pick start bar" mode armed — a plain chart click picks the bar */
+  pickStartBar?: boolean;
+  /** fired with the picked bar's time while pickStartBar mode is armed */
+  onPickStartBar?: (time: number) => void;
   /** right price-scale mode — TradingView-style LOG / % toggles */
   priceScaleMode?: "normal" | "log" | "percent";
   /** magnet crosshair — snaps the crosshair to OHLC values */
@@ -189,10 +193,12 @@ export function TerminalChart({
   drawings, onDrawingsChange, activeTool, onToolDone, onStatus, onLastBar,
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
-  tradeMarkers, priceLines, onReplayMenu, onReplayStart, priceScaleMode, magnet, screenshotSignal,
+  tradeMarkers, priceLines, onReplayMenu, onReplayStart, pickStartBar, onPickStartBar, priceScaleMode, magnet, screenshotSignal,
   bgImage, bgDim, prefs, onPrefsChange, onOpenSettings,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  // press origin for the replay "pick start bar" click (drag guard)
+  const pickDownXY = useRef<{ x: number; y: number } | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const paneRefs = useRef<HTMLDivElement[]>([]);
   const drawCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -524,11 +530,23 @@ export function TerminalChart({
     setFeedMsg(undefined);
     barsRef.current = [];
 
+    // future-margin drawing: keep the engine's bar-grid info in sync so
+    // tools can draw/hit-test/drag in the empty space RIGHT of the last bar
+    const syncSeriesInfo = () => {
+      const bars = barsRef.current;
+      engineRef.current?.setSeriesInfo(
+        bars.length
+          ? { lastTime: bars[bars.length - 1].time, lastIdx: bars.length - 1, barSeconds: TF_SECONDS[timeframe] }
+          : null,
+      );
+    };
+
     (async () => {
       try {
         const res = await loadFeed(symbol, timeframe);
         if (cancelled) return;
         barsRef.current = res.bars;
+        syncSeriesInfo();
         setFeedStatus(res.status);
         setFeedMsg(res.message);
         onStatus?.(res.status, res.message);
@@ -547,6 +565,7 @@ export function TerminalChart({
       } catch (e: any) {
         if (cancelled) return;
         barsRef.current = [];
+        engineRef.current?.setSeriesInfo(null);
         setLoading(false);
         setFeedStatus("error");
         setErrorMsg(String(e?.message || e));
@@ -559,6 +578,7 @@ export function TerminalChart({
       unsubRef.current?.();
       unsubRef.current = subscribeFeed(symbol, timeframe, (u) => {
         barsRef.current = u.bars;
+        syncSeriesInfo(); // last bar may have appended → future margin shifts
         updateLive(u.lastBar);
         onLastBar?.(u.lastBar);
       });
@@ -1033,7 +1053,10 @@ export function TerminalChart({
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
     const chart = chartRef.current;
     const price = Number(seriesRef.current?.coordinateToPrice(y) ?? 0);
-    const time = Number(chart?.timeScale()?.coordinateToTime?.(x) ?? 0);
+    // engine.timeAt resolves the future margin too (empty space right of the
+    // last bar) — right-clicking "tomorrow" yields tomorrow's time
+    const rawTime = engineRef.current?.timeAt(x) ?? chart?.timeScale()?.coordinateToTime?.(x);
+    const time = Number(rawTime ?? 0);
     setMenu({ x: Math.min(x, rect.width - 190), y: Math.min(y, rect.height - 250), price, time });
   };
 
@@ -1071,12 +1094,31 @@ export function TerminalChart({
     <div
       ref={wrapRef}
       className="relative flex h-full min-h-[300px] flex-col overflow-hidden rounded-xl border border-border/50"
-      style={{ background: colors.bg }}
+      style={{ background: colors.bg, cursor: pickStartBar ? "crosshair" : undefined }}
       onContextMenu={onContextMenu}
       onDoubleClick={resetView}
       onMouseDown={() => menu && setMenu(null)}
+      // replay "pick start bar": a plain click (not a drag/scroll) picks the
+      // bar under the cursor and starts the replay there
+      onMouseDownCapture={(e) => { pickDownXY.current = { x: e.clientX, y: e.clientY }; }}
+      onClick={(e) => {
+        if (!pickStartBar || !onPickStartBar) return;
+        const down = pickDownXY.current;
+        if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return; // was a drag
+        const rect = wrapRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const time = engineRef.current?.timeAt(e.clientX - rect.left);
+        if (time != null && time > 0) onPickStartBar(time);
+      }}
     >
       {/* user photo BEHIND the chart — candles/grid draw on a transparent bg */}
+      {pickStartBar && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center pt-1.5">
+          <span className="rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 py-1 text-[11px] font-bold text-amber-300 shadow-lg backdrop-blur">
+            🎯 Click the candle where the replay should start
+          </span>
+        </div>
+      )}
       {bgImage && (
         <>
           <img src={bgImage} alt="" className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover" />

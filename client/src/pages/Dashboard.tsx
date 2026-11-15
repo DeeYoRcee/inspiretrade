@@ -154,8 +154,9 @@ export default function Dashboard() {
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-display font-bold text-gradient mb-2">{t("overview")}</h2>
-            <p className="text-muted-foreground">{t("overviewDescription")}</p>
+            <h2 className="text-3xl font-display font-bold text-gradient mb-1">{t("overview")}</h2>
+            {/* motivational quote sits right under the title (subtitle removed to save space) */}
+            <RotatingQuote />
           </div>
           <Tabs defaultValue="ALL" onValueChange={setCategory} className="w-full md:w-auto">
             <TabsList className="glass-panel border-border/50">
@@ -164,9 +165,6 @@ export default function Dashboard() {
               <TabsTrigger value="CRYPTO">CRYPTO</TabsTrigger>
             </TabsList>
           </Tabs>
-        </div>
-        <div className="mt-4 pt-4 border-t border-primary/10">
-          <RotatingQuote />
         </div>
       </motion.div>
 
