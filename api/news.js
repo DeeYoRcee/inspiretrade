@@ -63,6 +63,79 @@ async function firstOk(jobs) {
     }
   });
 }
+var scIdCache = null;
+async function soundcloudClientId() {
+  if (scIdCache && Date.now() - scIdCache.at < 36e5) return scIdCache.id;
+  try {
+    const r = await fetch("https://soundcloud.com/", { headers: { "user-agent": UA } });
+    if (r.ok) {
+      const html = await r.text();
+      const inline = html.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{28,36})"/);
+      if (inline) {
+        scIdCache = { id: inline[1], at: Date.now() };
+        return inline[1];
+      }
+      const assets = [...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"']+\.js/g)].map((m) => m[0]).slice(-8);
+      for (const a of assets) {
+        const j = await fetch(a, { headers: { "user-agent": UA } });
+        if (!j.ok) continue;
+        const js = await j.text();
+        const m = js.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{28,36})"/);
+        if (m) {
+          scIdCache = { id: m[1], at: Date.now() };
+          return m[1];
+        }
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+async function scSearch(q) {
+  const id = await soundcloudClientId();
+  if (!id) return [];
+  const j = await jget(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&limit=24&client_id=${id}`, 7e3);
+  const out = [];
+  for (const t of j?.collection ?? []) {
+    if (t?.kind !== "track" || !t?.streamable || t?.policy === "SNIPPET" || Number(t?.duration) <= 9e4) continue;
+    const tr = t?.media?.transcodings ?? [];
+    const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url)?.url ?? null;
+    const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url)?.url ?? null;
+    const hint = prog ?? hls;
+    if (!hint) continue;
+    out.push({
+      id: `sc_${t.id}`,
+      title: String(t.title ?? ""),
+      author: String(t.user?.username ?? ""),
+      duration: Math.round((Number(t.duration) || 0) / 1e3),
+      art: String(t.artwork_url ?? "").replace("-large", "-t500x500"),
+      hint: String(hint)
+    });
+  }
+  return out;
+}
+async function resolveScHint(hint) {
+  const id = await soundcloudClientId();
+  if (!id) return null;
+  const sep = hint.includes("?") ? "&" : "?";
+  const r = await jget(`${hint}${sep}client_id=${id}`, 7e3);
+  const url = r?.url ? String(r.url) : null;
+  if (!url) return null;
+  if (url.includes("m3u8")) return url;
+  if (await audioOk(url)) return url;
+  return null;
+}
+async function scStream(scNumericId) {
+  const id = await soundcloudClientId();
+  if (!id) return null;
+  const t = await jget(`https://api-v2.soundcloud.com/tracks/${scNumericId}?client_id=${id}`, 7e3);
+  const tr = t?.media?.transcodings ?? [];
+  const prog = tr.find((x) => x?.format?.protocol === "progressive" && x?.url)?.url ?? null;
+  if (prog && await resolveScHint(String(prog))) return resolveScHint(String(prog));
+  const hls = tr.find((x) => x?.format?.protocol === "hls" && x?.url)?.url ?? null;
+  if (hls) return resolveScHint(String(hls));
+  return null;
+}
 async function musicSearch(q) {
   const piped = PIPED_HOSTS.map(async (h) => {
     const j = await jget(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`);
@@ -89,20 +162,47 @@ async function musicSearch(q) {
     if (!out.length) throw new Error("empty");
     return out;
   });
-  return await firstOk([...piped, ...inv]) ?? [];
+  const [raced, sc] = await Promise.all([
+    firstOk([...piped, ...inv]),
+    scSearch(q)
+  ]);
+  const seen = /* @__PURE__ */ new Set();
+  const merged = [];
+  for (const item of [...sc, ...raced ?? []]) {
+    const key = `${item.title.toLowerCase()}|${item.author.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
 }
 async function audioOk(url) {
+  const isAudio = (r) => {
+    const ct = String(r.headers.get("content-type") ?? "").toLowerCase();
+    return r.ok && (ct.startsWith("audio") || ct.includes("mpegurl") || ct === "application/octet-stream" || ct === "");
+  };
   try {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), 5e3);
     const r = await fetch(url, { method: "HEAD", redirect: "follow", headers: { "user-agent": UA } });
     clearTimeout(t);
-    return r.ok && String(r.headers.get("content-type") ?? "").toLowerCase().startsWith("audio");
+    if (isAudio(r)) return true;
+    const c2 = new AbortController();
+    const t2 = setTimeout(() => c2.abort(), 5e3);
+    const r2 = await fetch(url, { redirect: "follow", headers: { "user-agent": UA, Range: "bytes=0-1" }, signal: c2.signal });
+    clearTimeout(t2);
+    return isAudio(r2);
   } catch {
     return false;
   }
 }
-async function musicStream(id) {
+async function musicStream(id, hint) {
+  if (id.startsWith("sc_")) {
+    if (hint && /^https:\/\/api-v2\.soundcloud\.com\/media\/upload\/[A-Za-z0-9/_-]+$/.test(hint)) {
+      return resolveScHint(hint);
+    }
+    return scStream(id.slice(3));
+  }
   const tube = ["ANDROID", "IOS", "TV"].map(async (clientName) => {
     const r = await fetch("https://www.youtube.com/youtubei/v1/player", {
       method: "POST",
@@ -148,6 +248,12 @@ var FEEDS = [
   // Yahoo Finance ticker feeds — longer summaries + server-fetchable links
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false },
   // gold
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // silver / gold complex
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=EURUSD%3DX&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // euro/dollar
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GBPUSD%3DX&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // pound/dollar
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=BTC-USD&region=US&lang=en-US", source: "Yahoo Finance", google: false },
   // bitcoin
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5ENDX&region=US&lang=en-US", source: "Yahoo Finance", google: false },
@@ -155,18 +261,26 @@ var FEEDS = [
   // Per-symbol Google News searches — give the 7-day history the direct
   // feeds can't. Source is taken from the <source> tag inside each item.
   { url: GOOGLE_NEWS("gold price OR XAUUSD"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("gold bullion market"), source: "Google News", google: true },
   { url: GOOGLE_NEWS('EURUSD OR "euro dollar"'), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("ECB interest rate eurozone"), source: "Google News", google: true },
   { url: GOOGLE_NEWS('GBPUSD OR "pound sterling dollar"'), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("Bank of England rate pound sterling"), source: "Google News", google: true },
   { url: GOOGLE_NEWS("NASDAQ stocks"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS('"nasdaq 100" OR "wall street" tech stocks'), source: "Google News", google: true },
   { url: GOOGLE_NEWS('"federal reserve" OR "us dollar" rates'), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("dollar index OR nonfarm payrolls OR cpi inflation"), source: "Google News", google: true },
   { url: GOOGLE_NEWS("bitcoin OR crypto market"), source: "Google News", google: true }
 ];
 var TAG_RULES = [
-  { symbol: "XAUUSD", keywords: /\b(gold|xau|bullion|silver|xag)\b/i },
-  { symbol: "EURUSD", keywords: /\b(eurusd|eur\/usd|euro|ecb|european central bank)\b/i },
-  { symbol: "GBPUSD", keywords: /\b(gbpusd|gbp\/usd|pound|sterling|boe|bank of england)\b/i },
-  { symbol: "NASDAQ", keywords: /\b(nasdaq|nas100|us100|tech stocks|big tech|magnificent seven)\b/i },
-  { symbol: "USD", keywords: /\b(usd|dollar|greenback|fed|fomc|powell|federal reserve|treasury yields?|us indices)\b/i },
+  { symbol: "XAUUSD", keywords: /\b(gold|xau|bullion|silver|xag|precious metals?|platinum|palladium)\b/i },
+  { symbol: "EURUSD", keywords: /\b(eurusd|eur\/usd|euro|ecb|european central bank|eurozone|eur)\b/i },
+  { symbol: "GBPUSD", keywords: /\b(gbpusd|gbp\/usd|pound|sterling|boe|bank of england|gbp)\b/i },
+  { symbol: "NASDAQ", keywords: /\b(nasdaq|nas100|us100|ndx|qqq|tech stocks|big tech|magnificent seven|wall street|stock market)\b/i },
+  {
+    symbol: "USD",
+    keywords: /\b(usd|dollar|greenback|fed|fomc|powell|federal reserve|treasury yields?|us indices|dxy|dollar index|nonfarm|payrolls|cpi|inflation|interest rates?)\b/i
+  },
   { symbol: "BTC", keywords: /\b(btc|bitcoin|crypto|ethereum|stablecoin|altcoin|blockchain)\b/i }
 ];
 function decodeEntities(s) {
@@ -456,32 +570,29 @@ async function handler(req, res) {
   if (musicParam === "stream") {
     const id = url.searchParams.get("id") || "";
     if (!/^[\w-]{6,20}$/.test(id)) return res.status(400).json({ error: "bad id" });
-    const streamUrl = await musicStream(id);
+    const streamUrl = await musicStream(id, url.searchParams.get("hint"));
     if (!streamUrl) return res.status(502).json({ error: "no stream" });
     res.setHeader("Cache-Control", "public, max-age=1800");
     return res.status(200).json({ url: streamUrl });
   }
   const articleParam = url.searchParams.get("article");
   if (articleParam) {
-    res.setHeader("Cache-Control", "public, max-age=600, s-maxage=600");
-    const art = await extractArticle(articleParam);
-    if (art && art.ok && TRANSLATE_LANGS.has(lang) && Array.isArray(art.paragraphs) && art.paragraphs.length > 0) {
-      try {
-        const texts = [art.title || "", ...art.paragraphs];
-        const out = await translateTexts(texts, lang);
-        return res.status(200).json({
-          ...art,
-          title: out[0],
-          paragraphs: out.slice(1),
-          origTitle: art.title,
-          origParagraphs: art.paragraphs,
-          translatedLang: lang
-        });
-      } catch (e) {
-        console.error("[news] article translate failed", e?.message || e);
-      }
+    const data = await extractArticle(articleParam);
+    let out = data;
+    if (TRANSLATE_LANGS.has(lang) && data.ok && data.paragraphs.length > 0) {
+      const capped = data.paragraphs.slice(0, 40);
+      const [tp, tt] = await Promise.all([
+        translateTexts(capped, lang),
+        data.title ? translateTexts([data.title], lang) : Promise.resolve([])
+      ]);
+      out = {
+        ...data,
+        title: tt[0] ?? data.title,
+        paragraphs: [...tp, ...data.paragraphs.slice(40)]
+      };
     }
-    return res.status(200).json(art);
+    res.setHeader("Cache-Control", "public, max-age=600, s-maxage=600");
+    return res.status(200).json(out);
   }
   const [settled, calendar] = await Promise.all([
     Promise.allSettled(FEEDS.map((f) => fetchFeed(f.url, f))),
@@ -503,7 +614,7 @@ async function handler(req, res) {
     }
   }
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
-  const items = merged.filter((i) => i.publishedAt >= weekAgo).sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 250);
+  const items = merged.filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0).sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 300);
   let outItems = items;
   if (TRANSLATE_LANGS.has(lang)) {
     const titles = await translateTexts(items.map((i) => i.title), lang);
