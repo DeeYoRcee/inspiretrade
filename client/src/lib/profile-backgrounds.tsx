@@ -22,7 +22,17 @@ export const PROFILE_BACKGROUNDS: ProfileBackground[] = [
 
 export function getProfileBackground(id: string | null | undefined): ProfileBackground | null {
   if (!id) return null;
-  return PROFILE_BACKGROUNDS.find((b) => b.id === id) || null;
+  const hit = PROFILE_BACKGROUNDS.find((b) => b.id === id);
+  if (hit) return hit;
+  // owner custom background: a direct image/video URL stored instead of a catalog id
+  if (/^https?:\/\//i.test(id)) {
+    return { id, name: "Custom", src: id, tint: "linear-gradient(140deg, #0b0d12, #23262e 60%, #14161c)" };
+  }
+  return null;
+}
+
+function isImageUrl(src: string): boolean {
+  return /\.(png|jpe?g|webp|gif|avif|svg)(\?|#|$)/i.test(src);
 }
 
 /**
@@ -38,6 +48,26 @@ export function BackgroundVideo({
   className?: string;
   opacity?: number;
 }) {
+  // custom backgrounds may be a plain IMAGE url — render that without looping
+  if (isImageUrl(background.src)) {
+    return (
+      <img
+        src={background.src}
+        alt=""
+        aria-hidden
+        className={className}
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          opacity,
+          pointerEvents: "none",
+        }}
+      />
+    );
+  }
   return (
     <video
       src={background.src}

@@ -103,6 +103,9 @@ function ReferralApplier() {
 
 function AppFooter() {
   const { t } = useLanguage();
+  const [location] = useLocation();
+  // the terminal is a focused workspace — keep the contact/ad footer out of it
+  if (location.startsWith("/terminal")) return null;
   return (
     <footer className="py-8 border-t border-border/50 bg-card/30 backdrop-blur-sm">
       <div className="container mx-auto px-4 text-center">
@@ -132,7 +135,11 @@ function AppLayout({ children }: { children: ReactNode }) {
 }
 
 function LoadingScreen() {
-  return <div className="min-h-screen flex items-center justify-center"><Activity className="w-8 h-8 text-primary animate-pulse" /></div>;
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <img src="/logo.png" alt="InspireTrade" draggable={false} className="h-16 w-auto animate-pulse" />
+    </div>
+  );
 }
 
 function DashboardPage() {

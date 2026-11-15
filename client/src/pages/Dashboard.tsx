@@ -24,6 +24,53 @@ import { useLanguage } from "@/lib/language-context";
 
 type CalendarView = "monthly" | "weekly";
 
+// rotating motivational quotes for the Overview header (30 items, 20s each)
+const MOTIVATIONAL_QUOTES: string[] = [
+  "Waiting for the right time is just another way of wasting time",
+  "Plan the trade. Trade the plan.",
+  "Cut your losses fast and let your winners run",
+  "The market is always right",
+  "Discipline beats motivation every single day",
+  "Small losses are tuition. Big losses are failure.",
+  "Trade what you see, not what you feel",
+  "Protect your capital first, profits second",
+  "Consistency compounds. Chasing does not.",
+  "A good trade can lose money. A bad trade can make it.",
+  "The best trade is often the one you don't take",
+  "Patience pays. Impulse costs.",
+  "Your edge means nothing without risk management",
+  "Focus on the process and the profits will follow",
+  "Every chart tells a story — learn to read it",
+  "Control your risk or the market will control you",
+  "Trade less, win more",
+  "The trend is your friend until the end when it bends",
+  "Amateurs want to be right. Professionals want to make money.",
+  "No plan, no trade",
+  "Losses are part of the business — manage them, don't fear them",
+  "Don't average down into a losing trade",
+  "Journal every trade or repeat every mistake",
+  "Boredom is expensive in the markets",
+  "Survival first, profits second",
+  "Overtrading is the fastest way to an empty account",
+  "Master yourself before you master the market",
+  "Trade the setup, not the outcome",
+  "One good trade a day keeps the margin call away",
+  "The market opens every day — so does a new chance",
+];
+
+function RotatingQuote() {
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length));
+  useEffect(() => {
+    const id = setInterval(() => setIdx((i) => (i + 1) % MOTIVATIONAL_QUOTES.length), 20000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <p key={idx} className="animate-in fade-in duration-700 text-sm md:text-base font-medium italic text-primary/80 font-display">
+      "{MOTIVATIONAL_QUOTES[idx]}"
+    </p>
+  );
+}
+
 const EMOTION_MAP: Record<string, string> = {
   happy: ":)",
   neutral: ":|",
@@ -119,9 +166,7 @@ export default function Dashboard() {
           </Tabs>
         </div>
         <div className="mt-4 pt-4 border-t border-primary/10">
-          <p className="text-sm md:text-base font-medium italic text-primary/80 font-display">
-            "Waiting for the right time is just another way of wasting time"
-          </p>
+          <RotatingQuote />
         </div>
       </motion.div>
 

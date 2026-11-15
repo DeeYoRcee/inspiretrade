@@ -15,8 +15,8 @@ import {
   Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
-  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal, GripVertical,
-  PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check, Plus, X,
+  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette,
+  PanelRight, PanelRightClose, ChevronDown, ChevronRight, ImagePlus, Check, Plus, X,
   Settings2, Star, ChevronsUp, ChevronsDown,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
@@ -203,9 +203,6 @@ export default function TerminalPage() {
   // advanced tools
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tool, setTool] = useState<ToolId | null>(null);
-  // draggable instruments panel (stays inside the terminal frame)
-  const [symPos, setSymPos] = useState<{ x: number; y: number } | null>(null);
-  const symDragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; w: number; h: number } | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const [overlay, setOverlay] = useState<OverlayConfig>(() => {
     try { return { ...DEFAULT_OVERLAY, ...(JSON.parse(localStorage.getItem("terminalOverlay") ?? "null") ?? {}) }; } catch { return DEFAULT_OVERLAY; }
@@ -363,87 +360,49 @@ export default function TerminalPage() {
     return INSTRUMENTS.filter((i) => i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q));
   }, [symQuery]);
 
-  // drag-to-reorder the instrument list — the custom order persists in the
-  // terminal settings (RTDB); typing still switches to grouped search results
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const rowDrag = useRef<{ symbol: string; moved: boolean } | null>(null);
-  const rowDragMoved = useRef(false);
-  const [liveOrder, setLiveOrder] = useState<string[] | null>(null);
-
-  const orderedInstruments = useMemo(() => {
-    const order = liveOrder ?? (Array.isArray(settings.symbolOrder) ? settings.symbolOrder : []);
-    const map = new Map(INSTRUMENTS.map((i) => [i.symbol, i]));
-    const out = order.map((s) => map.get(s)).filter(Boolean) as typeof INSTRUMENTS;
-    for (const inst of INSTRUMENTS) if (!order.includes(inst.symbol)) out.push(inst);
-    return out;
-  }, [settings.symbolOrder, liveOrder]);
-
-  const startRowDrag = (symbol: string) => (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    e.preventDefault();
-    rowDrag.current = { symbol, moved: false };
+  // instrument favorites (TradingView-style) + collapsed search groups.
+  // NB: named toggleSymFav — toggleFav is the drawing-tool favorite toggle.
+  const [favSymbols, setFavSymbols] = useState<string[]>(() => {
+    try { const r = JSON.parse(localStorage.getItem("it_fav_symbols") || "[]"); return Array.isArray(r) ? r.map(String) : []; } catch { return []; }
+  });
+  const toggleSymFav = (symbol: string) => {
+    setFavSymbols((prev) => {
+      const next = prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol];
+      try { localStorage.setItem("it_fav_symbols", JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+  };
+  const [closedGroups, setClosedGroups] = useState<string[]>(() => {
+    try { const r = JSON.parse(localStorage.getItem("it_sym_closed") || "[]"); return Array.isArray(r) ? r.map(String) : []; } catch { return []; }
+  });
+  const toggleGroup = (cls: string) => {
+    setClosedGroups((prev) => {
+      const next = prev.includes(cls) ? prev.filter((c) => c !== cls) : [...prev, cls];
+      try { localStorage.setItem("it_sym_closed", JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
   };
 
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      const d = rowDrag.current;
-      if (!d || !listRef.current) return;
-      const rows = Array.from(listRef.current.querySelectorAll<HTMLElement>("[data-symbol]"));
-      const target = rows.find((el) => {
-        const r = el.getBoundingClientRect();
-        return e.clientY >= r.top && e.clientY <= r.bottom;
-      });
-      const targetSymbol = target?.dataset.symbol;
-      if (!targetSymbol || targetSymbol === d.symbol) return;
-      d.moved = true;
-      const base = liveOrder ?? orderedInstruments.map((i) => i.symbol);
-      const from = base.indexOf(d.symbol);
-      const to = base.indexOf(targetSymbol);
-      if (from < 0 || to < 0) return;
-      const next = [...base];
-      next.splice(from, 1);
-      next.splice(to, 0, d.symbol);
-      setLiveOrder(next);
-    };
-    const up = () => {
-      const d = rowDrag.current;
-      if (d?.moved) {
-        // a drag just ended — swallow the click that lands on the row
-        rowDragMoved.current = true;
-        setTimeout(() => { rowDragMoved.current = false; }, 300);
-        if (liveOrder) update({ symbolOrder: liveOrder });
-      }
-      rowDrag.current = null;
-      setLiveOrder(null);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveOrder, orderedInstruments]);
-
-  // drag the instruments panel around — clamped INSIDE the terminal frame
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      const d = symDragRef.current;
-      if (!d || !pageRef.current) return;
-      const r = pageRef.current.getBoundingClientRect();
-      const x = Math.min(r.right - d.w - 4, Math.max(r.left + 4, d.ox + (e.clientX - d.sx)));
-      const y = Math.min(r.bottom - d.h - 4, Math.max(r.top + 4, d.oy + (e.clientY - d.sy)));
-      setSymPos({ x, y });
-    };
-    const up = () => { symDragRef.current = null; };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-  }, []);
+  // one row in the symbol search: main pick area + a star to toggle favorites
+  const renderSymRow = (i: (typeof INSTRUMENTS)[number]) => {
+    const fav = favSymbols.includes(i.symbol);
+    const active = settings.symbol === i.symbol;
+    return (
+      <div key={i.symbol} className={cn("group flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-[11px]", active ? "text-emerald-400" : "text-muted-foreground")}>
+        <button onClick={() => { update({ symbol: i.symbol }); setSymOpen(false); }} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <span className="w-16 font-bold">{i.symbol}</span>
+          <span className="truncate">{i.name}</span>
+        </button>
+        <button
+          onClick={() => toggleSymFav(i.symbol)}
+          className={cn("shrink-0 rounded p-0.5 transition-opacity", fav ? "text-amber-400 opacity-100" : "text-muted-foreground/50 opacity-0 hover:text-amber-400 group-hover:opacity-100")}
+          title={fav ? "Remove from favorites" : "Add to favorites"}
+        >
+          <Star className={cn("h-3 w-3", fav && "fill-amber-400")} />
+        </button>
+      </div>
+    );
+  };
 
   // "F" hotkey toggles focus/maximize mode (TradingView-style), ignored while typing
   useEffect(() => {
@@ -592,24 +551,7 @@ export default function TerminalPage() {
             <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
           </button>
           {symOpen && (
-            <div
-              className={cn("z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-1.5 shadow-2xl", symPos ? "fixed" : "absolute left-0 top-9")}
-              style={symPos ? { left: symPos.x, top: symPos.y } : undefined}
-            >
-              {/* drag handle — the panel never leaves the terminal frame */}
-              <div
-                onPointerDown={(e) => {
-                  if (e.button !== 0) return;
-                  const r = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-                  symDragRef.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, w: r.width, h: r.height };
-                  e.preventDefault();
-                }}
-                className="mb-0.5 flex cursor-grab items-center justify-between rounded-md bg-white/5 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-muted-foreground/80 active:cursor-grabbing"
-                title="Drag — stays inside the terminal"
-              >
-                <span>Instruments</span>
-                <GripHorizontal className="h-3 w-3" />
-              </div>
+            <div className="absolute left-0 top-9 z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-1.5 shadow-2xl">
               <input
                 autoFocus
                 value={symQuery}
@@ -621,55 +563,41 @@ export default function TerminalPage() {
                 placeholder="Search instrument…"
                 className="num-input h-7 w-full text-[11px]"
               />
-              <div className="mt-1 max-h-56 overflow-y-auto" ref={listRef}>
-                {symQuery.trim() ? (
-                  <>
-                    {(["index", "metal", "forex", "crypto"] as const).map((cls) => {
-                      const rows = symMatches.filter((i) => i.assetClass === cls);
-                      if (!rows.length) return null;
-                      return (
-                        <div key={cls}>
-                          <div className="mt-1 select-none px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-muted-foreground/70">
-                            {cls === "index" ? "Indices" : cls === "metal" ? "Metals" : cls === "forex" ? "Forex" : "Crypto"}
-                          </div>
-                          {rows.map((i) => (
-                            <button
-                              key={i.symbol}
-                              onClick={() => { update({ symbol: i.symbol }); setSymOpen(false); }}
-                              className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
-                            >
-                              <span className="w-16 font-bold">{i.symbol}</span>
-                              <span className="truncate">{i.name}</span>
-                            </button>
-                          ))}
-                        </div>
-                      );
-                    })}
-                    {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
-                  </>
-                ) : (
-                  orderedInstruments.map((i) => (
-                    <div
-                      key={i.symbol}
-                      data-symbol={i.symbol}
-                      onClick={() => { if (rowDragMoved.current) return; update({ symbol: i.symbol }); setSymOpen(false); }}
-                      className={cn("flex w-full cursor-pointer items-center gap-1 rounded-lg px-1 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
-                    >
-                      <span
-                        onPointerDown={startRowDrag(i.symbol)}
-                        className="shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground/40 hover:text-muted-foreground active:cursor-grabbing"
-                        title="Drag to reorder"
-                      >
-                        <GripVertical className="h-3 w-3" />
-                      </span>
-                      <span className="w-16 shrink-0 font-bold">{i.symbol}</span>
-                      <span className="w-9 shrink-0 rounded bg-white/5 px-0.5 text-center text-[8px] font-bold uppercase tracking-wide">
-                        {i.assetClass === "index" ? "IDX" : i.assetClass === "metal" ? "MET" : i.assetClass === "forex" ? "FX" : "CRY"}
-                      </span>
-                      <span className="truncate">{i.name}</span>
+              <div className="mt-1 max-h-56 overflow-y-auto">
+                {/* favorites — pinned to the top, separate from the groups */}
+                {(() => {
+                  const favRows = symMatches.filter((i) => favSymbols.includes(i.symbol));
+                  if (!favRows.length) return null;
+                  return (
+                    <div>
+                      <div className="mt-1 flex select-none items-center gap-1 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-amber-400/90">
+                        <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
+                        Favorites
+                      </div>
+                      {favRows.map(renderSymRow)}
                     </div>
-                  ))
-                )}
+                  );
+                })()}
+                {(["index", "metal", "forex", "crypto"] as const).map((cls) => {
+                  const rows = symMatches.filter((i) => i.assetClass === cls);
+                  if (!rows.length) return null;
+                  const closed = closedGroups.includes(cls);
+                  return (
+                    <div key={cls}>
+                      <button
+                        onClick={() => toggleGroup(cls)}
+                        className="mt-1 flex w-full select-none items-center gap-1 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-muted-foreground/70 hover:text-foreground"
+                        title={closed ? "Show group" : "Hide group"}
+                      >
+                        {closed ? <ChevronRight className="h-2.5 w-2.5" /> : <ChevronDown className="h-2.5 w-2.5" />}
+                        {cls === "index" ? "Indices" : cls === "metal" ? "Metals" : cls === "forex" ? "Forex" : "Crypto"}
+                        <span className="ml-auto font-medium opacity-60">{rows.length}</span>
+                      </button>
+                      {!closed && rows.map(renderSymRow)}
+                    </div>
+                  );
+                })}
+                {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
               </div>
             </div>
           )}
@@ -880,6 +808,22 @@ export default function TerminalPage() {
           </button>
         </div>
       </div>)}
+
+      {/* favorites bar — starred instruments, TradingView-style, above the chart */}
+      {!immersive && favSymbols.length > 0 && (
+        <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-border/50 bg-card/40 px-2 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />
+          {favSymbols.map((s) => (
+            <button
+              key={s}
+              onClick={() => update({ symbol: s })}
+              className={cn("shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors", settings.symbol === s ? "bg-amber-500/20 text-amber-400" : "text-muted-foreground hover:text-foreground")}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ===== replay toolbar ===== */}
       {replayOpen && (
