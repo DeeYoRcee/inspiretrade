@@ -41,6 +41,8 @@ export interface PublicProfileSnapshot {
   usernameKey: string;
   displayName: string;
   updatedAt: number;
+  /** platform owner — the page shows the gold CEO badge instead of @handle */
+  ceo?: boolean;
   /** Steam-style animated background shown on the public page header. */
   background?: string;
   statistics?: PublicProfileStats;

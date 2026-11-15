@@ -234,6 +234,22 @@ export function TerminalChart({
   const [reloadKey, setReloadKey] = useState(0);
   const [legend, setLegend] = useState<{ o: number; h: number; l: number; c: number } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; price: number; time: number } | null>(null);
+  // inline drawing-text editor (text tool / double-click / "Text" toolbar)
+  const [textEdit, setTextEdit] = useState<{ id: string; x: number; y: number; text: string; isNew: boolean } | null>(null);
+  const textEditRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (textEdit) {
+      textEditRef.current?.focus();
+      textEditRef.current?.select();
+    }
+  }, [textEdit?.id]);
+
+  const commitTextEdit = (value: string) => {
+    if (!textEdit) return;
+    if (value.trim() !== textEdit.text) engineRef.current?.applyText(textEdit.id, value);
+    setTextEdit(null);
+  };
 
   const inst = getInstrument(symbol);
 
@@ -331,6 +347,8 @@ export function TerminalChart({
       engine.onToolDone = () => onToolDoneRef.current?.();
       // selection changes broadcast on the bus → TerminalPage floating toolbar
       engine.onSelection = (info) => drawingsBus.emit({ cmd: "sel", arg: { info } });
+      // inline text editor (TradingView-style — no browser prompts)
+      engine.onTextEdit = (req) => setTextEdit(req);
       engine.load(drawings);
       lastEmittedRef.current = JSON.stringify(drawings ?? []);
     }
@@ -348,6 +366,7 @@ export function TerminalChart({
       else if (cmd === "grow") e.resizeSelected(1.4);
       else if (cmd === "shrink") e.resizeSelected(1 / 1.4);
       else if (cmd === "label") e.setTextSelected((arg as { text?: string })?.text ?? "");
+      else if (cmd === "edit-text") e.requestTextEdit();
       else if (cmd === "tfs") e.toggleTfSelected((arg as { tf?: string })?.tf ?? "");
     });
 
@@ -1086,6 +1105,31 @@ export function TerminalChart({
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="relative min-h-0 flex-1">
           <div ref={mainRef} className="absolute inset-0" />
+          {/* inline text editor — opened by the text tool / double-click / "Text" button */}
+          {textEdit && (
+            <input
+              ref={textEditRef}
+              defaultValue={textEdit.text}
+              placeholder="Type text…"
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onBlur={(e) => commitTextEdit(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitTextEdit(e.currentTarget.value);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  // fresh text = cancel the creation; existing = keep old text
+                  setTextEdit(null);
+                  if (textEdit.isNew) engineRef.current?.applyText(textEdit.id, "");
+                }
+              }}
+              className="absolute z-30 w-40 rounded-lg border border-sky-500/70 bg-[#0d1117]/95 px-2 py-1 text-[12px] text-foreground shadow-lg outline-none focus:border-sky-400"
+              style={{ left: Math.max(4, Math.min(textEdit.x, (mainRef.current?.clientWidth ?? 600) - 170)), top: Math.max(4, textEdit.y - 14) }}
+            />
+          )}
           {/* faint watermark text behind the drawing layer ("" = off) */}
           {prefsRef.current.watermark && (
             <div className="pointer-events-none absolute inset-0 z-[8] flex items-center justify-center overflow-hidden" aria-hidden>

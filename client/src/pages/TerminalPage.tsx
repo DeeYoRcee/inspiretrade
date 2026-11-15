@@ -912,10 +912,7 @@ export default function TerminalPage() {
               <button onClick={() => drawingsBus.emit({ cmd: "grow" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make bigger"><Plus className="h-3.5 w-3.5" /></button>
               <span className="mx-0.5 h-4 w-px bg-white/10" />
               <button
-                onClick={() => {
-                  const t = window.prompt("Label text (empty = remove):", drawSel.text);
-                  if (t != null) drawingsBus.emit({ cmd: "label", arg: { text: t } });
-                }}
+                onClick={() => drawingsBus.emit({ cmd: "edit-text" })}
                 className={cn("flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-semibold", drawSel.text ? "text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
                 title="Add / edit the label written on this drawing"
               >

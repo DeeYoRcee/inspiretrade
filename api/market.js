@@ -114,26 +114,26 @@ async function logLedger(entry) {
 
 // shared/fragments.ts
 var FRAGMENTS = [
-  { id: "discipline", name: "5k$ 1", icon: "ShieldCheck", rarity: "common", dropPercent: 20 },
-  { id: "patience", name: "5k$ 2", icon: "Hourglass", rarity: "common", dropPercent: 20 },
-  { id: "risk-management", name: "5k$ 3", icon: "Scale", rarity: "rare", dropPercent: 14 },
-  { id: "backtesting", name: "5k$ 4", icon: "FlaskConical", rarity: "rare", dropPercent: 14 },
-  { id: "trading-plan", name: "5k$ 5", icon: "ClipboardList", rarity: "epic", dropPercent: 9 },
-  { id: "psychology", name: "5k$ 6", icon: "Brain", rarity: "epic", dropPercent: 9 },
-  { id: "consistency", name: "5k$ 7", icon: "Repeat", rarity: "covert", dropPercent: 5 },
-  { id: "execution", name: "5k$ 8", icon: "Crosshair", rarity: "covert", dropPercent: 5 },
-  { id: "master-trader", name: "5k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 2 }
+  { id: "discipline", name: "5k$ 1", icon: "ShieldCheck", rarity: "common", dropPercent: 35 },
+  { id: "patience", name: "5k$ 2", icon: "Hourglass", rarity: "common", dropPercent: 35 },
+  { id: "risk-management", name: "5k$ 3", icon: "Scale", rarity: "rare", dropPercent: 8 },
+  { id: "backtesting", name: "5k$ 4", icon: "FlaskConical", rarity: "rare", dropPercent: 8 },
+  { id: "trading-plan", name: "5k$ 5", icon: "ClipboardList", rarity: "epic", dropPercent: 5 },
+  { id: "psychology", name: "5k$ 6", icon: "Brain", rarity: "epic", dropPercent: 5 },
+  { id: "consistency", name: "5k$ 7", icon: "Repeat", rarity: "covert", dropPercent: 2.9995 },
+  { id: "execution", name: "5k$ 8", icon: "Crosshair", rarity: "covert", dropPercent: 2.9995 },
+  { id: "master-trader", name: "5k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
 var GOLD_FRAGMENTS = [
-  { id: "gold-1", name: "10k$ 1", icon: "Gem", rarity: "common", dropPercent: 20 },
-  { id: "gold-2", name: "10k$ 2", icon: "Zap", rarity: "common", dropPercent: 20 },
-  { id: "gold-3", name: "10k$ 3", icon: "Star", rarity: "rare", dropPercent: 14 },
-  { id: "gold-4", name: "10k$ 4", icon: "Target", rarity: "rare", dropPercent: 14 },
-  { id: "gold-5", name: "10k$ 5", icon: "Medal", rarity: "epic", dropPercent: 9 },
-  { id: "gold-6", name: "10k$ 6", icon: "Trophy", rarity: "epic", dropPercent: 9 },
-  { id: "gold-7", name: "10k$ 7", icon: "Rocket", rarity: "covert", dropPercent: 5 },
-  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 5 },
-  { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 2 }
+  { id: "gold-1", name: "10k$ 1", icon: "Gem", rarity: "common", dropPercent: 35 },
+  { id: "gold-2", name: "10k$ 2", icon: "Zap", rarity: "common", dropPercent: 35 },
+  { id: "gold-3", name: "10k$ 3", icon: "Star", rarity: "rare", dropPercent: 8 },
+  { id: "gold-4", name: "10k$ 4", icon: "Target", rarity: "rare", dropPercent: 8 },
+  { id: "gold-5", name: "10k$ 5", icon: "Medal", rarity: "epic", dropPercent: 5 },
+  { id: "gold-6", name: "10k$ 6", icon: "Trophy", rarity: "epic", dropPercent: 5 },
+  { id: "gold-7", name: "10k$ 7", icon: "Rocket", rarity: "covert", dropPercent: 2.9995 },
+  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
+  { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
 var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);

@@ -123,7 +123,7 @@ export default function PublicProfileSettingsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            <span>Trade Journal</span>
+            <span>InspireTrade</span>
             <span className="text-border">/</span>
             <span className="text-primary">{t("publicProfile")}</span>
           </div>

@@ -69,7 +69,7 @@ export default function AuthPage() {
         className="w-full max-w-md relative z-10"
       >
         <div className="flex justify-center mb-8">
-          <img src="/logo.png" alt="Trade Journal" className="h-24 w-auto object-contain" />
+          <img src="/logo.png" alt="InspireTrade" className="h-24 w-auto object-contain" />
         </div>
 
         <Card className="glass-panel border-border/50 shadow-2xl">

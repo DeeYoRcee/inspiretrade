@@ -19,19 +19,10 @@ import {
 import { CaseOpeningDialog } from "@/components/rewards/CaseOpeningDialog";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
 import {
-  FRAGMENTS, GOLD_FRAGMENTS, RARITY_META,
+  FRAGMENTS, GOLD_FRAGMENTS,
   type FragmentDef, type CaseType,
 } from "@shared/fragments";
 import { cn } from "@/lib/utils";
-
-const RARITY_ORDER: (keyof typeof RARITY_META)[] = ["common", "rare", "epic", "covert", "mythic"];
-
-function rarityOddsFor(list: FragmentDef[]) {
-  return RARITY_ORDER.map((rarity) => ({
-    rarity,
-    percent: list.filter((f) => f.rarity === rarity).reduce((s, f) => s + f.dropPercent, 0),
-  }));
-}
 
 export default function RewardsPage() {
   const { t } = useLanguage();
@@ -129,13 +120,6 @@ export default function RewardsPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{t("inspireCase")} · 5k$ Prop</p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {rarityOddsFor(FRAGMENTS).map(({ rarity, percent }) => (
-                      <span key={rarity} className="rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${RARITY_META[rarity].color}1f`, color: RARITY_META[rarity].color }}>
-                        {RARITY_META[rarity].label} {percent}%
-                      </span>
-                    ))}
-                  </div>
                 </div>
                 <Button
                   size="sm"
@@ -155,13 +139,6 @@ export default function RewardsPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{t("goldCase")} · 10k$ Prop</p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {rarityOddsFor(GOLD_FRAGMENTS).map(({ rarity, percent }) => (
-                      <span key={rarity} className="rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${RARITY_META[rarity].color}1f`, color: RARITY_META[rarity].color }}>
-                        {RARITY_META[rarity].label} {percent}%
-                      </span>
-                    ))}
-                  </div>
                 </div>
                 <Button
                   size="sm"

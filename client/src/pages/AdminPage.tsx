@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine,
+  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 interface Withdrawal {
@@ -43,11 +44,17 @@ const STATUS_STYLES: Record<string, string> = {
 export default function AdminPage() {
   const { t } = useLanguage();
   const { toast } = useToast();
+  const { user } = useAuth();
 
   // Gift form
   const [target, setTarget] = useState("");
   const [giftCoins, setGiftCoins] = useState("");
   const [giftCases, setGiftCases] = useState("");
+
+  // Owner panel — spawn cases for yourself + claim any username
+  const [spawnCases, setSpawnCases] = useState("");
+  const [spawnGold, setSpawnGold] = useState("");
+  const [claimName, setClaimName] = useState("");
 
   // Withdrawals
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
@@ -136,6 +143,37 @@ export default function AdminPage() {
     },
   });
 
+  // Owner: unlimited self-spawn of any case type — sell them or give away.
+  const spawnMutation = useMutation({
+    mutationFn: async () =>
+      authedFetch("/api/admin?action=gift", {
+        uid: user!.uid,
+        cases: Number(spawnCases) || 0,
+        goldCases: Number(spawnGold) || 0,
+        note: "owner spawn",
+      }),
+    onSuccess: () => {
+      toast({ title: t("ownerSpawnDone") });
+      setSpawnCases("");
+      setSpawnGold("");
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  // Owner: claim ANY username (even taken / celebrity-style) + CEO badge.
+  const claimMutation = useMutation({
+    mutationFn: async () => authedFetch("/api/admin?action=set-username", { username: claimName.trim() }),
+    onSuccess: () => {
+      toast({ title: t("ownerClaimDone"), description: `@${claimName.trim().toLowerCase()}` });
+      setClaimName("");
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
   return (
     <div className="container mx-auto max-w-5xl space-y-6 p-4 sm:px-6">
       <div>
@@ -151,7 +189,71 @@ export default function AdminPage() {
           <TabsTrigger value="gift" className="gap-1.5 rounded-full"><Send className="h-4 w-4" />{t("giftTab")}</TabsTrigger>
           <TabsTrigger value="deposits" className="gap-1.5 rounded-full"><ArrowDownToLine className="h-4 w-4" />{t("depositsTab")}</TabsTrigger>
           <TabsTrigger value="withdrawals" className="gap-1.5 rounded-full"><Clock className="h-4 w-4" />{t("withdrawalsTab")}</TabsTrigger>
+          <TabsTrigger value="owner" className="gap-1.5 rounded-full"><Crown className="h-4 w-4" />{t("ownerTab")}</TabsTrigger>
         </TabsList>
+
+        {/* Owner — CEO powers */}
+        <TabsContent value="owner">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="glass-panel border-amber-500/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg"><Crown className="h-5 w-5 text-amber-400" />{t("ownerSpawnTitle")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs leading-relaxed text-muted-foreground">{t("ownerSpawnHint")}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <PackageOpen className="h-3.5 w-3.5 text-primary" />{t("giftCases")}
+                    </label>
+                    <Input type="number" min={0} max={1000} value={spawnCases} onChange={(e) => setSpawnCases(e.target.value)} placeholder="0" className="h-11 rounded-xl" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <Crown className="h-3.5 w-3.5 text-amber-400" />{t("goldCases")}
+                    </label>
+                    <Input type="number" min={0} max={1000} value={spawnGold} onChange={(e) => setSpawnGold(e.target.value)} placeholder="0" className="h-11 rounded-xl" />
+                  </div>
+                </div>
+                <Button
+                  size="lg"
+                  className="w-full rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-semibold text-black hover:from-amber-400 hover:to-yellow-300"
+                  disabled={spawnMutation.isPending || (!Number(spawnCases) && !Number(spawnGold))}
+                  onClick={() => spawnMutation.mutate()}
+                >
+                  {spawnMutation.isPending ? t("sending") : <><PackageOpen className="mr-2 h-5 w-5" />{t("ownerSpawnButton")}</>}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="glass-panel border-amber-500/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg"><UserRoundPen className="h-5 w-5 text-amber-400" />{t("ownerClaimTitle")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs leading-relaxed text-muted-foreground">{t("ownerClaimHint")}</p>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">{t("ownerClaimLabel")}</label>
+                  <Input
+                    value={claimName}
+                    onChange={(e) => setClaimName(e.target.value.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20))}
+                    placeholder="CEO"
+                    className="h-11 rounded-xl"
+                  />
+                </div>
+                <Button
+                  size="lg"
+                  className="w-full rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-semibold text-black hover:from-amber-400 hover:to-yellow-300"
+                  disabled={claimMutation.isPending || claimName.trim().length < 3}
+                  onClick={() => claimMutation.mutate()}
+                >
+                  {claimMutation.isPending ? t("sending") : <><Crown className="mr-2 h-5 w-5" />{t("ownerClaimButton")}</>}
+                </Button>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">{t("ownerCeoNote")}</p>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
 
         {/* Gift */}
         <TabsContent value="gift">

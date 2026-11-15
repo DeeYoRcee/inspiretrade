@@ -120,12 +120,13 @@ var gift_default = handle(async (req, res) => {
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   const coins = Math.floor(Number(body.coins) || 0);
   const cases = Math.floor(Number(body.cases) || 0);
+  const goldCases = Math.floor(Number(body.goldCases) || 0);
   const note = String(body.note || "").slice(0, 200);
-  if (coins <= 0 && cases <= 0) {
+  if (coins <= 0 && cases <= 0 && goldCases <= 0) {
     throw new HttpError(400, "INVALID_AMOUNT", "Provide a positive coins and/or cases amount");
   }
-  if (coins > 1e5 || cases > 1e3) {
-    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000)");
+  if (coins > 1e5 || cases > 1e3 || goldCases > 1e3) {
+    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000, goldCases<=1000)");
   }
   let targetUid = String(body.uid || "").trim();
   if (!targetUid) {
@@ -143,6 +144,7 @@ var gift_default = handle(async (req, res) => {
       ...eco,
       coins: (eco.coins || 0) + coins,
       cases: (eco.cases || 0) + cases,
+      goldCases: (eco.goldCases || 0) + goldCases,
       updatedAt: Date.now()
     };
   });
@@ -152,6 +154,7 @@ var gift_default = handle(async (req, res) => {
     target: targetUid,
     coins,
     cases,
+    goldCases,
     note,
     by: admin2.email || admin2.uid
   });
@@ -299,8 +302,84 @@ function safeParse4(raw) {
   }
 }
 
-// api/_src/admin/index.ts
+// api/_src/admin/chat-send.ts
+var chat_send_default = handle(async (req, res) => {
+  assertPost(req);
+  const admin2 = await requireAdmin(req);
+  const body = typeof req.body === "string" ? safeParse5(req.body) : req.body || {};
+  const text = String(body.text || "").trim().slice(0, 300);
+  if (!text) throw new HttpError(400, "EMPTY_TEXT", "Provide a message text");
+  await rtdb().ref(`users/${admin2.uid}/profile`).transaction((profile) => ({
+    ...profile || {},
+    ...profile || {},
+    uid: admin2.uid,
+    ceo: true
+  }));
+  const message = {
+    uid: admin2.uid,
+    name: "CEO",
+    ceo: true,
+    text,
+    at: Date.now()
+  };
+  await rtdb().ref("chat/global").push(message);
+  res.status(200).json({ ok: true, message });
+});
 function safeParse5(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+// api/_src/admin/set-username.ts
+var USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+var set_username_default = handle(async (req, res) => {
+  assertPost(req);
+  const admin2 = await requireAdmin(req);
+  const body = typeof req.body === "string" ? safeParse6(req.body) : req.body || {};
+  const username = String(body.username || "").trim();
+  if (!USERNAME_RE.test(username)) {
+    throw new HttpError(400, "INVALID_USERNAME", "3-20 chars: letters, digits, underscore");
+  }
+  const key = username.toLowerCase();
+  const db = rtdb();
+  const profileSnap = await db.ref(`users/${admin2.uid}/profile`).once("value");
+  const profile = profileSnap.val() || {};
+  const oldKey = typeof profile.username === "string" ? profile.username.toLowerCase() : "";
+  const changedKey = oldKey !== key;
+  if (changedKey) {
+    await db.ref(`usernames/${key}`).set(admin2.uid);
+    await db.ref(`usernames/${oldKey}`).set(null);
+  }
+  await db.ref(`users/${admin2.uid}/profile`).transaction((p) => ({
+    ...p || {},
+    uid: admin2.uid,
+    username,
+    ceo: true
+  }));
+  if (changedKey && oldKey) {
+    const oldSnap = await db.ref(`publicProfiles/${oldKey}`).once("value");
+    if (oldSnap.exists()) {
+      await db.ref(`publicProfiles/${key}`).set({ ...oldSnap.val(), username, usernameKey: key, ceo: true, updatedAt: Date.now() });
+      await db.ref(`publicProfiles/${oldKey}`).set(null);
+    }
+  }
+  await db.ref(`publicProfiles/${key}/ceo`).set(true);
+  await logLedger({ type: "owner_set_username", target: admin2.uid, username, by: admin2.email || admin2.uid });
+  res.status(200).json({ ok: true, username, key });
+});
+function safeParse6(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+// api/_src/admin/index.ts
+function safeParse7(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -314,7 +393,7 @@ function getAction(req) {
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse5(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body;
   return String(body?.action || "");
 }
 async function handler(req, res) {
@@ -328,8 +407,12 @@ async function handler(req, res) {
       return deposits_default(req, res);
     case "chat-delete":
       return chat_delete_default(req, res);
+    case "chat-send":
+      return chat_send_default(req, res);
+    case "set-username":
+      return set_username_default(req, res);
     default:
-      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete)" });
+      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete|chat-send|set-username)" });
   }
 }
 export {

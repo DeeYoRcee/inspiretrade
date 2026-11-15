@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { MessageCircle, Send, Trash2, X } from "lucide-react";
+import { Crown, MessageCircle, Send, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/lib/language-context";
@@ -8,6 +8,7 @@ import { useUserProfile } from "@/hooks/use-premium";
 import { authedFetch } from "@/lib/api";
 import { db } from "@/lib/firebase";
 import { ref, push, onValue, query, limitToLast, remove, serverTimestamp } from "firebase/database";
+import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
 interface ChatMessage {
@@ -15,6 +16,8 @@ interface ChatMessage {
   uid: string;
   name: string;
   username?: string;
+  /** stamped server-side via admin chat-send — renders the CEO badge */
+  ceo?: boolean;
   text: string;
   at: number;
 }
@@ -53,6 +56,7 @@ export function GlobalChat() {
   const [cooldown, setCooldown] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [, navigate] = useLocation();
 
   // Realtime subscription
   useEffect(() => {
@@ -83,10 +87,9 @@ export function GlobalChat() {
 
   if (!user) return null;
 
-  const displayName =
-    profile?.username
-      ? `@${profile.username}`
-      : (user.displayName || user.email?.split("@")[0] || "trader").slice(0, 60);
+  const displayName = profile?.username
+    ? `@${profile.username}`
+    : (user.displayName || user.email?.split("@")[0] || "trader").slice(0, 60);
 
   const send = async () => {
     const value = text.trim().slice(0, MAX_LEN);
@@ -95,13 +98,19 @@ export function GlobalChat() {
     setCooldown(true);
     setTimeout(() => setCooldown(false), COOLDOWN_MS);
     try {
-      await push(ref(db, "chat/global"), {
-        uid: user.uid,
-        name: displayName,
-        ...(profile?.username ? { username: profile.username } : {}),
-        text: value,
-        at: serverTimestamp(),
-      });
+      if (isAdmin) {
+        // the owner posts AS the CEO — the badge is stamped server-side so
+        // nobody can fake it by writing to RTDB directly
+        await authedFetch("/api/admin?action=chat-send", { text: value });
+      } else {
+        await push(ref(db, "chat/global"), {
+          uid: user.uid,
+          name: displayName,
+          ...(profile?.username ? { username: profile.username } : {}),
+          text: value,
+          at: serverTimestamp(),
+        });
+      }
     } catch (e: any) {
       // most likely: rules not published yet
       alert(t("chatSendFailed"));
@@ -164,17 +173,46 @@ export function GlobalChat() {
             )}
             {messages.map((m) => (
               <div key={m.id} className={cn("group flex gap-2", m.uid === user.uid && "flex-row-reverse")}>
-                <div
-                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
-                  style={{ backgroundColor: uidColor(m.uid) }}
+                <button
+                  onClick={() => m.username && navigate(`/@${m.username}`)}
+                  className={cn(
+                    "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white",
+                    m.ceo ? "bg-gradient-to-br from-amber-400 to-yellow-600 text-black" : "",
+                    m.username && "cursor-pointer hover:opacity-85",
+                  )}
+                  style={m.ceo ? undefined : { backgroundColor: uidColor(m.uid) }}
+                  title={m.username ? `@${m.username}` : undefined}
                 >
-                  {(m.name || "?").replace("@", "").slice(0, 2).toUpperCase()}
-                </div>
+                  {m.ceo ? <Crown className="h-3.5 w-3.5" /> : (m.name || "?").replace("@", "").slice(0, 2).toUpperCase()}
+                </button>
                 <div className={cn("min-w-0 max-w-[75%]", m.uid === user.uid && "text-right")}>
                   <div className={cn("flex items-center gap-1.5", m.uid === user.uid && "flex-row-reverse")}>
-                    <span className={cn("text-[11px] font-bold", m.uid === user.uid ? "text-primary" : "text-muted-foreground")}>
-                      {m.name}
-                    </span>
+                    {m.ceo ? (
+                      // platform owner — gold CEO badge, links to the public profile
+                      <button
+                        onClick={() => m.username && navigate(`/@${m.username}`)}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-300",
+                          m.username && "hover:bg-amber-500/25",
+                        )}
+                        title={m.username ? `@${m.username}` : "CEO"}
+                      >
+                        <Crown className="h-3 w-3" />
+                        CEO
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => m.username && navigate(`/@${m.username}`)}
+                        className={cn(
+                          "text-[11px] font-bold",
+                          m.uid === user.uid ? "text-primary" : "text-muted-foreground",
+                          m.username && "underline-offset-2 hover:text-foreground hover:underline",
+                        )}
+                        title={m.username ? t("viewPublicProfile") : undefined}
+                      >
+                        {m.name}
+                      </button>
+                    )}
                     {isAdmin && (
                       <button
                         onClick={() => deleteMessage(m.id)}

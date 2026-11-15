@@ -76,7 +76,7 @@ export function InstallPrompt() {
           <div className="rounded-2xl glass-panel border border-border/60 shadow-2xl shadow-black/40 p-4">
             <div className="flex items-start gap-3">
               <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center overflow-hidden">
-                <img src="/logo.png" alt="Trade Journal" className="h-10 w-auto max-w-[130px] object-contain" />
+                <img src="/logo.png" alt="InspireTrade" className="h-10 w-auto max-w-[130px] object-contain" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">

@@ -63,6 +63,14 @@ export class DrawingEngine {
   /** fired whenever the selection changes (null = nothing selected) */
   onSelection: (info: SelInfo | null) => void = () => {};
 
+  /**
+   * fired when a text needs inline editing (creation click, double-click on
+   * a text, "Text" in the floating toolbar) — the host renders an input
+   * overlay at the chart coordinates and commits via applyText().
+   * TradingView-style: no browser prompt.
+   */
+  onTextEdit: (req: { id: string; x: number; y: number; text: string; isNew: boolean }) => void = () => {};
+
   getSelected(): SelInfo | null {
     const d = this.drawings.find((x) => x.id === this.selectedId);
     if (!d) return null;
@@ -381,6 +389,8 @@ export class DrawingEngine {
       color: this.style.color,
       width: this.style.width,
     });
+    const createdTool = this.tool;
+    const createdId = this.drawings[this.drawings.length - 1].id;
     this.pending = [];
     // drawing finished — deactivate the tool so the next click doesn't
     // start another one (arrow "never stops" bug)
@@ -388,6 +398,12 @@ export class DrawingEngine {
     this.cursorXY = null;
     this.onToolDone("cursor");
     this.onChange();
+    // a fresh text opens the inline editor immediately (TradingView-style)
+    if (createdTool === "text") {
+      this.selectedId = createdId;
+      this.fireSel();
+      this.requestTextEdit(createdId);
+    }
   }
 
   private neededPoints(tool: Exclude<DrawingTool, "cursor">): number {
@@ -486,10 +502,54 @@ export class DrawingEngine {
     const d = this.drawings.find((x) => x.id === this.selectedId);
     if (d && d.tool === "text" && !d.locked) {
       e.stopPropagation(); // text edit wins over chart "reset view"
-      const t = window.prompt("Text", d.text || "");
-      if (t != null) { d.text = t; this.pushUndo(); this.onChange(); this.render(); }
+      this.requestTextEdit(d.id);
     }
   };
+
+  /**
+   * Ask the host to open the inline text editor for a drawing: a "text"
+   * anchors at its own point, any other shape anchors at its label spot
+   * (midpoint / first point). No browser prompts anywhere.
+   */
+  requestTextEdit(id?: string) {
+    const d = id ? this.drawings.find((x) => x.id === id) : this.drawings.find((x) => x.id === this.selectedId);
+    if (!d || d.locked) return;
+    const anchor = (() => {
+      const xy = d.points.map((p) => ({ x: this.xFor(p.time), y: this.yFor(p.price) }));
+      if (xy.some((p) => p.x == null || p.y == null)) return null;
+      const P = xy as { x: number; y: number }[];
+      if (d.tool === "text" || d.tool === "hline" || d.tool === "vline" || P.length < 2) return P[0];
+      return { x: (P[0].x + P[1].x) / 2, y: (P[0].y + P[1].y) / 2 };
+    })();
+    if (!anchor) return;
+    this.selectedId = d.id;
+    this.fireSel();
+    this.render();
+    this.onTextEdit({ id: d.id, x: anchor.x, y: anchor.y, text: d.text ?? "", isNew: !d.text && d.tool === "text" });
+  }
+
+  /**
+   * Commit the inline editor: empty text on a brand-new "text" drawing
+   * cancels the creation (removes it); on a label it clears the label.
+   */
+  applyText(id: string, text: string) {
+    const d = this.drawings.find((x) => x.id === id);
+    if (!d) return;
+    const trimmed = text.trim();
+    if (!trimmed) {
+      if (d.tool === "text") {
+        this.drawings = this.drawings.filter((x) => x.id !== id);
+        if (this.selectedId === id) { this.selectedId = null; this.fireSel(); }
+      } else {
+        delete d.text;
+      }
+    } else {
+      d.text = trimmed;
+    }
+    this.pushUndo();
+    this.onChange();
+    this.render();
+  }
 
   // ---- selection & cursor-mode pointer routing ------------------------------
 
@@ -589,6 +649,8 @@ export class DrawingEngine {
         case "hline": hit = Math.abs(P[0].y - py) < SELECT_RADIUS; break;
         case "vline": hit = Math.abs(P[0].x - px) < SELECT_RADIUS; break;
         case "text": {
+          // font scales with the stroke width — the floating +/− grows text
+          this.ctx.font = `${Math.max(10, Math.round(8 + d.width * 2.4))}px ui-sans-serif, system-ui`;
           const w = this.ctx.measureText(d.text || "").width;
           hit = px >= P[0].x - 4 && px <= P[0].x + w + 8 && Math.abs(py - P[0].y) < 14;
           break;
@@ -807,7 +869,16 @@ export class DrawingEngine {
         }
         case "text": {
           if (!P[0]) break;
+          // TradingView-style free text: scales with the stroke width, drawn
+          // in the tool color with a soft shadow so it reads on any bg
+          const fs = Math.max(10, Math.round(8 + lw * 2.4));
+          this.ctx.font = `${fs}px ui-sans-serif, system-ui`;
+          this.ctx.save();
+          this.ctx.shadowColor = "rgba(0,0,0,0.55)";
+          this.ctx.shadowBlur = 3;
+          this.ctx.shadowOffsetY = 1;
           this.ctx.fillText(d.text || "Text", P[0].x, P[0].y);
+          this.ctx.restore();
           break;
         }
         case "long": case "short": {

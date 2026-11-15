@@ -23,15 +23,6 @@ import {
 } from "@shared/fragments";
 import { cn } from "@/lib/utils";
 
-const RARITY_ORDER: (keyof typeof RARITY_META)[] = ["common", "rare", "epic", "covert", "mythic"];
-
-function rarityOddsFor(list: FragmentDef[]) {
-  return RARITY_ORDER.map((rarity) => ({
-    rarity,
-    percent: list.filter((f) => f.rarity === rarity).reduce((s, f) => s + f.dropPercent, 0),
-  }));
-}
-
 export default function InventoryPage() {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -153,15 +144,8 @@ export default function InventoryPage() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">
-            {isGold ? t("goldCase") : t("inspireCase")} · {isGold ? "10k$" : "5k$"}
+            {isGold ? t("goldCase") : t("inspireCase")} · {isGold ? "10k$ Prop" : "5k$ Prop"}
           </p>
-          <div className="mt-1 flex flex-wrap gap-1">
-            {rarityOddsFor(list).map(({ rarity, percent }) => (
-              <span key={rarity} className="rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${RARITY_META[rarity].color}1f`, color: RARITY_META[rarity].color }}>
-                {RARITY_META[rarity].label} {percent}%
-              </span>
-            ))}
-          </div>
         </div>
         <Button
           size="sm"

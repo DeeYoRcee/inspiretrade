@@ -32,17 +32,21 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
     data: null,
     on: false,
   });
+  // which language the translate bar is currently showing
+  const [transLang, setTransLang] = useState<string>("en");
 
   // fetch the full article text every time a story is opened
   useEffect(() => {
     if (!item) {
       setArt({ loading: false, data: null });
       setTrans({ loading: false, data: null, on: false });
+      setTransLang("en");
       return;
     }
     let dead = false;
     setArt({ loading: true, data: null });
     setTrans({ loading: false, data: null, on: false });
+    setTransLang("en");
     setShowOriginal(false);
     fetch(`/api/news?article=${encodeURIComponent(item.link)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
@@ -51,14 +55,22 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
     return () => { dead = true; };
   }, [item]);
 
-  // Translate button: first click fetches the translated article, then it
-  // toggles between the translated text and the original English one.
-  const toggleTranslate = () => {
+  // translate bar under the story: pick any of the app languages; EN = original
+  const translateTo = (lang: string) => {
     if (!item) return;
-    if (trans.data) { setTrans((p) => ({ ...p, on: !p.on })); return; }
+    if (lang === "en") {
+      setTransLang("en");
+      setTrans((p) => ({ ...p, on: false }));
+      return;
+    }
     if (trans.loading) return;
+    if (trans.data && transLang === lang) {
+      setTrans((p) => ({ ...p, on: !p.on }));
+      return;
+    }
+    setTransLang(lang);
     setTrans({ loading: true, data: null, on: true });
-    fetch(`/api/news?article=${encodeURIComponent(item.link)}&lang=${encodeURIComponent(language)}`)
+    fetch(`/api/news?article=${encodeURIComponent(item.link)}&lang=${lang}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: ArticleData) => setTrans({ loading: false, data: d, on: true }))
       .catch(() => setTrans({ loading: false, data: null, on: false }));
@@ -96,7 +108,7 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
         </div>
 
         <DialogTitle className="text-lg font-bold leading-snug">
-          {showOriginal && item.titleEn ? item.titleEn : item.title}
+          {transOk ? trans.data!.title : showOriginal && item.titleEn ? item.titleEn : item.title}
         </DialogTitle>
 
         {translated && (
@@ -162,23 +174,50 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
             <ExternalLink className="h-3.5 w-3.5" />
             Open original site
           </Button>
-          {/* in-place translation — English stories become the reader's language */}
-          {language !== "en" && (
-            <Button
-              size="sm"
-              variant="outline"
-              className={cn("rounded-full gap-1.5 border-sky-500/40 text-sky-400 hover:bg-sky-500/10", trans.on && "bg-sky-500/10")}
-              onClick={toggleTranslate}
-              disabled={trans.loading}
-            >
-              {trans.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Languages className="h-3.5 w-3.5" />}
-              {trans.on && trans.data ? "Show original" : "Translate"}
-            </Button>
-          )}
           <Button size="sm" variant="ghost" className="rounded-full gap-1.5" onClick={onClose}>
             <X className="h-3.5 w-3.5" />
             Close
           </Button>
+        </div>
+
+        {/* translate the whole story — right under the news, all app languages */}
+        <div className="mt-3 rounded-xl border border-border/50 bg-muted/30 p-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+              <Languages className="h-3.5 w-3.5" />
+              Translate:
+            </span>
+            {([["en", "🇬🇧"], ["ru", "🇷🇺"], ["uz", "🇺🇿"], ["ar", "🇸🇦"]] as const).map(([code, flag]) => (
+              <button
+                key={code}
+                onClick={() => translateTo(code)}
+                disabled={trans.loading}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60",
+                  trans.on && transLang === code && trans.data?.ok
+                    ? "border-sky-500/60 bg-sky-500/15 text-sky-300"
+                    : "border-border/60 text-muted-foreground hover:border-border hover:text-foreground",
+                )}
+              >
+                <span aria-hidden>{flag}</span>
+                {code.toUpperCase()}
+                {trans.loading && transLang === code && <Loader2 className="h-3 w-3 animate-spin" />}
+              </button>
+            ))}
+            {trans.on && trans.data?.ok && (
+              <button
+                onClick={() => setTrans((p) => ({ ...p, on: false }))}
+                className="ml-auto text-[11px] font-semibold text-sky-400 underline-offset-2 hover:underline"
+              >
+                Show original
+              </button>
+            )}
+          </div>
+          {trans.on && trans.data && !trans.data.ok && (
+            <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">
+              Translation isn't available for this story — read it on the source site.
+            </p>
+          )}
         </div>
       </DialogContent>
     </Dialog>

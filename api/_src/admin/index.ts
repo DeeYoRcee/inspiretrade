@@ -10,11 +10,15 @@
  *                           POST { uid, id, action: "approve"|"reject" }
  *                           approve credits the coins atomically.
  *   ?action=chat-delete     POST { messageId }
+ *   ?action=chat-send       POST { text } — posts AS the CEO (stamped server-side)
+ *   ?action=set-username    POST { username } — owner claims ANY handle (CEO badge)
  */
 import gift from "./gift";
 import withdrawals from "./withdrawals";
 import deposits from "./deposits";
 import chatDelete from "./chat-delete";
+import chatSend from "./chat-send";
+import setUsername from "./set-username";
 
 function safeParse(raw: string): any {
   try {
@@ -49,9 +53,13 @@ export default async function handler(req: any, res: any) {
       return deposits(req, res);
     case "chat-delete":
       return chatDelete(req, res);
+    case "chat-send":
+      return chatSend(req, res);
+    case "set-username":
+      return setUsername(req, res);
     default:
       return res
         .status(400)
-        .json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete)" });
+        .json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete|chat-send|set-username)" });
   }
 }

@@ -1,7 +1,7 @@
 {
-  "name": "Trade Journal",
-  "short_name": "Trade Journal",
-  "description": "Professional trading journal for tracking forex and crypto trades with daily analytics",
+  "name": "InspireTrade",
+  "short_name": "InspireTrade",
+  "description": "Professional trading journal by InspireTrade — track forex & crypto trades, prop fragments and daily analytics",
   "id": "/",
   "start_url": "/",
   "scope": "/",

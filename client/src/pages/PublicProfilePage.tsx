@@ -1,9 +1,10 @@
-import { Activity, ArrowLeft, Download, Globe2 } from "lucide-react";
+import { Activity, ArrowLeft, Crown, Download, Globe2 } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
 import { usePublicProfile } from "@/hooks/use-public-profile";
 import { useLanguage } from "@/lib/language-context";
+import { cn } from "@/lib/utils";
 
 export default function PublicProfilePage({ username }: { username: string }) {
   const { t } = useLanguage();
@@ -23,7 +24,7 @@ export default function PublicProfilePage({ username }: { username: string }) {
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <Globe2 className="h-4 w-4" />
             </span>
-            <span>Trade Journal</span>
+            <span>InspireTrade</span>
           </Link>
           <Button variant="outline" size="sm" className="gap-2 rounded-xl" onClick={saveAsPdf}>
             <Download className="h-4 w-4" />
@@ -62,11 +63,26 @@ export default function PublicProfilePage({ username }: { username: string }) {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Trade Journal</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">InspireTrade</p>
                 <p className="mt-1 text-xs text-muted-foreground">{t("publicProfileSharedPage")}</p>
               </div>
-              <span className="rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-3 py-1 text-[10px] font-semibold text-emerald-300">
-                @{profileQuery.data.username}
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-semibold",
+                  profileQuery.data.ceo
+                    ? "border border-amber-500/50 bg-amber-500/15 text-amber-300"
+                    : "border border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-300",
+                )}
+              >
+                {profileQuery.data.ceo ? (
+                  <>
+                    <Crown className="h-3 w-3" />
+                    CEO
+                    <span className="font-normal opacity-70">@{profileQuery.data.username}</span>
+                  </>
+                ) : (
+                  `@${profileQuery.data.username}`
+                )}
               </span>
             </div>
             <ProfilePresentation profile={profileQuery.data} />
