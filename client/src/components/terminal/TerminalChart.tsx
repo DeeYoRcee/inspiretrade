@@ -50,6 +50,7 @@ export const CHART_THEMES: { id: string; label: string; colors: ChartColors }[] 
   { id: "sunset", label: "Sunset", colors: { up: "#fbbf24", down: "#fb7185", accent: "#f97316", grid: "rgba(251, 146, 60, 0.10)", bg: "#190d09", text: "#fdba74" } },
   { id: "matrix", label: "Matrix", colors: { up: "#00e676", down: "#ff5252", accent: "#00c853", grid: "rgba(0, 230, 118, 0.10)", bg: "#050a06", text: "#69f0ae" } },
   { id: "gold", label: "Royal Gold", colors: { up: "#eab308", down: "#f87171", accent: "#facc15", grid: "rgba(250, 204, 21, 0.09)", bg: "#0d0b05", text: "#e7c66b" } },
+  { id: "knight", label: "Steel & Gold", colors: { up: "#22c55e", down: "#ef4444", accent: "#d4a437", grid: "rgba(120, 134, 156, 0.14)", bg: "#0b0e14", text: "#b6c2d4" } },
   { id: "arctic", label: "Arctic (light)", colors: { up: "#059669", down: "#e11d48", accent: "#0284c7", grid: "rgba(148, 163, 184, 0.35)", bg: "#f1f5f9", text: "#0f172a" } },
 ];
 
@@ -150,6 +151,8 @@ interface Props {
   priceLines?: ReplayPriceLine[];
   /** extra right-click menu items for replay trading (price/time context) */
   onReplayMenu?: (price: number, time: number) => { label: string; onClick: () => void }[];
+  /** right-click any candle to start bar-replay from that bar (inactive replay) */
+  onReplayStart?: (time: number) => void;
   /** right price-scale mode — TradingView-style LOG / % toggles */
   priceScaleMode?: "normal" | "log" | "percent";
   /** magnet crosshair — snaps the crosshair to OHLC values */
@@ -186,7 +189,7 @@ export function TerminalChart({
   drawings, onDrawingsChange, activeTool, onToolDone, onStatus, onLastBar,
   onToggleVolume, onRequestFullscreen, height, compact,
   replay, onReplayBar, overlayCfg, anchoredVwapTime, compareSymbol, onAnchorVwap,
-  tradeMarkers, priceLines, onReplayMenu, priceScaleMode, magnet, screenshotSignal,
+  tradeMarkers, priceLines, onReplayMenu, onReplayStart, priceScaleMode, magnet, screenshotSignal,
   bgImage, bgDim, prefs, onPrefsChange, onOpenSettings,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -1192,6 +1195,9 @@ export function TerminalChart({
           <div className="my-1 h-px bg-border/50" />
           <MenuItem onClick={() => addLineAt("hline", menu.price, menu.time)}>Horizontal line @ {menu.price.toFixed(d)}</MenuItem>
           <MenuItem onClick={() => addLineAt("vline", menu.price, menu.time)}>Vertical line here</MenuItem>
+          {onReplayStart && !replay?.active && (
+            <MenuItem onClick={() => { onReplayStart(menu.time); setMenu(null); }}>▶ Replay from here</MenuItem>
+          )}
           {(onReplayMenu ? onReplayMenu(menu.price, menu.time) : []).map((item) => (
             <MenuItem key={item.label} onClick={() => { item.onClick(); setMenu(null); }}>{item.label}</MenuItem>
           ))}

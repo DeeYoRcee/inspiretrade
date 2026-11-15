@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-export const THEMES = ["dark", "light", "glass", "ocean", "forest", "sunset", "aurora", "neon", "cosmos"] as const;
+export const THEMES = ["dark", "light", "glass", "ocean", "forest", "sunset", "aurora", "neon", "cosmos", "knight"] as const;
 export type Theme = (typeof THEMES)[number];
 
 export const THEME_LABELS: Record<Theme, string> = {
@@ -13,6 +13,7 @@ export const THEME_LABELS: Record<Theme, string> = {
   aurora: "Aurora",
   neon: "Neon Grid",
   cosmos: "Cosmos",
+  knight: "Knight",
 };
 
 function isTheme(value: string | null): value is Theme {
@@ -44,7 +45,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.toggle("dark", theme !== "light");
     try { localStorage.setItem("tj-theme", theme); } catch { /* Continue without persisted storage. */ }
 
-    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", glass: "#252630", ocean: "#07131f", forest: "#0b1711", sunset: "#1a1020", aurora: "#04141c", neon: "#0d0618", cosmos: "#05060f" };
+    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", glass: "#252630", ocean: "#07131f", forest: "#0b1711", sunset: "#1a1020", aurora: "#04141c", neon: "#0d0618", cosmos: "#05060f", knight: "#0b0e14" };
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => meta.setAttribute("content", colors[theme]));
   }, [theme]);
 

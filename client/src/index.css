@@ -164,6 +164,11 @@ img[src="/logo.png"] {
   color-scheme: dark;
   --background: 235 40% 6%; --foreground: 230 25% 96%; --card: 235 38% 10%; --card-foreground: 230 25% 96%; --popover: 235 38% 11%; --popover-foreground: 230 25% 96%; --primary: 45 95% 62%; --primary-foreground: 235 50% 8%; --secondary: 235 25% 17%; --secondary-foreground: 230 25% 96%; --muted: 235 25% 16%; --muted-foreground: 228 15% 70%; --accent: 240 30% 22%; --accent-foreground: 230 25% 96%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 160 70% 50%; --success-foreground: 0 0% 100%; --border: 235 25% 24%; --input: 235 25% 24%; --ring: 45 95% 62%;
 }
+:root[data-theme="knight"] {
+  color-scheme: dark;
+  /* iron-night steel with armor-gold primary */
+  --background: 222 20% 6%; --foreground: 218 16% 94%; --card: 221 18% 10%; --card-foreground: 218 16% 94%; --popover: 221 18% 11%; --popover-foreground: 218 16% 94%; --primary: 42 78% 58%; --primary-foreground: 228 30% 8%; --secondary: 221 14% 17%; --secondary-foreground: 218 16% 94%; --muted: 221 14% 16%; --muted-foreground: 220 10% 68%; --accent: 216 22% 22%; --accent-foreground: 218 16% 94%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 150 62% 50%; --success-foreground: 0 0% 100%; --border: 220 15% 26%; --input: 220 15% 26%; --ring: 42 78% 58%;
+}
 
 @keyframes it-aurora-drift {
   0% { transform: translate3d(-4%, -2%, 0) scale(1) rotate(0deg); }
@@ -181,6 +186,11 @@ img[src="/logo.png"] {
 @keyframes it-cosmos-glow {
   0%, 100% { opacity: 0.75; }
   50% { opacity: 1; }
+}
+@keyframes it-knight-fog {
+  0% { transform: translate3d(-3%, 1%, 0) scale(1.05); }
+  50% { transform: translate3d(2.5%, -1.5%, 0) scale(1.12); }
+  100% { transform: translate3d(-1.5%, 2%, 0) scale(1.04); }
 }
 
 /* Aurora — drifting northern-lights blobs */
@@ -247,12 +257,57 @@ img[src="/logo.png"] {
   animation: it-cosmos-drift 60s linear infinite alternate;
 }
 
+/* Knight — iron night: moonlit sky, castle silhouette with battlements,
+   torch glow on the walls and slow drifting fog */
+:root[data-theme="knight"] body::after {
+  content: "";
+  position: fixed; inset: 0;
+  z-index: -2; pointer-events: none;
+  background:
+    /* moon halo */
+    radial-gradient(30% 22% at 76% 14%, hsl(46 55% 70% / 0.16), transparent 72%),
+    /* sky */
+    linear-gradient(180deg, hsl(222 22% 8%) 0%, hsl(221 18% 13%) 55%, hsl(220 16% 10%) 100%),
+    /* warm torch light licking the base */
+    radial-gradient(42% 18% at 50% 104%, hsl(28 80% 50% / 0.12), transparent 70%),
+    /* far keep — soft dark ridge on the horizon */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='36'%3E%3Cpath d='M0 36 V16 h10 v-8 h14 v8 h12 v-8 h14 v8 h12 v-8 h14 v8 h12 v-8 h14 v8 h12 v-8 h14 v8 h12 V36 z' fill='%23181c26'/%3E%3C/svg%3E") center bottom / auto 9vh repeat-x,
+    /* near wall with battlement teeth */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='24'%3E%3Cpath d='M0 24 V9 h7 v-6 h9 v6 h8 v-6 h9 v6 h7 V24 z' fill='%23111520'/%3E%3C/svg%3E") center bottom / auto 6.5vh repeat-x;
+}
+:root[data-theme="knight"] body::before {
+  content: "";
+  position: fixed; inset: -20% 0 -8% 0;
+  z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(46% 30% at 22% 88%, hsl(216 24% 30% / 0.38), transparent 70%),
+    radial-gradient(40% 26% at 78% 92%, hsl(214 20% 28% / 0.34), transparent 70%);
+  filter: blur(6px);
+  animation: it-knight-fog 26s ease-in-out infinite alternate;
+}
+:root[data-theme="knight"] .glass-panel { box-shadow: 0 12px 34px hsl(228 40% 3% / 0.5), inset 0 1px hsl(46 60% 60% / 0.06); }
+:root[data-theme="knight"] header { border-bottom-color: hsl(42 60% 55% / 0.14) !important; }
+:root[data-theme="knight"] .hover-glow:hover { box-shadow: 0 0 24px -6px hsl(42 78% 58% / 0.35); }
+
+/* theme picker dots — real swatches per theme (settings page + navbar) */
+.theme-dot-dark { background: #0a0a0f; }
+.theme-dot-light { background: #f6f8fa; }
+.theme-dot-glass { background: linear-gradient(135deg, #4a5b8c, #9a7bc8); }
+.theme-dot-ocean { background: linear-gradient(135deg, #06283d, #22b8cf); }
+.theme-dot-forest { background: linear-gradient(135deg, #0e2417, #34d17c); }
+.theme-dot-sunset { background: linear-gradient(135deg, #1a1020, #c084fc); }
+.theme-dot-aurora { background: linear-gradient(135deg, #04141c, #2dd4a8); }
+.theme-dot-neon { background: linear-gradient(135deg, #1b0a2e, #e879f9); }
+.theme-dot-cosmos { background: linear-gradient(135deg, #05060f, #eab308); }
+.theme-dot-knight { background: linear-gradient(135deg, #2a3348 40%, #d4a437); }
+
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="aurora"] body::before,
   :root[data-theme="neon"] body::before,
   :root[data-theme="neon"] body::after,
   :root[data-theme="cosmos"] body::before,
-  :root[data-theme="cosmos"] body::after {
+  :root[data-theme="cosmos"] body::after,
+  :root[data-theme="knight"] body::before {
     animation: none;
   }
 }

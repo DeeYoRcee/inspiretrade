@@ -897,37 +897,40 @@ export class DrawingEngine {
           const ey = P[0].y, sy = P[1].y;
           const GREEN = "#22c55e", RED = "#ef4444";
 
-          // risk / profit panels: translucent fill + outline + left accent bar
+          // refined risk/profit panels: airy fill, hairline border, 2px accent
+          // bar — delicate, TradingView-like, nothing chunky
           const riskTop = Math.min(ey, sy), riskH = Math.max(Math.abs(sy - ey), 1);
           const profTop = Math.min(ey, ty), profH = Math.max(Math.abs(ty - ey), 1);
           this.ctx.lineWidth = 1;
-          this.ctx.fillStyle = "rgba(239,68,68,0.14)";
+          this.ctx.fillStyle = "rgba(239,68,68,0.09)";
           this.ctx.fillRect(x, riskTop, rw, riskH);
-          this.ctx.strokeStyle = "rgba(239,68,68,0.55)";
+          this.ctx.strokeStyle = "rgba(239,68,68,0.30)";
           this.ctx.strokeRect(x + 0.5, riskTop + 0.5, rw - 1, riskH - 1);
-          this.ctx.fillStyle = "rgba(239,68,68,0.9)";
-          this.ctx.fillRect(x - 3, riskTop, 3, riskH);
-          this.ctx.fillStyle = "rgba(34,197,94,0.14)";
+          this.ctx.fillStyle = "rgba(239,68,68,0.75)";
+          this.ctx.fillRect(x - 2, riskTop, 2, riskH);
+          this.ctx.fillStyle = "rgba(34,197,94,0.09)";
           this.ctx.fillRect(x, profTop, rw, profH);
-          this.ctx.strokeStyle = "rgba(34,197,94,0.55)";
+          this.ctx.strokeStyle = "rgba(34,197,94,0.30)";
           this.ctx.strokeRect(x + 0.5, profTop + 0.5, rw - 1, profH - 1);
-          this.ctx.fillStyle = "rgba(34,197,94,0.9)";
-          this.ctx.fillRect(x - 3, profTop, 3, profH);
+          this.ctx.fillStyle = "rgba(34,197,94,0.75)";
+          this.ctx.fillRect(x - 2, profTop, 2, profH);
 
-          // entry (user color, solid) + stop/target (colored, dashed) lines
+          // entry (user color, solid hairline) + stop/target (dotted hairline)
           const levelLine = (yy: number, color: string, dashed?: boolean) => {
             this.ctx.save();
             this.ctx.strokeStyle = color;
-            if (dashed) this.ctx.setLineDash([5, 4]);
-            this.ctx.beginPath(); this.ctx.moveTo(x, yy); this.ctx.lineTo(x + rw, yy); this.ctx.stroke();
+            this.ctx.lineWidth = 1;
+            if (dashed) { this.ctx.setLineDash([2, 4]); this.ctx.globalAlpha = 0.7; }
+            this.ctx.beginPath(); this.ctx.moveTo(x, yy + 0.5); this.ctx.lineTo(x + rw, yy + 0.5); this.ctx.stroke();
             this.ctx.restore();
           };
           const levelPill = (yy: number, txt: string, color: string) => {
+            this.ctx.font = "9px ui-sans-serif, system-ui";
             const tw = this.ctx.measureText(txt).width;
-            this.ctx.fillStyle = "rgba(13,17,23,0.88)";
-            this.ctx.fillRect(x + rw + 4, yy - 8, tw + 10, 15);
+            this.ctx.fillStyle = "rgba(10,14,20,0.72)";
+            this.ctx.fillRect(x + rw + 5, yy - 7, tw + 8, 13);
             this.ctx.fillStyle = color;
-            this.ctx.fillText(txt, x + rw + 9, yy + 3.5);
+            this.ctx.fillText(txt, x + rw + 9, yy + 2.5);
           };
           levelLine(ey, col);
           levelLine(sy, RED, true);
@@ -936,20 +939,23 @@ export class DrawingEngine {
           levelPill(sy, `Stop ${this.fmt(series, stop)}`, "#f87171");
           levelPill(ty, `Target ${this.fmt(series, target)}`, "#4ade80");
 
-          // zone captions — distance in % + R multiple, centered per zone
+          // zone captions — small and dim so the chart stays readable
           const pctOf = (p: number) => entry ? (Math.abs(p - entry) / entry) * 100 : 0;
-          this.ctx.fillStyle = "rgba(255,255,255,0.9)";
-          this.ctx.fillText(`RISK 1R · ${pctOf(stop).toFixed(2)}%`, x + 8, (ey + sy) / 2 + 3);
-          this.ctx.fillText(`REWARD 1:${rr.toFixed(1)} · ${pctOf(target).toFixed(2)}%`, x + 8, (ey + ty) / 2 + 3);
+          this.ctx.font = "8px ui-sans-serif, system-ui";
+          this.ctx.fillStyle = "rgba(255,255,255,0.55)";
+          this.ctx.fillText(`RISK 1R · ${pctOf(stop).toFixed(2)}%`, x + 7, (ey + sy) / 2 + 3);
+          this.ctx.fillText(`REWARD 1:${rr.toFixed(1)} · ${pctOf(target).toFixed(2)}%`, x + 7, (ey + ty) / 2 + 3);
 
-          // header chip — ▲ LONG / ▼ SHORT + R:R on the shape's top edge
+          // slim header chip — dark plate, 2px colored side bar + colored text
           const chip = `${isLong ? "▲ LONG" : "▼ SHORT"}  1 : ${rr.toFixed(2)}`;
-          const cw = this.ctx.measureText(chip).width + 12;
-          const chipY = Math.min(profTop, riskTop) - 16;
+          this.ctx.font = "9px ui-sans-serif, system-ui";
+          const cw = this.ctx.measureText(chip).width + 14;
+          const chipY = Math.min(profTop, riskTop) - 15;
+          this.ctx.fillStyle = "rgba(10,14,20,0.8)";
+          this.ctx.fillRect(x, chipY, cw, 13);
           this.ctx.fillStyle = isLong ? GREEN : RED;
-          this.ctx.fillRect(x, chipY, cw, 14);
-          this.ctx.fillStyle = "#0b0e13";
-          this.ctx.fillText(chip, x + 6, chipY + 10.5);
+          this.ctx.fillRect(x, chipY, 2, 13);
+          this.ctx.fillText(chip, x + 7, chipY + 9.5);
           break;
         }
         case "measure": {
