@@ -6,6 +6,7 @@ import { CASES, RARITY_META, type CaseType, type FragmentDef } from "@shared/fra
 import { FragmentCard, FragmentIcon } from "./FragmentCard";
 import { Gem, Sparkles, Crown } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
+import { casePop, caseRattle, caseReveal, caseSpin } from "@/lib/sfx";
 import { cn } from "@/lib/utils";
 
 const STEP = 120; // px per reel item (w-[112px] + 8px gap)
@@ -72,13 +73,15 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", onClose 
   }, [open, result, caseDef]);
 
   // stage machine: case shakes → lid pops + reel drops in → winner reveal
+  // (+ the matching synthesized sfx for every phase)
   useEffect(() => {
     if (!open || !result) return;
     setStage("case");
     setOffset(null);
+    caseRattle();
     const timers = [
-      window.setTimeout(() => setStage("reel"), SHAKE_MS),
-      window.setTimeout(() => setStage("result"), SHAKE_MS + SPIN_MS + 600),
+      window.setTimeout(() => { setStage("reel"); casePop(); caseSpin(SPIN_MS); }, SHAKE_MS),
+      window.setTimeout(() => { setStage("result"); caseReveal(result.rarity); }, SHAKE_MS + SPIN_MS + 600),
     ];
     return () => timers.forEach((tid) => window.clearTimeout(tid));
   }, [open, result]);

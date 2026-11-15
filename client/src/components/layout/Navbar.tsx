@@ -2,11 +2,11 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
-import { useLanguage } from "@/lib/language-context";
+import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, ChartCandlestick, Wallet, ShieldCheck, Award, User as UserIcon, Package } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, ChartCandlestick, Wallet, ShieldCheck, Award, User as UserIcon, Package, BarChart2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePremiumStatus } from "@/hooks/use-premium";
 import { useEconomy } from "@/hooks/use-economy";
 import { useIsAdmin } from "@/hooks/use-admin";
@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 export function Navbar() {
   const { logout, user } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { t } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
   const { data: isPremium = false } = usePremiumStatus();
   const { data: economy } = useEconomy();
@@ -74,7 +74,35 @@ export function Navbar() {
               <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("mr-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
 
-            <Button variant="ghost" size="sm" aria-label={t("settings")} title={t("settings")} onClick={() => navigate("/settings")} className="h-9 gap-1.5 rounded-full px-2.5"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button>
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("settings")} title={t("settings")} className="h-9 gap-1.5 rounded-full px-2.5"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button></DropdownMenuTrigger>
+              {/* settings sections right below the button — same pattern as the account menu */}
+              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("language")}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="glass-panel w-44 border-border/60">
+                    {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => (
+                      <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer gap-2", language === code && "bg-primary/10 font-semibold text-primary")}>
+                        <span aria-hidden>{LANG_FLAGS[code]}</span>{LANGUAGE_LABELS[code]}{language === code && <span className="ml-auto text-xs">✓</span>}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="cursor-pointer gap-2"><Palette className="h-4 w-4" />{t("themeTitle")}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="glass-panel w-44 border-border/60">
+                    {THEMES.map((themeOption: Theme) => (
+                      <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer gap-2", theme === themeOption && "bg-primary/10 font-semibold text-primary")}>
+                        <span className={cn("h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2"><BarChart2 className="h-4 w-4" />{t("terminalDefaults")}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2 text-muted-foreground"><Settings className="h-4 w-4" />{t("allSettings")}</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("account")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-2.5"><UserRound className="h-4 w-4 md:hidden" /><span className="hidden md:inline">{t("account")}</span></Button></DropdownMenuTrigger>

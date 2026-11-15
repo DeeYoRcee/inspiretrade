@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Wallet, Coins, ArrowDownToLine, ArrowUpFromLine, ShieldCheck, Clock,
+  Wallet, Coins, ArrowDownToLine, ArrowUpFromLine, ShieldCheck, Clock, TriangleAlert,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,9 @@ interface DepositRequest {
 }
 
 const MIN_DEPOSIT = 10;
+
+/** deposits & withdrawals are switched off until the payment flow ships */
+const WALLET_SOON = true;
 
 export default function WalletPage() {
   const { t } = useLanguage();
@@ -147,6 +150,13 @@ export default function WalletPage() {
     }
   };
 
+  const soonBanner = (
+    <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-[11px] font-semibold leading-snug text-amber-300">
+      <TriangleAlert className="h-4 w-4 shrink-0" />
+      {t("walletSoon")}
+    </div>
+  );
+
   return (
     <div className="container mx-auto max-w-5xl space-y-6 p-4 sm:px-6">
       {/* Header */}
@@ -191,6 +201,8 @@ export default function WalletPage() {
               <CardTitle className="flex items-center gap-2 text-lg"><ArrowDownToLine className="h-5 w-5 text-emerald-400" />{t("depositTitle")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {soonBanner}
+              <fieldset disabled={WALLET_SOON} className="space-y-4">
               <p className="text-xs text-muted-foreground">{t("depositInAppNote")}</p>
               <div className="grid grid-cols-3 gap-2">
                 {DEPOSIT_PACKS.map((pack) => (
@@ -260,6 +272,7 @@ export default function WalletPage() {
                 {depositMutation.isPending ? t("depositing") : <><Clock className="mr-2 h-5 w-5" />{t("depositRequestButton")}</>}
               </Button>
               <p className="text-center text-[11px] text-muted-foreground">{t("depositProcessNote")}</p>
+              </fieldset>
 
               {/* last 10 deposit requests with their status */}
               {deposits.length > 0 && (
@@ -294,6 +307,8 @@ export default function WalletPage() {
               <CardTitle className="flex items-center gap-2 text-lg"><ArrowUpFromLine className="h-5 w-5 text-primary" />{t("withdrawTitle")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {soonBanner}
+              <fieldset disabled={WALLET_SOON} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">{t("withdrawAmount")} (min {MIN_WITHDRAW} INSP)</label>
                 <Input
@@ -342,6 +357,7 @@ export default function WalletPage() {
                 {withdrawMutation.isPending ? t("withdrawing") : <><Clock className="mr-2 h-5 w-5" />{t("withdrawRequestButton")}</>}
               </Button>
               <p className="text-center text-[11px] text-muted-foreground">{t("withdrawProcessNote")}</p>
+              </fieldset>
             </CardContent>
           </Card>
         </motion.div>

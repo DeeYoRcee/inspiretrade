@@ -15,7 +15,7 @@ import {
   Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
-  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal,
+  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal, GripVertical,
   PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check, Plus, X,
   Settings2,
 } from "lucide-react";
@@ -333,6 +333,69 @@ export default function TerminalPage() {
     return INSTRUMENTS.filter((i) => i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q));
   }, [symQuery]);
 
+  // drag-to-reorder the instrument list — the custom order persists in the
+  // terminal settings (RTDB); typing still switches to grouped search results
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rowDrag = useRef<{ symbol: string; moved: boolean } | null>(null);
+  const rowDragMoved = useRef(false);
+  const [liveOrder, setLiveOrder] = useState<string[] | null>(null);
+
+  const orderedInstruments = useMemo(() => {
+    const order = liveOrder ?? (Array.isArray(settings.symbolOrder) ? settings.symbolOrder : []);
+    const map = new Map(INSTRUMENTS.map((i) => [i.symbol, i]));
+    const out = order.map((s) => map.get(s)).filter(Boolean) as typeof INSTRUMENTS;
+    for (const inst of INSTRUMENTS) if (!order.includes(inst.symbol)) out.push(inst);
+    return out;
+  }, [settings.symbolOrder, liveOrder]);
+
+  const startRowDrag = (symbol: string) => (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    rowDrag.current = { symbol, moved: false };
+  };
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const d = rowDrag.current;
+      if (!d || !listRef.current) return;
+      const rows = Array.from(listRef.current.querySelectorAll<HTMLElement>("[data-symbol]"));
+      const target = rows.find((el) => {
+        const r = el.getBoundingClientRect();
+        return e.clientY >= r.top && e.clientY <= r.bottom;
+      });
+      const targetSymbol = target?.dataset.symbol;
+      if (!targetSymbol || targetSymbol === d.symbol) return;
+      d.moved = true;
+      const base = liveOrder ?? orderedInstruments.map((i) => i.symbol);
+      const from = base.indexOf(d.symbol);
+      const to = base.indexOf(targetSymbol);
+      if (from < 0 || to < 0) return;
+      const next = [...base];
+      next.splice(from, 1);
+      next.splice(to, 0, d.symbol);
+      setLiveOrder(next);
+    };
+    const up = () => {
+      const d = rowDrag.current;
+      if (d?.moved) {
+        // a drag just ended — swallow the click that lands on the row
+        rowDragMoved.current = true;
+        setTimeout(() => { rowDragMoved.current = false; }, 300);
+        if (liveOrder) update({ symbolOrder: liveOrder });
+      }
+      rowDrag.current = null;
+      setLiveOrder(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveOrder, orderedInstruments]);
+
   // drag the instruments panel around — clamped INSIDE the terminal frame
   useEffect(() => {
     const move = (e: PointerEvent) => {
@@ -528,29 +591,55 @@ export default function TerminalPage() {
                 placeholder="Search instrument…"
                 className="num-input h-7 w-full text-[11px]"
               />
-              <div className="mt-1 max-h-56 overflow-y-auto">
-                {(["index", "metal", "forex", "crypto"] as const).map((cls) => {
-                  const rows = symMatches.filter((i) => i.assetClass === cls);
-                  if (!rows.length) return null;
-                  return (
-                    <div key={cls}>
-                      <div className="mt-1 select-none px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-muted-foreground/70">
-                        {cls === "index" ? "Indices" : cls === "metal" ? "Metals" : cls === "forex" ? "Forex" : "Crypto"}
-                      </div>
-                      {rows.map((i) => (
-                        <button
-                          key={i.symbol}
-                          onClick={() => { update({ symbol: i.symbol }); setSymOpen(false); }}
-                          className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
-                        >
-                          <span className="w-16 font-bold">{i.symbol}</span>
-                          <span className="truncate">{i.name}</span>
-                        </button>
-                      ))}
+              <div className="mt-1 max-h-56 overflow-y-auto" ref={listRef}>
+                {symQuery.trim() ? (
+                  <>
+                    {(["index", "metal", "forex", "crypto"] as const).map((cls) => {
+                      const rows = symMatches.filter((i) => i.assetClass === cls);
+                      if (!rows.length) return null;
+                      return (
+                        <div key={cls}>
+                          <div className="mt-1 select-none px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-muted-foreground/70">
+                            {cls === "index" ? "Indices" : cls === "metal" ? "Metals" : cls === "forex" ? "Forex" : "Crypto"}
+                          </div>
+                          {rows.map((i) => (
+                            <button
+                              key={i.symbol}
+                              onClick={() => { update({ symbol: i.symbol }); setSymOpen(false); }}
+                              className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
+                            >
+                              <span className="w-16 font-bold">{i.symbol}</span>
+                              <span className="truncate">{i.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
+                    {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
+                  </>
+                ) : (
+                  orderedInstruments.map((i) => (
+                    <div
+                      key={i.symbol}
+                      data-symbol={i.symbol}
+                      onClick={() => { if (rowDragMoved.current) return; update({ symbol: i.symbol }); setSymOpen(false); }}
+                      className={cn("flex w-full cursor-pointer items-center gap-1 rounded-lg px-1 py-1.5 text-left text-[11px] hover:bg-card/60", settings.symbol === i.symbol ? "text-emerald-400" : "text-muted-foreground")}
+                    >
+                      <span
+                        onPointerDown={startRowDrag(i.symbol)}
+                        className="shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground/40 hover:text-muted-foreground active:cursor-grabbing"
+                        title="Drag to reorder"
+                      >
+                        <GripVertical className="h-3 w-3" />
+                      </span>
+                      <span className="w-16 shrink-0 font-bold">{i.symbol}</span>
+                      <span className="w-9 shrink-0 rounded bg-white/5 px-0.5 text-center text-[8px] font-bold uppercase tracking-wide">
+                        {i.assetClass === "index" ? "IDX" : i.assetClass === "metal" ? "MET" : i.assetClass === "forex" ? "FX" : "CRY"}
+                      </span>
+                      <span className="truncate">{i.name}</span>
                     </div>
-                  );
-                })}
-                {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
+                  ))
+                )}
               </div>
             </div>
           )}

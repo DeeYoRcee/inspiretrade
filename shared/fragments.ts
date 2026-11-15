@@ -31,40 +31,42 @@ export const RARITY_META: Record<
 /**
  * The 9 pieces of a $5,000 prop account (dropped by the Inspire Case).
  * Collect one of each to claim. Drop weights are CS2-style: reds are rare,
- * gold is the rarest. Sum of dropPercent must equal exactly 100.
+ * gold is the rarest. Rarity sums: common 70 · rare 16 · epic 10 ·
+ * covert 5.999 · mythic 0.001 (weights sum to 102 — the server roll
+ * normalizes by the total, the UI displays the per-rarity sums).
  *
  * Naming: pieces are named after the prop account they build —
  * a $5,000 account case drops "5k$ 1" … "5k$ 9" (piece numbers).
  * NOTE: `id` values are stored in RTDB and market listings — never rename them.
  */
-export const PROP_ACCOUNT_LABEL = "5k$"; // matches the $5,000 prop account
+export const PROP_ACCOUNT_LABEL = "5k$ Prop"; // matches the $5,000 prop account
 export const FRAGMENTS: FragmentDef[] = [
-  { id: "discipline",     name: "5k$ 1", icon: "ShieldCheck",   rarity: "common",  dropPercent: 20 },
-  { id: "patience",       name: "5k$ 2", icon: "Hourglass",     rarity: "common",  dropPercent: 20 },
-  { id: "risk-management",name: "5k$ 3", icon: "Scale",         rarity: "rare",    dropPercent: 14 },
-  { id: "backtesting",    name: "5k$ 4", icon: "FlaskConical",  rarity: "rare",    dropPercent: 14 },
-  { id: "trading-plan",   name: "5k$ 5", icon: "ClipboardList", rarity: "epic",    dropPercent: 9 },
-  { id: "psychology",     name: "5k$ 6", icon: "Brain",         rarity: "epic",    dropPercent: 9 },
-  { id: "consistency",    name: "5k$ 7", icon: "Repeat",        rarity: "covert",  dropPercent: 5 },
-  { id: "execution",      name: "5k$ 8", icon: "Crosshair",     rarity: "covert",  dropPercent: 5 },
-  { id: "master-trader",  name: "5k$ 9", icon: "Crown",         rarity: "mythic",  dropPercent: 2 },
+  { id: "discipline",     name: "5k$ 1", icon: "ShieldCheck",   rarity: "common",  dropPercent: 35 },
+  { id: "patience",       name: "5k$ 2", icon: "Hourglass",     rarity: "common",  dropPercent: 35 },
+  { id: "risk-management",name: "5k$ 3", icon: "Scale",         rarity: "rare",    dropPercent: 8 },
+  { id: "backtesting",    name: "5k$ 4", icon: "FlaskConical",  rarity: "rare",    dropPercent: 8 },
+  { id: "trading-plan",   name: "5k$ 5", icon: "ClipboardList", rarity: "epic",    dropPercent: 5 },
+  { id: "psychology",     name: "5k$ 6", icon: "Brain",         rarity: "epic",    dropPercent: 5 },
+  { id: "consistency",    name: "5k$ 7", icon: "Repeat",        rarity: "covert",  dropPercent: 2.9995 },
+  { id: "execution",      name: "5k$ 8", icon: "Crosshair",     rarity: "covert",  dropPercent: 2.9995 },
+  { id: "master-trader",  name: "5k$ 9", icon: "Crown",         rarity: "mythic",  dropPercent: 0.001 },
 ];
 
 /**
  * Gold Case — the Day-7 streak reward. Drops the 9 pieces of a $10,000
- * prop account ("10k$ 1" … "10k$ 9"). Same CS2-style rarity curve.
+ * prop account ("10k$ 1" … "10k$ 9"). Same rarity curve as the Inspire Case.
  */
-export const GOLD_ACCOUNT_LABEL = "10k$"; // matches the $10,000 prop account
+export const GOLD_ACCOUNT_LABEL = "10k$ Prop"; // matches the $10,000 prop account
 export const GOLD_FRAGMENTS: FragmentDef[] = [
-  { id: "gold-1", name: "10k$ 1", icon: "Gem",     rarity: "common",  dropPercent: 20 },
-  { id: "gold-2", name: "10k$ 2", icon: "Zap",     rarity: "common",  dropPercent: 20 },
-  { id: "gold-3", name: "10k$ 3", icon: "Star",    rarity: "rare",    dropPercent: 14 },
-  { id: "gold-4", name: "10k$ 4", icon: "Target",  rarity: "rare",    dropPercent: 14 },
-  { id: "gold-5", name: "10k$ 5", icon: "Medal",   rarity: "epic",    dropPercent: 9 },
-  { id: "gold-6", name: "10k$ 6", icon: "Trophy",  rarity: "epic",    dropPercent: 9 },
-  { id: "gold-7", name: "10k$ 7", icon: "Rocket",  rarity: "covert",  dropPercent: 5 },
-  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert",  dropPercent: 5 },
-  { id: "gold-9", name: "10k$ 9", icon: "Crown",   rarity: "mythic",  dropPercent: 2 },
+  { id: "gold-1", name: "10k$ 1", icon: "Gem",     rarity: "common",  dropPercent: 35 },
+  { id: "gold-2", name: "10k$ 2", icon: "Zap",     rarity: "common",  dropPercent: 35 },
+  { id: "gold-3", name: "10k$ 3", icon: "Star",    rarity: "rare",    dropPercent: 8 },
+  { id: "gold-4", name: "10k$ 4", icon: "Target",  rarity: "rare",    dropPercent: 8 },
+  { id: "gold-5", name: "10k$ 5", icon: "Medal",   rarity: "epic",    dropPercent: 5 },
+  { id: "gold-6", name: "10k$ 6", icon: "Trophy",  rarity: "epic",    dropPercent: 5 },
+  { id: "gold-7", name: "10k$ 7", icon: "Rocket",  rarity: "covert",  dropPercent: 2.9995 },
+  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert",  dropPercent: 2.9995 },
+  { id: "gold-9", name: "10k$ 9", icon: "Crown",   rarity: "mythic",  dropPercent: 0.001 },
 ];
 
 export type CaseType = "inspire" | "gold";

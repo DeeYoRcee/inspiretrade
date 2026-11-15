@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Coins, Flame, Gift, PackageOpen, Gem, Layers, Crown, ChevronRight, BadgeCheck, Lock, Check,
+  Coins, PackageOpen, Gem, Layers, Crown, ChevronRight, BadgeCheck, Lock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,23 +14,17 @@ import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
 import {
-  useEconomy, useInventory, useClaims, useEconomyInvalidator, todayTashkent,
+  useEconomy, useInventory, useClaims, useEconomyInvalidator,
 } from "@/hooks/use-economy";
 import { CaseOpeningDialog } from "@/components/rewards/CaseOpeningDialog";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
 import {
-  FRAGMENTS, GOLD_FRAGMENTS, CASES, RARITY_META, REWARD_CYCLE_DAYS, GOLD_CASE_DAY,
-  cycleDayOf, caseTypeForCycleDay,
+  FRAGMENTS, GOLD_FRAGMENTS, RARITY_META,
   type FragmentDef, type CaseType,
 } from "@shared/fragments";
 import { cn } from "@/lib/utils";
 
 const RARITY_ORDER: (keyof typeof RARITY_META)[] = ["common", "rare", "epic", "covert", "mythic"];
-
-interface ClaimResponse {
-  economy: { streak: number };
-  reward: { cycleDay: number; caseType: CaseType; caseName: string };
-}
 
 function rarityOddsFor(list: FragmentDef[]) {
   return RARITY_ORDER.map((rarity) => ({
@@ -55,15 +49,6 @@ export default function RewardsPage() {
   const coins = economy?.coins ?? 0;
   const cases = economy?.cases ?? 0;
   const goldCases = economy?.goldCases ?? 0;
-  const streak = economy?.streak ?? 0;
-  const lastClaimDate = economy?.lastClaimDate;
-  const claimedToday = lastClaimDate === todayTashkent();
-
-  // progress inside the current 7-day cycle
-  const claimedInCycle = claimedToday ? cycleDayOf(streak) : streak % REWARD_CYCLE_DAYS;
-  const nextCycleDay = (claimedInCycle % REWARD_CYCLE_DAYS) + 1;
-  const nextCaseType = caseTypeForCycleDay(nextCycleDay);
-  const nextIsGold = nextCaseType === "gold";
 
   const ownedTypes = useMemo(
     () => FRAGMENTS.filter((f) => (inventory?.[f.id] || 0) >= 1).length,
@@ -75,25 +60,6 @@ export default function RewardsPage() {
   );
   const canCombine = ownedTypes === FRAGMENTS.length;
   const canCombineGold = ownedGoldTypes === GOLD_FRAGMENTS.length;
-
-  const claimMutation = useMutation({
-    mutationFn: async () => authedFetch("/api/rewards/claim", {}) as Promise<ClaimResponse>,
-    onSuccess: (data) => {
-      invalidate();
-      toast({
-        title: t("claimSuccess"),
-        description: t("claimSuccessCase").replace("{case}", data.reward.caseName),
-      });
-    },
-    onError: (error: any) => {
-      if (error?.code === "ALREADY_CLAIMED_TODAY") {
-        toast({ title: t("alreadyClaimed") });
-        invalidate();
-      } else {
-        toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
-      }
-    },
-  });
 
   const openMutation = useMutation({
     mutationFn: async (type: CaseType) => {
@@ -147,75 +113,7 @@ export default function RewardsPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Daily claim — PUBG-style 7-day cycle */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-lg"><Flame className="h-5 w-5 text-orange-400" />{t("dailyReward")}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-4 gap-2">
-                {Array.from({ length: REWARD_CYCLE_DAYS }, (_, i) => i + 1).map((day) => {
-                  const isGold = day === GOLD_CASE_DAY;
-                  const isClaimed = day <= claimedInCycle;
-                  const isNext = !claimedToday && day === nextCycleDay;
-                  return (
-                    <div
-                      key={day}
-                      className={cn(
-                        "relative flex flex-col items-center justify-center gap-1 rounded-xl border px-1 py-2",
-                        isGold ? "border-amber-500/50" : "border-border/60",
-                        isClaimed && "bg-muted/40 opacity-55",
-                        isNext && (isGold ? "bg-amber-500/15" : "bg-primary/15"),
-                        !isClaimed && !isNext && "bg-card/50",
-                      )}
-                    >
-                      {isClaimed ? (
-                        <Check className={cn("h-5 w-5", isGold ? "text-amber-400/80" : "text-primary/80")} />
-                      ) : isGold ? (
-                        <Crown className={cn("h-5 w-5", isNext ? "text-amber-400" : "text-amber-400/60")} />
-                      ) : (
-                        <Gem className={cn("h-5 w-5", isNext ? "text-primary" : "text-muted-foreground/60")} />
-                      )}
-                      <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
-                        {t("dayN").replace("{n}", String(day))}
-                      </span>
-                    </div>
-                  );
-                })}
-                <div className="flex flex-col items-center justify-center rounded-xl border border-orange-500/30 bg-orange-500/10 px-1 py-2">
-                  <span className="text-base font-black leading-none text-orange-400">{streak}</span>
-                  <span className="text-[8px] font-bold uppercase tracking-wide text-orange-400/80">🔥</span>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {claimedToday
-                  ? t("dailyComeBackTomorrow")
-                  : t("dailyRewardToday").replace("{case}", CASES[nextCaseType].name)}
-              </p>
-              <Button
-                size="lg"
-                className={cn(
-                  "w-full rounded-xl font-semibold",
-                  nextIsGold && !claimedToday && "bg-gradient-to-r from-amber-500 to-yellow-400 text-black hover:from-amber-400 hover:to-yellow-300",
-                )}
-                disabled={claimedToday || claimMutation.isPending}
-                onClick={() => claimMutation.mutate()}
-              >
-                {claimedToday ? (
-                  <><BadgeCheck className="mr-2 h-5 w-5" />{t("claimedToday")}</>
-                ) : claimMutation.isPending ? (
-                  t("claiming")
-                ) : (
-                  <><Gift className="mr-2 h-5 w-5" />{t("claimReward")}</>
-                )}
-              </Button>
-              <p className="text-[11px] leading-relaxed text-muted-foreground">{t("dailyCycleNote")}</p>
-            </CardContent>
-          </Card>
-        </motion.div>
-
+      <div className="space-y-6">
         {/* Cases — Inspire + Gold */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }}>
           <Card className="glass-panel border-border/50">
@@ -230,7 +128,7 @@ export default function RewardsPage() {
                   <span className="absolute -right-2 -top-2 rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground">{cases}</span>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">{t("inspireCase")} · 5k$</p>
+                  <p className="text-sm font-medium">{t("inspireCase")} · 5k$ Prop</p>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {rarityOddsFor(FRAGMENTS).map(({ rarity, percent }) => (
                       <span key={rarity} className="rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${RARITY_META[rarity].color}1f`, color: RARITY_META[rarity].color }}>
@@ -256,7 +154,7 @@ export default function RewardsPage() {
                   <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-black">{goldCases}</span>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">{t("goldCase")} · 10k$</p>
+                  <p className="text-sm font-medium">{t("goldCase")} · 10k$ Prop</p>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {rarityOddsFor(GOLD_FRAGMENTS).map(({ rarity, percent }) => (
                       <span key={rarity} className="rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${RARITY_META[rarity].color}1f`, color: RARITY_META[rarity].color }}>
@@ -287,7 +185,7 @@ export default function RewardsPage() {
       <Card className="glass-panel border-border/50">
         <CardHeader className="pb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-primary" />{t("inventoryTitle")} · 5k$</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-primary" />{t("inventoryTitle")} · 5k$ Prop</CardTitle>
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold text-muted-foreground">{ownedTypes}/{FRAGMENTS.length}</span>
               <Progress value={(ownedTypes / FRAGMENTS.length) * 100} className="h-1.5 w-28" />
@@ -329,7 +227,7 @@ export default function RewardsPage() {
       <Card className="glass-panel border-amber-500/25">
         <CardHeader className="pb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="flex items-center gap-2 text-lg"><Crown className="h-5 w-5 text-amber-400" />{t("inventoryTitle")} · 10k$</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-lg"><Crown className="h-5 w-5 text-amber-400" />{t("inventoryTitle")} · 10k$ Prop</CardTitle>
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold text-muted-foreground">{ownedGoldTypes}/{GOLD_FRAGMENTS.length}</span>
               <Progress value={(ownedGoldTypes / GOLD_FRAGMENTS.length) * 100} className="h-1.5 w-28" />
@@ -379,7 +277,7 @@ export default function RewardsPage() {
                 <span className="font-number text-sm font-bold">{claim.reference}</span>
                 <div className="flex items-center gap-2">
                   {claim.set === "gold" && (
-                    <Badge className="rounded-full border border-amber-500/30 bg-amber-500/10 text-[10px] font-bold uppercase text-amber-400">10k$</Badge>
+                    <Badge className="rounded-full border border-amber-500/30 bg-amber-500/10 text-[10px] font-bold uppercase text-amber-400">10k$ Prop</Badge>
                   )}
                   <span className="text-xs text-muted-foreground">{new Date(claim.createdAt).toLocaleDateString()}</span>
                   <Badge className="rounded-full bg-amber-500/15 text-[10px] font-bold uppercase text-amber-500">{claim.status}</Badge>

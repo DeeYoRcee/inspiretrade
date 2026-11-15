@@ -3,7 +3,7 @@
  * Saved locally (language/theme) and to Firebase (terminal defaults).
  */
 import { Check, Globe2, Palette, Volume2, BarChart2 } from "lucide-react";
-import { useLanguage, LANGUAGE_LABELS, type Language } from "@/lib/language-context";
+import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
 import { useTheme, THEMES, THEME_LABELS, type Theme } from "@/lib/theme-context";
 import { useTerminalWorkspace } from "@/hooks/use-terminal-workspace";
 import { TIMEFRAMES, CHART_TYPES, type Timeframe, type ChartType } from "@shared/terminal";
@@ -123,5 +123,3 @@ function ColorPick({ label, value, onChange }: { label: string; value: string; o
     </label>
   );
 }
-
-const LANG_FLAGS: Record<Language, string> = { en: "🇬🇧", ru: "🇷🇺", uz: "🇺🇿", ar: "🇸🇦" };

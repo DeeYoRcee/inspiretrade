@@ -3,8 +3,6 @@
  * server-side (/api/news?article=…) and rendered right here on the site —
  * not just the 10-word summary from the feed. Falls back to the summary +
  * a source link when the publisher page can't be parsed (paywall / JS-only).
- * A Translate button (next to Open site / Close) pulls the same article
- * translated server-side and toggles back to the original at will.
  */
 import { useEffect, useState } from "react";
 import { Globe2, Clock3, ExternalLink, Languages, X, Loader2, FileText } from "lucide-react";
@@ -13,12 +11,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SYMBOL_COLOR, type NewsItem } from "@/lib/news-api";
 import { useLanguage } from "@/lib/language-context";
-import { cn } from "@/lib/utils";
 
 interface ArticleData {
   ok: boolean;
   title?: string;
   paragraphs: string[];
+  /** present when the server translated (?article=…&lang=…) — English originals */
+  origTitle?: string;
+  origParagraphs?: string[];
+  translatedLang?: string;
   error?: string;
 }
 
@@ -26,24 +27,17 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
   const { language } = useLanguage();
   const [showOriginal, setShowOriginal] = useState(false);
   const [art, setArt] = useState<{ loading: boolean; data: ArticleData | null }>({ loading: false, data: null });
-  // translated copy of the full article (server-side extraction + translate)
-  const [trans, setTrans] = useState<{ loading: boolean; data: ArticleData | null; on: boolean }>({
-    loading: false,
-    data: null,
-    on: false,
-  });
+  const [trans, setTrans] = useState<{ loading: boolean; data: ArticleData | null }>({ loading: false, data: null });
+  const [showTrans, setShowTrans] = useState(true);
 
   // fetch the full article text every time a story is opened
   useEffect(() => {
-    if (!item) {
-      setArt({ loading: false, data: null });
-      setTrans({ loading: false, data: null, on: false });
-      return;
-    }
+    if (!item) { setArt({ loading: false, data: null }); return; }
     let dead = false;
     setArt({ loading: true, data: null });
-    setTrans({ loading: false, data: null, on: false });
     setShowOriginal(false);
+    setTrans({ loading: false, data: null });
+    setShowTrans(true);
     fetch(`/api/news?article=${encodeURIComponent(item.link)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: ArticleData) => { if (!dead) setArt({ loading: false, data: d }); })
@@ -51,26 +45,23 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
     return () => { dead = true; };
   }, [item]);
 
-  // Translate button: first click fetches the translated article, then it
-  // toggles between the translated text and the original English one.
-  const toggleTranslate = () => {
-    if (!item) return;
-    if (trans.data) { setTrans((p) => ({ ...p, on: !p.on })); return; }
-    if (trans.loading) return;
-    setTrans({ loading: true, data: null, on: true });
-    fetch(`/api/news?article=${encodeURIComponent(item.link)}&lang=${encodeURIComponent(language)}`)
+  // Translate → the app language (server batch-translates title + body)
+  const doTranslate = () => {
+    if (!item || language === "en") return;
+    setTrans({ loading: true, data: null });
+    setShowTrans(true);
+    fetch(`/api/news?article=${encodeURIComponent(item.link)}&lang=${language}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: ArticleData) => setTrans({ loading: false, data: d, on: true }))
-      .catch(() => setTrans({ loading: false, data: null, on: false }));
+      .then((d: ArticleData) => setTrans({ loading: false, data: d }))
+      .catch(() => setTrans({ loading: false, data: null }));
   };
 
   if (!item) return null;
 
   const translated = language !== "en" && !!item.titleEn;
+  const transActive = !!trans.data?.ok && (trans.data.paragraphs?.length ?? 0) > 0 && trans.data.translatedLang === language;
   const fromFeed = !!item.fullText && item.fullText.length > item.summary.length + 100;
   const full = fromFeed || (art.data?.ok === true && art.data.paragraphs.length > 0);
-  // translated view takes over the body when switched on
-  const transOk = trans.on && !!trans.data?.ok && trans.data.paragraphs.length > 0;
 
   return (
     <Dialog open={!!item} onOpenChange={(v) => !v && onClose()}>
@@ -96,41 +87,51 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
         </div>
 
         <DialogTitle className="text-lg font-bold leading-snug">
-          {showOriginal && item.titleEn ? item.titleEn : item.title}
+          {showOriginal && item.titleEn ? item.titleEn : transActive && showTrans ? trans.data!.title : item.title}
         </DialogTitle>
 
-        {translated && (
-          <div className="mt-1.5 flex items-center gap-2">
-            <Badge variant="outline" className="rounded-full text-[10px] gap-1 border-sky-500/40 text-sky-400">
-              <Languages className="h-3 w-3" />
-              {language.toUpperCase()}
-            </Badge>
-            <button
-              onClick={() => setShowOriginal((v) => !v)}
-              className="text-[11px] font-semibold text-sky-400 underline-offset-2 hover:underline"
-            >
-              {showOriginal ? "Show translation" : "Show original (English)"}
-            </button>
+        {language !== "en" && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {!transActive ? (
+              <Button size="sm" variant="outline" className="h-7 rounded-full gap-1.5 border-sky-500/40 text-[11px] text-sky-400 hover:bg-sky-500/10" disabled={trans.loading} onClick={doTranslate}>
+                {trans.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Languages className="h-3.5 w-3.5" />}
+                Translate → {language.toUpperCase()}
+              </Button>
+            ) : (
+              <>
+                <Badge variant="outline" className="rounded-full text-[10px] gap-1 border-sky-500/40 text-sky-400">
+                  <Languages className="h-3 w-3" />
+                  {language.toUpperCase()}
+                </Badge>
+                <button
+                  onClick={() => setShowTrans((v) => !v)}
+                  className="text-[11px] font-semibold text-sky-400 underline-offset-2 hover:underline"
+                >
+                  {showTrans ? "Show original (English)" : "Show translation"}
+                </button>
+              </>
+            )}
+            {trans.data && !trans.data.ok && (
+              <span className="text-[11px] text-muted-foreground">Translation unavailable — showing the original.</span>
+            )}
+            {translated && (
+              <button
+                onClick={() => setShowOriginal((v) => !v)}
+                className="text-[11px] font-semibold text-muted-foreground underline-offset-2 hover:underline"
+              >
+                {showOriginal ? "Feed title: translation" : "Feed title: original"}
+              </button>
+            )}
           </div>
         )}
 
         <div className="mt-3 text-sm leading-relaxed text-foreground/90">
-          {trans.on && trans.loading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-xs">Translating the article…</span>
-            </div>
-          ) : transOk ? (
+          {transActive && showTrans ? (
             <div className="max-h-[52vh] space-y-3 overflow-y-auto pr-1">
               {trans.data!.paragraphs.map((p, i) => (
                 <p key={i} className="leading-relaxed">{p}</p>
               ))}
             </div>
-          ) : trans.on && trans.data && !trans.data.ok ? (
-            <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
-              <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Translation isn't available for this story — read it on the source site below.
-            </p>
           ) : fromFeed ? (
             <div className="max-h-[52vh] overflow-y-auto whitespace-pre-line pr-1">{item.fullText}</div>
           ) : art.loading ? (
@@ -162,19 +163,6 @@ export function ArticleDialog({ item, onClose }: { item: NewsItem | null; onClos
             <ExternalLink className="h-3.5 w-3.5" />
             Open original site
           </Button>
-          {/* in-place translation — English stories become the reader's language */}
-          {language !== "en" && (
-            <Button
-              size="sm"
-              variant="outline"
-              className={cn("rounded-full gap-1.5 border-sky-500/40 text-sky-400 hover:bg-sky-500/10", trans.on && "bg-sky-500/10")}
-              onClick={toggleTranslate}
-              disabled={trans.loading}
-            >
-              {trans.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Languages className="h-3.5 w-3.5" />}
-              {trans.on && trans.data ? "Show original" : "Translate"}
-            </Button>
-          )}
           <Button size="sm" variant="ghost" className="rounded-full gap-1.5" onClick={onClose}>
             <X className="h-3.5 w-3.5" />
             Close

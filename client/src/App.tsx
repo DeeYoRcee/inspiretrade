@@ -27,7 +27,6 @@ import AdminPage from "@/pages/AdminPage";
 import CertificatePage from "@/pages/CertificatePage";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { UsernamePrompt } from "@/components/UsernamePrompt";
-import { DailyRewardDialog } from "@/components/rewards/DailyRewardDialog";
 import { GlobalChat } from "@/components/chat/GlobalChat";
 import { AlertsEngine } from "@/components/news/AlertsEngine";
 import { MusicPlayer } from "@/components/music/MusicPlayer";
@@ -127,7 +126,6 @@ function AppLayout({ children }: { children: ReactNode }) {
       <AppFooter />
       <UsernamePrompt />
       <PremiumSuccessHandler />
-      <DailyRewardDialog />
       <GlobalChat />
     </div>
   );

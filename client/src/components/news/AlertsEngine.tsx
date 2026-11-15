@@ -7,6 +7,7 @@ import {
   ALERTS_SETTINGS_EVENT,
   appendAlertLog,
   browserNotify,
+  enableBackgroundAlerts,
   getCalSeen,
   getNewsSeen,
   loadAlertSettings,
@@ -31,7 +32,11 @@ export function AlertsEngine() {
   useEffect(() => {
     const sync = () => {
       settingsRef.current = loadAlertSettings();
+      // browser notifications on: register the periodic background sync so
+      // news/calendar alerts also arrive while the site is closed
+      if (settingsRef.current.browser) void enableBackgroundAlerts();
     };
+    sync();
     window.addEventListener(ALERTS_SETTINGS_EVENT, sync);
     return () => window.removeEventListener(ALERTS_SETTINGS_EVENT, sync);
   }, []);
