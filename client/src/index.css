@@ -149,6 +149,8 @@ img[src="/logo.png"] {
   -webkit-user-drag: none;
   user-select: none;
   -webkit-touch-callout: none;
+}
+
 /* ===== animated themes — "3D / video-like" backgrounds, pure CSS (no video files) ===== */
 :root[data-theme="aurora"] {
   color-scheme: dark;
