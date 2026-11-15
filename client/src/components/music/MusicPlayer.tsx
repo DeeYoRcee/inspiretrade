@@ -446,7 +446,7 @@ export function MusicPlayer() {
           if (!Hls.isSupported()) {
             // Safari plays m3u8 natively
             el.src = url;
-            el.play().catch(() => setPlaying(false));
+            el.play().catch(() => { setPlaying(false); setLoading(false); });
             return;
           }
           hlsRef.current?.destroy();
@@ -454,7 +454,7 @@ export function MusicPlayer() {
           hlsRef.current = h;
           h.attachMedia(el);
           h.loadSource(url);
-          el.play().catch(() => setPlaying(false));
+          el.play().catch(() => { setPlaying(false); setLoading(false); });
         })
         .catch(() => setNote("Stream loader failed — try another song"));
       return;
@@ -464,7 +464,7 @@ export function MusicPlayer() {
     hlsRef.current?.destroy();
     hlsRef.current = null;
     el.src = url;
-    el.play().catch(() => setPlaying(false));
+    el.play().catch(() => { setPlaying(false); setLoading(false); });
   };
 
   const playPreviewFor = async (t: Track): Promise<boolean> => {
@@ -475,7 +475,7 @@ export function MusicPlayer() {
     const el = audioRef.current;
     if (!hit?.url || !el) return false;
     el.src = hit.url;
-    el.play().catch(() => setPlaying(false));
+    el.play().catch(() => { setPlaying(false); setLoading(false); });
     setNote("Full version didn't load — playing a short preview");
     return true;
   };
@@ -560,7 +560,7 @@ export function MusicPlayer() {
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    const onTime = () => setCur(el.currentTime);
+    const onTime = () => { setCur(el.currentTime); setLoading(false); };
     const onMeta = () => {
       const t = queueRef.current[idxRef.current];
       setDur(el.duration && Number.isFinite(el.duration) ? el.duration : t?.duration || 0);
@@ -750,7 +750,7 @@ export function MusicPlayer() {
         </button>
 
         {/* card (bar / mini) — hidden in dot view, never unmounted mid-song */}
-        <div className={cn(view !== "dot" ? "block" : "hidden", wide ? "w-80" : "w-56")}>
+        <div className={cn(view !== "dot" ? "block" : "hidden", wide ? "w-80 max-w-[calc(100vw-12px)]" : "w-56")}>
           <div
             className="overflow-hidden rounded-2xl border border-border/60 bg-card/95 shadow-xl backdrop-blur-xl"
             style={{ opacity: prefs.opacity }}
@@ -852,7 +852,7 @@ export function MusicPlayer() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-bold text-foreground">{track.title}</p>
                   <p className="truncate text-xs text-muted-foreground">{track.artist}</p>
-                  {loading && (
+                  {loading && !playing && (
                     <p className="mt-1 flex items-center gap-1 text-[10px] font-medium text-primary">
                       <Loader2 className="h-3 w-3 animate-spin" /> loading…
                     </p>

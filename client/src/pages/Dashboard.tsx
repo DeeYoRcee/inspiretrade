@@ -396,9 +396,9 @@ export default function Dashboard() {
                           isSelected && "ring-2 ring-primary ring-offset-1 ring-offset-background",
                           todayDate && !isSelected && "bg-accent/60",
                           hasTrades && dayPnL > 0
-                            ? "border-2 border-success/80 shadow-[0_0_8px_rgba(34,197,94,0.25)]"
+                            ? "border-[1.5px] border-success/80 shadow-[0_0_8px_rgba(34,197,94,0.25)]"
                             : hasTrades && dayPnL < 0
-                              ? "border-2 border-destructive/80 shadow-[0_0_8px_rgba(239,68,68,0.25)]"
+                              ? "border-[1.5px] border-destructive/80 shadow-[0_0_8px_rgba(239,68,68,0.25)]"
                               : "border border-border/30 hover:border-border/60"
                         )}
                       >
@@ -509,9 +509,9 @@ export default function Dashboard() {
                         <div className={cn(
                           "flex flex-col items-center justify-between h-full w-full py-1 rounded-md transition-colors relative",
                           hasTrades && dayPnL > 0
-                            ? "border-2 border-success/80 shadow-[0_0_10px_rgba(34,197,94,0.3)]"
+                            ? "border-[1.5px] border-success/80 shadow-[0_0_10px_rgba(34,197,94,0.3)]"
                             : hasTrades && dayPnL < 0
-                              ? "border-2 border-destructive/80 shadow-[0_0_10px_rgba(239,68,68,0.3)]"
+                              ? "border-[1.5px] border-destructive/80 shadow-[0_0_10px_rgba(239,68,68,0.3)]"
                               : "border border-border/20"
                         )}>
                           <span className="font-medium text-xs sm:text-sm">{format(date, "d")}</span>

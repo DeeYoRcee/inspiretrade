@@ -1,6 +1,10 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { User, onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+
+// the splash logo is the site's entrance animation — hold it on screen for at
+// least this long, even when Firebase resolves the session in milliseconds
+const MIN_SPLASH_MS = 1600;
 
 interface AuthContextType {
   user: User | null;
@@ -17,11 +21,14 @@ const AuthContext = createContext<AuthContextType>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const bootAt = useRef(Date.now());
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      setLoading(false);
+      // keep the entrance animation up for its full beat, then release
+      const wait = Math.max(0, MIN_SPLASH_MS - (Date.now() - bootAt.current));
+      window.setTimeout(() => setLoading(false), wait);
     });
 
     return () => unsubscribe();

@@ -25,7 +25,7 @@ function timeAgo(ts: number): string {
 
 /**
  * Navbar notification bell: unread badge + dropdown with the alert log
- * (news hits open the article, calendar hits open the News page).
+ * (any entry opens the in-app News page).
  */
 export function NotificationBell() {
   const { t } = useLanguage();
@@ -78,7 +78,7 @@ export function NotificationBell() {
               return (
                 <button
                   key={`${entry.kind}-${entry.id}-${entry.at}`}
-                  onClick={() => (entry.kind === "news" ? window.open(entry.id, "_blank") : navigate("/news"))}
+                  onClick={() => navigate("/news")}
                   className="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-accent/50"
                 >
                   <span
