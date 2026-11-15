@@ -996,10 +996,11 @@ export default function TerminalPage() {
             )}
           </div>
         )}
-        {/* drawing toolbar — compact GROUP buttons, floats INSIDE the chart
-            area (TradingView-style); the corner arrow opens that group's
-            tool list to the RIGHT of the button */}
-        <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
+        {/* drawing toolbar — compact GROUP buttons. On desktop it is a REAL
+            column of the terminal (chart starts AFTER it — nothing renders
+            underneath); on mobile it stays a small overlay on the chart.
+            The corner arrow opens that group's tool list to the RIGHT. */}
+        <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur md:relative md:left-auto md:top-auto md:max-h-full md:shrink-0">
           {/* FAVORITES no longer live here — they float in their own draggable
               bar over the chart (TradingView-style), see favbarPos below */}
           {/* the group list — collapsible like TradingView's tool rail */}

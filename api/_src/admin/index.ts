@@ -19,6 +19,7 @@ import deposits from "./deposits";
 import chatDelete from "./chat-delete";
 import chatSend from "./chat-send";
 import setUsername from "./set-username";
+import caseAdmin from "./cases";
 
 function safeParse(raw: string): any {
   try {
@@ -57,9 +58,15 @@ export default async function handler(req: any, res: any) {
       return chatSend(req, res);
     case "set-username":
       return setUsername(req, res);
+    case "caseCreate":
+    case "caseDelete":
+    case "caseGrant":
+      // owner's case factory — create/delete custom case definitions, grant
+      // cases of ANY type (all three dispatched from one module)
+      return caseAdmin(req, res);
     default:
       return res
         .status(400)
-        .json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete|chat-send|set-username)" });
+        .json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete|chat-send|set-username|caseCreate|caseDelete|caseGrant)" });
   }
 }

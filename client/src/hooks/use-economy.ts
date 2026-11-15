@@ -10,6 +10,8 @@ export interface Economy {
   cases: number;
   /** Gold Case count (10k$ fragments) — the Day-7 streak reward */
   goldCases: number;
+  /** owner-made custom case counts — economy/<uid>/customCases/<caseId> */
+  customCases?: Record<string, number>;
   streak: number;
   lastClaimDate?: string;
   totalClaimed?: number;
@@ -33,7 +35,6 @@ export function useEconomy() {
 
 /** Record<fragmentId, owned count> — only counts > 0 are meaningful. */
 export type Inventory = Record<string, number>;
-
 export const EMPTY_INVENTORY: Inventory = {};
 
 export function useInventory() {
@@ -50,6 +51,33 @@ export function useInventory() {
         inventory[fragment.id] = data[fragment.id]?.count || 0;
       }
       return inventory;
+    },
+    enabled: !!user,
+  });
+}
+
+/** One owner-made custom case definition from economyConfig/cases. */
+export interface CustomCaseDef {
+  caseId: string;
+  name: string;
+  fragments: { id: string; weight: number }[];
+  createdAt?: number;
+  createdBy?: string;
+}
+
+/** The owner's custom case definitions (read-only to all signed-in users). */
+export function useCustomCases() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["caseDefs", user?.uid],
+    queryFn: async (): Promise<CustomCaseDef[]> => {
+      if (!user) return [];
+      const snap = await get(ref(db, "economyConfig/cases"));
+      if (!snap.exists()) return [];
+      const data = snap.val() as Record<string, any>;
+      return Object.entries(data)
+        .map(([caseId, def]) => ({ caseId, ...def }) as CustomCaseDef)
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     },
     enabled: !!user,
   });
@@ -89,6 +117,7 @@ export function useEconomyInvalidator() {
     queryClient.invalidateQueries({ queryKey: ["inventory"] });
     queryClient.invalidateQueries({ queryKey: ["claims"] });
     queryClient.invalidateQueries({ queryKey: ["market"] });
+    queryClient.invalidateQueries({ queryKey: ["caseDefs"] });
   };
 }
 

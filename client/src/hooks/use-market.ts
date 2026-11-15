@@ -7,6 +7,12 @@ export interface MarketListing {
   id: string;
   sellerUid: string;
   sellerName: string;
+  /** "case" listings sell an Inspire/Gold/custom case; fragments are the default */
+  kind?: "fragment" | "case";
+  /** case listings: "inspire" | "gold" | a custom case id */
+  caseId?: string;
+  /** friendly item name (server-stamped) — fragment id for old listings */
+  itemName?: string;
   fragmentId: string;
   price: number;
   status: "active" | "sold" | "canceled";

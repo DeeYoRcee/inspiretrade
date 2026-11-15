@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { CASES, RARITY_META, type CaseType, type FragmentDef } from "@shared/fragments";
+import { CASES, FRAGMENTS, RARITY_META, type CaseType, type FragmentDef } from "@shared/fragments";
 import { FragmentCard, FragmentIcon } from "./FragmentCard";
 import { Gem, Sparkles, Crown } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
@@ -20,7 +20,10 @@ interface CaseOpeningDialogProps {
   open: boolean;
   result: FragmentDef | null;
   /** which case is being opened — decides the drop pool and the case skin */
-  caseType?: CaseType;
+  caseType?: CaseType | string;
+  /** custom cases: the drop pool + display name (built-ins use CASES) */
+  pool?: FragmentDef[];
+  caseName?: string;
   onClose: () => void;
 }
 
@@ -55,14 +58,18 @@ const CASE_SKIN: Record<CaseType, { border: string; glow: string; iconTint: stri
  * dropped fragments appear below it and the reel scrolls past before
  * landing on the winner.
  */
-export function CaseOpeningDialog({ open, result, caseType = "inspire", onClose }: CaseOpeningDialogProps) {
+export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, caseName, onClose }: CaseOpeningDialogProps) {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState<Stage>("case");
   const [offset, setOffset] = useState<number | null>(null);
 
-  const caseDef = CASES[caseType];
-  const skin = CASE_SKIN[caseType];
+  // built-ins come from CASES; owner-made custom cases carry their own pool
+  const isBuiltin = caseType === "inspire" || caseType === "gold";
+  const caseDef = isBuiltin
+    ? CASES[caseType as CaseType]
+    : { id: caseType as CaseType, name: caseName || caseType, fragments: pool || FRAGMENTS };
+  const skin = CASE_SKIN[caseType as CaseType] ?? CASE_SKIN.inspire;
   const isGold = caseType === "gold";
 
   const items = useMemo(() => {
@@ -71,7 +78,6 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", onClose 
     fillers[WINNER_INDEX] = result;
     return fillers;
   }, [open, result, caseDef]);
-
   // stage machine: case shakes → lid pops + reel drops in → winner reveal
   // (+ the matching synthesized sfx for every phase)
   useEffect(() => {

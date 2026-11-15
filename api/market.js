@@ -138,6 +138,10 @@ var GOLD_FRAGMENTS = [
   { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
   { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
+var CASES = {
+  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
+  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS }
+};
 var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
@@ -151,12 +155,41 @@ function getFragment(id) {
 }
 
 // api/_src/market/list.ts
+var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
 var list_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
-  const { fragmentId, price } = req.body || {};
-  const fragment = getFragment(String(fragmentId || ""));
-  if (!fragment) throw new HttpError(400, "BAD_FRAGMENT", "Unknown fragment");
+  const { fragmentId, caseId, price } = req.body || {};
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const kind = body.kind === "case" ? "case" : "fragment";
+  let escrowRef;
+  let itemName;
+  let insufficientError;
+  let listingItem;
+  if (kind === "case") {
+    const id = String(caseId || "");
+    if (id === "inspire" || id === "gold") {
+      escrowRef = id === "gold" ? rtdb().ref(`economy/${user.uid}/goldCases`) : rtdb().ref(`economy/${user.uid}/cases`);
+      itemName = CASES[id].name;
+      insufficientError = new HttpError(400, "NO_CASES", "You don't own this case");
+      listingItem = { kind: "case", caseId: id };
+    } else {
+      if (!CASE_ID_RE.test(id)) throw new HttpError(400, "BAD_CASE", "Unknown case");
+      const def = (await rtdb().ref(`economyConfig/cases/${id}`).get()).val();
+      if (!def) throw new HttpError(400, "BAD_CASE", "Unknown case");
+      escrowRef = rtdb().ref(`economy/${user.uid}/customCases/${id}`);
+      itemName = String(def.name || id);
+      insufficientError = new HttpError(400, "NO_CASES", "You don't own this case");
+      listingItem = { kind: "case", caseId: id };
+    }
+  } else {
+    const fragment = getFragment(String(fragmentId || ""));
+    if (!fragment) throw new HttpError(400, "BAD_FRAGMENT", "Unknown fragment");
+    escrowRef = rtdb().ref(`inventory/${user.uid}/${fragment.id}/count`);
+    itemName = fragment.name;
+    insufficientError = new HttpError(400, "NO_FRAGMENT", "You don't own this fragment");
+    listingItem = { kind: "fragment", fragmentId: fragment.id };
+  }
   const rawPrice = Number(price);
   const priceCents = Math.round(rawPrice * 100);
   const normalizedPrice = priceCents / 100;
@@ -165,14 +198,13 @@ var list_default = handle(async (req, res) => {
   }
   const db = rtdb();
   const now = Date.now();
-  const countRef = db.ref(`inventory/${user.uid}/${fragment.id}/count`);
-  await decrementCounter(countRef, new HttpError(400, "NO_FRAGMENT", "You don't own this fragment"));
+  await decrementCounter(escrowRef, insufficientError);
   const allListings = (await db.ref("market").get()).val() || {};
   const activeMine = Object.values(allListings).filter(
     (l) => l && l.sellerUid === user.uid && l.status === "active"
   ).length;
   if (activeMine >= MAX_ACTIVE_LISTINGS) {
-    await db.ref(`inventory/${user.uid}/${fragment.id}/count`).transaction((c) => (c || 0) + 1);
+    await escrowRef.transaction((c) => (c || 0) + 1);
     throw new HttpError(400, "TOO_MANY_LISTINGS", `You can have at most ${MAX_ACTIVE_LISTINGS} active listings`);
   }
   let sellerName = "Trader";
@@ -186,18 +218,19 @@ var list_default = handle(async (req, res) => {
     id: listingRef.key,
     sellerUid: user.uid,
     sellerName,
-    fragmentId: fragment.id,
+    itemName,
+    ...listingItem,
     price: normalizedPrice,
     status: "active",
     listedAt: now
   };
   await listingRef.set(listing);
-  await db.ref(`inventory/${user.uid}/${fragment.id}/updatedAt`).set(now);
-  await logLedger({ type: "market_list", uid: user.uid, listingId: listingRef.key, fragmentId: fragment.id, price: normalizedPrice });
+  await logLedger({ type: "market_list", uid: user.uid, listingId: listingRef.key, kind, caseId: listing.caseId, fragmentId: listing.fragmentId, price: normalizedPrice });
   res.status(200).json({ ok: true, listing });
 });
 
 // api/_src/market/buy.ts
+var CASE_ID_RE2 = /^[a-z0-9][a-z0-9-]{2,23}$/;
 var buy_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
@@ -220,6 +253,14 @@ var buy_default = handle(async (req, res) => {
     throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
   }
   const listing = reserved;
+  const revertListing = async () => {
+    await db.ref(`market/${listingId}`).transaction((current) => {
+      if (current && current.status === "sold" && current.buyerUid === user.uid) {
+        return { ...current, status: "active", buyerUid: null, soldAt: null };
+      }
+      return current;
+    });
+  };
   const coinsRef = db.ref(`economy/${user.uid}/coins`);
   const before = (await coinsRef.get()).val() || 0;
   const payTx = await coinsRef.transaction((c) => {
@@ -228,12 +269,7 @@ var buy_default = handle(async (req, res) => {
   });
   const coinsAfter = payTx?.snapshot?.val?.() ?? 0;
   if (!payTx?.committed || coinsAfter >= before) {
-    await db.ref(`market/${listingId}`).transaction((current) => {
-      if (current && current.status === "sold" && current.buyerUid === user.uid) {
-        return { ...current, status: "active", buyerUid: null, soldAt: null };
-      }
-      return current;
-    });
+    await revertListing();
     throw new HttpError(400, "INSUFFICIENT_COINS", "Not enough INSP coins");
   }
   const priceCents = Math.round(listing.price * 100);
@@ -241,13 +277,30 @@ var buy_default = handle(async (req, res) => {
   const sellerReceives = (priceCents - feeCents) / 100;
   const fee = feeCents / 100;
   await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c) => (c || 0) + sellerReceives);
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  if (listing.kind === "case") {
+    const caseId = String(listing.caseId || "");
+    let deliverRef;
+    if (caseId === "inspire" || caseId === "gold") {
+      deliverRef = caseId === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : db.ref(`economy/${user.uid}/cases`);
+    } else if (CASE_ID_RE2.test(caseId) && (await db.ref(`economyConfig/cases/${caseId}`).get()).exists()) {
+      deliverRef = db.ref(`economy/${user.uid}/customCases/${caseId}`);
+    } else {
+      await revertListing();
+      await db.ref(`economy/${user.uid}/coins`).transaction((c) => (c || 0) + listing.price);
+      throw new HttpError(409, "CASE_UNAVAILABLE", "This case was removed by the owner \u2014 your coins are refunded");
+    }
+    await deliverRef.transaction((c) => (c || 0) + 1);
+  } else {
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  }
   await logLedger({
     type: "market_buy",
     buyerUid: user.uid,
     sellerUid: listing.sellerUid,
     listingId,
+    kind: listing.kind || "fragment",
+    caseId: listing.caseId,
     fragmentId: listing.fragmentId,
     price: listing.price,
     fee,
@@ -279,9 +332,15 @@ var cancel_default = handle(async (req, res) => {
   if (!tx.committed || !listing || listing.status !== "canceled") {
     throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
   }
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
-  await logLedger({ type: "market_cancel", uid: user.uid, listingId, fragmentId: listing.fragmentId });
+  if (listing.kind === "case") {
+    const caseId = String(listing.caseId || "");
+    const refundRef = caseId === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : caseId === "inspire" ? db.ref(`economy/${user.uid}/cases`) : db.ref(`economy/${user.uid}/customCases/${caseId}`);
+    await refundRef.transaction((c) => (c || 0) + 1);
+  } else {
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  }
+  await logLedger({ type: "market_cancel", uid: user.uid, listingId, kind: listing.kind || "fragment", caseId: listing.caseId, fragmentId: listing.fragmentId });
   res.status(200).json({ ok: true });
 });
 

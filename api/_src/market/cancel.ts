@@ -26,12 +26,25 @@ export default handle(async (req, res) => {
   if (!tx.committed || !listing || listing.status !== "canceled") {
     throw new HttpError(400, "CANNOT_CANCEL", "Listing is not active or not yours");
   }
-  await db
-    .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
-    .transaction((c: any) => (c || 0) + 1);
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  // Refund the escrowed item — a fragment goes back to the inventory, a case
+  // to the matching economy counter (Inspire / Gold / custom).
+  if (listing.kind === "case") {
+    const caseId = String(listing.caseId || "");
+    const refundRef =
+      caseId === "gold"
+        ? db.ref(`economy/${user.uid}/goldCases`)
+        : caseId === "inspire"
+          ? db.ref(`economy/${user.uid}/cases`)
+          : db.ref(`economy/${user.uid}/customCases/${caseId}`);
+    await refundRef.transaction((c: any) => (c || 0) + 1);
+  } else {
+    await db
+      .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
+      .transaction((c: any) => (c || 0) + 1);
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  }
 
-  await logLedger({ type: "market_cancel", uid: user.uid, listingId, fragmentId: listing.fragmentId });
+  await logLedger({ type: "market_cancel", uid: user.uid, listingId, kind: listing.kind || "fragment", caseId: listing.caseId, fragmentId: listing.fragmentId });
 
   res.status(200).json({ ok: true });
 });

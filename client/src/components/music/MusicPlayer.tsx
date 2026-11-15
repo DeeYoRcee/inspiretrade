@@ -299,7 +299,11 @@ export function MusicPlayer() {
     });
   };
 
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // the <audio> element only renders once the visitor is signed in — until
+  // then audioRef.current is null, so effects must track the real element
+  // (this state flips when it mounts and re-runs the listener subscription)
+  const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
   // hls.js instance for SoundCloud HLS streams (m3u8) — destroyed on every switch
   const hlsRef = useRef<{ destroy: () => void } | null>(null);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; w: number; h: number; moved: boolean } | null>(null);
@@ -558,7 +562,7 @@ export function MusicPlayer() {
   };
 
   useEffect(() => {
-    const el = audioRef.current;
+    const el = audioEl;
     if (!el) return;
     const onTime = () => { setCur(el.currentTime); setLoading(false); };
     const onMeta = () => {
@@ -618,12 +622,12 @@ export function MusicPlayer() {
       el.removeEventListener("error", onError);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [audioEl]);
 
   // volume follows the slider without re-subscribing the audio events
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = prefs.volume;
-  }, [prefs.volume]);
+    if (audioEl) audioEl.volume = prefs.volume;
+  }, [prefs.volume, audioEl]);
 
   const search = async () => {
     const q = term.trim();
@@ -729,7 +733,7 @@ export function MusicPlayer() {
 
   return (
     <>
-      <audio ref={audioRef} className="hidden" />
+      <audio ref={(el) => { audioRef.current = el; setAudioEl(el); }} className="hidden" />
       <div
         data-music-panel
         className="fixed left-2 top-[7rem] z-[80] sm:left-3 sm:top-[4.25rem]"

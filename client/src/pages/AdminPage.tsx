@@ -2,17 +2,20 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen,
+  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen, Box, Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { useCustomCases, useEconomyInvalidator } from "@/hooks/use-economy";
+import { ALL_FRAGMENTS, CASES } from "@shared/fragments";
 import { cn } from "@/lib/utils";
 
 interface Withdrawal {
@@ -56,6 +59,15 @@ export default function AdminPage() {
   const [spawnGold, setSpawnGold] = useState("");
   const [claimName, setClaimName] = useState("");
 
+  // Case factory — create custom cases, grant cases of any type
+  const { data: customCases } = useCustomCases();
+  const invalidateEconomy = useEconomyInvalidator();
+  const [newCaseName, setNewCaseName] = useState("");
+  const [caseWeights, setCaseWeights] = useState<Record<string, string>>({});
+  const [grantCaseId, setGrantCaseId] = useState("");
+  const [grantTarget, setGrantTarget] = useState("");
+  const [grantCount, setGrantCount] = useState("1");
+
   // Withdrawals
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -96,6 +108,58 @@ export default function AdminPage() {
       setLoadingList(false);
     }
   };
+
+  // Case factory — create / delete / grant (owner only, server validates)
+  const createCaseMutation = useMutation({
+    mutationFn: async () => {
+      const fragments = Object.entries(caseWeights)
+        .map(([id, weight]) => ({ id, weight: Number(weight) || 0 }))
+        .filter((row) => row.weight > 0);
+      return authedFetch("/api/admin?action=caseCreate", { name: newCaseName.trim(), fragments });
+    },
+    onSuccess: () => {
+      toast({ title: t("adminCaseCreated") });
+      setNewCaseName("");
+      setCaseWeights({});
+      invalidateEconomy();
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  const deleteCaseMutation = useMutation({
+    mutationFn: async (caseId: string) => authedFetch("/api/admin?action=caseDelete", { caseId }),
+    onSuccess: () => {
+      toast({ title: t("adminCaseDeleted") });
+      invalidateEconomy();
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  const grantCaseMutation = useMutation({
+    mutationFn: async () => {
+      const payload: Record<string, unknown> = { caseId: grantCaseId, count: Number(grantCount) || 1 };
+      const trimmed = grantTarget.trim();
+      if (trimmed.includes("@")) payload.username = trimmed.replace("@", "").toLowerCase();
+      else payload.uid = trimmed;
+      return authedFetch("/api/admin?action=caseGrant", payload);
+    },
+    onSuccess: () => {
+      toast({ title: t("adminCaseGranted") });
+      setGrantTarget("");
+      setGrantCount("1");
+      invalidateEconomy();
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  const pickedFragments = Object.entries(caseWeights).filter(([, w]) => Number(w) > 0);
+  const totalCaseWeight = pickedFragments.reduce((s, [, w]) => s + Number(w), 0);
 
   useEffect(() => {
     loadWithdrawals();
@@ -190,6 +254,7 @@ export default function AdminPage() {
           <TabsTrigger value="deposits" className="gap-1.5 rounded-full"><ArrowDownToLine className="h-4 w-4" />{t("depositsTab")}</TabsTrigger>
           <TabsTrigger value="withdrawals" className="gap-1.5 rounded-full"><Clock className="h-4 w-4" />{t("withdrawalsTab")}</TabsTrigger>
           <TabsTrigger value="owner" className="gap-1.5 rounded-full"><Crown className="h-4 w-4" />{t("ownerTab")}</TabsTrigger>
+          <TabsTrigger value="cases" className="gap-1.5 rounded-full"><Box className="h-4 w-4" />{t("adminCasesTab")}</TabsTrigger>
         </TabsList>
 
         {/* Owner — CEO powers */}
@@ -252,6 +317,146 @@ export default function AdminPage() {
                 <p className="text-[11px] leading-relaxed text-muted-foreground">{t("ownerCeoNote")}</p>
               </CardContent>
             </Card>
+          </div>
+        </TabsContent>
+
+        {/* Case factory — create custom cases, grant any case type */}
+        <TabsContent value="cases">
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* create */}
+            <Card className="glass-panel border-sky-500/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg"><Box className="h-5 w-5 text-sky-400" />{t("adminCaseCreateTitle")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs leading-relaxed text-muted-foreground">{t("adminCaseCreateHint")}</p>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">{t("adminCaseName")}</label>
+                  <Input
+                    value={newCaseName}
+                    onChange={(e) => setNewCaseName(e.target.value.slice(0, 40))}
+                    placeholder={t("adminCaseNamePlaceholder")}
+                    className="h-11 rounded-xl"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">{t("adminCasePool")}</label>
+                  <div className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-border/50 bg-card/40 p-2">
+                    {ALL_FRAGMENTS.map((f) => {
+                      const w = caseWeights[f.id] ?? "";
+                      const active = Number(w) > 0;
+                      return (
+                        <div key={f.id} className={cn("flex items-center gap-2 rounded-lg px-2 py-1 transition-colors", active ? "bg-sky-500/10" : "hover:bg-white/5")}>
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium">{f.name}</span>
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{f.rarity}</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={1000}
+                            step={0.5}
+                            value={w}
+                            onChange={(e) => setCaseWeights((p) => ({ ...p, [f.id]: e.target.value }))}
+                            placeholder="0"
+                            className="h-8 w-20 rounded-lg text-xs"
+                            aria-label={`${f.name} weight`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("adminCasePicked").replace("{n}", String(pickedFragments.length))} · {t("adminCaseTotalWeight")}: {totalCaseWeight || "—"}
+                  </p>
+                </div>
+                <Button
+                  size="lg"
+                  className="w-full rounded-xl bg-sky-500 font-semibold text-white hover:bg-sky-400"
+                  disabled={createCaseMutation.isPending || newCaseName.trim().length < 2 || pickedFragments.length < 1}
+                  onClick={() => createCaseMutation.mutate()}
+                >
+                  <Box className="mr-2 h-5 w-5" />{t("adminCaseCreateBtn")}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-4">
+              {/* existing custom cases */}
+              <Card className="glass-panel border-border/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-lg"><PackageOpen className="h-5 w-5 text-primary" />{t("adminCaseListTitle")}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {!(customCases ?? []).length ? (
+                    <p className="py-2 text-center text-sm text-muted-foreground">{t("adminCaseListEmpty")}</p>
+                  ) : (
+                    (customCases ?? []).map((def) => (
+                      <div key={def.caseId} className="flex items-center justify-between rounded-xl border border-border/50 bg-card/50 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{def.name}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {def.fragments.length} × fragment · {def.fragments.reduce((s, r) => s + (Number(r.weight) || 0), 0)} {t("adminCaseTotalWeight")}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full text-red-400 hover:text-red-300"
+                          disabled={deleteCaseMutation.isPending}
+                          onClick={() => deleteCaseMutation.mutate(def.caseId)}
+                        >
+                          <Trash2 className="mr-1 h-3.5 w-3.5" />{t("adminCaseDelete")}
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* grant any case type */}
+              <Card className="glass-panel border-amber-500/30">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-lg"><Crown className="h-5 w-5 text-amber-400" />{t("adminCaseGrantTitle")}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">{t("adminCasePickCase")}</label>
+                      <Select value={grantCaseId} onValueChange={setGrantCaseId}>
+                        <SelectTrigger className="w-full rounded-xl"><SelectValue placeholder={t("adminCasePickCase")} /></SelectTrigger>
+                        <SelectContent className="glass-panel border-border/60">
+                          <SelectItem value="inspire">{CASES.inspire.name}</SelectItem>
+                          <SelectItem value="gold">{CASES.gold.name}</SelectItem>
+                          {(customCases ?? []).map((def) => (
+                            <SelectItem key={def.caseId} value={def.caseId}>{def.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">{t("giftCases")}</label>
+                      <Input type="number" min={1} max={1000} value={grantCount} onChange={(e) => setGrantCount(e.target.value)} className="h-11 rounded-xl" />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">{t("giftTarget")}</label>
+                    <Input
+                      value={grantTarget}
+                      onChange={(e) => setGrantTarget(e.target.value)}
+                      placeholder="@username or uid"
+                      className="h-11 rounded-xl"
+                    />
+                  </div>
+                  <Button
+                    size="lg"
+                    className="w-full rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-semibold text-black hover:from-amber-400 hover:to-yellow-300"
+                    disabled={grantCaseMutation.isPending || !grantCaseId || !grantTarget.trim()}
+                    onClick={() => grantCaseMutation.mutate()}
+                  >
+                    <Send className="mr-2 h-5 w-5" />{t("adminCaseGrantBtn")}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </TabsContent>
 

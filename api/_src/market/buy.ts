@@ -3,11 +3,14 @@
  * Buys an active listing:
  *   1) atomically reserve the listing (status -> sold)
  *   2) atomically deduct buyer coins (revert listing if insufficient)
- *   3) credit seller (price minus 10% fee), deliver fragment to buyer
+ *   3) credit seller (price minus 10% fee), deliver the item — a fragment to
+ *      the buyer's inventory, or a case to their economy counters.
  * All state changes are logged to /ledger.
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
 import { MARKET_FEE_PERCENT } from "../lib/fragments";
+
+const CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
 
 export default handle(async (req, res) => {
   assertPost(req);
@@ -39,6 +42,16 @@ export default handle(async (req, res) => {
   }
   const listing = reserved;
 
+  // revert the reservation (payment failure / undeliverable item)
+  const revertListing = async () => {
+    await db.ref(`market/${listingId}`).transaction((current: any) => {
+      if (current && current.status === "sold" && current.buyerUid === user.uid) {
+        return { ...current, status: "active", buyerUid: null, soldAt: null };
+      }
+      return current; // someone else changed it, leave as-is
+    });
+  };
+
   // 2) Deduct buyer coins (no-op + refund if insufficient).
   const coinsRef = db.ref(`economy/${user.uid}/coins`);
   const before = (await coinsRef.get()).val() || 0;
@@ -49,31 +62,49 @@ export default handle(async (req, res) => {
   const coinsAfter = payTx?.snapshot?.val?.() ?? 0;
   if (!payTx?.committed || coinsAfter >= before) {
     // Could not pay — revert the listing reservation.
-    await db.ref(`market/${listingId}`).transaction((current: any) => {
-      if (current && current.status === "sold" && current.buyerUid === user.uid) {
-        return { ...current, status: "active", buyerUid: null, soldAt: null };
-      }
-      return current; // someone else changed it, leave as-is
-    });
+    await revertListing();
     throw new HttpError(400, "INSUFFICIENT_COINS", "Not enough INSP coins");
   }
 
-  // 3) Credit seller and deliver the fragment (cent-accurate fee, 2-decimal prices).
+  // 3) Credit seller and deliver the item (cent-accurate fee, 2-decimal prices).
   const priceCents = Math.round(listing.price * 100);
   const feeCents = Math.round((priceCents * MARKET_FEE_PERCENT) / 100);
   const sellerReceives = (priceCents - feeCents) / 100;
   const fee = feeCents / 100;
   await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c: any) => (c || 0) + sellerReceives);
-  await db
-    .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
-    .transaction((c: any) => (c || 0) + 1);
-  await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+
+  if (listing.kind === "case") {
+    // Case listing — deliver to the matching economy counter. A custom case
+    // whose definition was deleted by the owner is undeliverable: revert.
+    const caseId = String(listing.caseId || "");
+    let deliverRef: any;
+    if (caseId === "inspire" || caseId === "gold") {
+      deliverRef = caseId === "gold"
+        ? db.ref(`economy/${user.uid}/goldCases`)
+        : db.ref(`economy/${user.uid}/cases`);
+    } else if (CASE_ID_RE.test(caseId) && (await db.ref(`economyConfig/cases/${caseId}`).get()).exists()) {
+      deliverRef = db.ref(`economy/${user.uid}/customCases/${caseId}`);
+    } else {
+      await revertListing();
+      // refund the buyer's coins (the deduction above is already committed)
+      await db.ref(`economy/${user.uid}/coins`).transaction((c: any) => (c || 0) + listing.price);
+      throw new HttpError(409, "CASE_UNAVAILABLE", "This case was removed by the owner — your coins are refunded");
+    }
+    await deliverRef.transaction((c: any) => (c || 0) + 1);
+  } else {
+    await db
+      .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
+      .transaction((c: any) => (c || 0) + 1);
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  }
 
   await logLedger({
     type: "market_buy",
     buyerUid: user.uid,
     sellerUid: listing.sellerUid,
     listingId,
+    kind: listing.kind || "fragment",
+    caseId: listing.caseId,
     fragmentId: listing.fragmentId,
     price: listing.price,
     fee,

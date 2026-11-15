@@ -381,13 +381,50 @@ function safeParse6(raw) {
   }
 }
 
-// api/_src/admin/index.ts
+// shared/fragments.ts
+var FRAGMENTS = [
+  { id: "discipline", name: "5k$ 1", icon: "ShieldCheck", rarity: "common", dropPercent: 35 },
+  { id: "patience", name: "5k$ 2", icon: "Hourglass", rarity: "common", dropPercent: 35 },
+  { id: "risk-management", name: "5k$ 3", icon: "Scale", rarity: "rare", dropPercent: 8 },
+  { id: "backtesting", name: "5k$ 4", icon: "FlaskConical", rarity: "rare", dropPercent: 8 },
+  { id: "trading-plan", name: "5k$ 5", icon: "ClipboardList", rarity: "epic", dropPercent: 5 },
+  { id: "psychology", name: "5k$ 6", icon: "Brain", rarity: "epic", dropPercent: 5 },
+  { id: "consistency", name: "5k$ 7", icon: "Repeat", rarity: "covert", dropPercent: 2.9995 },
+  { id: "execution", name: "5k$ 8", icon: "Crosshair", rarity: "covert", dropPercent: 2.9995 },
+  { id: "master-trader", name: "5k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
+var GOLD_FRAGMENTS = [
+  { id: "gold-1", name: "10k$ 1", icon: "Gem", rarity: "common", dropPercent: 35 },
+  { id: "gold-2", name: "10k$ 2", icon: "Zap", rarity: "common", dropPercent: 35 },
+  { id: "gold-3", name: "10k$ 3", icon: "Star", rarity: "rare", dropPercent: 8 },
+  { id: "gold-4", name: "10k$ 4", icon: "Target", rarity: "rare", dropPercent: 8 },
+  { id: "gold-5", name: "10k$ 5", icon: "Medal", rarity: "epic", dropPercent: 5 },
+  { id: "gold-6", name: "10k$ 6", icon: "Trophy", rarity: "epic", dropPercent: 5 },
+  { id: "gold-7", name: "10k$ 7", icon: "Rocket", rarity: "covert", dropPercent: 2.9995 },
+  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
+  { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
+var CASES = {
+  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
+  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS }
+};
+var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
+var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
+var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+
+// api/_src/admin/cases.ts
+var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
 function safeParse7(raw) {
   try {
     return JSON.parse(raw);
   } catch {
     return {};
   }
+}
+function getBody(req) {
+  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body;
+  return body || {};
 }
 function getAction(req) {
   try {
@@ -396,11 +433,119 @@ function getAction(req) {
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body;
+  return String(getBody(req)?.action || "");
+}
+function slugifyCaseId(name) {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
+  return slug.length >= 3 ? slug : `case-${Math.random().toString(36).slice(2, 7)}`;
+}
+async function caseCounterRef(db, uid, caseId) {
+  if (caseId === "inspire") return { ref: db.ref(`economy/${uid}/cases`), name: CASES.inspire.name };
+  if (caseId === "gold") return { ref: db.ref(`economy/${uid}/goldCases`), name: CASES.gold.name };
+  if (!CASE_ID_RE.test(caseId)) throw new HttpError(400, "BAD_CASE", "Unknown case id");
+  const def = (await db.ref(`economyConfig/cases/${caseId}`).get()).val();
+  if (!def) throw new HttpError(404, "CASE_NOT_FOUND", `Case "${caseId}" does not exist`);
+  return { ref: db.ref(`economy/${uid}/customCases/${caseId}`), name: String(def.name || caseId) };
+}
+var cases_default = handle(async (req, res) => {
+  assertPost(req);
+  const admin2 = await requireAdmin(req);
+  const db = rtdb();
+  const action = getAction(req);
+  const body = getBody(req);
+  const now = Date.now();
+  if (action === "caseCreate") {
+    const name = String(body.name || "").trim().slice(0, 40);
+    if (name.length < 2) throw new HttpError(400, "BAD_NAME", "Case name must be 2-40 characters");
+    const caseId = slugifyCaseId(String(body.caseId || name));
+    if (!CASE_ID_RE.test(caseId)) throw new HttpError(400, "BAD_CASE_ID", "Case id must be 3-24 chars of a-z 0-9 -");
+    if ((await db.ref(`economyConfig/cases/${caseId}`).get()).exists()) {
+      throw new HttpError(409, "CASE_EXISTS", `A case with id "${caseId}" already exists`);
+    }
+    const rows = Array.isArray(body.fragments) ? body.fragments : [];
+    if (rows.length < 1 || rows.length > 12) {
+      throw new HttpError(400, "BAD_POOL", "Pick between 1 and 12 fragments for the pool");
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const fragments = [];
+    let total = 0;
+    for (const row of rows) {
+      const id = String(row?.id || "");
+      if (!ALL_FRAGMENTS.some((f) => f.id === id) || seen.has(id)) continue;
+      const weight = Math.round(Number(row?.weight) * 1e4) / 1e4;
+      if (!Number.isFinite(weight) || weight <= 0 || weight > 1e3) {
+        throw new HttpError(400, "BAD_WEIGHT", "Weights must be > 0 and <= 1000");
+      }
+      seen.add(id);
+      fragments.push({ id, weight });
+      total += weight;
+    }
+    if (fragments.length < 1 || total <= 0 || total > 1e3) {
+      throw new HttpError(400, "BAD_POOL", "The pool needs at least one fragment (total weight <= 1000)");
+    }
+    const def = { name, fragments, createdBy: admin2.uid, createdAt: now };
+    await db.ref(`economyConfig/cases/${caseId}`).set(def);
+    await logLedger({ type: "case_create", uid: admin2.uid, caseId, name, fragments });
+    res.status(200).json({ ok: true, caseId, def });
+    return;
+  }
+  if (action === "caseDelete") {
+    const caseId = String(body.caseId || "");
+    if (caseId === "inspire" || caseId === "gold") {
+      throw new HttpError(400, "BUILTIN_CASE", "The Inspire and Gold cases cannot be deleted");
+    }
+    if (!CASE_ID_RE.test(caseId)) throw new HttpError(400, "BAD_CASE", "Unknown case id");
+    if (!(await db.ref(`economyConfig/cases/${caseId}`).get()).exists()) {
+      throw new HttpError(404, "CASE_NOT_FOUND", `Case "${caseId}" does not exist`);
+    }
+    await db.ref(`economyConfig/cases/${caseId}`).remove();
+    await logLedger({ type: "case_delete", uid: admin2.uid, caseId });
+    res.status(200).json({ ok: true });
+    return;
+  }
+  if (action === "caseGrant") {
+    const caseId = String(body.caseId || "");
+    const count = Math.floor(Number(body.count) || 0);
+    if (count <= 0 || count > 1e3) throw new HttpError(400, "INVALID_AMOUNT", "count must be 1..1000");
+    let targetUid = String(body.uid || "").trim();
+    if (!targetUid) {
+      const username = String(body.username || "").trim().toLowerCase().replace("@", "");
+      if (!username) throw new HttpError(400, "MISSING_TARGET", "Provide uid or username");
+      const resolved = (await db.ref(`usernames/${username}`).get()).val();
+      if (typeof resolved !== "string" || !resolved) {
+        throw new HttpError(404, "USER_NOT_FOUND", `No user with username "${username}"`);
+      }
+      targetUid = resolved;
+    }
+    const counter = await caseCounterRef(db, targetUid, caseId);
+    await counter.ref.transaction((c) => (c || 0) + count);
+    await logLedger({ type: "case_grant", uid: admin2.uid, targetUid, caseId, count });
+    res.status(200).json({ ok: true, caseName: counter.name });
+    return;
+  }
+  throw new HttpError(400, "BAD_ACTION", "Unknown case action (use caseCreate|caseDelete|caseGrant)");
+});
+
+// api/_src/admin/index.ts
+function safeParse8(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function getAction2(req) {
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    const q = url.searchParams.get("action");
+    if (q) return String(q);
+  } catch {
+  }
+  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body;
   return String(body?.action || "");
 }
 async function handler(req, res) {
-  const action = getAction(req);
+  const action = getAction2(req);
   switch (action) {
     case "gift":
       return gift_default(req, res);
@@ -414,8 +559,12 @@ async function handler(req, res) {
       return chat_send_default(req, res);
     case "set-username":
       return set_username_default(req, res);
+    case "caseCreate":
+    case "caseDelete":
+    case "caseGrant":
+      return cases_default(req, res);
     default:
-      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete|chat-send|set-username)" });
+      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete|chat-send|set-username|caseCreate|caseDelete|caseGrant)" });
   }
 }
 export {
