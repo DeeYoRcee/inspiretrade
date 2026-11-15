@@ -1,3 +1,6 @@
+import { createRequire as __cR } from 'module';
+const require = __cR(import.meta.url);
+
 // api/_src/lib/firebase.ts
 import * as adminNamespace from "firebase-admin";
 var admin = adminNamespace.default ?? adminNamespace;

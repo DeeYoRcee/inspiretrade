@@ -28,11 +28,12 @@
  * external pingers like cron-job.org must add the same header). POST
  * (push registration) always requires a signed-in user instead.
  */
-// web-push ships CJS without a default export — load it via createRequire
-// (the bundled ESM output runs on Node 20 where this always resolves)
-import { createRequire } from "module";
-const require_ = createRequire(import.meta.url);
-const webpush: any = require_("web-push");
+// web-push must be a STATIC import: Vercel's dependency tracer only follows
+// static imports — loading it via createRequire/require() leaves the package
+// out of the lambda and the function 500s at runtime (locally it resolves from
+// node_modules, which is why it only broke in production). esbuild inlines the
+// CJS package into the bundled output.
+import * as webpush from "web-push";
 import { rtdb, handle, requireUser, assertPost, HttpError } from "./lib/firebase";
 import { INSTRUMENTS, getInstrument } from "../../shared/terminal";
 import { collectNewsCron } from "./news/index";

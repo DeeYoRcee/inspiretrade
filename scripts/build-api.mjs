@@ -49,6 +49,12 @@ for (const [inPath, outPath] of entries) {
     // firebase-admin must stay external: it resolves from node_modules at
     // runtime and bundling it would blow past the function size limit.
     external: ["firebase-admin"],
+    // ESM output has no require() — but inlined CJS deps (web-push chain:
+    // debug/supports-color) call require("tty") dynamically at load. Provide a
+    // real require via createRequire so those dynamic built-in lookups work.
+    banner: {
+      js: "import { createRequire as __cR } from 'module';\nconst require = __cR(import.meta.url);",
+    },
     logLevel: "error",
   });
   console.log("bundled:", outPath);

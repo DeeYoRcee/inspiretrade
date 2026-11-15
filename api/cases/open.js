@@ -1,3 +1,6 @@
+import { createRequire as __cR } from 'module';
+const require = __cR(import.meta.url);
+
 // api/_src/cases/open.ts
 import crypto from "crypto";
 
