@@ -268,6 +268,7 @@ async function itunesSearch(q: string): Promise<Track[]> {
 }
 
 export function MusicPlayer() {
+  const { user } = useAuth();
   const [prefs, setPrefs] = useMusicPrefs();
   const [term, setTerm] = useState("");
   const [searching, setSearching] = useState(false);
@@ -722,6 +723,9 @@ export function MusicPlayer() {
       {i === idx && loading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />}
     </button>
   );
+
+  // account feature — the player is hidden entirely until the visitor signs in
+  if (!user) return null;
 
   return (
     <>

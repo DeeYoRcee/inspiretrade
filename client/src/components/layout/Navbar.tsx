@@ -47,7 +47,7 @@ export function Navbar() {
 
       <header className="sticky top-0 z-50 w-full shrink-0 border-b border-border/50 bg-background/95 backdrop-blur-md">
         <div className="container mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4 md:min-h-16 md:flex-nowrap">
-          <button onClick={() => navigate("/")} aria-label="InspireTrade home" className="order-1 flex h-10 shrink-0 items-center"><img src="/logo.png" alt="InspireTrade" className="h-9 w-auto max-w-[130px] object-contain sm:h-10" /></button>
+          <button onClick={() => navigate("/")} aria-label="InspireTrade home" className="order-1 flex h-10 shrink-0 items-center"><img src="/logo.png" alt="InspireTrade" draggable={false} onDragStart={(e) => e.preventDefault()} onContextMenu={(e) => e.preventDefault()} className="select-none h-9 w-auto max-w-[130px] object-contain sm:h-10" /></button>
           {user && <nav aria-label="Main navigation" className="order-3 -mx-3 flex w-[calc(100%+1.5rem)] min-w-0 items-center overflow-x-auto rounded-none border-t border-border/40 bg-card/60 px-3 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:order-2 md:mx-auto md:w-auto md:max-w-full md:justify-center md:overflow-visible md:rounded-full md:border md:border-border/60 md:p-1 md:pt-1">
             {navItems.map(({ href, label, icon: Icon }) => {
               const active = href === "/" ? location === "/" : location.startsWith(href);

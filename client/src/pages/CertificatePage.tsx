@@ -186,7 +186,7 @@ export default function CertificatePage() {
               {/* header */}
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  <img src="/logo.png" alt="InspireTrade" className="h-11 w-auto object-contain" />
+                  <img src="/logo.png" alt="InspireTrade" draggable={false} onDragStart={(e) => e.preventDefault()} onContextMenu={(e) => e.preventDefault()} className="select-none h-11 w-auto object-contain" />
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] uppercase tracking-[0.3em] text-[#f5e08a]">Certificate ID</p>
@@ -290,7 +290,7 @@ export default function CertificatePage() {
                 {/* header */}
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <img src="/logo.png" alt="InspireTrade" className="h-11 w-auto object-contain" />
+                    <img src="/logo.png" alt="InspireTrade" draggable={false} onDragStart={(e) => e.preventDefault()} onContextMenu={(e) => e.preventDefault()} className="select-none h-11 w-auto object-contain" />
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] uppercase tracking-[0.3em] text-[#f5e08a]">Calendar ID</p>

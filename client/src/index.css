@@ -143,3 +143,10 @@ header nav[aria-label="Main navigation"] > button:not([aria-current="page"]):hov
   height: 100vh !important;
   background: #0b0e13;
 }
+
+/* brand logo: no drag-select / image ghost-drag */
+img[src="/logo.png"] {
+  -webkit-user-drag: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}

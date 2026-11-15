@@ -69,7 +69,7 @@ export default function AuthPage() {
         className="w-full max-w-md relative z-10"
       >
         <div className="flex justify-center mb-8">
-          <img src="/logo.png" alt="InspireTrade" className="h-24 w-auto object-contain" />
+          <img src="/logo.png" alt="InspireTrade" draggable={false} onDragStart={(e) => e.preventDefault()} onContextMenu={(e) => e.preventDefault()} className="select-none h-24 w-auto object-contain" />
         </div>
 
         <Card className="glass-panel border-border/50 shadow-2xl">
@@ -79,7 +79,7 @@ export default function AuthPage() {
             </CardTitle>
             <CardDescription>
               {isLogin
-                ? "Enter your credentials to access your journal"
+                ? "Enter your credentials to access InspireTrade"
                 : "Sign up to start tracking your trading performance"}
             </CardDescription>
           </CardHeader>
