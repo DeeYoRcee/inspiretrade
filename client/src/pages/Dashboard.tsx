@@ -369,7 +369,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Day headers */}
-                <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+                <div className="grid grid-cols-7 gap-2 mb-1.5">
                   {DAY_LABELS.map(d => (
                     <div key={d} className="text-center text-[10px] sm:text-xs font-medium text-muted-foreground py-1">
                       {d}
@@ -378,7 +378,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Day cells */}
-                <div className="grid grid-cols-7 gap-1.5">
+                <div className="grid grid-cols-7 gap-2">
                   {weekDays.map(date => {
                     const dayTrades = filteredTrades.filter(t => isSameDay(new Date(t.timestamp), date));
                     const dayPnL = dayTrades.reduce((acc, t) => acc + t.profit, 0);
@@ -472,9 +472,9 @@ export default function Dashboard() {
                     months: "w-full space-y-4",
                     month: "w-full space-y-4",
                     table: "w-full border-collapse space-y-1",
-                    head_row: "flex w-full",
+                    head_row: "flex w-full gap-1",
                     head_cell: "text-muted-foreground rounded-md w-full font-normal text-[0.8rem]",
-                    row: "flex w-full mt-2",
+                    row: "flex w-full mt-2 gap-1",
                     cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 w-full h-14 sm:h-20",
                     day: "h-full w-full p-0 font-normal aria-selected:opacity-100 hover:bg-accent rounded-md transition-colors flex flex-col items-center justify-start py-1",
                     day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",

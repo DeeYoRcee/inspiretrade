@@ -15,7 +15,7 @@ import {
   Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
   MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
-  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette,
+  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal,
   PanelRight, PanelRightClose, ChevronDown, ChevronRight, ImagePlus, Check, Plus, X,
   Settings2, Star, ChevronsUp, ChevronsDown,
 } from "lucide-react";
@@ -163,7 +163,6 @@ export default function TerminalPage() {
   // drag-reorderable, right-click unhooks. The rest of the list collapses.
   const [favTools, setFavTools] = useState<DrawingTool[]>(loadFavTools);
   const [toolsVisible, setToolsVisible] = useState(() => localStorage.getItem(TOOLS_VISIBLE_KEY) !== "0");
-  const dragFav = useRef<number | null>(null);
   const toggleFav = (id: DrawingTool) => {
     setFavTools((p) => {
       const next = p.includes(id) ? p.filter((x) => x !== id) : [...p, id];
@@ -174,6 +173,68 @@ export default function TerminalPage() {
   const commitFavs = (next: DrawingTool[]) => {
     setFavTools(next);
     try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  };
+
+  // FLOATING favorites toolbar (TradingView-style): a free-moving bar over the
+  // chart — grip handle drags it anywhere, the position persists. The rail
+  // keeps the standard group list; favorites live ONLY in this bar now.
+  const FAVBAR_POS_KEY = "it_favbar_pos";
+  const favbarRef = useRef<HTMLDivElement | null>(null);
+  const favbarDrag = useRef<{ dx: number; dy: number } | null>(null);
+  const [favbarPos, setFavbarPos] = useState<{ x: number; y: number }>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(FAVBAR_POS_KEY) || "null");
+      if (raw && typeof raw.x === "number" && typeof raw.y === "number") return raw;
+    } catch { /* private mode */ }
+    // rough default — centered near the top of the chart area (re-centered
+    // with the real measured width right after mount)
+    return { x: Math.max(4, Math.round(window.innerWidth / 2 - 140)), y: 74 };
+  });
+  const persistFavbar = (p: { x: number; y: number }) => {
+    try { localStorage.setItem(FAVBAR_POS_KEY, JSON.stringify(p)); } catch { /* quota */ }
+  };
+  const clampFavbar = (p: { x: number; y: number }): { x: number; y: number } => {
+    const w = favbarRef.current?.offsetWidth ?? 280;
+    const h = favbarRef.current?.offsetHeight ?? 44;
+    return {
+      x: Math.min(Math.max(4, p.x), Math.max(4, window.innerWidth - w - 4)),
+      y: Math.min(Math.max(4, p.y), Math.max(4, window.innerHeight - h - 4)),
+    };
+  };
+  useEffect(() => {
+    // re-center with the REAL bar width when no saved position exists, and
+    // clamp the saved one into view (smaller window since it was stored)
+    const t = window.setTimeout(() => {
+      setFavbarPos((p) => {
+        if (localStorage.getItem(FAVBAR_POS_KEY)) return clampFavbar(p);
+        const w = favbarRef.current?.offsetWidth ?? 280;
+        return clampFavbar({ x: Math.round((window.innerWidth - w) / 2), y: 74 });
+      });
+    }, 80);
+    const onResize = () => setFavbarPos((p) => clampFavbar(p));
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const startFavbarDrag = (e: React.PointerEvent) => {
+    const r = favbarRef.current?.getBoundingClientRect();
+    if (!r) return;
+    favbarDrag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+  const moveFavbar = (e: React.PointerEvent) => {
+    const d = favbarDrag.current;
+    if (!d) return;
+    setFavbarPos(clampFavbar({ x: e.clientX - d.dx, y: e.clientY - d.dy }));
+  };
+  const endFavbarDrag = () => {
+    favbarDrag.current = null;
+    setFavbarPos((p) => { persistFavbar(p); return p; });
   };
   // open tool-group flyout: viewport coords of the anchor button (fixed
   // positioning — MUST be outside the overflow-clipped toolbar container so
@@ -939,37 +1000,8 @@ export default function TerminalPage() {
             area (TradingView-style); the corner arrow opens that group's
             tool list to the RIGHT of the button */}
         <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
-          {/* FAVORITES — pinned tools, drag to reorder, right-click to unpin */}
-          {favTools.map((id, i) => {
-            const t = ALL_TOOLS.find((x) => x.id === id);
-            if (!t) return null;
-            const FIcon = t.icon;
-            return (
-              <button
-                key={id}
-                draggable
-                onDragStart={(e) => { dragFav.current = i; e.dataTransfer.effectAllowed = "move"; }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (dragFav.current == null || dragFav.current === i) return;
-                  const next = [...favTools];
-                  const [moved] = next.splice(dragFav.current, 1);
-                  next.splice(i, 0, moved);
-                  dragFav.current = i;
-                  commitFavs(next);
-                }}
-                onDragEnd={() => { dragFav.current = null; }}
-                onClick={() => { setActiveTool(id); setFlyout(null); }}
-                onContextMenu={(e) => { e.preventDefault(); toggleFav(id); }}
-                className={cn("relative flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
-                title={`${t.title} — favorite · drag to reorder · right-click to remove`}
-              >
-                <FIcon className="h-3.5 w-3.5" />
-                <span className="absolute right-0.5 top-0.5 h-1 w-1 rounded-full bg-amber-400" />
-              </button>
-            );
-          })}
-          {favTools.length > 0 && <div className="my-0.5 h-px w-6 shrink-0 bg-amber-500/40" />}
+          {/* FAVORITES no longer live here — they float in their own draggable
+              bar over the chart (TradingView-style), see favbarPos below */}
           {/* the group list — collapsible like TradingView's tool rail */}
           {toolsVisible && TOOL_GROUPS.map((g) => {
             const active = g.tools.some((t) => t.id === activeTool);
@@ -1014,7 +1046,7 @@ export default function TerminalPage() {
               return !v;
             })}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground"
-            title={toolsVisible ? "Hide the tool list — favorites stay" : "Show all tools"}
+            title={toolsVisible ? "Hide the tool list — favorites keep floating" : "Show all tools"}
           >
             {toolsVisible ? <ChevronsUp className="h-3.5 w-3.5" /> : <ChevronsDown className="h-3.5 w-3.5" />}
           </button>
@@ -1064,6 +1096,44 @@ export default function TerminalPage() {
             </div>
           );
         })()}
+
+        {/* floating favorites toolbar — drag the grip to move it anywhere on
+            screen, position persists; right-click a tool to unpin it */}
+        {favTools.length > 0 && (
+          <div
+            ref={favbarRef}
+            className="fixed z-[70] flex select-none items-center gap-0.5 rounded-xl border border-white/10 bg-[#0d1117]/90 p-1 shadow-2xl backdrop-blur"
+            style={{ left: favbarPos.x, top: favbarPos.y }}
+          >
+            <div
+              onPointerDown={startFavbarDrag}
+              onPointerMove={moveFavbar}
+              onPointerUp={endFavbarDrag}
+              onPointerCancel={endFavbarDrag}
+              className="flex h-7 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+              title="Drag the favorites bar"
+            >
+              <GripHorizontal className="h-3.5 w-3.5" />
+            </div>
+            {favTools.map((id) => {
+              const t = ALL_TOOLS.find((x) => x.id === id);
+              if (!t) return null;
+              const FIcon = t.icon;
+              return (
+                <button
+                  key={id}
+                  onClick={() => { setActiveTool(id); setFlyout(null); }}
+                  onContextMenu={(e) => { e.preventDefault(); toggleFav(id); }}
+                  className={cn("relative flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
+                  title={`${t.title} — click to select · right-click to remove from favorites`}
+                >
+                  <FIcon className="h-3.5 w-3.5" />
+                  <span className="absolute right-0.5 top-0.5 h-1 w-1 rounded-full bg-amber-400" />
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* charts (desktop) — flex-col so the grid gets a DEFINITE height. */}
         <div className="hidden min-h-0 min-w-0 flex-1 md:flex md:flex-col">{chartGrid}</div>

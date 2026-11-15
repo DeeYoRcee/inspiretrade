@@ -4,7 +4,7 @@ import { auth } from "@/lib/firebase";
 
 // the splash logo is the site's entrance animation — hold it on screen for at
 // least this long, even when Firebase resolves the session in milliseconds
-const MIN_SPLASH_MS = 1600;
+const MIN_SPLASH_MS = 2100;
 
 interface AuthContextType {
   user: User | null;
