@@ -2,9 +2,9 @@ import { useTheme } from "@/lib/theme-context";
 
 /**
  * Steam-style animated theme backdrop: when a theme ships with a looping
- * video (currently Knight), it plays behind the whole app — dimmed and
- * veiled so every text layer stays readable. The CSS scene layers of the
- * theme (castle silhouette, fog) still paint OVER it for depth.
+ * video (currently Knight → crossed-swords scene), it plays behind the whole
+ * app — dimmed and veiled so every text layer stays readable. The CSS scene
+ * layers of the theme (castle silhouette, fog) still paint OVER it for depth.
  */
 export function ThemeBackdrop() {
   const { theme } = useTheme();
@@ -12,7 +12,7 @@ export function ThemeBackdrop() {
   return (
     <div className="pointer-events-none fixed inset-0 z-[-2] overflow-hidden" aria-hidden>
       <video
-        src="/videos/knight.mp4"
+        src="/videos/sword.mp4"
         autoPlay
         loop
         muted

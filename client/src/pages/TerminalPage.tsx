@@ -515,6 +515,12 @@ export default function TerminalPage() {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       switch (e.key) {
+        // Esc closes the replay session itself — but NOT while a drawing tool
+        // is armed (Esc there belongs to canceling the pending drawing)
+        case "Escape":
+          if (activeTool !== "cursor") return;
+          e.preventDefault(); rs.stop(); setReplayOpen(false);
+          break;
         case " ": e.preventDefault(); rs.setPlaying(!rs.playing); break;
         case "ArrowRight": e.preventDefault(); rs.stepForward(1); break;
         case "ArrowLeft": e.preventDefault(); rs.stepBack(1); break;
@@ -524,7 +530,7 @@ export default function TerminalPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rs]);
+  }, [rs, activeTool]);
 
   // chart screenshot for the journal (downscaled JPEG of the first chart canvas)
   const captureChart = useCallback((): string | null => {
@@ -925,6 +931,17 @@ export default function TerminalPage() {
 
       {/* ===== workspace ===== */}
       <div className="relative flex min-h-0 flex-1 gap-1.5" ref={gridRef}>
+        {/* hard-to-miss EXIT chip overlaying the charts — the replay session
+            must be closable even if the control deck is scrolled out of view */}
+        {rs.active && (
+          <button
+            onClick={() => { rs.stop(); setReplayOpen(false); }}
+            className="absolute right-2 top-2 z-[80] flex items-center gap-1.5 rounded-lg border border-red-500/50 bg-[#0d1117]/95 px-3 py-1.5 text-[11px] font-black text-red-400 shadow-xl backdrop-blur hover:bg-red-500/15"
+            title="Exit trade replay (Esc)"
+          >
+            <Square className="h-3.5 w-3.5" />EXIT REPLAY
+          </button>
+        )}
         {/* exit chip in focus / fullscreen mode */}
         {immersive && (
           <button
