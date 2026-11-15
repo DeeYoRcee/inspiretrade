@@ -60,6 +60,20 @@ function ensureApp() {
   });
   return app;
 }
+async function requireUser(req) {
+  const header = req.headers?.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+  if (!token) throw new HttpError(401, "MISSING_TOKEN", "Missing Authorization bearer token");
+  ensureApp();
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(token);
+  } catch {
+    throw new HttpError(401, "INVALID_TOKEN", "Invalid or expired token");
+  }
+  if (!decoded?.uid) throw new HttpError(401, "INVALID_TOKEN", "Invalid token payload");
+  return { uid: decoded.uid, email: decoded.email, name: decoded.name };
+}
 function rtdb() {
   ensureApp();
   return admin.database();
@@ -77,6 +91,9 @@ function handle(fn) {
       }
     }
   };
+}
+function assertPost(req) {
+  if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
 
 // shared/terminal.ts
@@ -347,7 +364,62 @@ async function sendPush(uid, payload) {
 function asSet(arr) {
   return new Set(Array.isArray(arr) ? arr.map(String) : []);
 }
+function subKey(endpoint) {
+  return Buffer.from(endpoint).toString("base64url").slice(0, 120);
+}
+function sanitizeSettings(s) {
+  return {
+    enabled: !!s?.enabled,
+    symbols: Array.isArray(s?.symbols) ? s.symbols.slice(0, 20).map(String) : [],
+    calEnabled: !!s?.calEnabled,
+    calCurrencies: Array.isArray(s?.calCurrencies) ? s.calCurrencies.slice(0, 12).map(String) : []
+  };
+}
+function safeParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+async function pushRegistration(req, res) {
+  assertPost(req);
+  const user = await requireUser(req);
+  const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+  let action = String(body?.action || "");
+  if (!action) {
+    try {
+      action = String(new URL(req.url || "/", "http://localhost").searchParams.get("action") || "");
+    } catch {
+    }
+  }
+  if (action === "subscribe") {
+    const endpoint = String(body?.subscription?.endpoint || "");
+    if (!endpoint.startsWith("https://")) {
+      throw new HttpError(400, "INVALID_SUBSCRIPTION", "subscription.endpoint (https) is required");
+    }
+    await rtdb().ref(`pushSubs/${user.uid}/${subKey(endpoint)}`).set({ sub: body.subscription, at: Date.now() });
+    if (body.settings && typeof body.settings === "object") {
+      await rtdb().ref(`pushSettings/${user.uid}`).set({ ...sanitizeSettings(body.settings), at: Date.now() });
+    }
+    res.status(200).json({ ok: true });
+    return;
+  }
+  if (action === "unsubscribe") {
+    const endpoint = String(body?.endpoint || "");
+    if (endpoint) await rtdb().ref(`pushSubs/${user.uid}/${subKey(endpoint)}`).remove();
+    res.status(200).json({ ok: true });
+    return;
+  }
+  if (action === "sync-settings") {
+    await rtdb().ref(`pushSettings/${user.uid}`).set({ ...sanitizeSettings(body?.settings), at: Date.now() });
+    res.status(200).json({ ok: true });
+    return;
+  }
+  throw new HttpError(400, "BAD_ACTION", "use ?action=subscribe|unsubscribe|sync-settings");
+}
 var alerts_cron_default = handle(async (req, res) => {
+  if ((req.method || "").toUpperCase() === "POST") return pushRegistration(req, res);
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");

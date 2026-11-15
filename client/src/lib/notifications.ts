@@ -211,7 +211,7 @@ export async function enableWebPush(): Promise<{ ok: boolean; reason?: string }>
         applicationServerKey: urlBase64ToUint8Array(key) as unknown as BufferSource,
       }));
     const { authedFetch } = await import("./api");
-    await authedFetch("/api/push?action=subscribe", { subscription: sub.toJSON(), settings: loadAlertSettings() });
+    await authedFetch("/api/push?action=subscribe", { action: "subscribe", subscription: sub.toJSON(), settings: loadAlertSettings() });
     return { ok: true };
   } catch (err: any) {
     return { ok: false, reason: String(err?.message || "push-failed") };
@@ -225,7 +225,7 @@ export async function disableWebPush(): Promise<void> {
     const sub = await reg?.pushManager.getSubscription();
     if (sub) {
       const { authedFetch } = await import("./api");
-      await authedFetch("/api/push?action=unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
+      await authedFetch("/api/push?action=unsubscribe", { action: "unsubscribe", endpoint: sub.endpoint }).catch(() => {});
       await sub.unsubscribe().catch(() => {});
     }
   } catch { /* best effort */ }
@@ -236,7 +236,7 @@ export async function syncPushSettings(): Promise<void> {
   try {
     if (!(await isPushSubscribed())) return;
     const { authedFetch } = await import("./api");
-    await authedFetch("/api/push?action=sync-settings", { settings: loadAlertSettings() });
+    await authedFetch("/api/push?action=sync-settings", { action: "sync-settings", settings: loadAlertSettings() });
   } catch { /* settings sync is best-effort */ }
 }
 

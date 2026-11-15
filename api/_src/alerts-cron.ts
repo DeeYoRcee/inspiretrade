@@ -1,5 +1,7 @@
 /**
- * GET /api/alerts-cron — system cron endpoint (Vercel Cron / external pinger).
+ * GET  /api/alerts-cron — system cron endpoint (Vercel Cron / external pinger).
+ * POST /api/push        — web-push registration, REWRITTEN here (vercel.json):
+ * both live in ONE serverless function because Vercel Hobby caps at 12.
  *
  * Server-side alert evaluation + WEB PUSH delivery (the fix for "notifications
  * only arrive when I open the site"):
@@ -9,10 +11,10 @@
  * Indicator alerts (RSI/MACD/EMA/BB) and drawing-based alerts stay client-side
  * — they need full OHLC history / user drawings.
  *
- * Delivery: web-push to every registered browser (api/push.js stores
- * subscriptions in pushSubs/{uid}, settings in pushSettings/{uid}). Requires
- * VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY env vars; without them the run still
- * evaluates state but cannot deliver.
+ * Delivery: web-push to every registered browser (subscriptions in
+ * pushSubs/{uid}, settings in pushSettings/{uid}). Requires VAPID_PUBLIC_KEY +
+ * VAPID_PRIVATE_KEY env vars; without them the run still evaluates state but
+ * cannot deliver.
  *
  * Reliability: NO user session; every active alert of every user is checked on
  * each invocation with a per-alert cooldown (default 60 min). Trigger state
@@ -21,16 +23,17 @@
  * each other. News/calendar seen-markers live in pushSeen/{uid} (RTDB) so a
  * story never notifies twice.
  *
- * Protection: when CRON_SECRET is set, requests must carry
+ * Protection: when CRON_SECRET is set, the GET (cron) requests must carry
  * `Authorization: Bearer <CRON_SECRET>` (Vercel Cron does this natively —
- * external pingers like cron-job.org must add the same header).
+ * external pingers like cron-job.org must add the same header). POST
+ * (push registration) always requires a signed-in user instead.
  */
 // web-push ships CJS without a default export — load it via createRequire
 // (the bundled ESM output runs on Node 20 where this always resolves)
 import { createRequire } from "module";
 const require_ = createRequire(import.meta.url);
 const webpush: any = require_("web-push");
-import { rtdb, handle } from "./lib/firebase";
+import { rtdb, handle, requireUser, assertPost, HttpError } from "./lib/firebase";
 import { INSTRUMENTS, getInstrument } from "../../shared/terminal";
 import { collectNewsCron } from "./news/index";
 
@@ -69,7 +72,76 @@ function asSet(arr: any): Set<string> {
   return new Set(Array.isArray(arr) ? arr.map(String) : []);
 }
 
+// ---- POST /api/push (rewritten here) — push subscription registration ------
+
+function subKey(endpoint: string): string {
+  return Buffer.from(endpoint).toString("base64url").slice(0, 120);
+}
+
+function sanitizeSettings(s: any) {
+  return {
+    enabled: !!s?.enabled,
+    symbols: Array.isArray(s?.symbols) ? s.symbols.slice(0, 20).map(String) : [],
+    calEnabled: !!s?.calEnabled,
+    calCurrencies: Array.isArray(s?.calCurrencies) ? s.calCurrencies.slice(0, 12).map(String) : [],
+  };
+}
+
+function safeParse(raw: string): any {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function pushRegistration(req: any, res: any): Promise<void> {
+  assertPost(req);
+  const user = await requireUser(req);
+  const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+  // action from the query string OR the body (rewrite-proof)
+  let action = String(body?.action || "");
+  if (!action) {
+    try {
+      action = String(new URL(req.url || "/", "http://localhost").searchParams.get("action") || "");
+    } catch { /* fall through to BAD_ACTION */ }
+  }
+
+  if (action === "subscribe") {
+    const endpoint = String(body?.subscription?.endpoint || "");
+    if (!endpoint.startsWith("https://")) {
+      throw new HttpError(400, "INVALID_SUBSCRIPTION", "subscription.endpoint (https) is required");
+    }
+    await rtdb()
+      .ref(`pushSubs/${user.uid}/${subKey(endpoint)}`)
+      .set({ sub: body.subscription, at: Date.now() });
+    if (body.settings && typeof body.settings === "object") {
+      await rtdb().ref(`pushSettings/${user.uid}`).set({ ...sanitizeSettings(body.settings), at: Date.now() });
+    }
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  if (action === "unsubscribe") {
+    const endpoint = String(body?.endpoint || "");
+    if (endpoint) await rtdb().ref(`pushSubs/${user.uid}/${subKey(endpoint)}`).remove();
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  if (action === "sync-settings") {
+    await rtdb().ref(`pushSettings/${user.uid}`).set({ ...sanitizeSettings(body?.settings), at: Date.now() });
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  throw new HttpError(400, "BAD_ACTION", "use ?action=subscribe|unsubscribe|sync-settings");
+}
+
 export default handle(async (req, res) => {
+  // the browser registers/updates its push subscription here (POST /api/push)
+  if ((req.method || "").toUpperCase() === "POST") return pushRegistration(req, res);
+
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");

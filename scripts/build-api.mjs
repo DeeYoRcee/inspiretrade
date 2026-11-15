@@ -18,11 +18,11 @@ import { dirname } from "path";
 // Vercel Hobby allows max 12 Serverless Functions per deployment.
 // Related endpoints are merged into one dispatcher each (action query param):
 // market (list|buy|cancel), admin (gift|withdrawals|chat-delete|chat-send|set-username),
-// wallet (withdraw), whop (plans|checkout|verify), referral (info|apply),
-// push (subscribe|unsubscribe|sync-settings).
+// wallet (withdraw), whop (plans|checkout|verify), referral (info|apply).
 // news is a public read-only feed aggregator.
-// alerts-cron is the server-side alert evaluator + web-push sender (Vercel Cron, no user auth).
-// Current count: 12/12 (health.ts + the 11 entries below).
+// alerts-cron is the server-side alert evaluator + web-push sender, and ALSO
+// serves the push registration: POST /api/push is rewritten to it (vercel.json)
+// — that keeps the count at 12/12 (health.ts + the 11 entries below).
 const entries = [
   ["api/_src/rewards/claim.ts", "api/rewards/claim.js"],
   ["api/_src/cases/open.ts", "api/cases/open.js"],
@@ -35,7 +35,6 @@ const entries = [
   ["api/_src/news/index.ts", "api/news.js"],
   ["api/_src/quotes.ts", "api/quotes.js"],
   ["api/_src/alerts-cron.ts", "api/alerts-cron.js"],
-  ["api/_src/push/index.ts", "api/push.js"],
 ];
 
 for (const [inPath, outPath] of entries) {

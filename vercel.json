@@ -2,6 +2,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
+    { "source": "/api/push", "destination": "/api/alerts-cron" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "crons": [
