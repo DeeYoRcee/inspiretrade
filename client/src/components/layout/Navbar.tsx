@@ -4,7 +4,7 @@ import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
 import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
-import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, ChartCandlestick, Wallet, ShieldCheck, Award, User as UserIcon, Package, BarChart2 } from "lucide-react";
+import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, ChartCandlestick, Wallet, ShieldCheck, Award, User as UserIcon, Package } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePremiumStatus } from "@/hooks/use-premium";
@@ -55,7 +55,7 @@ export function Navbar() {
             })}
           </nav>}
 
-          {user && <div className="order-2 ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-card/60 p-1 sm:gap-1 xl:order-3">
+          {user && <div className="order-2 ms-auto flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-card/60 p-1 sm:gap-1 xl:order-3">
             {economy && (
               <>
                 <button onClick={() => navigate("/wallet")} className="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold text-amber-400 transition-colors hover:bg-amber-400/10 sm:text-sm" aria-label={t("inspireBalance")}>
@@ -70,8 +70,8 @@ export function Navbar() {
             <NotificationBell />
 
             <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Theme" title={`Theme: ${THEME_LABELS[theme]}`} className="h-9 gap-1.5 rounded-full px-2.5"><Palette className="h-4 w-4" /><span className="text-xs sm:text-sm">Theme</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("mr-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Theme" title={`Theme: ${THEME_LABELS[theme]}`} className="h-9 gap-1.5 rounded-full px-2.5"><Palette className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">Theme</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("me-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ms-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
 
             <DropdownMenu modal={false}>
@@ -83,17 +83,18 @@ export function Navbar() {
                 <div className="px-2 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{t("language")}</div>
                 {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => (
                   <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer gap-2", language === code && "bg-primary/10 font-semibold text-primary")}>
-                    <span aria-hidden>{LANG_FLAGS[code]}</span>{LANGUAGE_LABELS[code]}{language === code && <span className="ml-auto text-xs">✓</span>}
+                    <span aria-hidden>{LANG_FLAGS[code]}</span>{LANGUAGE_LABELS[code]}{language === code && <span className="ms-auto text-xs">✓</span>}
                   </DropdownMenuItem>
                 ))}
                 <div className="px-2 pb-1 pt-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{t("themeTitle")}</div>
                 {THEMES.map((themeOption: Theme) => (
                   <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer gap-2", theme === themeOption && "bg-primary/10 font-semibold text-primary")}>
-                    <span className={cn("h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}
+                    <span className={cn("h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ms-auto text-xs">✓</span>}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2"><BarChart2 className="h-4 w-4" />{t("terminalDefaults")}</DropdownMenuItem>
+                {/* Terminal defaults menu item removed — the section moved
+                    into the terminal's own Chart settings dialog */}
                 <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2 text-muted-foreground"><Settings className="h-4 w-4" />{t("allSettings")}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

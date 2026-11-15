@@ -134,11 +134,11 @@ export function GlobalChat() {
         whileHover={{ scale: 1.06 }}
         whileTap={{ scale: 0.94 }}
         aria-label={t("chat")}
-        className="fixed bottom-5 right-5 z-50 flex items-center justify-center rounded-full border border-primary/40 bg-primary p-3.5 text-primary-foreground shadow-[0_4px_24px_-4px_hsl(var(--primary)/0.7)]"
+        className="fixed bottom-5 end-5 z-50 flex items-center justify-center rounded-full border border-primary/40 bg-primary p-3.5 text-primary-foreground shadow-[0_4px_24px_-4px_hsl(var(--primary)/0.7)]"
       >
         {open ? <X className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
         {!open && messages.length > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-black">
+          <span className="absolute -end-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-black">
             {messages.length > 99 ? "99+" : messages.length}
           </span>
         )}
@@ -150,7 +150,7 @@ export function GlobalChat() {
           initial={{ opacity: 0, y: 16, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.18 }}
-          className="fixed bottom-20 right-5 z-50 flex h-[480px] w-[min(92vw,360px)] flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/95 shadow-2xl backdrop-blur-md"
+          className="fixed bottom-20 end-5 z-50 flex h-[min(480px,calc(100dvh-8rem))] w-[min(92vw,360px)] flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/95 shadow-2xl backdrop-blur-md"
         >
           <div className="flex items-center justify-between border-b border-border/50 bg-card/80 px-4 py-2.5">
             <div className="flex items-center gap-2">

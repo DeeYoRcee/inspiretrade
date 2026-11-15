@@ -1,14 +1,15 @@
 /**
  * ChartSettingsDialog — TradingView-style chart settings for the terminal.
- * Five tabs (Canvas / Scales / Symbol / Crosshair / Status) over the
- * ChartPrefs object that lives in TerminalSettings.chartPrefs — every change
- * applies to ALL chart slots instantly and persists (localStorage + RTDB).
+ * Tabs (Canvas / Scales / Symbol / Colors / Crosshair / Status) over the
+ * ChartPrefs object + the workspace colors that live in
+ * TerminalSettings — every change applies to ALL chart slots instantly and
+ * persists (localStorage + RTDB).
  */
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DEFAULT_CHART_PREFS, type ChartPrefs, type LineStyleKind } from "./TerminalChart";
+import { DEFAULT_CHART_PREFS, DEFAULT_COLORS, type ChartColors, type ChartPrefs, type LineStyleKind } from "./TerminalChart";
 
 const LINE_STYLES: { id: LineStyleKind; label: string }[] = [
   { id: "solid", label: "Solid" },
@@ -22,18 +23,23 @@ const TABS = [
   { id: "canvas", label: "Canvas" },
   { id: "scales", label: "Scales" },
   { id: "symbol", label: "Symbol" },
+  { id: "colors", label: "Colors" },
   { id: "crosshair", label: "Crosshair" },
   { id: "status", label: "Status" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
 export function ChartSettingsDialog({
-  open, onOpenChange, prefs, onChange,
+  open, onOpenChange, prefs, onChange, colors, onColorsChange, sound, onSoundChange,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   prefs: ChartPrefs;
   onChange: (patch: Partial<ChartPrefs>) => void;
+  colors: ChartColors;
+  onColorsChange: (patch: Partial<ChartColors>) => void;
+  sound: boolean;
+  onSoundChange: (v: boolean) => void;
 }) {
   const [tab, setTab] = useState<TabId>("canvas");
 
@@ -89,7 +95,23 @@ export function ChartSettingsDialog({
               <Toggle label="High/low wicks" on={prefs.candleWick} onToggle={() => onChange({ candleWick: !prefs.candleWick })} />
               <SliderRow label="Volume overlay opacity" value={Math.round(prefs.volumeOpacity * 100)} min={5} max={90} suffix="%"
                 onCommit={(v) => onChange({ volumeOpacity: v / 100 })} />
-              <Hint>Candle up/down and line colors are set in the Themes tool. Hollow candles always keep their border.</Hint>
+              <Hint>Candle up/down and line colors live in the Colors tab. Hollow candles always keep their border.</Hint>
+            </>
+          )}
+
+          {tab === "colors" && (
+            <>
+              <Hint>Candle, line, background and grid colors — applies to every chart slot. One-click presets are in the Themes tool on the toolbar.</Hint>
+              <ColorRow label="Bullish (up candles)" value={colors.up} fallback={DEFAULT_COLORS.up} swatches={["#22c55e", "#26a69a", "#089981", "#4ade80", "#10b981"]}
+                onPick={(v) => onColorsChange({ up: v })} />
+              <ColorRow label="Bearish (down candles)" value={colors.down} fallback={DEFAULT_COLORS.down} swatches={["#ef4444", "#ef5350", "#f23645", "#f87171", "#dc2626"]}
+                onPick={(v) => onColorsChange({ down: v })} />
+              <ColorRow label="Accent (lines & drawings)" value={colors.accent} fallback={DEFAULT_COLORS.accent} swatches={["#22c55e", "#38bdf8", "#f59e0b", "#a78bfa", "#e2e8f0"]}
+                onPick={(v) => onColorsChange({ accent: v })} />
+              <ColorRow label="Background" value={colors.bg} fallback={DEFAULT_COLORS.bg} swatches={["#0b0e13", "#131722", "#1e222d", "#ffffff", "#111827"]}
+                onPick={(v) => onColorsChange({ bg: v })} />
+              <ColorRow label="Grid" value={colors.grid} fallback="#2a2e36" swatches={["#2a2e36", "#1f2937", "#363a45", "#4b5563"]}
+                onPick={(v) => onColorsChange({ grid: v })} />
             </>
           )}
 
@@ -110,6 +132,7 @@ export function ChartSettingsDialog({
             <>
               <Toggle label="OHLC legend (top bar)" on={prefs.legend} onToggle={() => onChange({ legend: !prefs.legend })} />
               <Toggle label="Bar-close countdown" on={prefs.countdown} onToggle={() => onChange({ countdown: !prefs.countdown })} />
+              <Toggle label="Alert sound (beep on trigger)" on={sound} onToggle={() => onSoundChange(!sound)} />
               <TextRow label="Watermark text" value={prefs.watermark} placeholder="e.g. XAUUSD — empty = off"
                 onCommit={(v) => onChange({ watermark: v.slice(0, 18) })} />
               <Hint>The watermark renders faintly behind the chart on every slot.</Hint>

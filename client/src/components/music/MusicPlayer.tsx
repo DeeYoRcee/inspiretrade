@@ -736,7 +736,7 @@ export function MusicPlayer() {
       <audio ref={(el) => { audioRef.current = el; setAudioEl(el); }} className="hidden" />
       <div
         data-music-panel
-        className="fixed left-2 top-[7rem] z-[80] sm:left-3 sm:top-[4.25rem]"
+        className="fixed left-2 top-[7rem] z-[45] sm:left-3 sm:top-[4.25rem]"
         style={prefs.pos ? { left: prefs.pos.x, top: prefs.pos.y } : undefined}
       >
         {/* dot (1%) — only in dot view */}

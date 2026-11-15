@@ -596,7 +596,10 @@ export default function TerminalPage() {
   );
 
   return (
-    <div className="relative flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5" ref={pageRef}>
+    /* dir=ltr: the terminal is a chart workspace — in Arabic (html dir=rtl)
+       the whole layout (toolbar, rail, chart grid, favbar drag math) must
+       stay left-to-right or everything piles up */
+    <div dir="ltr" className="relative flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5" ref={pageRef}>
       {/* ===== toolbar (hidden in focus/maximize mode) ===== */}
       {!immersive && (
       <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/50 bg-card/60 p-1.5">
@@ -1220,6 +1223,10 @@ export default function TerminalPage() {
         onOpenChange={setChartSettingsOpen}
         prefs={settings.chartPrefs}
         onChange={(patch) => update({ chartPrefs: { ...settings.chartPrefs, ...patch } })}
+        colors={settings.colors}
+        onColorsChange={(patch) => update({ colors: { ...settings.colors, ...patch } })}
+        sound={settings.sound}
+        onSoundChange={(v) => update({ sound: v })}
       />
       <ToolsDialog open={toolsOpen} onOpenChange={setToolsOpen} onLaunch={launchTool} />
       <ReplayJournalDialog draft={journalDraft} onClose={() => setJournalDraft(null)} />

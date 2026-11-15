@@ -111,7 +111,7 @@ export function UsernameDialog({ open, currentUsername, isPremium, onClose }: Us
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="glass-panel border-border/60 max-w-sm">
+      <DialogContent className="glass-panel border-border/60 max-w-[calc(100vw-1.5rem)] sm:max-w-sm max-h-[85dvh] overflow-y-auto rounded-2xl">
         <DialogHeader>
           <DialogTitle className="font-display">{t("setUsername")}</DialogTitle>
           <DialogDescription>
@@ -123,16 +123,16 @@ export function UsernameDialog({ open, currentUsername, isPremium, onClose }: Us
 
         <div className="space-y-4 mt-2">
           <div className="relative">
-            <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <AtSign className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               value={value}
               onChange={e => { setValue(e.target.value.replace(/\s/g, "")); setAvailable(null); }}
               placeholder="username"
-              className="pl-9 pr-10"
+              className="ps-9 pe-10"
               maxLength={20}
             />
             {value && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+              <div className="absolute end-3 top-1/2 -translate-y-1/2">
                 {checking ? (
                   <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                 ) : available === true ? (

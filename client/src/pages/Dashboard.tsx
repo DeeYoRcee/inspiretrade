@@ -150,7 +150,7 @@ export default function Dashboard() {
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-8 p-6 rounded-2xl bg-gradient-to-r from-primary/10 to-transparent border-l-4 border-primary shadow-lg"
+        className="mb-8 p-6 rounded-2xl bg-gradient-to-r from-primary/10 to-transparent border-s-4 border-primary shadow-lg"
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -194,8 +194,9 @@ export default function Dashboard() {
                     <Globe className="w-5 h-5" />
                     <span className="text-sm font-semibold uppercase tracking-wider">{t("communityStats")}</span>
                   </div>
-                  {/* Period selector */}
-                  <div className="flex gap-1 bg-secondary/60 rounded-lg p-1">
+                  {/* Period selector — flex-wrap: long UZ/RU labels ("Hamma vaqt",
+                      "Ежегодно") must wrap, not squeeze or overlap on phones */}
+                  <div className="flex flex-wrap gap-1 bg-secondary/60 rounded-lg p-1">
                     {PERIODS.map(({ key, label }) => (
                       <button
                         key={key}

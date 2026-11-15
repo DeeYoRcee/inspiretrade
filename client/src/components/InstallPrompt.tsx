@@ -29,14 +29,14 @@ export function InstallPrompt() {
 
     if (isIOSDevice) {
       setIsIOS(true);
-      setTimeout(() => setShow(true), 3000);
+      setTimeout(() => setShow(true), 10000);
       return;
     }
 
     const handler = (e: Event) => {
       e.preventDefault();
       setInstallEvent(e as BeforeInstallPromptEvent);
-      setTimeout(() => setShow(true), 3000);
+      setTimeout(() => setShow(true), 10000);
     };
 
     window.addEventListener("beforeinstallprompt", handler);
@@ -70,8 +70,11 @@ export function InstallPrompt() {
           exit={{ y: 100, opacity: 0 }}
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
           /* no translate-x here: framer-motion overrides the transform,
-             which pushed the prompt off the right edge on mobile */
-          className="fixed inset-x-3 bottom-6 z-[200] mx-auto max-w-sm"
+             which pushed the prompt off the right edge on mobile.
+             z-45 keeps it BELOW dialogs (z-50) — the username modal must
+             never fight this banner; on phones the banner stops short of
+             the chat FAB zone (logical `end` — RTL-safe). */
+          className="fixed bottom-6 z-[45] start-3 end-[4.5rem] sm:end-3 mx-auto max-w-sm"
         >
           <div className="rounded-2xl glass-panel border border-border/60 shadow-2xl shadow-black/40 p-4">
             <div className="flex items-start gap-3">

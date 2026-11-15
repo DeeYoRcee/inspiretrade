@@ -13,7 +13,8 @@ export function UsernamePrompt() {
     if (!isLoading && user && profile !== undefined) {
       if (!profile?.username) {
         // Kichik kechikish bilan — sahifa to'liq yuklangandan keyin
-        const timer = setTimeout(() => setOpen(true), 1500);
+        // (mobil qurilmalarda render/splash tugallanishi uchun 3s)
+        const timer = setTimeout(() => setOpen(true), 3000);
         return () => clearTimeout(timer);
       }
     }
