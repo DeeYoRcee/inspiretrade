@@ -18,7 +18,7 @@ import {
   type NewsSymbol,
 } from "@/lib/news-api";
 import { ArticleDialog } from "@/components/news/ArticleDialog";
-import { loadAlertSettings, saveAlertSettings, requestBrowserPermission, type AlertSettings } from "@/lib/notifications";
+import { loadAlertSettings, saveAlertSettings, requestBrowserPermission, enableWebPush, disableWebPush, type AlertSettings } from "@/lib/notifications";
 
 const CALENDAR_WIDGET_CONFIG = {
   width: "100%",
@@ -104,6 +104,11 @@ function AlertsSettingsPanel({ alerts, onChange }: { alerts: AlertSettings; onCh
                 onChange({ ...alerts, browser: false });
                 return;
               }
+              // register the web-push subscription in this click — the server
+              // cron then delivers alerts while the site is closed
+              void enableWebPush();
+            } else {
+              void disableWebPush();
             }
             onChange({ browser: v });
           }}

@@ -1,3 +1,6 @@
+// api/_src/alerts-cron.ts
+import { createRequire } from "module";
+
 // api/_src/lib/firebase.ts
 import * as adminNamespace from "firebase-admin";
 var admin = adminNamespace.default ?? adminNamespace;
@@ -105,13 +108,257 @@ function getInstrument(symbol) {
   return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
 }
 
+// api/_src/news/index.ts
+var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+var GOOGLE_NEWS = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:7d")}&hl=en-US&gl=US&ceid=US:en`;
+var FEEDS = [
+  { url: "https://www.investing.com/rss/news_1.rss", source: "Investing", google: false },
+  // forex
+  { url: "https://www.investing.com/rss/news_11.rss", source: "Investing", google: false },
+  // commodities / gold
+  { url: "https://www.investing.com/rss/news_14.rss", source: "Investing", google: false },
+  // economy
+  { url: "https://www.investing.com/rss/news_25.rss", source: "Investing", google: false },
+  // stocks / indices
+  { url: "https://www.investing.com/rss/news_285.rss", source: "Investing", google: false },
+  // most popular
+  { url: "https://www.forexlive.com/feed/news", source: "ForexLive", google: false },
+  { url: "https://cointelegraph.com/rss", source: "Cointelegraph", google: false },
+  { url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", source: "CNBC", google: false },
+  // economy
+  // Yahoo Finance ticker feeds — longer summaries + server-fetchable links
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // gold
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI%3DF&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // silver / gold complex
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=EURUSD%3DX&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // euro/dollar
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GBPUSD%3DX&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // pound/dollar
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=BTC-USD&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // bitcoin
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5ENDX&region=US&lang=en-US", source: "Yahoo Finance", google: false },
+  // Nasdaq 100
+  // Per-symbol Google News searches — give the 7-day history the direct
+  // feeds can't. Source is taken from the <source> tag inside each item.
+  { url: GOOGLE_NEWS("gold price OR XAUUSD"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("gold bullion market"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS('EURUSD OR "euro dollar"'), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("ECB interest rate eurozone"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS('GBPUSD OR "pound sterling dollar"'), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("Bank of England rate pound sterling"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("NASDAQ stocks"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS('"nasdaq 100" OR "wall street" tech stocks'), source: "Google News", google: true },
+  { url: GOOGLE_NEWS('"federal reserve" OR "us dollar" rates'), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("dollar index OR nonfarm payrolls OR cpi inflation"), source: "Google News", google: true },
+  { url: GOOGLE_NEWS("bitcoin OR crypto market"), source: "Google News", google: true }
+];
+var TAG_RULES = [
+  { symbol: "XAUUSD", keywords: /\b(gold|xau|bullion|silver|xag|precious metals?|platinum|palladium)\b/i },
+  { symbol: "EURUSD", keywords: /\b(eurusd|eur\/usd|euro|ecb|european central bank|eurozone|eur)\b/i },
+  { symbol: "GBPUSD", keywords: /\b(gbpusd|gbp\/usd|pound|sterling|boe|bank of england|gbp)\b/i },
+  { symbol: "NASDAQ", keywords: /\b(nasdaq|nas100|us100|ndx|qqq|tech stocks|big tech|magnificent seven|wall street|stock market)\b/i },
+  {
+    symbol: "USD",
+    keywords: /\b(usd|dollar|greenback|fed|fomc|powell|federal reserve|treasury yields?|us indices|dxy|dollar index|nonfarm|payrolls|cpi|inflation|interest rates?)\b/i
+  },
+  { symbol: "BTC", keywords: /\b(btc|bitcoin|crypto|ethereum|stablecoin|altcoin|blockchain)\b/i }
+];
+function decodeEntities(s) {
+  return s.replace(/&#(\d+);/g, (_, d) => {
+    try {
+      return String.fromCodePoint(Number(d));
+    } catch {
+      return " ";
+    }
+  }).replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+    try {
+      return String.fromCodePoint(parseInt(h, 16));
+    } catch {
+      return " ";
+    }
+  }).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+function cleanText(raw, maxLen) {
+  const text = decodeEntities(
+    String(raw || "").replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]*>/g, " ")
+  ).replace(/\s+/g, " ").trim();
+  return text.length > maxLen ? `${text.slice(0, maxLen - 1).trimEnd()}\u2026` : text;
+}
+function pick(block, tag) {
+  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i"));
+  return m ? m[1] : "";
+}
+function parseFeed(xml, feed) {
+  const items = [];
+  const blocks = xml.split(/<item[\s>]/i).slice(1);
+  for (const block of blocks) {
+    const end = block.indexOf("</item>");
+    const body = end >= 0 ? block.slice(0, end) : block;
+    let title = cleanText(pick(body, "title"), 220);
+    let source = feed.source;
+    if (feed.google) {
+      const srcTag = decodeEntities(pick(body, "source").replace(/<[^>]*>/g, "").trim());
+      const idx = title.lastIndexOf(" - ");
+      if (idx > 0) {
+        const tail = title.slice(idx + 3);
+        title = title.slice(0, idx);
+        if (!srcTag) source = tail;
+      }
+      if (srcTag) source = srcTag;
+    }
+    const link = cleanText(pick(body, "link"), 500);
+    if (!title || !link) continue;
+    const pubRaw = pick(body, "pubDate") || pick(body, "published") || pick(body, "updated");
+    const publishedAt = pubRaw ? new Date(pubRaw.trim()).getTime() || Date.now() : Date.now();
+    const summary = feed.google ? "" : cleanText(pick(body, "description"), 220);
+    const contentRaw = pick(body, "content:encoded") || pick(body, "content");
+    let fullText;
+    if (contentRaw) {
+      const paras = contentRaw.split(/<\/(p|h2|h3|li)>/i).filter((_, i) => i % 2 === 0).map((chunk) => decodeEntities(chunk.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim()).filter((t) => t.length > 40);
+      const joined = paras.join("\n\n");
+      if (joined.length > 300) fullText = joined.slice(0, 12e3);
+    }
+    if (!fullText && !feed.google) {
+      const dText = decodeEntities(pick(body, "description").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+      if (dText.length > 300) fullText = dText.slice(0, 12e3);
+    }
+    const haystack = `${title} ${summary}`;
+    const symbols = TAG_RULES.filter((rule) => rule.keywords.test(haystack)).map((r) => r.symbol);
+    items.push({ title, link, source, publishedAt, summary, symbols, fullText });
+  }
+  return items;
+}
+var FEED_TTL = 5 * 60 * 1e3;
+var feedCache = /* @__PURE__ */ new Map();
+async function fetchFeed(url, feed) {
+  const hit = feedCache.get(url);
+  if (hit && Date.now() - hit.at < FEED_TTL) return hit.items;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8e3);
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/rss+xml, application/xml, text/xml, */*" },
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const xml = await res.text();
+    const items = parseFeed(xml, feed);
+    feedCache.set(url, { at: Date.now(), items });
+    return items;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+var TRANS_CACHE_TTL = 6 * 60 * 60 * 1e3;
+var CAL_TTL = 30 * 60 * 1e3;
+var calCache = null;
+async function fetchCalendar() {
+  if (calCache && Date.now() - calCache.at < CAL_TTL) {
+    return { events: calCache.events, ok: calCache.ok };
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8e3);
+    const res = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
+      headers: {
+        "User-Agent": UA,
+        Accept: "application/json, text/plain, */*",
+        Referer: "https://www.forexfactory.com/calendar"
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.json();
+    const weekStart = Date.now() - 2 * 24 * 60 * 60 * 1e3;
+    const events = raw.map((e) => {
+      const impact = String(e.impact ?? e.Importance ?? "").toLowerCase();
+      const currency = String(e.country ?? e.currency ?? "").toUpperCase().slice(0, 5);
+      const date = new Date(e.date ?? "").getTime() || 0;
+      const title = String(e.title ?? e.Title ?? "").trim();
+      if (!title || !date || !currency) return null;
+      return {
+        id: `${currency}-${date}-${title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 30)}`,
+        title,
+        currency,
+        date,
+        impact: impact.charAt(0).toUpperCase() + impact.slice(1),
+        forecast: String(e.forecast ?? "").slice(0, 24),
+        previous: String(e.previous ?? "").slice(0, 24)
+      };
+    }).filter((e) => !!e && e.impact === "High" && e.date >= weekStart).sort((a, b) => a.date - b.date).slice(0, 60);
+    calCache = { at: Date.now(), events, ok: true };
+    return { events, ok: true };
+  } catch {
+    calCache = { at: Date.now(), events: [], ok: false };
+    return { events: [], ok: false };
+  }
+}
+var ART_TTL = 30 * 60 * 1e3;
+async function collectNewsCron() {
+  const [settled, calendar] = await Promise.all([
+    Promise.allSettled(FEEDS.map((f) => fetchFeed(f.url, f))),
+    fetchCalendar().catch(() => ({ events: [], ok: false }))
+  ]);
+  const seen = /* @__PURE__ */ new Set();
+  const merged = [];
+  for (const r of settled) {
+    if (r.status !== "fulfilled") continue;
+    for (const item of r.value) {
+      const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 90);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
+  const items = merged.filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0).sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 300);
+  return { items, calendar: calendar.events || [], ok: !!calendar.ok };
+}
+
 // api/_src/alerts-cron.ts
-var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36";
+var require_ = createRequire(import.meta.url);
+var webpush = require_("web-push");
+var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36";
+var VAPID_SUBJECT = "mailto:support@inspiretrade.app";
+function pushConfigured() {
+  return !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+async function sendPush(uid, payload) {
+  if (!pushConfigured()) return 0;
+  const snap = await rtdb().ref(`pushSubs/${uid}`).once("value");
+  const subs = snap.val() || {};
+  let sent = 0;
+  await Promise.allSettled(Object.entries(subs).map(async ([key, row]) => {
+    if (!row?.sub?.endpoint) return;
+    try {
+      await webpush.sendNotification(row.sub, JSON.stringify(payload), { vapidDetails: { subject: VAPID_SUBJECT, publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY } });
+      sent++;
+    } catch (err) {
+      if (err?.statusCode === 404 || err?.statusCode === 410) {
+        await rtdb().ref(`pushSubs/${uid}/${key}`).remove().catch(() => {
+        });
+      }
+    }
+  }));
+  return sent;
+}
+function asSet(arr) {
+  return new Set(Array.isArray(arr) ? arr.map(String) : []);
+}
 var alerts_cron_default = handle(async (req, res) => {
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     if (got !== secret) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+  const pushOn = pushConfigured();
+  if (pushOn) {
+    try {
+      webpush.setVapidDetails(VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+    } catch {
+    }
   }
   const snap = await rtdb().ref("terminalAlerts").once("value");
   const all = snap.val() || {};
@@ -139,7 +386,6 @@ var alerts_cron_default = handle(async (req, res) => {
       }
     }
   }
-  if (!jobs.length) return res.status(200).json({ ok: true, evaluated: 0, fired: 0 });
   const prices = /* @__PURE__ */ new Map();
   const prevDay = /* @__PURE__ */ new Map();
   if (cryptoNeeded.size) {
@@ -165,7 +411,7 @@ var alerts_cron_default = handle(async (req, res) => {
   }
   if (yahooNeeded.size) {
     await Promise.allSettled([...yahooNeeded].map(async (sym) => {
-      const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d`, { headers: { "User-Agent": UA, Accept: "application/json" } });
+      const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d`, { headers: { "User-Agent": UA2, Accept: "application/json" } });
       if (!r.ok) return;
       const data = await r.json();
       const result = data?.chart?.result?.[0];
@@ -186,6 +432,7 @@ var alerts_cron_default = handle(async (req, res) => {
     }));
   }
   let fired = 0;
+  let pushed = 0;
   const now = Date.now();
   for (const job of jobs) {
     const kind = job.a.kind ?? "price";
@@ -202,8 +449,67 @@ var alerts_cron_default = handle(async (req, res) => {
     fired++;
     const history = [...Array.isArray(job.a.history) ? job.a.history : [], { at: now, price }].slice(-20);
     await rtdb().ref(`terminalAlerts/${job.uid}/${job.id}`).update({ lastTriggeredAt: now, history });
+    if (pushOn) {
+      const dir = job.a.direction === "above" ? "crossed above" : "dropped to";
+      pushed += await sendPush(job.uid, {
+        title: `${job.a.symbol} ${kind === "dailyHL" ? "daily level" : "alert"}`,
+        body: `${job.a.symbol} ${dir} ${job.a.price} \u2014 now ${price}`,
+        url: "/terminal",
+        tag: `alert-${job.uid}-${job.id}`
+      });
+    }
   }
-  return res.status(200).json({ ok: true, evaluated: jobs.length, fired });
+  let newsPushed = 0;
+  let calPushed = 0;
+  if (pushOn) {
+    try {
+      const [{ items, calendar, ok }, subsSnap, settingsSnap, seenSnap] = await Promise.all([
+        collectNewsCron(),
+        rtdb().ref("pushSubs").once("value"),
+        rtdb().ref("pushSettings").once("value"),
+        rtdb().ref("pushSeen").once("value")
+      ]);
+      const subsByUid = subsSnap.val() || {};
+      const settingsByUid = settingsSnap.val() || {};
+      const seenByUid = seenSnap.val() || {};
+      const seenUpdates = {};
+      for (const uid of Object.keys(subsByUid)) {
+        const s = settingsByUid[uid] || {};
+        if (!s.enabled || !Array.isArray(s.symbols) || !s.symbols.length) continue;
+        const seen = seenByUid[uid] || {};
+        const newsSeen = asSet(seen.news);
+        const calSeen = asSet(seen.cal);
+        const updates = {};
+        const fresh = items.filter(
+          (i) => !newsSeen.has(i.link) && now - i.publishedAt < 45 * 60 * 1e3 && i.symbols.some((sym) => s.symbols.includes(sym))
+        ).slice(0, 3);
+        for (const item of fresh) {
+          const syms = item.symbols.filter((sym) => s.symbols.includes(sym)).join(" \xB7 ");
+          newsPushed += await sendPush(uid, { title: syms || "News", body: String(item.title || "").slice(0, 180), url: "/news", tag: item.link });
+          updates[item.link] = now;
+        }
+        if (ok && s.calEnabled && Array.isArray(s.calCurrencies) && s.calCurrencies.length) {
+          const soon = calendar.filter(
+            (e) => e.impact === "High" && s.calCurrencies.includes(e.currency) && !calSeen.has(e.id) && e.date > now && e.date - now <= 30 * 60 * 1e3
+          ).slice(0, 2);
+          for (const ev of soon) {
+            const mins = Math.max(1, Math.round((ev.date - now) / 6e4));
+            calPushed += await sendPush(uid, { title: `${ev.currency} \u2014 ${mins} min`, body: String(ev.title || "").slice(0, 180), url: "/news", tag: ev.id });
+            updates[ev.id] = now;
+          }
+        }
+        if (Object.keys(updates).length) {
+          const mergedNews = [...Object.entries(seen.news || {}).map(([k, v]) => [k, v]), ...Object.entries(updates)].slice(-400);
+          const mergedCal = [...Object.entries(seen.cal || {}).map(([k, v]) => [k, v]), ...Object.entries(updates)].slice(-200);
+          seenUpdates[`pushSeen/${uid}/news`] = Object.fromEntries(mergedNews);
+          seenUpdates[`pushSeen/${uid}/cal`] = Object.fromEntries(mergedCal);
+        }
+      }
+      if (Object.keys(seenUpdates).length) await rtdb().ref().update(seenUpdates);
+    } catch {
+    }
+  }
+  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn });
 });
 export {
   alerts_cron_default as default

@@ -1,32 +1,84 @@
 /**
- * GET /api/alerts-cron — system cron endpoint (Vercel Cron).
+ * GET /api/alerts-cron — system cron endpoint (Vercel Cron / external pinger).
  *
- * Server-side alert evaluation for kinds that need only prices and daily
- * bars: "price" (above/below) and "dailyHL" (previous-day high/low breakout).
- * Indicator alerts (RSI/MACD/EMA/BB) and drawing-based alerts are evaluated
- * client-side on the 30s loop — they need full OHLC history / user drawings.
+ * Server-side alert evaluation + WEB PUSH delivery (the fix for "notifications
+ * only arrive when I open the site"):
+ *  - "price" (above/below) and "dailyHL" (prev-day H/L breakout) alerts,
+ *  - news items in the user's picked symbols,
+ *  - high-impact calendar events in the picked currencies (30-min window).
+ * Indicator alerts (RSI/MACD/EMA/BB) and drawing-based alerts stay client-side
+ * — they need full OHLC history / user drawings.
  *
- * Reliability: runs with NO user session; every active alert of every user is
- * checked on each invocation with a per-alert cooldown (default 60 min) so a
- * single event never notifies twice. Trigger state (lastTriggeredAt + history
- * ring, max 20) is written back to the same RTDB node the client reads, so
- * client and server evaluations de-duplicate against each other.
+ * Delivery: web-push to every registered browser (api/push.js stores
+ * subscriptions in pushSubs/{uid}, settings in pushSettings/{uid}). Requires
+ * VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY env vars; without them the run still
+ * evaluates state but cannot deliver.
+ *
+ * Reliability: NO user session; every active alert of every user is checked on
+ * each invocation with a per-alert cooldown (default 60 min). Trigger state
+ * (lastTriggeredAt + history ring, max 20) is written back to the same RTDB
+ * node the client reads, so client and server evaluations de-duplicate against
+ * each other. News/calendar seen-markers live in pushSeen/{uid} (RTDB) so a
+ * story never notifies twice.
  *
  * Protection: when CRON_SECRET is set, requests must carry
- * `Authorization: Bearer <CRON_SECRET>` (Vercel Cron does this natively).
+ * `Authorization: Bearer <CRON_SECRET>` (Vercel Cron does this natively —
+ * external pingers like cron-job.org must add the same header).
  */
+// web-push ships CJS without a default export — load it via createRequire
+// (the bundled ESM output runs on Node 20 where this always resolves)
+import { createRequire } from "module";
+const require_ = createRequire(import.meta.url);
+const webpush: any = require_("web-push");
 import { rtdb, handle } from "./lib/firebase";
 import { INSTRUMENTS, getInstrument } from "../../shared/terminal";
+import { collectNewsCron } from "./news/index";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36";
 
 interface Job { uid: string; id: string; a: any }
+
+const VAPID_SUBJECT = "mailto:support@inspiretrade.app";
+
+function pushConfigured(): boolean {
+  return !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+
+/** Send one push to every browser of a user; prune dead subscriptions. */
+async function sendPush(uid: string, payload: { title: string; body: string; url?: string; tag?: string }): Promise<number> {
+  if (!pushConfigured()) return 0;
+  const snap = await rtdb().ref(`pushSubs/${uid}`).once("value");
+  const subs = snap.val() || {};
+  let sent = 0;
+  await Promise.allSettled(Object.entries<any>(subs).map(async ([key, row]) => {
+    if (!row?.sub?.endpoint) return;
+    try {
+      await webpush.sendNotification(row.sub, JSON.stringify(payload), { vapidDetails: { subject: VAPID_SUBJECT, publicKey: process.env.VAPID_PUBLIC_KEY!, privateKey: process.env.VAPID_PRIVATE_KEY! } });
+      sent++;
+    } catch (err: any) {
+      // 404/410 = the browser no longer knows this subscription — drop it
+      if (err?.statusCode === 404 || err?.statusCode === 410) {
+        await rtdb().ref(`pushSubs/${uid}/${key}`).remove().catch(() => {});
+      }
+    }
+  }));
+  return sent;
+}
+
+function asSet(arr: any): Set<string> {
+  return new Set(Array.isArray(arr) ? arr.map(String) : []);
+}
 
 export default handle(async (req, res) => {
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     if (got !== secret) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+
+  const pushOn = pushConfigured();
+  if (pushOn) {
+    try { webpush.setVapidDetails(VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!); } catch { /* push disabled this run */ }
   }
 
   const snap = await rtdb().ref("terminalAlerts").once("value");
@@ -57,8 +109,6 @@ export default handle(async (req, res) => {
       }
     }
   }
-
-  if (!jobs.length) return res.status(200).json({ ok: true, evaluated: 0, fired: 0 });
 
   const prices = new Map<string, number>();       // by instrument symbol
   const prevDay = new Map<string, { high: number; low: number }>();
@@ -110,6 +160,7 @@ export default handle(async (req, res) => {
   }
 
   let fired = 0;
+  let pushed = 0;
   const now = Date.now();
   for (const job of jobs) {
     const kind: string = job.a.kind ?? "price";
@@ -126,7 +177,74 @@ export default handle(async (req, res) => {
     fired++;
     const history = [...(Array.isArray(job.a.history) ? job.a.history : []), { at: now, price }].slice(-20);
     await rtdb().ref(`terminalAlerts/${job.uid}/${job.id}`).update({ lastTriggeredAt: now, history });
+    if (pushOn) {
+      const dir = job.a.direction === "above" ? "crossed above" : "dropped to";
+      pushed += await sendPush(job.uid, {
+        title: `${job.a.symbol} ${kind === "dailyHL" ? "daily level" : "alert"}`,
+        body: `${job.a.symbol} ${dir} ${job.a.price} — now ${price}`,
+        url: "/terminal",
+        tag: `alert-${job.uid}-${job.id}`,
+      });
+    }
   }
 
-  return res.status(200).json({ ok: true, evaluated: jobs.length, fired });
+  // ---- news + calendar push (same rules as the in-tab AlertsEngine) --------
+  let newsPushed = 0;
+  let calPushed = 0;
+  if (pushOn) {
+    try {
+      const [{ items, calendar, ok }, subsSnap, settingsSnap, seenSnap] = await Promise.all([
+        collectNewsCron(),
+        rtdb().ref("pushSubs").once("value"),
+        rtdb().ref("pushSettings").once("value"),
+        rtdb().ref("pushSeen").once("value"),
+      ]);
+      const subsByUid = subsSnap.val() || {};
+      const settingsByUid = settingsSnap.val() || {};
+      const seenByUid = seenSnap.val() || {};
+      const seenUpdates: Record<string, any> = {};
+
+      for (const uid of Object.keys(subsByUid)) {
+        const s = settingsByUid[uid] || {};
+        if (!s.enabled || !Array.isArray(s.symbols) || !s.symbols.length) continue;
+        const seen = seenByUid[uid] || {};
+        const newsSeen = asSet(seen.news);
+        const calSeen = asSet(seen.cal);
+        const updates: any = {};
+
+        const fresh = items.filter(
+          (i) => !newsSeen.has(i.link) && now - i.publishedAt < 45 * 60 * 1000 && i.symbols.some((sym) => s.symbols.includes(sym)),
+        ).slice(0, 3);
+        for (const item of fresh) {
+          const syms = item.symbols.filter((sym) => s.symbols.includes(sym)).join(" · ");
+          newsPushed += await sendPush(uid, { title: syms || "News", body: String(item.title || "").slice(0, 180), url: "/news", tag: item.link });
+          updates[item.link] = now;
+        }
+
+        if (ok && s.calEnabled && Array.isArray(s.calCurrencies) && s.calCurrencies.length) {
+          const soon = calendar.filter(
+            (e: any) => e.impact === "High" && s.calCurrencies.includes(e.currency) && !calSeen.has(e.id) && e.date > now && e.date - now <= 30 * 60 * 1000,
+          ).slice(0, 2);
+          for (const ev of soon) {
+            const mins = Math.max(1, Math.round((ev.date - now) / 60000));
+            calPushed += await sendPush(uid, { title: `${ev.currency} — ${mins} min`, body: String(ev.title || "").slice(0, 180), url: "/news", tag: ev.id });
+            updates[ev.id] = now;
+          }
+        }
+
+        if (Object.keys(updates).length) {
+          // merge into the per-uid seen maps, newest last, capped
+          const mergedNews = [...Object.entries(seen.news || {}).map(([k, v]) => [k, v]), ...Object.entries(updates)]
+            .slice(-400);
+          const mergedCal = [...Object.entries(seen.cal || {}).map(([k, v]) => [k, v]), ...Object.entries(updates)]
+            .slice(-200);
+          seenUpdates[`pushSeen/${uid}/news`] = Object.fromEntries(mergedNews);
+          seenUpdates[`pushSeen/${uid}/cal`] = Object.fromEntries(mergedCal);
+        }
+      }
+      if (Object.keys(seenUpdates).length) await rtdb().ref().update(seenUpdates);
+    } catch { /* news push unavailable this run — price alerts already delivered */ }
+  }
+
+  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn });
 });

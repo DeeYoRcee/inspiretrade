@@ -133,6 +133,25 @@ async function checkNewsInBackground() {
   }
 }
 
+// ---- web push (server cron → browser notification while the site is closed)
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: "InspireTrade", body: event.data ? event.data.text() : "" };
+  }
+  event.waitUntil(
+    self.registration.showNotification(String(data.title || "InspireTrade"), {
+      body: String(data.body || "").slice(0, 200),
+      tag: data.tag,
+      icon: "/favicon.png",
+      badge: "/favicon.png",
+      data: { url: data.url || "/" },
+    }),
+  );
+});
+
 // clicking a notification focuses the site (or opens it)
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

@@ -466,6 +466,35 @@ async function extractArticle(rawUrl: string): Promise<ArticleData> {
 
 import { musicSearch, musicStream } from "../music/index";
 
+/**
+ * Cron hook (alerts-cron): one UNCACHED fetch of every feed + the calendar,
+ * deduped the same way the public handler does — English titles only (push
+ * notifications stay source-language, translation is a per-request concern).
+ */
+export async function collectNewsCron(): Promise<{ items: NewsItem[]; calendar: CalEvent[]; ok: boolean }> {
+  const [settled, calendar] = await Promise.all([
+    Promise.allSettled(FEEDS.map((f) => fetchFeed(f.url, f))),
+    fetchCalendar().catch(() => ({ events: [] as CalEvent[], ok: false })),
+  ]);
+  const seen = new Set<string>();
+  const merged: NewsItem[] = [];
+  for (const r of settled) {
+    if (r.status !== "fulfilled") continue;
+    for (const item of r.value) {
+      const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 90);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const items = merged
+    .filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0)
+    .sort((a, b) => b.publishedAt - a.publishedAt)
+    .slice(0, 300);
+  return { items, calendar: calendar.events || [], ok: !!calendar.ok };
+}
+
 // ---- handler ----------------------------------------------------------------
 
 export default async function handler(req: any, res: any) {

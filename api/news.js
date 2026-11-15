@@ -553,6 +553,26 @@ async function extractArticle(rawUrl) {
     return { ok: false, paragraphs: [], link: target, error: e?.name === "AbortError" ? "TIMEOUT" : "FETCH_FAILED" };
   }
 }
+async function collectNewsCron() {
+  const [settled, calendar] = await Promise.all([
+    Promise.allSettled(FEEDS.map((f) => fetchFeed(f.url, f))),
+    fetchCalendar().catch(() => ({ events: [], ok: false }))
+  ]);
+  const seen = /* @__PURE__ */ new Set();
+  const merged = [];
+  for (const r of settled) {
+    if (r.status !== "fulfilled") continue;
+    for (const item of r.value) {
+      const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 90);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
+  const items = merged.filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0).sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 300);
+  return { items, calendar: calendar.events || [], ok: !!calendar.ok };
+}
 async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") {
     return res.status(405).json({ error: "METHOD_NOT_ALLOWED", message: "GET only" });
@@ -643,5 +663,6 @@ async function handler(req, res) {
   });
 }
 export {
+  collectNewsCron,
   handler as default
 };

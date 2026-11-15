@@ -17,7 +17,7 @@ import {
   Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
   Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal, GripVertical,
   PanelRight, PanelRightClose, ChevronDown, ImagePlus, Check, Plus, X,
-  Settings2,
+  Settings2, Star, ChevronsUp, ChevronsDown,
 } from "lucide-react";
 import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
 import { useLanguage } from "@/lib/language-context";
@@ -86,6 +86,20 @@ const TOOL_GROUPS: { label: string; accent?: boolean; tools: { id: DrawingTool; 
   ] },
 ];
 
+const ALL_TOOLS = TOOL_GROUPS.flatMap((g) => g.tools);
+const ALL_TOOL_IDS = new Set(ALL_TOOLS.map((t) => t.id));
+const FAV_KEY = "it_fav_tools";
+const TOOLS_VISIBLE_KEY = "it_tools_visible";
+
+function loadFavTools(): DrawingTool[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FAV_KEY) || "[]");
+    return Array.isArray(raw) ? raw.filter((t) => ALL_TOOL_IDS.has(t)) : [];
+  } catch {
+    return [];
+  }
+}
+
 type SideTab = "trade" | "challenge" | "calendar" | "alerts" | "risk" | "replay";
 
 const DRAWER_TITLES: Partial<Record<ToolId, { title: string; subtitle: string }>> = {
@@ -145,6 +159,22 @@ export default function TerminalPage() {
   const { account, positions } = useTerminalTrading();
 
   const [activeTool, setActiveTool] = useState<DrawingTool>("cursor");
+  // TradingView-style drawing-tool favorites: pinned to the top of the rail,
+  // drag-reorderable, right-click unhooks. The rest of the list collapses.
+  const [favTools, setFavTools] = useState<DrawingTool[]>(loadFavTools);
+  const [toolsVisible, setToolsVisible] = useState(() => localStorage.getItem(TOOLS_VISIBLE_KEY) !== "0");
+  const dragFav = useRef<number | null>(null);
+  const toggleFav = (id: DrawingTool) => {
+    setFavTools((p) => {
+      const next = p.includes(id) ? p.filter((x) => x !== id) : [...p, id];
+      try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
+  };
+  const commitFavs = (next: DrawingTool[]) => {
+    setFavTools(next);
+    try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  };
   // open tool-group flyout: viewport coords of the anchor button (fixed
   // positioning — MUST be outside the overflow-clipped toolbar container so
   // the menu always appears to the RIGHT of the group, never clipped)
@@ -965,7 +995,39 @@ export default function TerminalPage() {
             area (TradingView-style); the corner arrow opens that group's
             tool list to the RIGHT of the button */}
         <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur">
-          {TOOL_GROUPS.map((g) => {
+          {/* FAVORITES — pinned tools, drag to reorder, right-click to unpin */}
+          {favTools.map((id, i) => {
+            const t = ALL_TOOLS.find((x) => x.id === id);
+            if (!t) return null;
+            const FIcon = t.icon;
+            return (
+              <button
+                key={id}
+                draggable
+                onDragStart={(e) => { dragFav.current = i; e.dataTransfer.effectAllowed = "move"; }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragFav.current == null || dragFav.current === i) return;
+                  const next = [...favTools];
+                  const [moved] = next.splice(dragFav.current, 1);
+                  next.splice(i, 0, moved);
+                  dragFav.current = i;
+                  commitFavs(next);
+                }}
+                onDragEnd={() => { dragFav.current = null; }}
+                onClick={() => { setActiveTool(id); setFlyout(null); }}
+                onContextMenu={(e) => { e.preventDefault(); toggleFav(id); }}
+                className={cn("relative flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
+                title={`${t.title} — favorite · drag to reorder · right-click to remove`}
+              >
+                <FIcon className="h-3.5 w-3.5" />
+                <span className="absolute right-0.5 top-0.5 h-1 w-1 rounded-full bg-amber-400" />
+              </button>
+            );
+          })}
+          {favTools.length > 0 && <div className="my-0.5 h-px w-6 shrink-0 bg-amber-500/40" />}
+          {/* the group list — collapsible like TradingView's tool rail */}
+          {toolsVisible && TOOL_GROUPS.map((g) => {
             const active = g.tools.some((t) => t.id === activeTool);
             // the group's FACE is whatever the user last picked in this group
             const current = g.tools.find((t) => t.id === lastTool[g.label]) ?? g.tools[0];
@@ -1001,6 +1063,17 @@ export default function TerminalPage() {
             );
           })}
           <div className="my-1 h-px w-6 shrink-0 bg-white/10" />
+          {/* collapse / expand the standard tool list (favorites always stay) */}
+          <button
+            onClick={() => setToolsVisible((v) => {
+              try { localStorage.setItem(TOOLS_VISIBLE_KEY, v ? "0" : "1"); } catch { /* private mode */ }
+              return !v;
+            })}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground"
+            title={toolsVisible ? "Hide the tool list — favorites stay" : "Show all tools"}
+          >
+            {toolsVisible ? <ChevronsUp className="h-3.5 w-3.5" /> : <ChevronsDown className="h-3.5 w-3.5" />}
+          </button>
           <button onClick={() => drawingsBus.emit({ cmd: "undo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Undo"><Undo2 className="h-3.5 w-3.5" /></button>
           <button onClick={() => drawingsBus.emit({ cmd: "redo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Redo"><Redo2 className="h-3.5 w-3.5" /></button>
           <button onClick={() => drawingsBus.emit({ cmd: "lock" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Lock selected"><Lock className="h-3.5 w-3.5" /></button>
@@ -1030,7 +1103,18 @@ export default function TerminalPage() {
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{title}</span>
-                  {activeTool === id && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                  <span className="ml-auto flex shrink-0 items-center gap-1">
+                    {activeTool === id && <Check className="h-3 w-3" />}
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      onClick={(e) => { e.stopPropagation(); toggleFav(id); }}
+                      className={cn("rounded p-0.5", favTools.includes(id) ? "text-amber-400" : "text-muted-foreground/40 hover:text-amber-300")}
+                      title={favTools.includes(id) ? "Remove from favorites" : "Add to favorites (pin to the toolbar)"}
+                    >
+                      <Star className={cn("h-3 w-3", favTools.includes(id) && "fill-amber-400")} />
+                    </span>
+                  </span>
                 </button>
               ))}
             </div>

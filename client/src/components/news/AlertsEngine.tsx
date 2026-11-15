@@ -8,6 +8,8 @@ import {
   appendAlertLog,
   browserNotify,
   enableBackgroundAlerts,
+  enableWebPush,
+  isPushSubscribed,
   getCalSeen,
   getNewsSeen,
   loadAlertSettings,
@@ -34,7 +36,13 @@ export function AlertsEngine() {
       settingsRef.current = loadAlertSettings();
       // browser notifications on: register the periodic background sync so
       // news/calendar alerts also arrive while the site is closed
-      if (settingsRef.current.browser) void enableBackgroundAlerts();
+      if (settingsRef.current.browser) {
+        void enableBackgroundAlerts();
+        // real web push — the server cron delivers even with the site closed
+        void (async () => {
+          if (!(await isPushSubscribed())) await enableWebPush();
+        })();
+      }
     };
     sync();
     window.addEventListener(ALERTS_SETTINGS_EVENT, sync);

@@ -6,7 +6,7 @@ import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/l
 import { Button } from "@/components/ui/button";
 import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, ChartCandlestick, Wallet, ShieldCheck, Award, User as UserIcon, Package, BarChart2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePremiumStatus } from "@/hooks/use-premium";
 import { useEconomy } from "@/hooks/use-economy";
 import { useIsAdmin } from "@/hooks/use-admin";
@@ -76,28 +76,22 @@ export function Navbar() {
 
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("settings")} title={t("settings")} className="h-9 gap-1.5 rounded-full px-2.5"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button></DropdownMenuTrigger>
-              {/* settings sections right below the button — same pattern as the account menu */}
-              <DropdownMenuContent align="end" className="glass-panel w-52 border-border/60">
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="cursor-pointer gap-2"><Globe2 className="h-4 w-4" />{t("language")}</DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="glass-panel w-44 border-border/60">
-                    {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => (
-                      <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer gap-2", language === code && "bg-primary/10 font-semibold text-primary")}>
-                        <span aria-hidden>{LANG_FLAGS[code]}</span>{LANGUAGE_LABELS[code]}{language === code && <span className="ml-auto text-xs">✓</span>}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="cursor-pointer gap-2"><Palette className="h-4 w-4" />{t("themeTitle")}</DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="glass-panel w-44 border-border/60">
-                    {THEMES.map((themeOption: Theme) => (
-                      <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer gap-2", theme === themeOption && "bg-primary/10 font-semibold text-primary")}>
-                        <span className={cn("h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
+              {/* settings sections INLINE (no submenus): Radix submenus open
+                  off-screen at the right edge and need hover — on touch they
+                  looked like "click Language → nothing happens" */}
+              <DropdownMenuContent align="end" className="glass-panel max-h-[70vh] w-52 overflow-y-auto border-border/60">
+                <div className="px-2 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{t("language")}</div>
+                {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => (
+                  <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer gap-2", language === code && "bg-primary/10 font-semibold text-primary")}>
+                    <span aria-hidden>{LANG_FLAGS[code]}</span>{LANGUAGE_LABELS[code]}{language === code && <span className="ml-auto text-xs">✓</span>}
+                  </DropdownMenuItem>
+                ))}
+                <div className="px-2 pb-1 pt-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{t("themeTitle")}</div>
+                {THEMES.map((themeOption: Theme) => (
+                  <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer gap-2", theme === themeOption && "bg-primary/10 font-semibold text-primary")}>
+                    <span className={cn("h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ml-auto text-xs">✓</span>}
+                  </DropdownMenuItem>
+                ))}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2"><BarChart2 className="h-4 w-4" />{t("terminalDefaults")}</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2 text-muted-foreground"><Settings className="h-4 w-4" />{t("allSettings")}</DropdownMenuItem>

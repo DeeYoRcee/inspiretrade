@@ -79,6 +79,8 @@ export function saveAlertSettings(settings: AlertSettings): void {
   writeJson(SETTINGS_KEY, settings);
   window.dispatchEvent(new CustomEvent(ALERTS_SETTINGS_EVENT));
   void syncAlertStateToSW();
+  // keep the server snapshot fresh so the cron pushes for the right symbols
+  void syncPushSettings();
 }
 
 /**
@@ -158,6 +160,84 @@ export function requestBrowserPermission(): Promise<string> {
   } catch {
     return Promise.resolve("denied");
   }
+}
+
+// ---- web push (alerts arrive even when the site is closed) --------------------
+
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const pad = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function vapidKey(): string | null {
+  const key = String(import.meta.env.VITE_VAPID_PUBLIC_KEY || "");
+  return key ? key : null;
+}
+
+/** A web-push subscription exists for this browser? */
+export async function isPushSubscribed(): Promise<boolean> {
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+    const reg = await swRegistration();
+    return !!(await reg?.pushManager.getSubscription());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Full web-push enable flow: permission → PushSubscription → register the
+ * subscription + current alert settings on the server (api/push). The server
+ * cron then delivers news/calendar/price alerts while the site is closed.
+ */
+export async function enableWebPush(): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const key = vapidKey();
+    if (!key) return { ok: false, reason: "no-vapid-key" };
+    const perm = await requestBrowserPermission();
+    if (perm !== "granted") return { ok: false, reason: perm };
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return { ok: false, reason: "unsupported" };
+    const reg = (await navigator.serviceWorker.ready) ?? (await swRegistration());
+    if (!reg) return { ok: false, reason: "no-sw" };
+    const existing = await reg.pushManager.getSubscription();
+    const sub =
+      existing ??
+      (await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key) as unknown as BufferSource,
+      }));
+    const { authedFetch } = await import("./api");
+    await authedFetch("/api/push?action=subscribe", { subscription: sub.toJSON(), settings: loadAlertSettings() });
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, reason: String(err?.message || "push-failed") };
+  }
+}
+
+/** Remove this browser's subscription (server + browser). */
+export async function disableWebPush(): Promise<void> {
+  try {
+    const reg = await swRegistration();
+    const sub = await reg?.pushManager.getSubscription();
+    if (sub) {
+      const { authedFetch } = await import("./api");
+      await authedFetch("/api/push?action=unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
+      await sub.unsubscribe().catch(() => {});
+    }
+  } catch { /* best effort */ }
+}
+
+/** Mirror the latest alert settings to the server (no-op when not subscribed). */
+export async function syncPushSettings(): Promise<void> {
+  try {
+    if (!(await isPushSubscribed())) return;
+    const { authedFetch } = await import("./api");
+    await authedFetch("/api/push?action=sync-settings", { settings: loadAlertSettings() });
+  } catch { /* settings sync is best-effort */ }
 }
 
 // ---- seen markers --------------------------------------------------------------
