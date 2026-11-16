@@ -1,1287 +1,218 @@
 /**
- * InspireTrade Terminal — the main trading workspace page.
+ * InspireTrade Terminal — the main trading workspace page (REBUILT).
  *
- * Existing: toolbar (instrument / timeframes / chart type / indicators /
- * volume / layouts / fullscreen), drawing toolbar, chart grid, side panel
- * (trade / challenge / alerts / replay), market watch.
- * Advanced tools (launched via the searchable Tools palette or toolbar):
- * bar replay, strategy tester, sessions, heatmap, screener, MTF, volume
- * analysis, workspace templates, chart comparison, prop-firm analytics,
- * calculators — all fed by REAL data through the terminal feed layer.
+ * The old 1,287-line monolith (drawing tools, indicators, replay, screener,
+ * heatmap, MTF, templates, …) is deleted. This page is the real product:
+ *   - live REAL-data chart (PriceChart: candles + volume, position lines)
+ *   - account strip driven by the SERVER-authoritative engine (/api/trading)
+ *   - TradingPanel: market/limit/stop orders, SL/TP, positions, history
+ * Every mutation hits the server; the client never touches balances.
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import {
-  Maximize, Minimize, BarChart2, LayoutGrid, Columns2, Square,
-  Undo2, Redo2, Trash2, Lock, Eye, EyeOff, MousePointer2, Minus, MoveUp,
-  MoveUpRight, SquareDashed, Ruler, TrendingUp, TrendingDown,
-  Type, ArrowRight, Pencil, GitCompareArrows, Layers, Activity,
-  Spline, MoveDiagonal, Wrench, Camera, Magnet, Shapes, Palette, GripHorizontal, Slash,
-  PanelRight, PanelRightClose, ChevronDown, ChevronRight, ImagePlus, Check, Plus, X,
-  Settings2, Star, ChevronsUp, ChevronsDown,
-} from "lucide-react";
-import { INSTRUMENTS, CHART_TYPES, TIMEFRAMES, type Bar, type ChartType, type Timeframe } from "@shared/terminal";
-import { useLanguage } from "@/lib/language-context";
-import { useAuth } from "@/hooks/use-auth";
-import { useToast } from "@/hooks/use-toast";
-import { useTerminalWorkspace, useDrawingsStore, type TerminalSettings } from "@/hooks/use-terminal-workspace";
+import { useEffect, useMemo, useState } from "react";
+import { INSTRUMENTS, TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import { useTrading } from "@/hooks/use-trading";
-import { priceBusUpdate, getAllPrices } from "@/lib/price-store";
-import { TerminalChart, CHART_THEMES, type ActiveIndicator } from "@/components/terminal/TerminalChart";
+import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
-import { ChallengeDashboard } from "@/components/terminal/ChallengeDashboard";
-import { AlertsPanel, useTerminalAlerts } from "@/components/terminal/AlertsPanel";
-import { IndicatorDialog } from "@/components/terminal/IndicatorDialog";
-import { ChartSettingsDialog } from "@/components/terminal/ChartSettingsDialog";
-import { ToolDrawer } from "@/components/terminal/ToolDrawer";
-import { ToolsDialog, type ToolId } from "@/components/terminal/ToolsDialog";
-import { useReplaySession } from "@/hooks/use-replay";
-import { ReplayToolbar } from "@/components/terminal/ReplayToolbar";
-import { ReplayTradingPanel } from "@/components/terminal/ReplayTradingPanel";
-import { ReplayStatsPanel } from "@/components/terminal/ReplayStatsPanel";
-import { ReplayJournalDialog, type JournalDraft } from "@/components/terminal/ReplayJournalDialog";
-import { StrategyTester } from "@/components/terminal/StrategyTester";
-import { SessionsPanel } from "@/components/terminal/SessionsPanel";
-import { HeatmapPanel } from "@/components/terminal/HeatmapPanel";
-import { ScreenerPanel } from "@/components/terminal/ScreenerPanel";
-import { MtfPanel } from "@/components/terminal/MtfPanel";
-import { VolumePanel } from "@/components/terminal/VolumePanel";
-import { TemplatesPanel } from "@/components/terminal/TemplatesPanel";
-import { ComparisonPanel } from "@/components/terminal/ComparisonPanel";
-import { PropAnalyticsPanel } from "@/components/terminal/PropAnalyticsPanel";
-import { evaluateAlert, type AlertContext } from "@/lib/terminal/alert-engine";
-import { loadBarsCached } from "@/lib/terminal/data-feeds";
-import { DEFAULT_OVERLAY, type OverlayConfig } from "@/lib/terminal/chart-overlay";
-import { drawingsBus } from "@/lib/terminal/drawings-bus";
-import { DRAWING_TFS, type DrawingTool } from "@/lib/terminal/drawings";
+import {
+  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { RefreshCw, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Drawing tools grouped TradingView-style: each section has its own label. */
-const TOOL_GROUPS: { label: string; accent?: boolean; tools: { id: DrawingTool; icon: any; title: string }[] }[] = [
-  { label: "CURSOR", tools: [{ id: "cursor", icon: MousePointer2, title: "Cursor" }] },
-  { label: "LINES", tools: [
-    { id: "trendline", icon: Slash, title: "Trend line" },
-    { id: "hline", icon: Minus, title: "Horizontal line" },
-    { id: "vline", icon: MoveUp, title: "Vertical line" },
-    { id: "ray", icon: MoveUpRight, title: "Ray" },
-    { id: "extline", icon: MoveUpRight, title: "Extended line" },
-    { id: "channel", icon: MoveDiagonal, title: "Parallel channel" },
-  ] },
-  { label: "FIB", accent: true, tools: [
-    { id: "fib", icon: GitCompareArrows, title: "Fibonacci retracement" },
-    { id: "fibext", icon: Spline, title: "Fibonacci extension" },
-  ] },
-  { label: "SHAPES", tools: [
-    { id: "rect", icon: SquareDashed, title: "Rectangle" },
-    { id: "brush", icon: Pencil, title: "Brush" },
-    { id: "arrow", icon: ArrowRight, title: "Arrow" },
-  ] },
-  { label: "TEXT", tools: [{ id: "text", icon: Type, title: "Text" }] },
-  { label: "TRADE", tools: [
-    { id: "long", icon: TrendingUp, title: "Long position" },
-    { id: "short", icon: TrendingDown, title: "Short position" },
-    { id: "measure", icon: Ruler, title: "Measure" },
-  ] },
-];
+const SYMBOL_KEY = "it_terminal_symbol";
+const TF_KEY = "it_terminal_tf";
 
-const ALL_TOOLS = TOOL_GROUPS.flatMap((g) => g.tools);
-const ALL_TOOL_IDS = new Set(ALL_TOOLS.map((t) => t.id));
-const FAV_KEY = "it_fav_tools";
-const TOOLS_VISIBLE_KEY = "it_tools_visible";
-
-function loadFavTools(): DrawingTool[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FAV_KEY) || "[]");
-    return Array.isArray(raw) ? raw.filter((t) => ALL_TOOL_IDS.has(t)) : [];
-  } catch {
-    return [];
-  }
-}
-
-type SideTab = "trade" | "challenge" | "alerts" | "replay";
-
-const DRAWER_TITLES: Partial<Record<ToolId, { title: string; subtitle: string }>> = {
-  backtest: { title: "Strategy Tester", subtitle: "Backtest rules on real historical data — no look-ahead" },
-  sessions: { title: "Session Analyzer", subtitle: "Sydney · Tokyo · London · New York — DST-correct" },
-  heatmap: { title: "Market Heatmap", subtitle: "Daily performance + currency strength" },
-  screener: { title: "Market Screener", subtitle: "Multi-filter scan across every instrument" },
-  mtf: { title: "Multi-Timeframe Analysis", subtitle: "M1 → D1 trend classification" },
-  volume: { title: "Volume Analysis", subtitle: "Profile · POC/VAH/VAL · anchored VWAP · delta" },
-  templates: { title: "Workspace Templates", subtitle: "Save / restore complete chart setups" },
-  analytics: { title: "Prop Firm Analytics", subtitle: "Your demo-account trade history" },
-  compare: { title: "Chart Comparison", subtitle: "Normalized performance of two instruments" },
-  replayStats: { title: "Replay Performance", subtitle: "Statistics of the simulated session — CSV export" },
-};
-
-function playBeep() {
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.value = 880; gain.gain.value = 0.05;
-    osc.start(); osc.stop(ctx.currentTime + 0.25);
-  } catch { /* autoplay blocked */ }
-}
-
-/** Downscale any picked photo to a ≤1600px JPEG data URL for the chart bg. */
-async function fileToChartBg(file: File): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("read-failed"));
-    reader.readAsDataURL(file);
-  });
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("decode-failed"));
-    image.src = dataUrl;
-  });
-  const scale = Math.min(1, 1600 / img.width, 1600 / img.height);
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(img.width * scale);
-  canvas.height = Math.round(img.height * scale);
-  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.78);
-}
+const ASSET_CLASSES = [
+  { id: "crypto", label: "Crypto" },
+  { id: "metal", label: "Metals" },
+  { id: "forex", label: "Forex" },
+  { id: "index", label: "Indices" },
+] as const;
 
 export default function TerminalPage() {
-  const { t } = useLanguage();
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const { settings, update } = useTerminalWorkspace();
-  const { alerts, patchAlert } = useTerminalAlerts();
-  const { positions } = useTrading();
+  const {
+    accounts, account, positions, orders, metrics,
+    loading, busy, setActiveId, resetAccount, refreshNow,
+  } = useTrading();
 
-  const [activeTool, setActiveTool] = useState<DrawingTool>("cursor");
-  // TradingView-style drawing-tool favorites: pinned to the top of the rail,
-  // drag-reorderable, right-click unhooks. The rest of the list collapses.
-  const [favTools, setFavTools] = useState<DrawingTool[]>(loadFavTools);
-  const [toolsVisible, setToolsVisible] = useState(() => localStorage.getItem(TOOLS_VISIBLE_KEY) !== "0");
-  const toggleFav = (id: DrawingTool) => {
-    setFavTools((p) => {
-      const next = p.includes(id) ? p.filter((x) => x !== id) : [...p, id];
-      try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
-      return next;
-    });
-  };
-  const commitFavs = (next: DrawingTool[]) => {
-    setFavTools(next);
-    try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
-  };
-  /** pick a drawing tool — clicking the ACTIVE tool again cancels it back to
-      the cursor (TradingView-style "otmena"), everywhere: rail, flyout, favbar */
-  const pickTool = (id: DrawingTool) => setActiveTool((cur) => (cur === id ? "cursor" : id));
-
-  // FLOATING favorites toolbar (TradingView-style): a free-moving bar over the
-  // chart — grip handle drags it anywhere, the position persists. The rail
-  // keeps the standard group list; favorites live ONLY in this bar now.
-  const FAVBAR_POS_KEY = "it_favbar_pos";
-  const favbarRef = useRef<HTMLDivElement | null>(null);
-  const favbarDrag = useRef<{ dx: number; dy: number } | null>(null);
-  const [favbarPos, setFavbarPos] = useState<{ x: number; y: number }>(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem(FAVBAR_POS_KEY) || "null");
-      if (raw && typeof raw.x === "number" && typeof raw.y === "number") return raw;
-    } catch { /* private mode */ }
-    // rough default — centered near the top of the chart area (re-centered
-    // with the real measured width right after mount)
-    return { x: Math.max(4, Math.round(window.innerWidth / 2 - 140)), y: 74 };
-  });
-  const persistFavbar = (p: { x: number; y: number }) => {
-    try { localStorage.setItem(FAVBAR_POS_KEY, JSON.stringify(p)); } catch { /* quota */ }
-  };
-  const clampFavbar = (p: { x: number; y: number }): { x: number; y: number } => {
-    const w = favbarRef.current?.offsetWidth ?? 280;
-    const h = favbarRef.current?.offsetHeight ?? 44;
-    // clamp to the TERMINAL WORKSPACE, not the whole window — like the music
-    // widget the bar can never leave the chart area / vanish behind the
-    // navbar or page edges; stale saved positions heal back inside on mount
-    const r = pageRef.current?.getBoundingClientRect();
-    const minX = r ? Math.max(4, r.left) : 4;
-    const minY = r ? Math.max(4, r.top) : 4;
-    const maxX = r ? Math.max(minX, r.right - w - 4) : Math.max(4, window.innerWidth - w - 4);
-    const maxY = r ? Math.max(minY, r.bottom - h - 4) : Math.max(4, window.innerHeight - h - 4);
-    return {
-      x: Math.min(Math.max(minX, p.x), maxX),
-      y: Math.min(Math.max(minY, p.y), maxY),
-    };
-  };
-  useEffect(() => {
-    // re-center with the REAL bar width when no saved position exists, and
-    // clamp the saved one into view (smaller window since it was stored)
-    const t = window.setTimeout(() => {
-      setFavbarPos((p) => {
-        if (localStorage.getItem(FAVBAR_POS_KEY)) return clampFavbar(p);
-        const w = favbarRef.current?.offsetWidth ?? 280;
-        return clampFavbar({ x: Math.round((window.innerWidth - w) / 2), y: 74 });
-      });
-    }, 80);
-    const onResize = () => setFavbarPos((p) => clampFavbar(p));
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
-    // page scroll moves the workspace under a fixed bar — keep it inside
-    window.addEventListener("scroll", onResize, { passive: true });
-    return () => {
-      window.clearTimeout(t);
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
-      window.removeEventListener("scroll", onResize);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const startFavbarDrag = (e: React.PointerEvent) => {
-    const r = favbarRef.current?.getBoundingClientRect();
-    if (!r) return;
-    favbarDrag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
-  const moveFavbar = (e: React.PointerEvent) => {
-    const d = favbarDrag.current;
-    if (!d) return;
-    setFavbarPos(clampFavbar({ x: e.clientX - d.dx, y: e.clientY - d.dy }));
-  };
-  const endFavbarDrag = () => {
-    favbarDrag.current = null;
-    setFavbarPos((p) => { persistFavbar(p); return p; });
-  };
-  // open tool-group flyout: viewport coords of the anchor button (fixed
-  // positioning — MUST be outside the overflow-clipped toolbar container so
-  // the menu always appears to the RIGHT of the group, never clipped)
-  const [flyout, setFlyout] = useState<{ label: string; top: number; left: number } | null>(null);
-  // selected drawing (broadcast by the chart engines via the bus) — powers
-  // the floating object toolbar: color, per-timeframe visibility, size, label
-  const [drawSel, setDrawSel] = useState<{ id: string; tool: string; text: string; width: number; color?: string; tfs?: string[] | null } | null>(null);
-  // id of the drawing whose separate Colors section is open (colors never
-  // pop up on plain selection — the palette button opens them on demand)
-  const [colorOpenFor, setColorOpenFor] = useState<string | null>(null);
-  useEffect(() => drawingsBus.subscribe(({ cmd, arg }) => {
-    if (cmd === "sel") setDrawSel((arg as { info?: { id: string; tool: string; text: string; width: number; color?: string; tfs?: string[] | null } | null })?.info ?? null);
-  }), []);
-  // last-picked tool PER GROUP — becomes that group button's icon, exactly
-  // like TradingView: pick "Horizontal line" once and the LINES button keeps
-  // showing the horizontal-line icon
-  const [lastTool, setLastTool] = useState<Partial<Record<string, DrawingTool>>>({});
-  const [indDialog, setIndDialog] = useState(false);
-  const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
-  const [sideTab, setSideTab] = useState<SideTab>("trade");
-  const [mobilePanel, setMobilePanel] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
-  const gridRef = useRef<HTMLDivElement>(null);
-
-  // advanced tools
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [tool, setTool] = useState<ToolId | null>(null);
-  const pageRef = useRef<HTMLDivElement>(null);
-  const [overlay, setOverlay] = useState<OverlayConfig>(() => {
-    try { return { ...DEFAULT_OVERLAY, ...(JSON.parse(localStorage.getItem("terminalOverlay") ?? "null") ?? {}) }; } catch { return DEFAULT_OVERLAY; }
-  });
-  const [anchor, setAnchor] = useState<number | null>(() => {
-    const v = localStorage.getItem("terminalAvwap"); return v ? Number(v) : null;
-  });
-  const [compare, setCompare] = useState<string | null>(() => localStorage.getItem("terminalCompare") || null);
-
-  // ===== Replay 2.0 =====
-  const rs = useReplaySession(settings.symbol, settings.timeframe);
-  const [replayOpen, setReplayOpen] = useState(false);
-  const [journalDraft, setJournalDraft] = useState<JournalDraft | null>(null);
-  const [screenshotSignal, setScreenshotSignal] = useState(0);
-  // replay must ALWAYS be stoppable: whenever a session goes active (whether
-  // started from the toolbar OR the chart's right-click "Replay from here")
-  // the control deck opens — EXIT is never out of reach
-  useEffect(() => {
-    if (rs.active) setReplayOpen(true);
-  }, [rs.active]);
-  // "pick the start bar on the chart" mode (armed from the replay toolbar)
-  const [pickStart, setPickStart] = useState(false);
-  const replaySymbolRef = useRef(settings.symbol);
-  useEffect(() => {
-    if (replaySymbolRef.current !== settings.symbol) {
-      replaySymbolRef.current = settings.symbol;
-      if (rs.active) { rs.stop(); toast({ title: "Replay stopped — instrument changed" }); }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.symbol]);
-  // auto-evaluate the training challenge after every trade / equity move
-  useEffect(() => { rs.evaluateChallenge(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [rs.engine.closed.length, Math.round(rs.equity)]);
-  // open the replay side tab automatically when a session starts
-  useEffect(() => { if (rs.active) setSideTab((cur) => (cur === "replay" ? cur : "replay")); }, [rs.active]);
-
-  useEffect(() => { localStorage.setItem("terminalOverlay", JSON.stringify(overlay)); }, [overlay]);
-  useEffect(() => { anchor == null ? localStorage.removeItem("terminalAvwap") : localStorage.setItem("terminalAvwap", String(anchor)); }, [anchor]);
-  useEffect(() => { compare == null ? localStorage.removeItem("terminalCompare") : localStorage.setItem("terminalCompare", compare); }, [compare]);
-
-  const { drawings, save } = useDrawingsStore(user?.uid, settings.symbol);
-
-  // live ticks go into the external price store — components that display a
-  // price subscribe there; the page itself NEVER re-renders on ticks
-  const onLastBar = useMemo(
-    () => (bar: { time: number; close: number }) => priceBusUpdate(settings.symbol, bar.close),
-    [settings.symbol],
+  const [symbol, setSymbol] = useState(() => localStorage.getItem(SYMBOL_KEY) || "BTCUSD");
+  const [timeframe, setTimeframe] = useState<Timeframe>(
+    () => (localStorage.getItem(TF_KEY) as Timeframe) || "5m",
   );
 
-  // ---- advanced alert engine (v2) — 30s loop + 60s bar cache ----------------
-  const alertBarsRef = useRef<Map<string, Bar[]>>(new Map());
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      const needs = new Map<string, Timeframe>();
-      for (const a of alerts) {
-        if (a.paused) continue;
-        const kind = a.kind ?? "price";
-        if (["rsi", "macd", "emaCross", "bbBreakout", "trendline"].includes(kind) && a.timeframe) {
-          needs.set(`${a.symbol}:${a.timeframe}`, a.timeframe);
-        } else if (kind === "dailyHL") {
-          needs.set(`${a.symbol}:1d`, "1d");
-        }
-      }
-      for (const [key, tf] of needs) {
-        const sym = key.slice(0, key.lastIndexOf(":"));
-        try {
-          const bars = await loadBarsCached(sym, tf, 500);
-          if (alive) alertBarsRef.current.set(key, bars);
-        } catch { /* feed unavailable — alert skipped this cycle */ }
-      }
-    };
-    load();
-    const id = setInterval(load, 60_000);
-    return () => { alive = false; clearInterval(id); };
-  }, [alerts]);
+  useEffect(() => { localStorage.setItem(SYMBOL_KEY, symbol); }, [symbol]);
+  useEffect(() => { localStorage.setItem(TF_KEY, timeframe); }, [timeframe]);
 
-  useEffect(() => {
-    let busy = false;
-    const evaluate = async () => {
-      if (busy || !alerts.length) return;
-      busy = true;
-      const ctx: AlertContext = {
-        prices: getAllPrices(),
-        bars: (sym, tf) => alertBarsRef.current.get(`${sym}:${tf}`),
-        drawings: (sym) => (sym === settings.symbol ? drawings : []),
-      };
-      for (const a of alerts) {
-        const fire = evaluateAlert(a, ctx);
-        if (!fire) continue;
-        toast({ title: `🔔 ${fire.title}` });
-        if (settings.sound) playBeep();
-        try {
-          await patchAlert(a.id, {
-            lastTriggeredAt: Date.now(),
-            history: [...(a.history ?? []).slice(-19), { at: Date.now(), price: fire.value }],
-          });
-        } catch { /* trigger state write failed — cooldown may repeat once */ }
-      }
-      busy = false;
-    };
-    evaluate();
-    const id = setInterval(evaluate, 30_000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alerts, drawings, settings.symbol]);
-
-  const openCount = positions.length; // server positions are open by definition
-
-  const toggleFullscreen = () => {
-    const el = gridRef.current?.parentElement;
-    if (!document.fullscreenElement) {
-      // browser fullscreen (whole screen, site chrome hidden)
-      el?.requestFullscreen?.();
-    } else {
-      document.exitFullscreen?.().catch(() => {});
+  // Chart price lines: entry / SL / TP for open positions + pending order
+  // levels of the selected symbol.
+  const marks = useMemo<PriceMark[]>(() => {
+    const out: PriceMark[] = [];
+    for (const p of positions) {
+      if (p.symbol !== symbol) continue;
+      const qty = p.lots.toFixed(2);
+      out.push({ id: `e-${p.id}`, price: p.entry, color: "#3b82f6", title: `${p.side} ${qty} @`, dashed: true });
+      if (p.sl) out.push({ id: `sl-${p.id}`, price: p.sl, color: "#ef4444", title: "SL", dashed: true });
+      if (p.tp) out.push({ id: `tp-${p.id}`, price: p.tp, color: "#22c55e", title: "TP", dashed: true });
     }
-  };
+    for (const o of orders) {
+      if (o.symbol !== symbol) continue;
+      out.push({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true });
+    }
+    return out;
+  }, [positions, orders, symbol]);
 
-  // immersive = browser fullscreen OR in-page focus/maximize mode
-  const immersive = fullscreen;
-  const [drawingsHidden, setDrawingsHidden] = useState(false);
-  const [objectsOpen, setObjectsOpen] = useState(false);
-  const [themesOpen, setThemesOpen] = useState(false);
-  // chart background photo — rendered BEHIND the candles (chart only, never
-  // site-wide); dim veil adjustable, persisted per device
-  const [bgImage, setBgImage] = useState<string | null>(() => {
-    try { return localStorage.getItem("terminalBg"); } catch { return null; }
-  });
-  const [bgDim, setBgDim] = useState<number>(() => {
-    try {
-      const raw = localStorage.getItem("terminalBgDim");
-      return raw == null ? 0.3 : Math.min(0.9, Math.max(0, Number(raw) || 0));
-    } catch { return 0.3; }
-  });
-  const [bgOpen, setBgOpen] = useState(false);
-  const bgFileRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    try { bgImage == null ? localStorage.removeItem("terminalBg") : localStorage.setItem("terminalBg", bgImage); } catch { /* quota */ }
-  }, [bgImage]);
-  useEffect(() => {
-    try { localStorage.setItem("terminalBgDim", String(bgDim)); } catch { /* ignore */ }
-  }, [bgDim]);
-  // one-time migration: the OLD site-wide background (removed) moves behind the chart
-  useEffect(() => {
-    if (bgImage) return;
-    try {
-      const old = JSON.parse(localStorage.getItem("inspire_terminal_bg") || "null");
-      if (old?.img) {
-        setBgImage(old.img);
-        if (typeof old.dim === "number") setBgDim(Math.min(0.9, Math.max(0, old.dim)));
-      }
-    } catch { /* no old background */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // instrument search combo (toolbar, top-left)
-  const [symQuery, setSymQuery] = useState("");
-  const [symOpen, setSymOpen] = useState(false);
-  // side panel visibility — collapse to give the chart the full width
-  const [panelOpen, setPanelOpen] = useState(true);
-
-  const symMatches = useMemo(() => {
-    const q = symQuery.trim().toLowerCase();
-    if (!q) return INSTRUMENTS;
-    return INSTRUMENTS.filter((i) => i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q));
-  }, [symQuery]);
-
-  // instrument favorites (TradingView-style) + collapsed search groups.
-  // NB: named toggleSymFav — toggleFav is the drawing-tool favorite toggle.
-  const [favSymbols, setFavSymbols] = useState<string[]>(() => {
-    try { const r = JSON.parse(localStorage.getItem("it_fav_symbols") || "[]"); return Array.isArray(r) ? r.map(String) : []; } catch { return []; }
-  });
-  const toggleSymFav = (symbol: string) => {
-    setFavSymbols((prev) => {
-      const next = prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol];
-      try { localStorage.setItem("it_fav_symbols", JSON.stringify(next)); } catch { /* quota */ }
-      return next;
-    });
-  };
-  const [closedGroups, setClosedGroups] = useState<string[]>(() => {
-    try { const r = JSON.parse(localStorage.getItem("it_sym_closed") || "[]"); return Array.isArray(r) ? r.map(String) : []; } catch { return []; }
-  });
-  const toggleGroup = (cls: string) => {
-    setClosedGroups((prev) => {
-      const next = prev.includes(cls) ? prev.filter((c) => c !== cls) : [...prev, cls];
-      try { localStorage.setItem("it_sym_closed", JSON.stringify(next)); } catch { /* quota */ }
-      return next;
-    });
-  };
-
-  // one row in the symbol search: main pick area + a star to toggle favorites
-  const renderSymRow = (i: (typeof INSTRUMENTS)[number]) => {
-    const fav = favSymbols.includes(i.symbol);
-    const active = settings.symbol === i.symbol;
+  if (loading && !account) {
     return (
-      <div key={i.symbol} className={cn("group flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-[11px]", active ? "text-emerald-400" : "text-muted-foreground")}>
-        <button onClick={() => { update({ symbol: i.symbol }); setSymOpen(false); }} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-          <span className="w-16 font-bold">{i.symbol}</span>
-          <span className="truncate">{i.name}</span>
-        </button>
-        <button
-          onClick={() => toggleSymFav(i.symbol)}
-          className={cn("shrink-0 rounded p-0.5 transition-opacity", fav ? "text-amber-400 opacity-100" : "text-muted-foreground/50 opacity-0 hover:text-amber-400 group-hover:opacity-100")}
-          title={fav ? "Remove from favorites" : "Add to favorites"}
-        >
-          <Star className={cn("h-3 w-3", fav && "fill-amber-400")} />
-        </button>
+      <div className="flex h-[60vh] items-center justify-center text-sm text-slate-400">
+        Loading trading account…
       </div>
     );
-  };
-
-  // "F" hotkey toggles focus/maximize mode (TradingView-style), ignored while typing
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      // "/" opens the searchable tools palette (replay, backtest, sessions…)
-      if (e.key === "/") {
-        e.preventDefault();
-        setToolsOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // keep the fullscreen button in sync (F11-style exit, ESC)
-  useEffect(() => {
-    const onFs = () => setFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
-  }, []);
-
-  const launchTool = (id: ToolId) => {
-    if (id === "replay") { setReplayOpen(true); return; }
-    setTool(id);
-  };
-
-  // keyboard shortcuts (§2) — only while replay is active and no field focused
-  useEffect(() => {
-    if (!rs.active) return;
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      switch (e.key) {
-        // Esc closes the replay session itself — but NOT while a drawing tool
-        // is armed (Esc there belongs to canceling the pending drawing)
-        case "Escape":
-          if (activeTool !== "cursor") return;
-          e.preventDefault(); rs.stop(); setReplayOpen(false);
-          break;
-        case " ": e.preventDefault(); rs.setPlaying(!rs.playing); break;
-        case "ArrowRight": e.preventDefault(); rs.stepForward(1); break;
-        case "ArrowLeft": e.preventDefault(); rs.stepBack(1); break;
-        case "ArrowUp": e.preventDefault(); rs.setSpeedIdx(Math.min(7, rs.speedIdx + 1)); break;
-        case "ArrowDown": e.preventDefault(); rs.setSpeedIdx(Math.max(0, rs.speedIdx - 1)); break;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [rs, activeTool]);
-
-  // chart screenshot for the journal (downscaled JPEG of the first chart canvas)
-  const captureChart = useCallback((): string | null => {
-    try {
-      const canvas = gridRef.current?.querySelector("canvas");
-      if (!canvas) return null;
-      const scale = Math.min(1, 900 / canvas.width);
-      const out = document.createElement("canvas");
-      out.width = Math.round(canvas.width * scale);
-      out.height = Math.round(canvas.height * scale);
-      out.getContext("2d")!.drawImage(canvas, 0, 0, out.width, out.height);
-      return out.toDataURL("image/jpeg", 0.7);
-    } catch { return null; }
-  }, []);
-
-  const chartNode = (i: number) => (
-    <TerminalChart
-      key={`chart-${i}-${settings.symbol}-${settings.timeframe}`}
-      symbol={settings.symbol}
-      timeframe={settings.timeframe}
-      chartType={settings.chartType}
-      indicators={settings.indicators}
-      showVolume={settings.showVolume}
-      colors={settings.colors}
-      prefs={settings.chartPrefs}
-      onPrefsChange={(patch) => update({ chartPrefs: { ...settings.chartPrefs, ...patch } })}
-      onOpenSettings={() => setChartSettingsOpen(true)}
-      drawings={drawingsHidden ? [] : drawings}
-      onDrawingsChange={save}
-      activeTool={activeTool}
-      onToolDone={() => setActiveTool("cursor")}
-      onLastBar={i === 0 ? onLastBar : undefined}
-      onToggleVolume={() => update({ showVolume: !settings.showVolume })}
-      onRequestFullscreen={toggleFullscreen}
-      priceScaleMode={settings.priceScale}
-      magnet={settings.magnet}
-      screenshotSignal={i === 0 ? screenshotSignal : 0}
-      bgImage={bgImage}
-      bgDim={bgDim}
-      overlayCfg={overlay}
-      anchoredVwapTime={anchor}
-      compareSymbol={compare}
-      onAnchorVwap={setAnchor}
-      {...(rs.active
-        ? (i === 0
-            // primary chart: feed the replay engine's DEEP history so the
-            // cursor can sit in bars older than the live feed's window
-            ? { replay: { active: true, upToTime: rs.upToTime, bars: rs.bars }, tradeMarkers: rs.markers, priceLines: rs.priceLines }
-            // secondary (MTF) charts: slice their own timeframe at the cursor
-            : rs.replayChartProps)
-        : {})}
-      // right-click a candle → start bar-replay from THAT bar
-      onReplayStart={i === 0 && !rs.active ? (time) => {
-        const idx = rs.bars.findIndex((b) => b.time >= time);
-        rs.start(idx >= 0 ? idx : undefined);
-      } : undefined}
-      // toolbar "🎯 Pick on chart" — a plain chart click starts replay there
-      pickStartBar={i === 0 && pickStart && !rs.active}
-      onPickStartBar={i === 0 && !rs.active ? (time) => {
-        const idx = rs.bars.findIndex((b) => b.time >= time);
-        rs.start(idx >= 0 ? idx : undefined);
-        setPickStart(false);
-      } : undefined}
-      onReplayMenu={i === 0 && rs.active ? (price) => {
-        const pos = rs.engine.positions.find((p) => p.symbol === settings.symbol);
-        const items: { label: string; onClick: () => void }[] = [
-          { label: "Buy limit here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "buy", lots: 0.1, type: "limit", price, sl: null, tp: null }) },
-          { label: "Sell limit here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "sell", lots: 0.1, type: "limit", price, sl: null, tp: null }) },
-          { label: "Buy stop here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "buy", lots: 0.1, type: "stop", price, sl: null, tp: null }) },
-          { label: "Sell stop here (0.10)", onClick: () => rs.pending({ symbol: settings.symbol, side: "sell", lots: 0.1, type: "stop", price, sl: null, tp: null }) },
-        ];
-        if (pos) {
-          items.push(
-            { label: `Set SL of #${pos.id} here`, onClick: () => rs.modify(pos.id, { sl: price }) },
-            { label: `Set TP of #${pos.id} here`, onClick: () => rs.modify(pos.id, { tp: price }) },
-            { label: `Close #${pos.id} at this price`, onClick: () => rs.close(pos.id) },
-          );
-        }
-        return items;
-      } : undefined}
-      height={420}
-    />
-  );
-
-  const sidePanel = (cls?: string) =>
-    sideTab === "trade" ? <TradingPanel symbol={settings.symbol} className={cls} /> :
-    sideTab === "challenge" ? <ChallengeDashboard className={cls} /> :
-    sideTab === "alerts" ? <AlertsPanel drawings={drawings} className={cls} /> :
-    <ReplayTradingPanel rs={rs} onJournal={(t) => setJournalDraft({ trade: t, sessionId: `${settings.symbol}-${settings.timeframe}`, symbol: settings.symbol, timeframe: settings.timeframe, captureChart })} />;
-
-  const chartGrid = (
-    <div
-      className={cn(
-        "grid h-full min-h-0 w-full flex-1 gap-1.5",
-        settings.layout === 1 && "grid-cols-1 grid-rows-1",
-        settings.layout === 2 && "grid-cols-1 grid-rows-2 md:grid-cols-2 md:grid-rows-1",
-        settings.layout === 4 && "grid-cols-1 grid-rows-2 sm:grid-cols-2",
-      )}
-    >
-      {Array.from({ length: settings.layout }, (_, i) => chartNode(i))}
-    </div>
-  );
+  }
 
   return (
-    /* dir=ltr: the terminal is a chart workspace — in Arabic (html dir=rtl)
-       the whole layout (toolbar, rail, chart grid, favbar drag math) must
-       stay left-to-right or everything piles up */
-    <div dir="ltr" className="relative flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col gap-1.5" ref={pageRef}>
-      {/* ===== toolbar (hidden in focus/maximize mode) ===== */}
-      {!immersive && (
-      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/50 bg-card/60 p-1.5">
-        {/* instrument — compact symbol box with built-in search (merged) */}
-        {/* z-50 while open: the workspace charts below must never paint over it */}
-        <div className={cn("relative", symOpen && "z-50")}>
-          <button
-            onClick={() => { setSymQuery(""); setSymOpen((v) => !v); }}
-            className={cn("num-input flex h-8 w-24 items-center justify-between gap-1 px-2.5 font-bold", symOpen && "border-emerald-500/50")}
-            aria-label="Instrument"
-            title="Instrument — click to search"
-          >
-            <span className="truncate">{settings.symbol}</span>
-            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-          </button>
-          {symOpen && (
-            <div className="absolute left-0 top-9 z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-1.5 shadow-2xl max-sm:fixed max-sm:inset-x-2 max-sm:top-[3.75rem] max-sm:w-auto">
-              <input
-                autoFocus
-                value={symQuery}
-                onChange={(e) => setSymQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && symMatches.length > 0) { update({ symbol: symMatches[0].symbol }); setSymOpen(false); }
-                  if (e.key === "Escape") setSymOpen(false);
-                }}
-                placeholder="Search instrument…"
-                className="num-input h-7 w-full text-[11px]"
-              />
-              <div className="mt-1 max-h-[min(14rem,42dvh)] sm:max-h-56 overflow-y-auto">
-                {/* favorites — pinned to the top, separate from the groups */}
-                {(() => {
-                  const favRows = symMatches.filter((i) => favSymbols.includes(i.symbol));
-                  if (!favRows.length) return null;
-                  return (
-                    <div>
-                      <div className="mt-1 flex select-none items-center gap-1 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-amber-400/90">
-                        <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
-                        Favorites
-                      </div>
-                      {favRows.map(renderSymRow)}
-                    </div>
-                  );
-                })()}
-                {(["index", "metal", "forex", "crypto"] as const).map((cls) => {
-                  const rows = symMatches.filter((i) => i.assetClass === cls);
-                  if (!rows.length) return null;
-                  const closed = closedGroups.includes(cls);
-                  return (
-                    <div key={cls}>
-                      <button
-                        onClick={() => toggleGroup(cls)}
-                        className="mt-1 flex w-full select-none items-center gap-1 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-muted-foreground/70 hover:text-foreground"
-                        title={closed ? "Show group" : "Hide group"}
-                      >
-                        {closed ? <ChevronRight className="h-2.5 w-2.5" /> : <ChevronDown className="h-2.5 w-2.5" />}
-                        {cls === "index" ? "Indices" : cls === "metal" ? "Metals" : cls === "forex" ? "Forex" : "Crypto"}
-                        <span className="ml-auto font-medium opacity-60">{rows.length}</span>
-                      </button>
-                      {!closed && rows.map(renderSymRow)}
-                    </div>
-                  );
-                })}
-                {symMatches.length === 0 && <div className="px-2 py-2 text-center text-[10px] text-muted-foreground">No instrument matches</div>}
-              </div>
-            </div>
-          )}
+    <div className="flex h-[calc(100dvh-4.25rem)] min-h-[560px] flex-col gap-2 p-2">
+      <Toolbar
+        symbol={symbol} onSymbolChange={setSymbol}
+        timeframe={timeframe} onTimeframeChange={setTimeframe}
+        accounts={accounts} activeId={account?.id ?? null} onAccountChange={setActiveId}
+        metrics={metrics} busy={busy} onRefresh={refreshNow}
+        account={account} onReset={resetAccount}
+      />
+      <div className="flex min-h-0 flex-1 gap-2">
+        <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
+          <PriceChart symbol={symbol} timeframe={timeframe} marks={marks} />
         </div>
+        <TradingPanel symbol={symbol} className="w-[380px] shrink-0 overflow-y-auto" />
+      </div>
+    </div>
+  );
+}
 
-        <div className="flex max-w-full overflow-x-auto rounded-lg border border-border/60">
-          {TIMEFRAMES.map((tf) => (
-            <button
-              key={tf}
-              onClick={() => update({ timeframe: tf as Timeframe })}
-              className={cn("shrink-0 px-2 py-1 text-[11px] font-semibold transition-colors", settings.timeframe === tf ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:text-foreground")}
-            >
-              {tf.toUpperCase()}
-            </button>
+// ---------------------------------------------------------------------------
+// Toolbar: instrument picker, timeframes, account strip
+// ---------------------------------------------------------------------------
+
+function Toolbar({
+  symbol, onSymbolChange, timeframe, onTimeframeChange,
+  accounts, activeId, onAccountChange,
+  metrics, busy, onRefresh, account, onReset,
+}: {
+  symbol: string; onSymbolChange: (s: string) => void;
+  timeframe: Timeframe; onTimeframeChange: (tf: Timeframe) => void;
+  accounts: { id: string; label: string; type: string }[];
+  activeId: string | null; onAccountChange: (id: string) => void;
+  metrics: { balance: number; equity: number; floatingPnl: number; usedMargin: number; freeMargin: number; marginLevel: number | null } | null;
+  busy: boolean; onRefresh: () => void;
+  account: { id: string; label: string } | null; onReset: () => void;
+}) {
+  const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pnl = metrics?.floatingPnl ?? 0;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2 py-1.5">
+      <Select value={symbol} onValueChange={onSymbolChange}>
+        <SelectTrigger className="w-[170px] font-semibold">
+          <SelectValue placeholder="Symbol" />
+        </SelectTrigger>
+        <SelectContent>
+          {ASSET_CLASSES.map((c) => (
+            <SelectGroup key={c.id}>
+              <SelectLabel>{c.label}</SelectLabel>
+              {INSTRUMENTS.filter((i) => i.assetClass === c.id).map((i) => (
+                <SelectItem key={i.symbol} value={i.symbol}>
+                  {i.symbol} <span className="ml-1 text-xs text-slate-400">{i.name}</span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
           ))}
-        </div>
+        </SelectContent>
+      </Select>
 
-        <select
-          value={settings.chartType}
-          onChange={(e) => update({ chartType: e.target.value as ChartType })}
-          className="num-input h-8 w-20 sm:w-24"
-          aria-label="Chart type"
-          title={CHART_TYPES.find((c) => c.id === settings.chartType)?.label}
-        >
-          {CHART_TYPES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-        </select>
-
-        <button onClick={() => setIndDialog(true)} className="flex h-8 items-center gap-1.5 rounded-lg border border-border/60 px-2.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground">
-          <Layers className="h-3.5 w-3.5" /><span className="hidden sm:inline">{t("indicators")}</span>
-          {settings.indicators.length > 0 && <span className="rounded bg-emerald-500/20 px-1 text-[10px] text-emerald-400">{settings.indicators.length}</span>}
-        </button>
-
-        <button
-          onClick={() => update({ showVolume: !settings.showVolume })}
-          className={cn("flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold", settings.showVolume ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
-          title="Volume"
-        >
-          <BarChart2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Vol</span>
-        </button>
-
-        <button
-          onClick={() => setToolsOpen(true)}
-          className="flex h-8 items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 text-[11px] font-bold text-sky-400 hover:bg-sky-500/20"
-          title="Search tools (replay, backtest, sessions, heatmap…)"
-        >
-          <Wrench className="h-3.5 w-3.5" /><span className="hidden sm:inline">Tools</span>
-        </button>
-
-        {/* TradingView-style view controls — magnet, screenshot, objects */}
-        <button
-          onClick={() => update({ magnet: !settings.magnet })}
-          className={cn("flex h-8 w-8 items-center justify-center rounded-lg border", settings.magnet ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground")}
-          title="Magnet crosshair — snap to OHLC"
-        ><Magnet className="h-3.5 w-3.5" /></button>
-        <button onClick={() => setScreenshotSignal((n) => n + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground" title="Export chart image (PNG)">
-          <Camera className="h-3.5 w-3.5" />
-        </button>
-        {/* TradingView-style chart settings — grid, scales, candles, crosshair… */}
-        <button
-          onClick={() => setChartSettingsOpen(true)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground"
-          title="Chart settings — grid, scales, candles, crosshair, status line"
-        >
-          <Settings2 className="h-3.5 w-3.5" />
-        </button>
-        <div className="relative">
+      <div className="flex items-center gap-0.5 rounded-md border border-slate-700/70 p-0.5">
+        {TIMEFRAMES.map((tf) => (
           <button
-            onClick={() => setObjectsOpen((v) => !v)}
-            className={cn("flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold", objectsOpen ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
-            title="Objects — drawings on this chart"
-          >
-            <Shapes className="h-3.5 w-3.5" />{drawings.length > 0 ? drawings.length : ""}
-          </button>
-          {objectsOpen && (
-            <div className="absolute right-0 top-9 z-50 w-60 rounded-xl border border-border/60 bg-[#0d1117] p-2 shadow-2xl">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase text-muted-foreground">
-                <span>Objects ({drawings.length})</span>
-                <button onClick={() => setDrawingsHidden((v) => !v)} className={cn("flex items-center gap-1 rounded px-1.5 py-0.5", drawingsHidden ? "text-amber-400" : "text-muted-foreground hover:text-foreground")} title="Show/hide all drawings">
-                  {drawingsHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}{drawingsHidden ? "Hidden" : "Visible"}
-                </button>
-              </div>
-              <div className="max-h-44 space-y-0.5 overflow-y-auto">
-                {!drawings.length && <div className="py-2 text-center text-[10px] text-muted-foreground">No drawings on {settings.symbol}</div>}
-                {drawings.map((d) => (
-                  <div key={d.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 text-[10px] hover:bg-card/60">
-                    <span className="uppercase text-muted-foreground">{d.tool}</span>
-                    <span className="ml-auto text-muted-foreground">{d.points?.[0] ? new Date(d.points[0].time * 1000).toLocaleDateString() : ""}</span>
-                  </div>
-                ))}
-              </div>
-              {drawings.length > 0 && (
-                <button
-                  onClick={() => { if (confirm("Remove all drawings on this symbol?")) { save([]); setObjectsOpen(false); } }}
-                  className="mt-1.5 w-full rounded-lg border border-red-500/40 py-1 text-[10px] font-bold text-red-400 hover:bg-red-500/10"
-                >
-                  Remove all
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* chart background photo — behind the CANDLES (chart only, never the site) */}
-        <div className="relative">
-          <button
-            onClick={() => setBgOpen((v) => !v)}
-            className={cn("relative flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold", bgOpen || bgImage ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
-            title="Chart background photo"
-          >
-            <ImagePlus className="h-3.5 w-3.5" /><span className="hidden sm:inline">BG</span>
-            {bgImage && <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-emerald-400" />}
-          </button>
-          {bgOpen && (
-            <div className="absolute right-0 top-9 z-50 w-56 rounded-xl border border-border/60 bg-[#0d1117] p-2 shadow-2xl">
-              <div className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Chart background</div>
-              <button
-                onClick={() => bgFileRef.current?.click()}
-                className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 py-1.5 text-[11px] font-bold text-emerald-400 hover:bg-emerald-500/20"
-              >
-                Upload photo…
-              </button>
-              <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">Shown behind the candles inside the chart only.</p>
-              {bgImage && <div className="mt-1.5 overflow-hidden rounded-lg border border-border/60"><img src={bgImage} alt="" className="h-14 w-full object-cover" /></div>}
-              {bgImage && (
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <span className="shrink-0 text-[10px] font-semibold text-muted-foreground">Dim</span>
-                  <input
-                    type="range" min={0} max={90} value={Math.round(bgDim * 100)}
-                    onChange={(e) => setBgDim(Number(e.target.value) / 100)}
-                    className="h-1 flex-1 accent-emerald-400"
-                    title="Darken the photo so candles stay readable"
-                  />
-                  <span className="w-7 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{Math.round(bgDim * 100)}%</span>
-                </div>
-              )}
-              {bgImage && (
-                <button
-                  onClick={() => { setBgImage(null); setBgOpen(false); }}
-                  className="mt-1.5 w-full rounded-lg border border-red-500/40 py-1 text-[10px] font-bold text-red-400 hover:bg-red-500/10"
-                >
-                  Remove background
-                </button>
-              )}
-            </div>
-          )}
-          <input
-            ref={bgFileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (!file) return;
-              try { setBgImage(await fileToChartBg(file)); } catch { toast({ title: "Could not load that image" }); }
-              setBgOpen(false);
-            }}
-          />
-        </div>
-
-        {/* chart theme picker — one-click presets, persisted per user */}
-        <div className="relative">
-          <button
-            onClick={() => setThemesOpen((v) => !v)}
-            className={cn("flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold", themesOpen ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
-            title="Chart theme"
-          >
-            <Palette className="h-3.5 w-3.5" /><span className="hidden sm:inline">{CHART_THEMES.find((th) => JSON.stringify(th.colors) === JSON.stringify(settings.colors))?.label ?? "Custom"}</span>
-          </button>
-          {themesOpen && (
-            <div className="absolute right-0 top-9 z-50 w-56 rounded-xl border border-border/60 bg-[#0d1117] p-2 shadow-2xl">
-              <div className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Chart themes</div>
-              <div className="space-y-0.5">
-                {CHART_THEMES.map((th) => (
-                  <button
-                    key={th.id}
-                    onClick={() => { update({ colors: th.colors }); setThemesOpen(false); }}
-                    className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] font-semibold hover:bg-card/60", JSON.stringify(settings.colors) === JSON.stringify(th.colors) ? "text-emerald-400" : "text-muted-foreground")}
-                  >
-                    <span className="flex h-5 w-9 items-center justify-center gap-1 rounded border border-border/60" style={{ background: th.colors.bg }}>
-                      <span className="h-2.5 w-1 rounded-sm" style={{ background: th.colors.up }} />
-                      <span className="h-2.5 w-1 rounded-sm" style={{ background: th.colors.down }} />
-                      <span className="h-2.5 w-1 rounded-sm" style={{ background: th.colors.accent }} />
-                    </span>
-                    {th.label}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1.5 text-[9px] leading-relaxed text-muted-foreground">
-                Theme colors candles, grid and text. Photo backgrounds live in the BG button.
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div className="ml-auto flex items-center gap-1.5">
-          {([1, 2, 4] as const).map((l) => (
-            <button
-              key={l}
-              onClick={() => update({ layout: l })}
-              className={cn("flex h-8 w-8 items-center justify-center rounded-lg border", settings.layout === l ? "border-emerald-500/40 text-emerald-400" : "border-border/60 text-muted-foreground hover:text-foreground")}
-              title={`${l} chart${l > 1 ? "s" : ""}`}
-            >
-              {l === 1 ? <Square className="h-3.5 w-3.5" /> : l === 2 ? <Columns2 className="h-3.5 w-3.5" /> : <LayoutGrid className="h-3.5 w-3.5" />}
-            </button>
-          ))}
-          <button onClick={toggleFullscreen} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 text-muted-foreground hover:text-foreground" title="Fullscreen (whole screen)">
-            {fullscreen ? <Minimize className="h-3.5 w-3.5" /> : <Maximize className="h-3.5 w-3.5" />}
-          </button>
-        </div>
-      </div>)}
-
-      {/* favorites bar — starred instruments, TradingView-style, above the chart */}
-      {!immersive && favSymbols.length > 0 && (
-        <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-border/50 bg-card/40 px-2 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />
-          {favSymbols.map((s) => (
-            <button
-              key={s}
-              onClick={() => update({ symbol: s })}
-              className={cn("shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors", settings.symbol === s ? "bg-amber-500/20 text-amber-400" : "text-muted-foreground hover:text-foreground")}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ===== replay toolbar ===== */}
-      {replayOpen && (
-        <ReplayToolbar rs={rs} onOpenStats={() => setTool("replayStats")}
-          onPickOnChart={() => setPickStart((v) => !v)} picking={pickStart && !rs.active} />
-      )}
-
-      {/* ===== workspace ===== */}
-      <div className="relative flex min-h-0 flex-1 gap-1.5" ref={gridRef}>
-        {/* hard-to-miss EXIT chip overlaying the charts — the replay session
-            must be closable even if the control deck is scrolled out of view */}
-        {rs.active && (
-          <button
-            onClick={() => { rs.stop(); setReplayOpen(false); }}
-            className="absolute right-2 top-2 z-[80] flex items-center gap-1.5 rounded-lg border border-red-500/50 bg-[#0d1117]/95 px-3 py-1.5 text-[11px] font-black text-red-400 shadow-xl backdrop-blur hover:bg-red-500/15"
-            title="Exit trade replay (Esc)"
-          >
-            <Square className="h-3.5 w-3.5" />EXIT REPLAY
-          </button>
-        )}
-        {/* exit chip in focus / fullscreen mode */}
-        {immersive && (
-          <button
-            onClick={() => document.exitFullscreen?.().catch(() => {})}
-            className="absolute right-2 top-2 z-[70] flex items-center gap-1 rounded-lg border border-border/60 bg-[#0d1117]/90 px-2 py-1 text-[10px] font-bold text-muted-foreground hover:text-foreground"
-            title="Exit full view"
-          >
-            <Minimize className="h-3 w-3" />Exit full view (Esc)
-          </button>
-        )}
-        {/* floating timeframe switcher — compact, top-center, full view only */}
-        {immersive && (
-          <div className="absolute left-1/2 top-2 z-[70] flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-border/60 bg-[#0d1117]/90 px-1 py-0.5 backdrop-blur">
-            {TIMEFRAMES.map((tf) => (
-              <button
-                key={tf}
-                onClick={() => update({ timeframe: tf as Timeframe })}
-                className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold transition-colors", settings.timeframe === tf ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:text-foreground")}
-                title={`Timeframe ${tf}`}
-              >
-                {tf.toUpperCase()}
-              </button>
-            ))}
-          </div>
-        )}
-        {/* click-away layer for the open tool-group flyout */}
-        {flyout && <div className="fixed inset-0 z-40" onMouseDown={() => setFlyout(null)} />}
-        {/* floating object toolbar — a drawing was clicked on the chart:
-            shrink / grow, label text, delete (locked shapes ignore edits).
-            Colors do NOT pop up on selection — they open as a separate
-            section via the palette button. */}
-        {drawSel && (
-          <div data-draw-sel-bar className="absolute bottom-3 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-1 rounded-xl border border-emerald-500/40 bg-[#0d1117]/95 px-2 py-1.5 shadow-2xl backdrop-blur">
-            <div className="flex items-center gap-1">
-              <span className="px-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400">{drawSel.tool}</span>
-              <span className="mx-0.5 h-4 w-px bg-white/10" />
-              {/* per-timeframe visibility — TradingView "show on" chips */}
-              {DRAWING_TFS.map((tf) => {
-                const active = !drawSel.tfs || drawSel.tfs.length === 0 || drawSel.tfs.includes(tf);
-                return (
-                  <button
-                    key={tf}
-                    onClick={() => drawingsBus.emit({ cmd: "tfs", arg: { tf } })}
-                    className={cn("h-6 shrink-0 rounded-md px-1.5 text-[10px] font-bold", active ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5")}
-                    title={`${tf} — toggle visibility on this timeframe`}
-                  >{tf}</button>
-                );
-              })}
-              <span className="mx-0.5 h-4 w-px bg-white/10" />
-              <button onClick={() => drawingsBus.emit({ cmd: "shrink" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make smaller"><Minus className="h-3.5 w-3.5" /></button>
-              <span className="num-input w-8 text-center text-[11px] font-bold">{Math.round(drawSel.width * 10) / 10}</span>
-              <button onClick={() => drawingsBus.emit({ cmd: "grow" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Make bigger"><Plus className="h-3.5 w-3.5" /></button>
-              <span className="mx-0.5 h-4 w-px bg-white/10" />
-              <button
-                onClick={() => drawingsBus.emit({ cmd: "edit-text" })}
-                className={cn("flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-semibold", drawSel.text ? "text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
-                title="Add / edit the label written on this drawing"
-              >
-                <Type className="h-3.5 w-3.5" />Text
-              </button>
-              <span className="mx-0.5 h-4 w-px bg-white/10" />
-              {/* palette toggle — colors live in a SEPARATE section below the
-                  toolbar row (open on demand, never on plain selection) */}
-              <button
-                onClick={() => setColorOpenFor(colorOpenFor === drawSel.id ? null : drawSel.id)}
-                className={cn(
-                  "flex h-6 items-center gap-1 rounded-md px-1.5 transition-colors",
-                  colorOpenFor === drawSel.id ? "bg-emerald-500/20 text-emerald-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
-                )}
-                title="Colors — open the color section"
-              >
-                <Palette className="h-3.5 w-3.5" />
-                <span className="h-3 w-3 rounded-full border border-white/25" style={{ background: drawSel.color ?? "#4ade80" }} />
-              </button>
-              <span className="mx-0.5 h-4 w-px bg-white/10" />
-              <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-red-400" title="Delete this drawing"><Trash2 className="h-3.5 w-3.5" /></button>
-              <span className="mx-0.5 h-4 w-px bg-white/10" />
-              <button onClick={() => { setDrawSel(null); setColorOpenFor(null); }} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Close — click an empty chart spot to deselect too"><X className="h-3.5 w-3.5" /></button>
-            </div>
-            {/* the separate Colors section — 8 presets + a custom picker */}
-            {colorOpenFor === drawSel.id && (
-              <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
-                <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Color</span>
-                {["#4ade80", "#f87171", "#60a5fa", "#fbbf24", "#c084fc", "#22d3ee", "#f472b6", "#e5e7eb"].map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => drawingsBus.emit({ cmd: "style", arg: { color: c } })}
-                    className={cn("h-4 w-4 shrink-0 rounded-full border transition-transform hover:scale-110", drawSel.color === c ? "border-foreground ring-1 ring-foreground/60" : "border-white/25")}
-                    style={{ background: c }}
-                    title={`Line color ${c}`}
-                  />
-                ))}
-                <input
-                  type="color"
-                  value={drawSel.color ?? "#4ade80"}
-                  onChange={(e) => drawingsBus.emit({ cmd: "style", arg: { color: e.target.value } })}
-                  className="h-5 w-7 cursor-pointer rounded border-0 bg-transparent"
-                  title="Custom color"
-                />
-              </div>
+            key={tf}
+            onClick={() => onTimeframeChange(tf)}
+            className={cn(
+              "rounded px-2 py-1 text-xs font-medium transition-colors",
+              tf === timeframe ? "bg-sky-600 text-white" : "text-slate-400 hover:text-slate-200",
             )}
-          </div>
-        )}
-        {/* drawing toolbar — compact GROUP buttons. On desktop it is a REAL
-            column of the terminal (chart starts AFTER it — nothing renders
-            underneath); on mobile it stays a small overlay on the chart.
-            The corner arrow opens that group's tool list to the RIGHT. */}
-        <div className="absolute left-1.5 top-9 z-50 flex max-h-[calc(100%-2.75rem)] w-10 flex-col items-center gap-0.5 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/85 py-1.5 backdrop-blur md:relative md:left-auto md:top-auto md:max-h-full md:shrink-0">
-          {/* FAVORITES no longer live here — they float in their own draggable
-              bar over the chart (TradingView-style), see favbarPos below */}
-          {/* the group list — collapsible like TradingView's tool rail */}
-          {toolsVisible && TOOL_GROUPS.map((g) => {
-            const active = g.tools.some((t) => t.id === activeTool);
-            // the group's FACE is whatever the user last picked in this group
-            const current = g.tools.find((t) => t.id === lastTool[g.label]) ?? g.tools[0];
-            const GIcon = current.icon;
-            const open = flyout?.label === g.label;
-            return (
-              <div key={g.label} className="relative w-full">
-                {/* main part of the button — selects the group's current tool */}
-                <button
-                  onClick={() => { pickTool(current.id); setFlyout(null); }}
-                  className={cn("mx-auto flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", active || open ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
-                  title={`${current.title} — click to select`}
-                >
-                  <GIcon className="h-3.5 w-3.5" />
-                </button>
-                {/* corner arrow — opens THIS group's tool list to the right */}
-                <button
-                  onClick={(e) => {
-                    if (open) { setFlyout(null); return; }
-                    const r = e.currentTarget.getBoundingClientRect();
-                    setFlyout({
-                      label: g.label,
-                      top: Math.max(8, Math.min(r.top, window.innerHeight - 320)),
-                      left: r.right + 6,
-                    });
-                  }}
-                  className={cn("absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded transition-colors", open ? "bg-emerald-500/40 text-emerald-300" : "bg-white/10 text-muted-foreground hover:bg-white/25 hover:text-foreground")}
-                  title={`${g.label} tools — open the list`}
-                >
-                  <ChevronDown className="h-2.5 w-2.5" />
-                </button>
-              </div>
-            );
-          })}
-          <div className="my-1 h-px w-6 shrink-0 bg-white/10" />
-          {/* collapse / expand the standard tool list (favorites always stay) */}
-          <button
-            onClick={() => setToolsVisible((v) => {
-              try { localStorage.setItem(TOOLS_VISIBLE_KEY, v ? "0" : "1"); } catch { /* private mode */ }
-              return !v;
-            })}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground"
-            title={toolsVisible ? "Hide the tool list — favorites keep floating" : "Show all tools"}
           >
-            {toolsVisible ? <ChevronsUp className="h-3.5 w-3.5" /> : <ChevronsDown className="h-3.5 w-3.5" />}
+            {tf.toUpperCase()}
           </button>
-          <button onClick={() => drawingsBus.emit({ cmd: "undo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Undo"><Undo2 className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "redo" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Redo"><Redo2 className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "lock" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Lock selected"><Lock className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "hide" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-foreground" title="Hide selected"><Eye className="h-3.5 w-3.5" /></button>
-          <button onClick={() => drawingsBus.emit({ cmd: "delete" })} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-white/5 hover:text-red-400" title="Delete selected"><Trash2 className="h-3.5 w-3.5" /></button>
-          {/* the bottom color/width row was REMOVED — colors now live only in
-              the selected-object toolbar's separate Colors section, so clicking
-              a tool never spills the palette */}
-        </div>
-
-        {/* the flyout itself — FIXED to the viewport at the anchor button's
-            right side, OUTSIDE the clipped toolbar container */}
-        {flyout && (() => {
-          const g = TOOL_GROUPS.find((x) => x.label === flyout.label);
-          if (!g) return null;
-          return (
-            <div
-              className="fixed z-50 max-h-[70vh] w-44 overflow-y-auto rounded-xl border border-white/10 bg-[#0d1117]/95 p-1 shadow-2xl backdrop-blur"
-              style={{ left: flyout.left, top: flyout.top }}
-            >
-              <div className={cn("select-none px-2 py-1 text-[8px] font-bold uppercase tracking-widest", g.accent ? "text-amber-400/80" : "text-muted-foreground/70")}>{g.label}</div>
-              {g.tools.map(({ id, icon: Icon, title }) => (
-                <button
-                  key={id}
-                  onClick={() => { pickTool(id); setLastTool((p) => ({ ...p, [g.label]: id })); setFlyout(null); }}
-                  className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-white/5", activeTool === id ? "text-emerald-400" : "text-muted-foreground")}
-                >
-                  <Icon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{title}</span>
-                  <span className="ml-auto flex shrink-0 items-center gap-1">
-                    {activeTool === id && <Check className="h-3 w-3" />}
-                    <span
-                      role="button"
-                      tabIndex={-1}
-                      onClick={(e) => { e.stopPropagation(); toggleFav(id); }}
-                      className={cn("rounded p-0.5", favTools.includes(id) ? "text-amber-400" : "text-muted-foreground/40 hover:text-amber-300")}
-                      title={favTools.includes(id) ? "Remove from favorites" : "Add to favorites (pin to the toolbar)"}
-                    >
-                      <Star className={cn("h-3 w-3", favTools.includes(id) && "fill-amber-400")} />
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          );
-        })()}
-
-        {/* floating favorites toolbar — drag the grip to move it anywhere on
-            screen, position persists; right-click a tool to unpin it */}
-        {favTools.length > 0 && (
-          <div
-            ref={favbarRef}
-            className="fixed z-[70] flex select-none items-center gap-0.5 rounded-xl border border-white/10 bg-[#0d1117]/90 p-1 shadow-2xl backdrop-blur"
-            style={{ left: favbarPos.x, top: favbarPos.y }}
-          >
-            <div
-              onPointerDown={startFavbarDrag}
-              onPointerMove={moveFavbar}
-              onPointerUp={endFavbarDrag}
-              onPointerCancel={endFavbarDrag}
-              className="flex h-7 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
-              title="Drag the favorites bar"
-            >
-              <GripHorizontal className="h-3.5 w-3.5" />
-            </div>
-            {favTools.map((id) => {
-              const t = ALL_TOOLS.find((x) => x.id === id);
-              if (!t) return null;
-              const FIcon = t.icon;
-              return (
-                <button
-                  key={id}
-                  onClick={() => { pickTool(id); setFlyout(null); }}
-                  onContextMenu={(e) => { e.preventDefault(); toggleFav(id); }}
-                  className={cn("relative flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors", activeTool === id ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" : "text-muted-foreground hover:bg-white/5 hover:text-foreground")}
-                  title={`${t.title} — click to select · right-click to remove from favorites`}
-                >
-                  <FIcon className="h-3.5 w-3.5" />
-                  <span className="absolute right-0.5 top-0.5 h-1 w-1 rounded-full bg-amber-400" />
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* charts (desktop) — flex-col so the grid gets a DEFINITE height. */}
-        <div className="hidden min-h-0 min-w-0 flex-1 md:flex md:flex-col">{chartGrid}</div>
-
-        {/* charts (mobile) */}
-        <div className="flex min-h-0 w-full flex-col gap-1.5 md:hidden">
-          <div className="min-h-0 flex-1">{chartNode(0)}</div>
-          {mobilePanel && (
-            <div className="h-72 overflow-hidden rounded-xl border border-border/50 bg-card">
-              {sidePanel("h-full")}
-            </div>
-          )}
-          <div className="flex shrink-0 gap-1.5">
-            <button
-              onClick={() => setMobilePanel((v) => !v)}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 py-2 text-xs font-bold text-emerald-400"
-            >
-              <Activity className="h-4 w-4" />
-              {mobilePanel ? t("hidePanel") : t("showPanel")} ({openCount})
-            </button>
-          </div>
-        </div>
-
-        {/* side panel (desktop) — hidden in focus mode; collapsible to widen the chart */}
-        {!immersive && !panelOpen && (
-          <button
-            onClick={() => setPanelOpen(true)}
-            className="hidden w-6 shrink-0 flex-col items-center rounded-xl border border-border/50 bg-card/60 py-2 text-muted-foreground hover:text-foreground md:flex"
-            title="Show panel"
-          >
-            <PanelRight className="h-4 w-4" />
-          </button>
-        )}
-        {!immersive && panelOpen && (
-        <div className="hidden w-80 shrink-0 md:block">
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/50 bg-card/60">
-            <div className="flex shrink-0 items-center gap-0.5 border-b border-border/40 p-1">
-              <button
-                onClick={() => setPanelOpen(false)}
-                className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                title="Hide panel (more chart)"
-              >
-                <PanelRightClose className="h-3.5 w-3.5" />
-              </button>
-              {(["trade", "challenge", "alerts", "replay"] as SideTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setSideTab(tab)}
-                  className={cn("flex-1 rounded-lg px-1 py-1.5 text-[10px] font-bold uppercase tracking-wide transition-colors", sideTab === tab ? "bg-emerald-500/15 text-emerald-400" : "text-muted-foreground hover:text-foreground", tab === "replay" && rs.active && "text-sky-400")}
-                >
-                  {tab === "replay" ? "REPLAY" : tab === "trade" ? t("tabTrade") : tab === "challenge" ? t("tabChallenge") : t("tabAlerts")}
-                </button>
-              ))}
-            </div>
-            <div className="min-h-0 flex-1 overflow-hidden">{sidePanel()}</div>
-          </div>
-        </div>)}
-
-        {/* floating replay bar — replaced by the dedicated toolbar above the workspace */}
-
-        {/* advanced tool drawers */}
-        <ToolDrawer open={tool != null} onClose={() => setTool(null)}
-          title={tool ? DRAWER_TITLES[tool]?.title ?? tool : ""}
-          subtitle={tool ? DRAWER_TITLES[tool]?.subtitle : undefined}>
-          {tool === "backtest" && <StrategyTester symbol={settings.symbol} />}
-          {tool === "sessions" && <SessionsPanel symbol={settings.symbol} timeframe={settings.timeframe} overlay={overlay} setOverlay={setOverlay} />}
-          {tool === "heatmap" && <HeatmapPanel onSelect={(s) => { update({ symbol: s }); setTool(null); }} />}
-          {tool === "screener" && <ScreenerPanel onSelect={(s) => { update({ symbol: s }); setTool(null); }} />}
-          {tool === "mtf" && <MtfPanel symbol={settings.symbol} onSelect={(s) => update({ symbol: s })} />}
-          {tool === "volume" && <VolumePanel symbol={settings.symbol} timeframe={settings.timeframe} overlay={overlay} setOverlay={setOverlay} anchor={anchor} setAnchor={setAnchor} />}
-          {tool === "templates" && <TemplatesPanel settings={settings} currentDrawings={drawings} onApply={(s: TerminalSettings) => update(s)} />}
-          {tool === "analytics" && <PropAnalyticsPanel />}
-          {tool === "compare" && <ComparisonPanel symbol={settings.symbol} compare={compare} setCompare={setCompare} onSelect={(s) => { update({ symbol: s }); setTool(null); }} />}
-          {tool === "replayStats" && <ReplayStatsPanel rs={rs} />}
-        </ToolDrawer>
+        ))}
       </div>
 
-      <IndicatorDialog open={indDialog} onOpenChange={setIndDialog} active={settings.indicators} onChange={(list: ActiveIndicator[]) => update({ indicators: list })} />
-      <ChartSettingsDialog
-        open={chartSettingsOpen}
-        onOpenChange={setChartSettingsOpen}
-        prefs={settings.chartPrefs}
-        onChange={(patch) => update({ chartPrefs: { ...settings.chartPrefs, ...patch } })}
-        colors={settings.colors}
-        onColorsChange={(patch) => update({ colors: { ...settings.colors, ...patch } })}
-        sound={settings.sound}
-        onSoundChange={(v) => update({ sound: v })}
-      />
-      <ToolsDialog open={toolsOpen} onOpenChange={setToolsOpen} onLaunch={launchTool} />
-      <ReplayJournalDialog draft={journalDraft} onClose={() => setJournalDraft(null)} />
+      <div className="mx-1 hidden h-6 w-px bg-slate-700 sm:block" />
+
+      {/* Account strip — server metrics, refreshed by the 10s heartbeat */}
+      {account && (
+        <Select value={activeId ?? undefined} onValueChange={onAccountChange}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Account" />
+          </SelectTrigger>
+          <SelectContent>
+            {accounts.map((a) => (
+              <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <Stat label="Balance" value={metrics ? `$${money(metrics.balance)}` : "—"} />
+        <Stat label="Equity" value={metrics ? `$${money(metrics.equity)}` : "—"} />
+        <Stat
+          label="Floating P/L"
+          value={metrics ? `${pnl >= 0 ? "+" : "−"}$${money(Math.abs(pnl))}` : "—"}
+          className={pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-red-400" : undefined}
+        />
+        <Stat label="Used margin" value={metrics ? `$${money(metrics.usedMargin)}` : "—"} />
+        <Stat label="Free margin" value={metrics ? `$${money(metrics.freeMargin)}` : "—"} />
+        {metrics?.marginLevel != null && (
+          <Stat label="Margin level" value={`${metrics.marginLevel.toFixed(0)}%`} />
+        )}
+      </div>
+
+      <div className="ml-auto flex items-center gap-1.5">
+        <Button variant="outline" size="icon" onClick={onRefresh} disabled={busy} title="Refresh account">
+          <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
+        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="icon" disabled={busy || !account} title="Reset account to starting balance">
+              <RotateCcw className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reset account?</AlertDialogTitle>
+              <AlertDialogDescription>
+                All open positions, orders and history of “{account?.label}” are wiped and the balance
+                goes back to its starting amount. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={onReset}>Reset</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div className="flex flex-col leading-tight">
+      <span className="text-[10px] uppercase tracking-wide text-slate-500">{label}</span>
+      <span className={cn("font-semibold text-slate-100 tabular-nums", className)}>{value}</span>
     </div>
   );
 }

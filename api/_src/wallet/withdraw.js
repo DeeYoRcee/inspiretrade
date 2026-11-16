@@ -1,0 +1,58 @@
+/**
+ * POST /api/wallet?action=withdraw
+ * Body: { amount: number, method: "crypto"|"telegram"|"other", details: string }
+ * Atomically reserves INSP from the user's balance and stores a pending
+ * withdrawal request. The owner processes it manually and marks it paid or
+ * rejected (rejected = coins refunded) via /api/admin?action=withdrawals.
+ */
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
+const MIN_WITHDRAW = 5; // INSP
+const METHODS = {
+    crypto: "Crypto (USDT TRC20)",
+    telegram: "Telegram gift / stars",
+    other: "Other (agree with owner)",
+};
+export default handle(async (req, res) => {
+    assertPost(req);
+    const user = await requireUser(req);
+    const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+    const amount = Math.floor(Number(body.amount) || 0);
+    const method = String(body.method || "");
+    const details = String(body.details || "").trim().slice(0, 200);
+    if (!METHODS[method]) {
+        throw new HttpError(400, "INVALID_METHOD", "Choose a withdrawal method");
+    }
+    if (amount < MIN_WITHDRAW) {
+        throw new HttpError(400, "AMOUNT_TOO_SMALL", `Minimum withdrawal is ${MIN_WITHDRAW} INSP`);
+    }
+    if (!details) {
+        throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
+    }
+    // Atomically reserve the coins (see decrementCounter for why the transaction
+    // update fn must never return undefined — insufficient balance = no-op + throw).
+    const coinsRef = rtdb().ref(`economy/${user.uid}/coins`);
+    await decrementCounter(coinsRef, new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance"));
+    const requestRef = rtdb().ref(`withdrawals/${user.uid}`).push();
+    const request = {
+        id: requestRef.key,
+        uid: user.uid,
+        amount,
+        method,
+        methodLabel: METHODS[method],
+        details,
+        status: "pending",
+        at: Date.now(),
+    };
+    await requestRef.set(request);
+    await logLedger({ type: "withdraw_request", uid: user.uid, amount, method });
+    res.status(200).json({ ok: true, request });
+});
+export { MIN_WITHDRAW };
+function safeParse(raw) {
+    try {
+        return JSON.parse(raw);
+    }
+    catch {
+        return {};
+    }
+}
