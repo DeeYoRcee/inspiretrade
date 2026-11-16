@@ -219,6 +219,10 @@ export function TerminalChart({
   const lastEmittedRef = useRef<string>("[]");
   const chartIdRef = useRef<string>(`chart-${++CHART_SEQ}`);
   const lastFullRenderRef = useRef(0);
+  // last bar time actually applied to the live series — guards updateLive
+  // against out-of-order arrivals (an older bar would make lightweight-charts
+  // throw "Cannot update oldest data" and kill the render loop)
+  const lastAppliedTimeRef = useRef(0);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<ChartOverlay | null>(null);
   const avwapRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -545,6 +549,7 @@ export function TerminalChart({
 
     (async () => {
       try {
+        lastAppliedTimeRef.current = 0; // new series — live guard restarts
         const res = await loadFeed(symbol, timeframe);
         if (cancelled) return;
         barsRef.current = res.bars;
@@ -736,6 +741,9 @@ export function TerminalChart({
     const s = seriesRef.current;
     if (!chart || !s) return;
     const t = bar.time as UTCTimestamp;
+    // out-of-order protection (see lastAppliedTimeRef)
+    if (t < lastAppliedTimeRef.current) return;
+    lastAppliedTimeRef.current = t;
 
     if (chartType === "heikin" || chartType === "renko") {
       if (Date.now() - lastFullRenderRef.current > 2000) renderData();

@@ -65,6 +65,11 @@ class BinanceProvider {
   private ws: WebSocket | null = null;
   private wsKey = "";
   private backoff = 1000;
+  private lastMsgAt = 0;
+  private wsFails = 0;
+  private wsAltPort = false;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private polls = new Map<string, ReturnType<typeof setInterval>>();
   private listeners = new Map<string, Set<UpdateCb>>();
   private history = new Map<string, Bar[]>();
   private loadedAt = new Map<string, number>();
@@ -75,44 +80,118 @@ class BinanceProvider {
     // short-lived fresh cache — instant timeframe switching / remounts
     const fresh = this.history.get(key);
     if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) return fresh;
-    const url = `https://api.binance.com/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=1000`;
-    const raw: any[] = await (await fetch(url)).json();
-    const bars: Bar[] = raw.map((k) => ({
-      time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
-      takerBuy: k[9] != null ? +k[9] : undefined,
-    }));
+    const bars = await this.fetchRecent(symbol, tf, 1000);
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
     return bars;
   }
 
-  subscribe(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {
+  /** REST klines fetch — used for history AND for gap-fill / safety polling. */
+  private async fetchRecent(symbol: string, tf: Timeframe, limit: number): Promise<Bar[]> {
     const inst = getInstrument(symbol)!;
+    const url = `https://api.binance.com/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=${limit}`;
+    const raw: any[] = await (await fetch(url)).json();
+    return raw.map((k) => ({
+      time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
+      takerBuy: k[9] != null ? +k[9] : undefined,
+    }));
+  }
+
+  subscribe(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {
     const key = `${symbol}:${tf}`;
     if (!this.listeners.has(key)) this.listeners.set(key, new Set());
     this.listeners.get(key)!.add(cb);
 
     if (this.wsKey !== key) this.openSocket(symbol, tf, key);
+    this.startWatchdog();
+    // REST safety poll (10s): the chart must NEVER freeze. While the WS is
+    // healthy (a message within the last 5s) it costs nothing; the moment the
+    // WS goes stale (blocked network, dead NAT, region issue) this poll
+    // upserts the last 2 klines and keeps the last candle moving instead.
+    if (!this.polls.has(key)) {
+      this.polls.set(key, setInterval(async () => {
+        if (this.history.get(key)?.length && Date.now() - this.lastMsgAt < 5000) return;
+        try {
+          const recent = await this.fetchRecent(symbol, tf, 2);
+          if (!recent.length) return;
+          let bars = this.history.get(key) || [];
+          let changed = false;
+          for (const b of recent) {
+            const prev = bars.find((x) => x.time === b.time);
+            if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
+            bars = upsert(bars, b);
+          }
+          if (!changed) return;
+          this.history.set(key, bars);
+          this.loadedAt.set(key, Date.now());
+          const lastBar = bars[bars.length - 1];
+          this.listeners.get(key)?.forEach((c) => c({ bars, lastBar, isRealtime: false }));
+        } catch { /* transient — next tick retries */ }
+      }, 10000));
+    }
     return () => {
       const set = this.listeners.get(key);
       set?.delete(cb);
-      if (set && set.size === 0 && this.wsKey === key) {
-        this.ws?.close();
-        this.ws = null;
-        this.wsKey = "";
+      if (set && set.size === 0) {
+        const p = this.polls.get(key);
+        if (p) { clearInterval(p); this.polls.delete(key); }
+        if (this.wsKey === key) {
+          this.ws?.close();
+          this.ws = null;
+          this.wsKey = "";
+          if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = null; }
+        }
       }
     };
+  }
+
+  /** Kills a silently-dead socket: kline streams push every ~1-2s when live. */
+  private startWatchdog() {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN && Date.now() - this.lastMsgAt > 15000) {
+        this.lastMsgAt = Date.now(); // avoid double-fire while reconnecting
+        this.ws.close(); // onclose → reconnect (with REST resync)
+      }
+    }, 5000);
   }
 
   private openSocket(symbol: string, tf: Timeframe, key: string) {
     this.ws?.close();
     const inst = getInstrument(symbol)!;
     const stream = `${inst.binance!.toLowerCase()}@kline_${BINANCE_INTERVAL[tf]}`;
-    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${stream}`);
+    // some networks/regions block :9443 — fall back to :443 after 2 fails
+    if (this.wsFails >= 2) this.wsAltPort = !this.wsAltPort;
+    if (this.wsFails >= 2) this.wsFails = 0;
+    const host = this.wsAltPort ? "stream.binance.com:443" : "stream.binance.com:9443";
+    const ws = new WebSocket(`wss://${host}/ws/${stream}`);
     this.ws = ws;
     this.wsKey = key;
-    ws.onopen = () => { this.backoff = 1000; };
+    this.lastMsgAt = Date.now();
+    ws.onopen = () => {
+      this.backoff = 1000;
+      // resync right after (re)connect: candles traded while the socket was
+      // down are fetched via REST and upserted — no gap, no stale candle
+      this.fetchRecent(symbol, tf, 2)
+        .then((recent) => {
+          if (!recent.length || this.wsKey !== key) return;
+          let bars = this.history.get(key) || [];
+          let changed = false;
+          for (const b of recent) {
+            const prev = bars.find((x) => x.time === b.time);
+            if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
+            bars = upsert(bars, b);
+          }
+          if (!changed) return;
+          this.history.set(key, bars);
+          const lastBar = bars[bars.length - 1];
+          this.listeners.get(key)?.forEach((c) => c({ bars, lastBar, isRealtime: true }));
+        })
+        .catch(() => { /* the WS stream will still update from now on */ });
+    };
     ws.onmessage = (ev) => {
+      this.lastMsgAt = Date.now();
+      this.wsFails = 0; // this port works
       try {
         const k = JSON.parse(ev.data)?.k;
         if (!k) return;
@@ -124,6 +203,7 @@ class BinanceProvider {
     };
     ws.onclose = () => {
       if (this.wsKey !== key) return;
+      this.wsFails++;
       this.ws = null;
       this.wsKey = "";
       setTimeout(() => {
@@ -144,6 +224,7 @@ class QuotesProvider {
   private listeners = new Map<string, Set<UpdateCb>>();
   private history = new Map<string, Bar[]>();
   private loadedAt = new Map<string, number>();
+  private inflight = new Set<string>();
 
   // network fetch + aggregation, always bypasses the fresh cache (poll path)
   private async loadNetwork(symbol: string, tf: Timeframe): Promise<Bar[]> {
@@ -185,15 +266,25 @@ class QuotesProvider {
     const key = `${symbol}:${tf}`;
     if (!this.listeners.has(key)) this.listeners.set(key, new Set());
     this.listeners.get(key)!.add(cb);
-    // REST polling — 15s is enough for delayed quotes and keeps request volume low.
-    // loadNetwork (not load) so the 15s poll never serves the 15s fresh cache.
-    const timer = setInterval(async () => {
+    const tick = async () => {
+      // in-flight guard: a slow response must never stack requests or let an
+      // older answer overwrite a newer one (chart jumping backwards)
+      if (this.inflight.has(key)) return;
+      this.inflight.add(key);
       try {
         await this.loadNetwork(symbol, tf);
         const bars = this.history.get(key)!;
         if (bars.length) this.listeners.get(key)?.forEach((c) => cb({ bars, lastBar: bars[bars.length - 1], isRealtime: false }));
-      } catch { /* transient — next poll retries */ }
-    }, 15000);
+      } catch { /* transient — next poll retries */ } finally {
+        this.inflight.delete(key);
+      }
+    };
+    // first tick right away — but skip it when the history was just fetched
+    // (fresh cache), so mounting the chart never duplicates the load request
+    if (Date.now() - (this.loadedAt.get(key) ?? 0) > 10000) void tick();
+    // REST polling — 10s; Yahoo data is delayed anyway, this keeps the last
+    // candle moving without hammering the proxy.
+    const timer = setInterval(tick, 10000);
     this.timers.set(key, timer);
     return () => {
       clearInterval(timer);
