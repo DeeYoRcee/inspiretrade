@@ -250,6 +250,7 @@ export function TerminalChart({
 
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("connecting");
   const [feedMsg, setFeedMsg] = useState<string | undefined>();
+  const feedStatusRef = useRef<FeedStatus>("connecting"); // change-detection for live callbacks
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
@@ -560,6 +561,7 @@ export function TerminalChart({
         if (cancelled) return;
         barsRef.current = res.bars;
         syncSeriesInfo();
+        feedStatusRef.current = res.status;
         setFeedStatus(res.status);
         setFeedMsg(res.message);
         onStatus?.(res.status, res.message);
@@ -580,6 +582,7 @@ export function TerminalChart({
         barsRef.current = [];
         engineRef.current?.setSeriesInfo(null);
         setLoading(false);
+        feedStatusRef.current = "error";
         setFeedStatus("error");
         setErrorMsg(String(e?.message || e));
         onStatus?.("error", String(e?.message || e));
@@ -594,6 +597,19 @@ export function TerminalChart({
         syncSeriesInfo(); // last bar may have appended → future margin shifts
         updateLive(u.lastBar);
         onLastBar?.(u.lastBar);
+        // honest transport status: crypto normally ticks over WebSocket; when
+        // the socket is blocked by the network the REST fallback keeps the
+        // candle moving — surface that instead of a fake "LIVE" badge
+        const next: FeedStatus = inst?.feed === "binance" ? (u.isRealtime ? "live" : "polling") : "polling";
+        if (next !== feedStatusRef.current) {
+          feedStatusRef.current = next;
+          setFeedStatus(next);
+          const msg = next === "polling" && inst?.feed === "binance"
+            ? "Live via REST fallback (WebSocket blocked)"
+            : undefined;
+          setFeedMsg(msg);
+          onStatus?.(next, msg);
+        }
       });
     }
     startLiveRef.current = startLive;
@@ -1139,7 +1155,7 @@ export function TerminalChart({
 
   const feedLabel =
     feedStatus === "live" ? "LIVE" :
-    feedStatus === "polling" ? "DELAYED" :
+    feedStatus === "polling" ? (inst?.feed === "binance" ? "POLL" : "DELAYED") :
     feedStatus === "error" ? "ERROR" : "…";
 
   const feedColor =

@@ -61,13 +61,25 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
 // Binance (crypto — real live)
 // ---------------------------------------------------------------------------
 
+// Endpoints are tried in order and rotate on failure. The last WS entry and
+// second REST host are Binance's official PUBLIC MARKET-DATA mirrors on a
+// different domain (binance.vision) — ISP-level blocks of binance.com (common
+// in several regions) do not take the live feed down with them.
+const WS_ENDPOINTS = ["wss://stream.binance.com:9443", "wss://stream.binance.com:443", "wss://data-stream.binance.vision"];
+const REST_HOSTS = ["api.binance.com", "data-api.binance.vision"];
+const CONNECT_TIMEOUT_MS = 4000; // a blocked socket often hangs CONNECTING forever — force failover
+
 class BinanceProvider {
   private ws: WebSocket | null = null;
-  private wsKey = "";
+  private streams = new Map<string, string>();     // "SYM:tf" → "sym@kline_int"
+  private streamToKey = new Map<string, string>(); // incoming frame route
+  private meta = new Map<string, { symbol: string; tf: Timeframe }>();
+  private restHostIdx = 0;
+  private wsEpIdx = 0;
+  private wsWorks = false; // current endpoint delivered at least one frame
   private backoff = 1000;
   private lastMsgAt = 0;
-  private wsFails = 0;
-  private wsAltPort = false;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private polls = new Map<string, ReturnType<typeof setInterval>>();
   private listeners = new Map<string, Set<UpdateCb>>();
@@ -75,7 +87,6 @@ class BinanceProvider {
   private loadedAt = new Map<string, number>();
 
   async load(symbol: string, tf: Timeframe): Promise<Bar[]> {
-    const inst = getInstrument(symbol)!;
     const key = `${symbol}:${tf}`;
     // short-lived fresh cache — instant timeframe switching / remounts
     const fresh = this.history.get(key);
@@ -89,45 +100,75 @@ class BinanceProvider {
   /** REST klines fetch — used for history AND for gap-fill / safety polling. */
   private async fetchRecent(symbol: string, tf: Timeframe, limit: number): Promise<Bar[]> {
     const inst = getInstrument(symbol)!;
-    const url = `https://api.binance.com/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=${limit}`;
-    const raw: any[] = await (await fetch(url)).json();
+    const raw: any[] = await this.restGet(`/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=${limit}`);
     return raw.map((k) => ({
       time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
       takerBuy: k[9] != null ? +k[9] : undefined,
     }));
   }
 
+  /** REST with mirror failover: api.binance.com blocked → data-api.binance.vision. */
+  private async restGet(path: string): Promise<any> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < REST_HOSTS.length; attempt++) {
+      const idx = (this.restHostIdx + attempt) % REST_HOSTS.length;
+      try {
+        const res = await fetch(`https://${REST_HOSTS[idx]}${path}`);
+        if (!res.ok) throw new Error(`binance ${res.status}`);
+        const json = await res.json();
+        this.restHostIdx = idx; // remember the working host
+        return json;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr ?? new Error("binance REST unreachable");
+  }
+
+  /** Fetch the last 2 klines and upsert them into the series (gap-fill). */
+  private async resync(key: string, isRealtime = true) {
+    const m = this.meta.get(key);
+    if (!m || !this.listeners.get(key)?.size) return;
+    const recent = await this.fetchRecent(m.symbol, m.tf, 2);
+    if (!recent.length) return;
+    let bars = this.history.get(key) || [];
+    let changed = false;
+    for (const b of recent) {
+      const prev = bars.find((x) => x.time === b.time);
+      if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
+      bars = upsert(bars, b);
+    }
+    if (!changed) return;
+    this.history.set(key, bars);
+    this.loadedAt.set(key, Date.now());
+    const lastBar = bars[bars.length - 1];
+    this.listeners.get(key)?.forEach((c) => c({ bars, lastBar, isRealtime }));
+  }
+
   subscribe(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {
+    const inst = getInstrument(symbol)!;
     const key = `${symbol}:${tf}`;
+    const stream = `${inst.binance!.toLowerCase()}@kline_${BINANCE_INTERVAL[tf]}`;
     if (!this.listeners.has(key)) this.listeners.set(key, new Set());
     this.listeners.get(key)!.add(cb);
-
-    if (this.wsKey !== key) this.openSocket(symbol, tf, key);
+    const isNew = !this.streams.has(key);
+    this.streams.set(key, stream);
+    this.streamToKey.set(stream, key);
+    this.meta.set(key, { symbol, tf });
+    // ONE socket serves every open chart via a combined stream — a second
+    // chart must never steal the first one's live feed (multi-chart layouts)
+    if (!this.ws) this.openSocket();
+    else if (isNew && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify({ method: "SUBSCRIBE", params: [stream], id: Date.now() % 1e9 })); } catch { /* resync covers it */ }
+    }
     this.startWatchdog();
-    // REST safety poll (10s): the chart must NEVER freeze. While the WS is
-    // healthy (a message within the last 5s) it costs nothing; the moment the
-    // WS goes stale (blocked network, dead NAT, region issue) this poll
-    // upserts the last 2 klines and keeps the last candle moving instead.
+    // REST safety poll (2s): the chart must NEVER freeze. While the WS is
+    // healthy (a message within the last 5s) the guard makes it free; the
+    // moment the WS goes stale (blocked network, dead NAT, region issue) this
+    // poll upserts the last 2 klines and keeps the candle moving.
     if (!this.polls.has(key)) {
-      this.polls.set(key, setInterval(async () => {
+      this.polls.set(key, setInterval(() => {
         if (this.history.get(key)?.length && Date.now() - this.lastMsgAt < 5000) return;
-        try {
-          const recent = await this.fetchRecent(symbol, tf, 2);
-          if (!recent.length) return;
-          let bars = this.history.get(key) || [];
-          let changed = false;
-          for (const b of recent) {
-            const prev = bars.find((x) => x.time === b.time);
-            if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
-            bars = upsert(bars, b);
-          }
-          if (!changed) return;
-          this.history.set(key, bars);
-          this.loadedAt.set(key, Date.now());
-          const lastBar = bars[bars.length - 1];
-          this.listeners.get(key)?.forEach((c) => c({ bars, lastBar, isRealtime: false }));
-        } catch { /* transient — next tick retries */ }
-      }, 10000));
+        void this.resync(key, false).catch(() => { /* transient — next tick retries */ });
+      }, 2000));
     }
     return () => {
       const set = this.listeners.get(key);
@@ -135,11 +176,19 @@ class BinanceProvider {
       if (set && set.size === 0) {
         const p = this.polls.get(key);
         if (p) { clearInterval(p); this.polls.delete(key); }
-        if (this.wsKey === key) {
-          this.ws?.close();
+        const stream = this.streams.get(key);
+        this.streams.delete(key);
+        if (stream) this.streamToKey.delete(stream);
+        this.meta.delete(key);
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && stream) {
+          try { this.ws.send(JSON.stringify({ method: "UNSUBSCRIBE", params: [stream], id: Date.now() % 1e9 })); } catch { /* socket dying anyway */ }
+        }
+        if (this.streams.size === 0 && this.ws) {
+          const ws = this.ws;
           this.ws = null;
-          this.wsKey = "";
+          if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
           if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = null; }
+          try { ws.close(); } catch { /* already dead */ }
         }
       }
     };
@@ -156,62 +205,56 @@ class BinanceProvider {
     }, 5000);
   }
 
-  private openSocket(symbol: string, tf: Timeframe, key: string) {
-    this.ws?.close();
-    const inst = getInstrument(symbol)!;
-    const stream = `${inst.binance!.toLowerCase()}@kline_${BINANCE_INTERVAL[tf]}`;
-    // some networks/regions block :9443 — fall back to :443 after 2 fails
-    if (this.wsFails >= 2) this.wsAltPort = !this.wsAltPort;
-    if (this.wsFails >= 2) this.wsFails = 0;
-    const host = this.wsAltPort ? "stream.binance.com:443" : "stream.binance.com:9443";
-    const ws = new WebSocket(`wss://${host}/ws/${stream}`);
+  /** ONE combined-stream socket for every open chart. Endpoints are tried in
+   * order and rotate on failure — data-stream.binance.vision is Binance's
+   * official market-data mirror on a DIFFERENT domain, so ISP-level blocks of
+   * binance.com (region issues) do not take the live feed down with it. */
+  private openSocket() {
+    const list = [...this.streams.values()];
+    if (!list.length || this.ws) return;
+    const host = WS_ENDPOINTS[this.wsEpIdx];
+    const ws = new WebSocket(`${host}/stream?streams=${list.join("/")}`);
     this.ws = ws;
-    this.wsKey = key;
     this.lastMsgAt = Date.now();
+    // a blocked socket often hangs CONNECTING forever — force failover
+    this.connectTimer = setTimeout(() => { try { ws.close(); } catch { /* already dead */ } }, CONNECT_TIMEOUT_MS);
     ws.onopen = () => {
+      if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
       this.backoff = 1000;
-      // resync right after (re)connect: candles traded while the socket was
-      // down are fetched via REST and upserted — no gap, no stale candle
-      this.fetchRecent(symbol, tf, 2)
-        .then((recent) => {
-          if (!recent.length || this.wsKey !== key) return;
-          let bars = this.history.get(key) || [];
-          let changed = false;
-          for (const b of recent) {
-            const prev = bars.find((x) => x.time === b.time);
-            if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
-            bars = upsert(bars, b);
-          }
-          if (!changed) return;
-          this.history.set(key, bars);
-          const lastBar = bars[bars.length - 1];
-          this.listeners.get(key)?.forEach((c) => c({ bars, lastBar, isRealtime: true }));
-        })
-        .catch(() => { /* the WS stream will still update from now on */ });
+      // explicit SUBSCRIBE covers streams added while the socket was opening
+      try { ws.send(JSON.stringify({ method: "SUBSCRIBE", params: [...this.streams.values()], id: Date.now() % 1e9 })); } catch { /* the combined URL already carries them */ }
+      for (const key of this.streams.keys()) void this.resync(key).catch(() => { /* the WS stream will still update from now on */ });
     };
     ws.onmessage = (ev) => {
       this.lastMsgAt = Date.now();
-      this.wsFails = 0; // this port works
+      this.wsWorks = true;
       try {
-        const k = JSON.parse(ev.data)?.k;
+        const payload = JSON.parse(ev.data);
+        const k = payload?.data?.k ?? payload?.k;
         if (!k) return;
+        const key = payload?.stream
+          ? this.streamToKey.get(payload.stream)
+          : (this.streamToKey.size === 1 ? [...this.streamToKey.values()][0] : undefined);
+        if (!key) return;
         const bar: Bar = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v, takerBuy: k.V != null ? +k.V : undefined };
         const bars = upsert(this.history.get(key) || [], bar);
         this.history.set(key, bars);
+        this.loadedAt.set(key, Date.now());
         this.listeners.get(key)?.forEach((cb) => cb({ bars, lastBar: bar, isRealtime: true }));
       } catch { /* malformed frame — skip */ }
     };
     ws.onclose = () => {
-      if (this.wsKey !== key) return;
-      this.wsFails++;
+      if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
       this.ws = null;
-      this.wsKey = "";
-      setTimeout(() => {
-        if (this.listeners.get(key)?.size) this.openSocket(symbol, tf, key);
-      }, this.backoff);
-      this.backoff = Math.min(this.backoff * 2, 30000);
+      if (this.streams.size === 0) return; // last chart unmounted — normal shutdown
+      // an endpoint that never delivered a frame is effectively blocked → rotate
+      if (!this.wsWorks) this.wsEpIdx = (this.wsEpIdx + 1) % WS_ENDPOINTS.length;
+      this.wsWorks = false;
+      const delay = this.backoff;
+      this.backoff = Math.min(this.backoff * 2, 15000);
+      setTimeout(() => { if (this.streams.size && !this.ws) this.openSocket(); }, delay);
     };
-    ws.onerror = () => ws.close();
+    ws.onerror = () => { try { ws.close(); } catch { /* nothing */ } };
   }
 }
 
