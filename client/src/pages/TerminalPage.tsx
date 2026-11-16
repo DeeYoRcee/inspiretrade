@@ -574,7 +574,14 @@ export default function TerminalPage() {
       anchoredVwapTime={anchor}
       compareSymbol={compare}
       onAnchorVwap={setAnchor}
-      {...(rs.active ? rs.replayChartProps : {})}
+      {...(rs.active
+        ? (i === 0
+            // primary chart: feed the replay engine's DEEP history so the
+            // cursor can sit in bars older than the live feed's window
+            ? { replay: { active: true, upToTime: rs.upToTime, bars: rs.bars }, tradeMarkers: rs.markers, priceLines: rs.priceLines }
+            // secondary (MTF) charts: slice their own timeframe at the cursor
+            : rs.replayChartProps)
+        : {})}
       // right-click a candle → start bar-replay from THAT bar
       onReplayStart={i === 0 && !rs.active ? (time) => {
         const idx = rs.bars.findIndex((b) => b.time >= time);

@@ -134,8 +134,11 @@ interface Props {
    * Bar-replay mode: display only bars with time ≤ `upToTime` (UTC sec).
    * The cursor time is the single source of truth — every chart (any
    * timeframe) stays synchronized to the same historical instant.
+   * `bars` — the replay engine's deep history: when given (primary chart),
+   * it is RENDERED instead of the live feed's window, so the cursor can sit
+   * in bars older than the live series covers (deep replay stays visible).
    */
-  replay?: { active: boolean; upToTime: number } | null;
+  replay?: { active: boolean; upToTime: number; bars?: Bar[] } | null;
   /** fired with the current last visible bar during replay */
   onReplayBar?: (bar: Bar) => void;
   /** session boxes + prev day/week levels + volume profile overlay */
@@ -227,7 +230,10 @@ export function TerminalChart({
   const overlayRef = useRef<ChartOverlay | null>(null);
   const avwapRef = useRef<ISeriesApi<"Line"> | null>(null);
   const compareRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const replayRef = useRef<{ active: boolean; upToTime: number } | null>(null);
+  const replayRef = useRef<{ active: boolean; upToTime: number; bars?: Bar[] } | null>(null);
+  // latest startLive closure — the replay effect needs to (re)start the live
+  // subscription when a session ends (it lives outside the load effect)
+  const startLiveRef = useRef<() => void>(() => {});
   const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
   const countdownRef = useRef<HTMLSpanElement>(null);
   const clockRef = useRef<HTMLSpanElement>(null);
@@ -590,6 +596,7 @@ export function TerminalChart({
         onLastBar?.(u.lastBar);
       });
     }
+    startLiveRef.current = startLive;
 
     return () => {
       cancelled = true;
@@ -611,12 +618,14 @@ export function TerminalChart({
     const full = barsRef.current;
     // replay mode hides everything after the cursor time (binary scan from end)
     const rp = replayRef.current;
-    let bars = full;
+    // when the replay engine supplies its own deep history, RENDER that — the
+    // live feed's window may not even cover the cursor (deep replay start)
+    let bars = rp?.active && rp.bars?.length ? rp.bars : full;
     if (rp?.active) {
-      let hi = full.length; // first index with time > upToTime
+      let hi = bars.length; // first index with time > upToTime
       let lo = 0;
-      while (lo < hi) { const mid = (lo + hi) >> 1; if (full[mid].time <= rp.upToTime) lo = mid + 1; else hi = mid; }
-      bars = full.slice(0, Math.max(1, lo));
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (bars[mid].time <= rp.upToTime) lo = mid + 1; else hi = mid; }
+      bars = bars.slice(0, Math.max(1, lo));
     }
     if (chartType === "heikin") return toHeikinAshi(bars);
     if (chartType === "renko") return toRenko(bars);
@@ -740,6 +749,9 @@ export function TerminalChart({
     const chart = chartRef.current;
     const s = seriesRef.current;
     if (!chart || !s) return;
+    // replay owns the chart while active — a live tick must never paint the
+    // REAL current candle onto a replay of the past (look-ahead leak)
+    if (replayRef.current?.active) return;
     const t = bar.time as UTCTimestamp;
     // out-of-order protection (see lastAppliedTimeRef)
     if (t < lastAppliedTimeRef.current) return;
@@ -885,10 +897,25 @@ export function TerminalChart({
   // replay cursor moved or toggled → re-render sliced data
   useEffect(() => {
     replayRef.current = replay ?? null;
+    if (replay?.active) {
+      // replay owns the chart: the live subscription would keep painting the
+      // REAL current candle onto a replay of the past (look-ahead leak) — kill it
+      unsubRef.current?.();
+      unsubRef.current = null;
+    } else if (!unsubRef.current) {
+      startLiveRef.current?.(); // replay ended → resume live updates
+    }
     if (!chartRef.current) return;
     renderData();
     if (replay?.active) {
       const bars = displayBars();
+      // drawing tools / right edge must match the REPLAYED series, not the
+      // (no-longer-polled) live window
+      engineRef.current?.setSeriesInfo(
+        bars.length
+          ? { lastTime: bars[bars.length - 1].time, lastIdx: bars.length - 1, barSeconds: TF_SECONDS[timeframe] }
+          : null,
+      );
       const lastBar = bars[bars.length - 1];
       if (lastBar) onReplayBarRef.current?.(lastBar);
     }

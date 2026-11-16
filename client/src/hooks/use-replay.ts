@@ -165,6 +165,27 @@ export function useReplaySession(symbol: string, timeframe: Timeframe) {
     setCursorIdx(i);
   }, [active, processTo]);
 
+  // ---- playback loop --------------------------------------------------------------
+  // The Play button / Space key only toggle `playing`; THIS interval is what
+  // actually advances the bars. (A refactor dropped the loop entirely — Play
+  // flipped the icon and nothing moved.) Auto-pauses at the end of history;
+  // candleMode pauses after each bar (handled inside stepForward).
+  const playingRef = useRef(playing); playingRef.current = playing;
+  const speedMsRef = useRef(SPEEDS[speedIdx]?.ms ?? 1000); speedMsRef.current = SPEEDS[speedIdx]?.ms ?? 1000;
+  const stepForwardRef = useRef(stepForward); stepForwardRef.current = stepForward;
+  useEffect(() => {
+    if (!active || !playing) return;
+    const id = setInterval(() => {
+      if (!playingRef.current) return;
+      if (barsRef.current.length && stateRef.current.cursorIdx >= barsRef.current.length - 1) {
+        setPlaying(false); // reached the last bar
+        return;
+      }
+      stepForwardRef.current(1);
+    }, speedMsRef.current);
+    return () => clearInterval(id);
+  }, [active, playing, speedIdx]);
+
   // ---- trading -----------------------------------------------------------------
   const priceOf = useCallback((sym: string) => (sym === symbol ? cursorBar?.close : undefined), [symbol, cursorBar]);
 

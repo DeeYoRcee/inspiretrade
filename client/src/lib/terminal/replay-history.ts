@@ -11,7 +11,7 @@
  * + sessionStorage (10 min TTL) so seeking around a session never re-downloads.
  */
 import type { Bar, Timeframe } from "@shared/terminal";
-import { getInstrument, BINANCE_INTERVAL, YAHOO_INTERVAL } from "@shared/terminal";
+import { getInstrument, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS, aggregateBars } from "@shared/terminal";
 import { authedFetch } from "@/lib/api";
 
 const TTL = 10 * 60_000;
@@ -69,9 +69,15 @@ async function binanceDeep(binance: string, tf: Timeframe, maxBars: number): Pro
 
 async function yahooRange(yahoo: string, tf: Timeframe): Promise<Bar[]> {
   const cfg = YAHOO_INTERVAL[tf];
-  const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(yahoo)}&range=${cfg.range}&interval=${cfg.interval}`);
-  const bars = (res?.bars ?? []) as Bar[];
+  const agg = YAHOO_AGGREGATE[tf];
+  // 2h/4h have no native Yahoo interval — the provider serves the base tf
+  // (1h) which MUST be aggregated to the target tf (same rule as the live
+  // feed), otherwise replay steps 1h candles on a 2h/4h chart
+  const useCfg = agg ? (cfg.interval === YAHOO_INTERVAL[agg].interval ? cfg : YAHOO_INTERVAL[agg]) : cfg;
+  const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(yahoo)}&range=${useCfg.range}&interval=${useCfg.interval}`);
+  let bars = (res?.bars ?? []) as Bar[];
   if (!Array.isArray(bars) || !bars.length) throw new Error("EMPTY_HISTORY");
+  if (agg) bars = aggregateBars(bars, TF_SECONDS[tf] / 60);
   return mergeBatches([bars]);
 }
 
