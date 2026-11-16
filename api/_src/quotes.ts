@@ -196,6 +196,10 @@ export default handle(async (req, res) => {
   const fromStooq = async () => {
     const sq = stooqOf(symbols);
     if (!sq) throw new Error("NO_STOOQ_MAP");
+    // stooq has no true 1-minute CSV: its finest intraday feed is 5-minute.
+    // Serving that as "1m" mislabeled every candle — refuse instead and let
+    // the client show the honest error/retry state.
+    if (interval === "1m") throw new Error("STOOQ_NO_1M");
     const si = STOOQ_INTERVAL[interval];
     if (!si) throw new Error("NO_STOOQ_INTERVAL");
     const controller = new AbortController();

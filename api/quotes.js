@@ -258,6 +258,7 @@ var quotes_default = handle(async (req, res) => {
   const fromStooq = async () => {
     const sq = stooqOf(symbols);
     if (!sq) throw new Error("NO_STOOQ_MAP");
+    if (interval === "1m") throw new Error("STOOQ_NO_1M");
     const si = STOOQ_INTERVAL[interval];
     if (!si) throw new Error("NO_STOOQ_INTERVAL");
     const controller = new AbortController();

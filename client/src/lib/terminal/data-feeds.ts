@@ -67,10 +67,14 @@ class BinanceProvider {
   private backoff = 1000;
   private listeners = new Map<string, Set<UpdateCb>>();
   private history = new Map<string, Bar[]>();
+  private loadedAt = new Map<string, number>();
 
   async load(symbol: string, tf: Timeframe): Promise<Bar[]> {
     const inst = getInstrument(symbol)!;
     const key = `${symbol}:${tf}`;
+    // short-lived fresh cache — instant timeframe switching / remounts
+    const fresh = this.history.get(key);
+    if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) return fresh;
     const url = `https://api.binance.com/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=1000`;
     const raw: any[] = await (await fetch(url)).json();
     const bars: Bar[] = raw.map((k) => ({
@@ -78,6 +82,7 @@ class BinanceProvider {
       takerBuy: k[9] != null ? +k[9] : undefined,
     }));
     this.history.set(key, bars);
+    this.loadedAt.set(key, Date.now());
     return bars;
   }
 
@@ -138,20 +143,42 @@ class QuotesProvider {
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private listeners = new Map<string, Set<UpdateCb>>();
   private history = new Map<string, Bar[]>();
+  private loadedAt = new Map<string, number>();
 
-  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; delayed: boolean }> {
+  // network fetch + aggregation, always bypasses the fresh cache (poll path)
+  private async loadNetwork(symbol: string, tf: Timeframe): Promise<Bar[]> {
     const inst = getInstrument(symbol)!;
     const key = `${symbol}:${tf}`;
     const cfg = YAHOO_INTERVAL[tf];
     const agg = YAHOO_AGGREGATE[tf];
-    const useCfg = agg ? YAHOO_INTERVAL[agg] : cfg;
+    // prefer the target tf's own config when its interval equals the base
+    // interval (4h: "1y/60m" gives ~4x deeper history than the 1h base's 3mo)
+    const useCfg = agg
+      ? (cfg.interval === YAHOO_INTERVAL[agg].interval ? cfg : YAHOO_INTERVAL[agg])
+      : cfg;
     const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo!)}&range=${useCfg.range}&interval=${useCfg.interval}`);
     if (!res?.ok) throw new Error(res?.detail || "FEED_UNAVAILABLE");
     let bars: Bar[] = res.bars;
-    if (agg) bars = aggregateBars(bars, TF_SECONDS[tf] / TF_SECONDS[agg]);
+    // bucket length = the TARGET timeframe in minutes (3m→3, 2h→120, 4h→240).
+    // The old TF_SECONDS[tf]/TF_SECONDS[agg] ratio only happens to be minutes
+    // for the 1m base: from the 1h base it passed 2/4 "minutes" → 2- and
+    // 4-MINUTE buckets → the 2h and 4h charts actually rendered 1h candles.
+    if (agg) bars = aggregateBars(bars, TF_SECONDS[tf] / 60);
     bars = dedupSort(bars);
     this.history.set(key, bars);
-    return { bars, delayed: !!res.delayed };
+    this.loadedAt.set(key, Date.now());
+    return bars;
+  }
+
+  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; delayed: boolean }> {
+    const key = `${symbol}:${tf}`;
+    // short-lived fresh cache: instant timeframe switching + remounts
+    const fresh = this.history.get(key);
+    if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) {
+      return { bars: fresh, delayed: true };
+    }
+    const bars = await this.loadNetwork(symbol, tf);
+    return { bars, delayed: true };
   }
 
   subscribe(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {
@@ -159,9 +186,10 @@ class QuotesProvider {
     if (!this.listeners.has(key)) this.listeners.set(key, new Set());
     this.listeners.get(key)!.add(cb);
     // REST polling — 15s is enough for delayed quotes and keeps request volume low.
+    // loadNetwork (not load) so the 15s poll never serves the 15s fresh cache.
     const timer = setInterval(async () => {
       try {
-        await this.load(symbol, tf);
+        await this.loadNetwork(symbol, tf);
         const bars = this.history.get(key)!;
         if (bars.length) this.listeners.get(key)?.forEach((c) => cb({ bars, lastBar: bars[bars.length - 1], isRealtime: false }));
       } catch { /* transient — next poll retries */ }

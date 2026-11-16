@@ -977,13 +977,25 @@ export function TerminalChart({
       const last = bars[bars.length - 1];
       if (!last) { el.style.display = "none"; return; }
       const tf = TF_SECONDS[timeframe];
-      const remain = tf - (Math.floor(Date.now() / 1000) - last.time);
-      if (remain <= 0 || remain > tf) { el.style.display = "none"; return; }
+      // next-bar target: month-length aware for 1M (30d constant is off by
+      // up to 1.5 days), tf-grid math for everything else
+      let remain: number;
+      if (timeframe === "1M") {
+        const d = new Date();
+        remain = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000 - Date.now() / 1000);
+      } else {
+        remain = tf - (Math.floor(Date.now() / 1000) - last.time);
+      }
+      if (remain <= 0 || remain > tf + 4 * 86400) { el.style.display = "none"; return; }
       el.style.display = "";
-      // h:mm:ss for daily+ timeframes, mm:ss otherwise
-      el.textContent = remain >= 3600
-        ? `${Math.floor(remain / 3600)}:${String(Math.floor((remain % 3600) / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`
-        : `${String(Math.floor(remain / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`;
+      // "Xd hh:mm" for daily+ bars, mm:ss / h:mm:ss otherwise
+      if (remain >= 86400) {
+        el.textContent = `${Math.floor(remain / 86400)}d ${String(Math.floor((remain % 86400) / 3600)).padStart(2, "0")}:${String(Math.floor((remain % 3600) / 60)).padStart(2, "0")}`;
+      } else {
+        el.textContent = remain >= 3600
+          ? `${Math.floor(remain / 3600)}:${String(Math.floor((remain % 3600) / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`
+          : `${String(Math.floor(remain / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`;
+      }
     };
     tick();
     const id = setInterval(tick, 1000);
