@@ -5,7 +5,7 @@
  * Clients have NO direct Firestore access to the trading domain.
  */
 import { authedFetch } from "@/lib/api";
-import type { Quote, Side, OrderKind } from "@shared/trading-engine";
+import type { Quote, Side, OrderKind, PropRules, RuleEvaluation, AccountStatus } from "@shared/trading-engine";
 
 export interface TradingMetrics {
   balance: number;
@@ -27,6 +27,8 @@ export interface ServerPosition {
   sl: number | null;
   tp: number | null;
   openedAt: number;
+  /** accumulated overnight swap (USD, signed) — server-settled */
+  swapAccrued?: number;
   comment?: string | null;
 }
 
@@ -45,12 +47,20 @@ export interface ServerOrder {
 export interface ServerAccount {
   id: string;
   label: string;
-  type: "DEMO";
+  type: "DEMO" | "CHALLENGE";
   balance: number;
   startingBalance: number;
   leverage: number;
   createdAt: number;
+  status: AccountStatus;
+  rules: PropRules | null;
+  failedReason: string | null;
+  peakEquity: number;
+  /** distinct UTC days with closed trades */
+  tradingDays: number;
   dayStart: Record<string, number>;
+  /** live rule evaluation (null for DEMO accounts) */
+  ruleState: RuleEvaluation | null;
   positions: ServerPosition[];
   orders: ServerOrder[];
   metrics: TradingMetrics;
@@ -66,6 +76,8 @@ export interface ServerTrade {
   entry: number;
   exit: number;
   pnl: number;
+  /** overnight swap charged over the life of the position (USD) */
+  swap: number;
   reason: string;
   openedAt: number;
   closedAt: number;
@@ -83,11 +95,20 @@ export interface PlaceOrderArgs {
   comment?: string;
 }
 
+export interface CreateAccountArgs {
+  label?: string;
+  startingBalance?: number;
+  /** leverage for margin math (clamped server-side, default 100) */
+  leverage?: number;
+  /** prop-firm rules → CHALLENGE account; omit for a plain DEMO */
+  rules?: PropRules | null;
+}
+
 export const tradingApi = {
   getAccounts: () => authedFetch<{ accounts: ServerAccount[] }>("/api/trading?action=accounts").then((r) => r.accounts),
 
-  createAccount: (label?: string, startingBalance?: number) =>
-    authedFetch<{ account: ServerAccount }>("/api/trading?action=create", { label, startingBalance }).then((r) => r.account),
+  createAccount: (args: CreateAccountArgs = {}) =>
+    authedFetch<{ account: ServerAccount }>("/api/trading?action=create", args).then((r) => r.account),
 
   placeOrder: (args: PlaceOrderArgs) =>
     authedFetch<{ position: ServerPosition | null; order: ServerOrder | null; entry: number; quote: Quote }>(
@@ -100,8 +121,16 @@ export const tradingApi = {
       "/api/trading?action=close", { accountId, positionId, lots: lots ?? null },
     ),
 
+  closeAll: (accountId: string) =>
+    authedFetch<{ closed: ServerTrade[]; metrics: TradingMetrics }>(
+      "/api/trading?action=close-all", { accountId },
+    ),
+
   modifyPosition: (accountId: string, positionId: string, patch: { sl?: number | null; tp?: number | null }) =>
     authedFetch<{ ok: boolean }>("/api/trading?action=modify", { accountId, positionId, ...patch }),
+
+  modifyOrder: (accountId: string, orderId: string, patch: { price?: number; lots?: number; sl?: number | null; tp?: number | null }) =>
+    authedFetch<{ ok: boolean }>("/api/trading?action=modify-order", { accountId, orderId, ...patch }),
 
   cancelOrder: (accountId: string, orderId: string) =>
     authedFetch<{ ok: boolean }>("/api/trading?action=cancel", { accountId, orderId }),

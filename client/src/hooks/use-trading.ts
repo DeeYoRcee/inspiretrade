@@ -9,7 +9,7 @@
  * consumer (TerminalPage, TradingPanel, dashboards) — a single poller.
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { tradingApi, type ServerAccount, type ServerTrade, type TradingMetrics } from "@/lib/trading-api";
+import { tradingApi, type ServerAccount, type ServerTrade, type TradingMetrics, type CreateAccountArgs } from "@/lib/trading-api";
 import type { Side, OrderKind } from "@shared/trading-engine";
 import { useAuth } from "./use-auth";
 
@@ -55,7 +55,7 @@ async function refresh(silent = true) {
     let accounts = await tradingApi.getAccounts();
     if (!accounts.length) {
       // first visit — provision the default $100,000 virtual account
-      const acc = await tradingApi.createAccount("DEMO", 100000);
+      const acc = await tradingApi.createAccount({ label: "DEMO", startingBalance: 100000 });
       accounts = [acc];
     }
     const stored = currentUid ? localStorage.getItem(storageKey(currentUid)) : null;
@@ -132,19 +132,29 @@ export const tradingActions = {
     if (!acc) return Promise.resolve(null);
     return run(() => tradingApi.closePosition(acc.id, positionId, lots));
   },
+  closeAll() {
+    const acc = activeAccount();
+    if (!acc) return Promise.resolve(null);
+    return run(() => tradingApi.closeAll(acc.id));
+  },
   modifyPosition(positionId: string, patchValues: { sl?: number | null; tp?: number | null }) {
     const acc = activeAccount();
     if (!acc) return Promise.resolve(null);
     return run(() => tradingApi.modifyPosition(acc.id, positionId, patchValues));
+  },
+  modifyOrder(orderId: string, patchValues: { price?: number; lots?: number; sl?: number | null; tp?: number | null }) {
+    const acc = activeAccount();
+    if (!acc) return Promise.resolve(null);
+    return run(() => tradingApi.modifyOrder(acc.id, orderId, patchValues));
   },
   cancelOrder(orderId: string) {
     const acc = activeAccount();
     if (!acc) return Promise.resolve(null);
     return run(() => tradingApi.cancelOrder(acc.id, orderId));
   },
-  createAccount(label?: string, startingBalance?: number) {
+  createAccount(args: CreateAccountArgs = {}) {
     return run(async () => {
-      const acc = await tradingApi.createAccount(label, startingBalance);
+      const acc = await tradingApi.createAccount(args);
       patch({ activeId: acc.id });
       if (currentUid) localStorage.setItem(storageKey(currentUid), acc.id);
       return acc;
@@ -181,7 +191,9 @@ export interface UseTrading extends TradingState {
   setActiveId: (id: string) => void;
   placeOrder: typeof tradingActions.placeOrder;
   closePosition: typeof tradingActions.closePosition;
+  closeAll: typeof tradingActions.closeAll;
   modifyPosition: typeof tradingActions.modifyPosition;
+  modifyOrder: typeof tradingActions.modifyOrder;
   cancelOrder: typeof tradingActions.cancelOrder;
   createAccount: typeof tradingActions.createAccount;
   resetAccount: typeof tradingActions.resetAccount;
@@ -211,7 +223,9 @@ export function useTrading(): UseTrading {
     setActiveId: tradingActions.setActiveId,
     placeOrder: tradingActions.placeOrder,
     closePosition: tradingActions.closePosition,
+    closeAll: tradingActions.closeAll,
     modifyPosition: tradingActions.modifyPosition,
+    modifyOrder: tradingActions.modifyOrder,
     cancelOrder: tradingActions.cancelOrder,
     createAccount: tradingActions.createAccount,
     resetAccount: tradingActions.resetAccount,

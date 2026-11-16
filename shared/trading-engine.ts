@@ -305,3 +305,289 @@ export function evaluateAccount(args: {
 export function dayKey(ts: number = Date.now()): string {
   return new Date(ts).toISOString().slice(0, 10);
 }
+
+// ---------------------------------------------------------------------------
+// Overnight swap — simulated financing cost, USD per 1.00 lot per night.
+// Negative = the holder pays; positive = the holder receives. These are
+// simulation parameters (configurable constants), charged per UTC midnight
+// crossed while the position stays open (no triple-Wednesday modeling).
+// ---------------------------------------------------------------------------
+
+export const SWAP_USD_PER_LOT_NIGHT: Record<string, { long: number; short: number }> = {
+  XAUUSD: { long: -8.4, short: 1.6 },
+  XAGUSD: { long: -7.5, short: -1.0 },
+  EURUSD: { long: -5.3, short: 3.1 },
+  GBPUSD: { long: -3.8, short: 1.4 },
+  USDJPY: { long: 8.9, short: -13.0 },
+  AUDUSD: { long: -6.6, short: 4.0 },
+  NZDUSD: { long: -5.9, short: 2.9 },
+  USDCAD: { long: -2.1, short: -7.9 },
+  USDCHF: { long: 6.4, short: -11.2 },
+  BTCUSD: { long: -32.0, short: -18.0 },
+  ETHUSD: { long: -21.0, short: -12.0 },
+  SOLUSD: { long: -8.0, short: -5.0 },
+  XRPUSD: { long: -5.0, short: -3.0 },
+  NAS100: { long: -2.9, short: 1.1 },
+  US30: { long: -3.7, short: 1.3 },
+  SPX500: { long: -1.9, short: 0.7 },
+  GER40: { long: -1.6, short: -0.7 },
+  UK100: { long: -8.3, short: -2.4 },
+};
+
+/** Whole UTC midnights crossed between two timestamps. */
+export function nightsHeld(openedAt: number, now: number): number {
+  if (!(now > openedAt)) return 0;
+  const d1 = new Date(openedAt);
+  const d2 = new Date(now);
+  const u1 = Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth(), d1.getUTCDate());
+  const u2 = Date.UTC(d2.getUTCFullYear(), d2.getUTCMonth(), d2.getUTCDate());
+  return Math.floor((u2 - u1) / 86_400_000);
+}
+
+/** Swap (USD, cents-accurate) owed for `nights` whole nights on `lots`. */
+export function swapForPosition(
+  spec: InstrumentSpec, side: Side, lots: number, openedAt: number, now: number = Date.now(),
+): number {
+  const rate = SWAP_USD_PER_LOT_NIGHT[spec.symbol];
+  if (!rate) return 0;
+  const nights = nightsHeld(openedAt, now);
+  if (nights <= 0) return 0;
+  const perNight = side === "buy" ? rate.long : rate.short;
+  return Math.round(perNight * lots * nights * 100) / 100;
+}
+
+// ---------------------------------------------------------------------------
+// Prop-firm rules — pure rule engine (server is the only enforcer).
+//
+// Hard breaches (daily loss / overall drawdown) terminate the account: the
+// server force-closes every position and cancels every pending order and
+// sets status "failed". Passing requires the profit target, the minimum
+// trading-day count and a flat book (all positions closed) at the same time.
+// ---------------------------------------------------------------------------
+
+export type AccountStatus = "active" | "passed" | "failed";
+
+export interface PropRules {
+  /** Max equity loss in one UTC day, % of the day-start balance. null = off. */
+  dailyLossLimitPct: number | null;
+  /** Max loss from the starting balance, % (static drawdown). null = off. */
+  maxDrawdownPct: number | null;
+  /** Profit target, % of the starting balance. null = no target. */
+  profitTargetPct: number | null;
+  /** Distinct UTC days with at least one closed trade required to pass. */
+  minTradingDays: number;
+  /** Max combined open lots (positions + pending orders). null = off. */
+  maxLotsTotal: number | null;
+  /** Max lots per single order. null = off. */
+  maxLotsPerOrder: number | null;
+  /** Max open positions + pending orders combined. null = off. */
+  maxOpenPositions: number | null;
+}
+
+export const DEFAULT_PROP_RULES: PropRules = {
+  dailyLossLimitPct: 5,
+  maxDrawdownPct: 10,
+  profitTargetPct: 10,
+  minTradingDays: 3,
+  maxLotsTotal: 10,
+  maxLotsPerOrder: 5,
+  maxOpenPositions: 10,
+};
+
+export interface RuleEvaluation {
+  status: AccountStatus;
+  failedReason: string | null;
+  /** hard breach — server must force-close everything and terminate */
+  hardBreach: boolean;
+  dailyBreach: boolean;
+  overallBreach: boolean;
+  /** equity ≥ target (pass may still need trading days / flat book) */
+  targetReached: boolean;
+  /** all pass conditions met right now */
+  canPass: boolean;
+  dailyLossUsd: number;
+  dailyLossLimitUsd: number | null;
+  drawdownUsd: number;
+  maxDrawdownUsd: number | null;
+  targetUsd: number | null;
+  tradingDays: number;
+  peakEquity: number;
+  /** 0..1+ fill levels for progress bars */
+  dailyLossUsed: number;
+  drawdownUsed: number;
+  targetProgress: number;
+}
+
+/**
+ * Evaluate prop rules against the live account state. Pure: no mutation —
+ * the caller applies status changes and force-closes when hardBreach is set.
+ * Accounts without rules (DEMO) get a neutral pass-through evaluation.
+ */
+export function evaluatePropRules(args: {
+  rules: PropRules | null;
+  status: AccountStatus;
+  balance: number;
+  equity: number;
+  startingBalance: number;
+  dayStartBalance: number;
+  peakEquity: number;
+  tradingDays: number;
+  openPositions: number;
+  openLots: number;
+}): RuleEvaluation {
+  const { rules, startingBalance, equity, dayStartBalance, tradingDays, openPositions } = args;
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const peakEquity = Math.max(args.peakEquity, equity);
+
+  const out: RuleEvaluation = {
+    status: args.status,
+    failedReason: null,
+    hardBreach: false,
+    dailyBreach: false,
+    overallBreach: false,
+    targetReached: false,
+    canPass: false,
+    dailyLossUsd: 0,
+    dailyLossLimitUsd: null,
+    drawdownUsd: 0,
+    maxDrawdownUsd: null,
+    targetUsd: null,
+    tradingDays,
+    peakEquity: r2(peakEquity),
+    dailyLossUsed: 0,
+    drawdownUsed: 0,
+    targetProgress: 0,
+  };
+
+  if (!rules) return out; // DEMO account — nothing to enforce
+
+  // daily loss: equity below the day-start balance (includes floating P/L)
+  if (rules.dailyLossLimitPct != null && rules.dailyLossLimitPct > 0) {
+    const limit = r2(dayStartBalance * (rules.dailyLossLimitPct / 100));
+    const loss = r2(dayStartBalance - equity);
+    out.dailyLossUsd = loss;
+    out.dailyLossLimitUsd = limit;
+    out.dailyLossUsed = limit > 0 ? Math.max(0, loss / limit) : 0;
+    if (loss >= limit && limit > 0) {
+      out.dailyBreach = true;
+      out.failedReason = `Daily loss limit breached: -$${loss.toFixed(2)} of -$${limit.toFixed(2)} allowed today`;
+    }
+  }
+
+  // overall drawdown: equity below the starting balance (static)
+  if (rules.maxDrawdownPct != null && rules.maxDrawdownPct > 0) {
+    const limit = r2(startingBalance * (rules.maxDrawdownPct / 100));
+    const dd = r2(startingBalance - equity);
+    out.drawdownUsd = dd;
+    out.maxDrawdownUsd = limit;
+    out.drawdownUsed = limit > 0 ? Math.max(0, dd / limit) : 0;
+    if (dd >= limit && limit > 0) {
+      out.overallBreach = true;
+      out.failedReason = `Maximum drawdown breached: -$${dd.toFixed(2)} of -$${limit.toFixed(2)} allowed overall`;
+    }
+  }
+
+  // profit target (needs the book flat and the minimum trading days to pass)
+  if (rules.profitTargetPct != null && rules.profitTargetPct > 0) {
+    const target = r2(startingBalance * (rules.profitTargetPct / 100));
+    out.targetUsd = target;
+    out.targetReached = equity >= startingBalance + target;
+    out.targetProgress = target > 0 ? Math.max(0, (equity - startingBalance) / target) : 0;
+    out.canPass = out.targetReached
+      && tradingDays >= Math.max(0, rules.minTradingDays)
+      && openPositions === 0;
+  }
+
+  out.hardBreach = out.dailyBreach || out.overallBreach;
+  if (out.hardBreach) {
+    out.status = "failed";
+    out.canPass = false;
+  } else if (out.canPass && args.status !== "failed") {
+    out.status = "passed";
+  } else if (args.status !== "failed") {
+    out.status = "active";
+  }
+  return out;
+}
+
+/** Distinct UTC days that produced at least one closed trade. */
+export function tradingDayCount(trades: { closedAt: number }[]): number {
+  const days = new Set<string>();
+  for (const t of trades) days.add(dayKey(t.closedAt));
+  return days.size;
+}
+
+// ---------------------------------------------------------------------------
+// Order/position modification validation — against the LIVE quote
+// (MT5 semantics: an SL beyond the entry locking profit is legal).
+// ---------------------------------------------------------------------------
+
+export interface ModifyValidation { ok: boolean; error?: string }
+
+/** Validate new SL/TP for an OPEN position against its live close price. */
+export function validatePositionModify(args: {
+  pos: Pick<PositionLike, "side" | "entry">;
+  quote: Quote;
+  sl?: number | null;
+  tp?: number | null;
+}): ModifyValidation {
+  const { pos, quote } = args;
+  const closePx = exitPriceFor(pos.side, quote);
+  const sl = args.sl ?? null;
+  const tp = args.tp ?? null;
+  if (sl != null && (!Number.isFinite(sl) || sl <= 0)) return { ok: false, error: "Invalid Stop Loss" };
+  if (tp != null && (!Number.isFinite(tp) || tp <= 0)) return { ok: false, error: "Invalid Take Profit" };
+  if (pos.side === "buy") {
+    if (sl != null && sl >= closePx) return { ok: false, error: "For a BUY, Stop Loss must be below the current Bid price" };
+    if (tp != null && tp <= closePx) return { ok: false, error: "For a BUY, Take Profit must be above the current Bid price" };
+  } else {
+    if (sl != null && sl <= closePx) return { ok: false, error: "For a SELL, Stop Loss must be above the current Ask price" };
+    if (tp != null && tp >= closePx) return { ok: false, error: "For a SELL, Take Profit must be below the current Ask price" };
+  }
+  return { ok: true };
+}
+
+/** Validate a pending-order modification against the live quote. */
+export function validateOrderModify(args: {
+  order: Pick<OrderLike, "side" | "kind" | "price">;
+  quote: Quote;
+  price?: number | null;
+  sl?: number | null;
+  tp?: number | null;
+}): ModifyValidation {
+  const { order, quote } = args;
+  const price = args.price != null ? Number(args.price) : order.price;
+  if (!Number.isFinite(price) || price <= 0) return { ok: false, error: "Invalid trigger price" };
+  if (order.kind === "limit") {
+    if (order.side === "buy" && price >= quote.ask) return { ok: false, error: "Buy limit must stay below the current price" };
+    if (order.side === "sell" && price <= quote.bid) return { ok: false, error: "Sell limit must stay above the current price" };
+  } else {
+    if (order.side === "buy" && price <= quote.ask) return { ok: false, error: "Buy stop must stay above the current price" };
+    if (order.side === "sell" && price >= quote.bid) return { ok: false, error: "Sell stop must stay below the current price" };
+  }
+  const ref = { side: order.side, entry: price };
+  const v = validatePositionModify({ pos: ref, quote, sl: args.sl ?? null, tp: args.tp ?? null });
+  return v;
+}
+
+/** Prop-rule guard for new orders (applies on top of margin validation). */
+export function validateAgainstRules(args: {
+  rules: PropRules | null;
+  lots: number;
+  openPositions: number;
+  openOrders: number;
+  openLots: number;
+}): ModifyValidation & { needsSlot?: boolean } {
+  const { rules } = args;
+  if (!rules) return { ok: true };
+  if (rules.maxLotsPerOrder != null && args.lots > rules.maxLotsPerOrder) {
+    return { ok: false, error: `Max lot size per order is ${rules.maxLotsPerOrder}` };
+  }
+  if (rules.maxLotsTotal != null && args.openLots + args.lots > rules.maxLotsTotal + 1e-9) {
+    return { ok: false, error: `Max combined volume is ${rules.maxLotsTotal} lots (you have ${Math.round(args.openLots * 100) / 100})` };
+  }
+  if (rules.maxOpenPositions != null && args.openPositions + args.openOrders + 1 > rules.maxOpenPositions) {
+    return { ok: false, error: `Max ${rules.maxOpenPositions} open positions/orders allowed` };
+  }
+  return { ok: true };
+}

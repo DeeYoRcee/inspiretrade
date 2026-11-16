@@ -13,13 +13,15 @@
  *
  *   GET  ?action=accounts                 → accounts + live metrics + quotes
  *   GET  ?action=history&accountId=&limit → immutable fills ledger
- *   POST ?action=create                   { label?, startingBalance? }
+ *   POST ?action=create                   { label?, startingBalance?, leverage?, rules? }
  *   POST ?action=order                    { accountId, symbol, side, lots, kind: market|limit|stop, price?, sl?, tp? }
  *   POST ?action=close                    { accountId, positionId, lots? }   (lots? = partial close)
+ *   POST ?action=close-all                { accountId }                      (close every open position)
  *   POST ?action=modify                   { accountId, positionId, sl?, tp? }
+ *   POST ?action=modify-order             { accountId, orderId, price?, lots?, sl?, tp? }
  *   POST ?action=cancel                   { accountId, orderId }
- *   POST ?action=evaluate                 { accountId }   — SL/TP/pending/stop-out (idempotent)
- *   POST ?action=reset                    { accountId }   — DEMO reset to starting balance
+ *   POST ?action=evaluate                 { accountId }   — SL/TP/pending/stop-out/rules (idempotent)
+ *   POST ?action=reset                    { accountId }   — reset to starting balance (fresh challenge attempt)
  *   (no action)                           → health probe
  */
 import { handle, requireUser, json, assertPost, type AuthedUser } from "../lib/firebase";
@@ -73,7 +75,10 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     json(res, 200, { trades: await store.history(user.uid, accountId, limit) });
   },
   async create(_req, res, user, body) {
-    json(res, 200, { account: await store.createAccount(user.uid, body.label, body.startingBalance) });
+    json(res, 200, { account: await store.createAccount(user.uid, body.label, body.startingBalance, {
+      leverage: body.leverage != null ? Number(body.leverage) : null,
+      rules: body.rules ?? null,
+    }) });
   },
   async order(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
@@ -99,6 +104,10 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     );
     json(res, 200, result);
   },
+  async "close-all"(req, res, user, body) {
+    await requireAccountAccess(user, user.uid, requireAccountId(body));
+    json(res, 200, await store.closeAll(user.uid, String(body.accountId)));
+  },
   async modify(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.positionId) throw Object.assign(new Error("positionId is required"), { status: 400 });
@@ -108,6 +117,18 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
       body.tp !== undefined ? body.tp : undefined,
     );
     json(res, 200, result);
+  },
+  async "modify-order"(req, res, user, body) {
+    await requireAccountAccess(user, user.uid, requireAccountId(body));
+    if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
+    const numOrNull = (v: unknown) => (v == null || v === "" ? null : Number(v));
+    const numOrUndef = (v: unknown) => (v == null || v === "" ? undefined : Number(v));
+    json(res, 200, await store.modifyOrder(user.uid, String(body.accountId), String(body.orderId), {
+      price: numOrUndef(body.price),
+      lots: numOrUndef(body.lots),
+      sl: body.sl !== undefined ? numOrNull(body.sl) : undefined,
+      tp: body.tp !== undefined ? numOrNull(body.tp) : undefined,
+    }));
   },
   async cancel(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));

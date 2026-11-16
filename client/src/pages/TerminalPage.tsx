@@ -1,11 +1,10 @@
 /**
- * InspireTrade Terminal — the main trading workspace page (REBUILT).
+ * InspireTrade Terminal — the main trading workspace page.
  *
- * The old 1,287-line monolith (drawing tools, indicators, replay, screener,
- * heatmap, MTF, templates, …) is deleted. This page is the real product:
  *   - live REAL-data chart (PriceChart: candles + volume, position lines)
+ *   - order ticket (TradingPanel) on the right
+ *   - TradingBlotter below the chart: Positions / Orders / History / Statistics
  *   - account strip driven by the SERVER-authoritative engine (/api/trading)
- *   - TradingPanel: market/limit/stop orders, SL/TP, positions, history
  * Every mutation hits the server; the client never touches balances.
  */
 import { useEffect, useMemo, useState } from "react";
@@ -13,6 +12,8 @@ import { INSTRUMENTS, TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import { useTrading } from "@/hooks/use-trading";
 import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
+import { TradingBlotter } from "@/components/terminal/TradingBlotter";
+import { NewAccountDialog } from "@/components/terminal/NewAccountDialog";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -21,7 +22,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, RotateCcw } from "lucide-react";
+import { Plus, RefreshCw, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SYMBOL_KEY = "it_terminal_symbol";
@@ -39,6 +40,7 @@ export default function TerminalPage() {
     accounts, account, positions, orders, metrics,
     loading, busy, setActiveId, resetAccount, refreshNow,
   } = useTrading();
+  const [newAccountOpen, setNewAccountOpen] = useState(false);
 
   const [symbol, setSymbol] = useState(() => localStorage.getItem(SYMBOL_KEY) || "BTCUSD");
   const [timeframe, setTimeframe] = useState<Timeframe>(
@@ -75,20 +77,25 @@ export default function TerminalPage() {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-4.25rem)] min-h-[560px] flex-col gap-2 p-2">
+    <div className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
       <Toolbar
         symbol={symbol} onSymbolChange={setSymbol}
         timeframe={timeframe} onTimeframeChange={setTimeframe}
         accounts={accounts} activeId={account?.id ?? null} onAccountChange={setActiveId}
         metrics={metrics} busy={busy} onRefresh={refreshNow}
         account={account} onReset={resetAccount}
+        onNewAccount={() => setNewAccountOpen(true)}
       />
-      <div className="flex min-h-0 flex-1 gap-2">
+      {/* chart + order ticket */}
+      <div className="flex min-h-0 flex-[3] gap-2">
         <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
           <PriceChart symbol={symbol} timeframe={timeframe} marks={marks} />
         </div>
-        <TradingPanel symbol={symbol} className="w-[380px] shrink-0 overflow-y-auto" />
+        <TradingPanel symbol={symbol} className="w-[340px] shrink-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60" />
       </div>
+      {/* professional blotter below the chart */}
+      <TradingBlotter symbol={symbol} className="h-[260px] shrink-0" />
+      <NewAccountDialog open={newAccountOpen} onClose={() => setNewAccountOpen(false)} />
     </div>
   );
 }
@@ -100,7 +107,7 @@ export default function TerminalPage() {
 function Toolbar({
   symbol, onSymbolChange, timeframe, onTimeframeChange,
   accounts, activeId, onAccountChange,
-  metrics, busy, onRefresh, account, onReset,
+  metrics, busy, onRefresh, account, onReset, onNewAccount,
 }: {
   symbol: string; onSymbolChange: (s: string) => void;
   timeframe: Timeframe; onTimeframeChange: (tf: Timeframe) => void;
@@ -109,6 +116,7 @@ function Toolbar({
   metrics: { balance: number; equity: number; floatingPnl: number; usedMargin: number; freeMargin: number; marginLevel: number | null } | null;
   busy: boolean; onRefresh: () => void;
   account: { id: string; label: string } | null; onReset: () => void;
+  onNewAccount: () => void;
 }) {
   const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const pnl = metrics?.floatingPnl ?? 0;
@@ -180,6 +188,9 @@ function Toolbar({
       </div>
 
       <div className="ml-auto flex items-center gap-1.5">
+        <Button variant="outline" size="icon" onClick={onNewAccount} title="New DEMO / challenge account">
+          <Plus className="h-4 w-4" />
+        </Button>
         <Button variant="outline" size="icon" onClick={onRefresh} disabled={busy} title="Refresh account">
           <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
         </Button>
@@ -194,7 +205,8 @@ function Toolbar({
               <AlertDialogTitle>Reset account?</AlertDialogTitle>
               <AlertDialogDescription>
                 All open positions, orders and history of “{account?.label}” are wiped and the balance
-                goes back to its starting amount. This cannot be undone.
+                goes back to its starting amount. A failed challenge returns to Active status.
+                This cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

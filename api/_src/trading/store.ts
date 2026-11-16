@@ -12,8 +12,10 @@ import { HttpError, firestore } from "../lib/firebase";
 import { getInstrument } from "../../../shared/terminal";
 import {
   DEFAULT_LEVERAGE, MIN_LOTS, MAX_LOTS, computeMetrics, evaluateAccount, exitPriceFor,
-  positionPnlUsd, validateNewOrder, dayKey,
+  positionPnlUsd, validateNewOrder, dayKey, evaluatePropRules, swapForPosition, nightsHeld,
+  validateAgainstRules, validateOrderModify, validatePositionModify,
   type Quote, type PositionLike, type OrderLike, type OrderKind, type Side,
+  type PropRules, type AccountStatus, type RuleEvaluation,
 } from "../../../shared/trading-engine";
 import { getQuotes, withConversionSymbols } from "./prices";
 
@@ -21,6 +23,7 @@ const MAX_ACCOUNTS = 10;
 const MAX_OPEN_POSITIONS = 30;
 const MAX_PENDING_ORDERS = 30;
 const TRADE_HISTORY_KEEP = 500;
+const ALLOWED_LEVERAGES = [10, 20, 30, 50, 100, 200, 500];
 
 // ---------------------------------------------------------------------------
 // Firestore handles
@@ -34,19 +37,29 @@ const tradeCol = (uid: string, aid: string) => accountsCol(uid).doc(aid).collect
 
 interface AccountDoc {
   label: string;
-  type: "DEMO";
+  type: "DEMO" | "CHALLENGE";
   balance: number;
   startingBalance: number;
   leverage: number;
-  status: "active";
+  status: AccountStatus;
+  /** prop-firm rules; null/absent for DEMO accounts */
+  rules: PropRules | null;
+  /** failed hard-breach reason (status failed) */
+  failedReason: string | null;
+  /** high-water mark for stats */
+  peakEquity: number;
+  /** dayKey → closed trades that day (minimum-trading-days rule) */
+  tradingDays: Record<string, number>;
   createdAt: number;
   dayStart: Record<string, number>;
 }
 
+type StorePosition = PositionLike & { comment?: string | null; swapAccrued?: number; swapNights?: number };
+
 interface AccountState {
   id: string;
   account: AccountDoc;
-  positions: (PositionLike & { comment?: string })[];
+  positions: StorePosition[];
   orders: OrderLike[];
 }
 
@@ -77,22 +90,47 @@ function requireQuote(quotes: Record<string, Quote>, symbol: string): Quote {
 // Evaluation application (shared by every mutation)
 // ---------------------------------------------------------------------------
 
-interface CloseOutcome { symbol: string; side: Side; lots: number; entry: number; exit: number; pnl: number; reason: string; openedAt: number; closedAt: number; positionId: string }
+interface CloseOutcome { symbol: string; side: Side; lots: number; entry: number; exit: number; pnl: number; swap: number; reason: string; openedAt: number; closedAt: number; positionId: string }
 
 function writeTradeDoc(tx: any, uid: string, aid: string, o: CloseOutcome) {
   tx.set(tradeCol(uid, aid).doc(), { ...o });
 }
 
 /**
+ * Settle overnight swap owed by one position into the account balance
+ * (whole UTC nights crossed minus the already-charged nights). Mutates the
+ * position's swapAccrued/swapNights and the state balance in place; returns
+ * the position's total accumulated swap (USD, signed).
+ */
+function settleSwap(state: AccountState, pos: StorePosition, now: number): number {
+  const spec = getInstrument(pos.symbol);
+  if (!spec) return pos.swapAccrued ?? 0;
+  const nights = Math.max(nightsHeld(pos.openedAt, now), 0);
+  const charged = pos.swapNights ?? 0;
+  if (nights <= charged) return pos.swapAccrued ?? 0;
+  const owed = swapForPosition(spec, pos.side, pos.lots, pos.openedAt + charged * 86_400_000, now);
+  state.account.balance = Math.round((state.account.balance + owed) * 100) / 100;
+  pos.swapAccrued = Math.round(((pos.swapAccrued ?? 0) + owed) * 100) / 100;
+  pos.swapNights = nights;
+  return pos.swapAccrued;
+}
+
+/**
  * Apply SL/TP exits + stop-out + pending fills to the in-transaction state.
  * Mutates state.positions / state.orders / state.account.balance and queues
  * all Firestore writes. Returns the realized close outcomes and fill count.
+ *
+ * Also runs, in order: (1) overnight swap accrual — whole UTC nights crossed
+ * since the last charge are settled into the balance; (2) prop-rule checks —
+ * a hard breach force-closes the book, cancels pendings and fails the
+ * account, a satisfied target + flat book + enough trading days passes it.
  */
 function applyEvaluationTx(
   tx: any, uid: string, aid: string, state: AccountState,
   quotes: Record<string, Quote>, prices: Record<string, number>,
-): { closed: CloseOutcome[]; filled: number } {
+): { closed: CloseOutcome[]; filled: number; ruleState: RuleEvaluation | null } {
   const leverage = state.account.leverage || DEFAULT_LEVERAGE;
+  const now = Date.now();
   const result = evaluateAccount({
     balance: state.account.balance,
     positions: state.positions,
@@ -103,8 +141,8 @@ function applyEvaluationTx(
   });
   const closed: CloseOutcome[] = [];
 
-  // stop-out force-closes everything; otherwise close the SL/TP hits
-  const toClose: { pos: PositionLike; exit: number; reason: string }[] = [];
+  // ---- stop-out force-closes everything; otherwise close the SL/TP hits --
+  const toClose: { pos: StorePosition; exit: number; reason: string }[] = [];
   if (result.stopOut) {
     for (const p of state.positions) {
       const q = requireQuote(quotes, p.symbol);
@@ -118,38 +156,109 @@ function applyEvaluationTx(
   }
   for (const { pos, exit, reason } of toClose) {
     const spec = getInstrument(pos.symbol)!;
+    const swap = settleSwap(state, pos, now);
     const pnl = positionPnlUsd(spec, pos.side, pos.lots, pos.entry, exit, prices);
     state.account.balance = Math.round((state.account.balance + pnl) * 100) / 100;
     closed.push({
       symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, exit,
-      pnl, reason, openedAt: pos.openedAt, closedAt: Date.now(), positionId: pos.id,
+      pnl, swap, reason, openedAt: pos.openedAt, closedAt: now, positionId: pos.id,
     });
     tx.delete(posCol(uid, aid).doc(pos.id));
     state.positions = state.positions.filter((p) => p.id !== pos.id);
   }
-  for (const o of closed) writeTradeDoc(tx, uid, aid, o);
+  for (const o of closed) {
+    writeTradeDoc(tx, uid, aid, o);
+    bumpTradingDay(state.account, o.closedAt);
+  }
 
+  // ---- pending fills -------------------------------------------------------
   for (const f of result.fills) {
     const order = state.orders.find((o) => o.id === f.orderId);
     if (!order) continue;
     const posRef = posCol(uid, aid).doc();
-    const pos: PositionLike = {
+    const pos: StorePosition = {
       id: posRef.id, symbol: order.symbol, side: order.side, lots: order.lots,
-      entry: f.entry, sl: order.sl, tp: order.tp, openedAt: Date.now(),
+      entry: f.entry, sl: order.sl, tp: order.tp, openedAt: now,
+      swapAccrued: 0, swapNights: 0,
     };
-    tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, openedAt: pos.openedAt });
+    tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
     tx.delete(ordCol(uid, aid).doc(order.id));
     state.orders = state.orders.filter((o) => o.id !== order.id);
     state.positions.push(pos);
   }
 
-  // daily balance snapshot (for daily-drawdown rules)
+  // ---- swap accrual for positions that stay open ---------------------------
+  for (const p of state.positions) {
+    const spec = getInstrument(p.symbol);
+    if (!spec) continue;
+    const nights = Math.max(nightsHeld(p.openedAt, now), 0);
+    if (nights > (p.swapNights ?? 0)) {
+      settleSwap(state, p, now);
+      tx.update(posCol(uid, aid).doc(p.id), { swapAccrued: p.swapAccrued, swapNights: p.swapNights });
+    }
+  }
+
+  // ---- daily balance snapshot (for daily-drawdown rules) -------------------
   const today = dayKey();
   const dayStart = { ...(state.account.dayStart || {}) };
   if (dayStart[today] == null) dayStart[today] = state.account.balance;
   state.account.dayStart = dayStart;
 
-  return { closed, filled: result.fills.length };
+  // ---- prop-rule enforcement ----------------------------------------------
+  const rules = state.account.rules ?? null;
+  if (rules && state.account.status !== "failed") {
+    const leverage2 = state.account.leverage || DEFAULT_LEVERAGE;
+    const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage2);
+    const ruleState = evaluatePropRules({
+      rules,
+      status: state.account.status || "active",
+      balance: state.account.balance,
+      equity: metrics.equity,
+      startingBalance: state.account.startingBalance,
+      dayStartBalance: dayStart[today] ?? state.account.balance,
+      peakEquity: state.account.peakEquity ?? state.account.balance,
+      tradingDays: Object.keys(state.account.tradingDays || {}).length,
+      openPositions: state.positions.length,
+      openLots: state.positions.reduce((s, p) => s + p.lots, 0),
+    });
+    state.account.peakEquity = ruleState.peakEquity;
+    state.account.status = ruleState.status;
+    state.account.failedReason = ruleState.status === "failed" ? ruleState.failedReason : null;
+
+    if (ruleState.hardBreach) {
+      // terminate the account: close the whole book at market, kill pendings
+      for (const p of [...state.positions]) {
+        const q = requireQuote(quotes, p.symbol);
+        const spec = getInstrument(p.symbol)!;
+        const swap = settleSwap(state, p, now);
+        const exit = exitPriceFor(p.side, q);
+        const pnl = positionPnlUsd(spec, p.side, p.lots, p.entry, exit, prices);
+        state.account.balance = Math.round((state.account.balance + pnl) * 100) / 100;
+        const outcome: CloseOutcome = {
+          symbol: p.symbol, side: p.side, lots: p.lots, entry: p.entry, exit,
+          pnl, swap, reason: "rule-breach", openedAt: p.openedAt, closedAt: now, positionId: p.id,
+        };
+        closed.push(outcome);
+        writeTradeDoc(tx, uid, aid, outcome);
+        bumpTradingDay(state.account, outcome.closedAt);
+        tx.delete(posCol(uid, aid).doc(p.id));
+      }
+      state.positions = [];
+      for (const o of state.orders) tx.delete(ordCol(uid, aid).doc(o.id));
+      state.orders = [];
+    }
+    return { closed, filled: result.fills.length, ruleState };
+  }
+
+  return { closed, filled: result.fills.length, ruleState: null };
+}
+
+/** Count the day of a closed trade toward the minimum-trading-days rule. */
+function bumpTradingDay(account: AccountDoc, closedAt: number) {
+  const key = dayKey(closedAt);
+  const days = { ...(account.tradingDays || {}) };
+  days[key] = (days[key] || 0) + 1;
+  account.tradingDays = days;
 }
 
 /** Persist account balance/dayStart + cached metrics after evaluation. */
@@ -159,6 +268,11 @@ function persistAccountTx(tx: any, uid: string, aid: string, state: AccountState
   tx.update(accountsCol(uid).doc(aid), {
     balance: state.account.balance,
     dayStart: state.account.dayStart,
+    status: state.account.status || "active",
+    rules: state.account.rules ?? null,
+    failedReason: state.account.failedReason ?? null,
+    peakEquity: state.account.peakEquity ?? state.account.balance,
+    tradingDays: state.account.tradingDays || {},
     balanceUpdatedAt: Date.now(),
     metrics: { ...metrics, updatedAt: Date.now() },
   });
@@ -183,16 +297,39 @@ async function readState(uid: string, aid: string): Promise<AccountState> {
 
 export async function listAccounts(uid: string) {
   const snap = await accountsCol(uid).orderBy("createdAt", "asc").get();
+  const today = dayKey();
   const out = [];
   for (const doc of snap.docs) {
     const state = await readState(uid, doc.id);
     const { quotes, prices } = await quotesForState(state);
-    const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, state.account.leverage || DEFAULT_LEVERAGE);
+    const leverage = state.account.leverage || DEFAULT_LEVERAGE;
+    const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
+    const acc = state.account;
+    const ruleState = acc.rules
+      ? evaluatePropRules({
+          rules: acc.rules,
+          status: acc.status || "active",
+          balance: acc.balance,
+          equity: metrics.equity,
+          startingBalance: acc.startingBalance,
+          dayStartBalance: acc.dayStart?.[today] ?? acc.balance,
+          peakEquity: acc.peakEquity ?? acc.balance,
+          tradingDays: Object.keys(acc.tradingDays || {}).length,
+          openPositions: state.positions.length,
+          openLots: state.positions.reduce((s, p) => s + p.lots, 0),
+        })
+      : null;
     out.push({
-      id: doc.id, label: state.account.label, type: state.account.type,
-      balance: state.account.balance, startingBalance: state.account.startingBalance,
-      leverage: state.account.leverage, createdAt: state.account.createdAt,
-      dayStart: state.account.dayStart ?? {},
+      id: doc.id, label: acc.label, type: acc.type,
+      balance: acc.balance, startingBalance: acc.startingBalance,
+      leverage: acc.leverage, createdAt: acc.createdAt,
+      status: acc.status || "active",
+      rules: acc.rules ?? null,
+      failedReason: acc.failedReason ?? null,
+      peakEquity: acc.peakEquity ?? acc.balance,
+      tradingDays: Object.keys(acc.tradingDays || {}).length,
+      dayStart: acc.dayStart ?? {},
+      ruleState,
       positions: state.positions, orders: state.orders, metrics,
       quotes: Object.fromEntries(Object.entries(quotes).filter(([s]) =>
         state.positions.some((p) => p.symbol === s) || state.orders.some((o) => o.symbol === s))),
@@ -210,22 +347,59 @@ export async function history(uid: string, aid: string, limit = 100) {
 // Mutations
 // ---------------------------------------------------------------------------
 
-export async function createAccount(uid: string, label?: string, startingBalance?: number) {
+export interface CreateAccountOptions {
+  /** leverage for margin math — clamped to ALLOWED_LEVERAGES (default 100) */
+  leverage?: number | null;
+  /** prop-firm rules → account type CHALLENGE; null/absent → DEMO */
+  rules?: PropRules | null;
+}
+
+function sanitizeRules(raw: any): PropRules | null {
+  if (!raw || typeof raw !== "object") return null;
+  const pct = (v: unknown, lo: number, hi: number): number | null => {
+    const n = Number(v);
+    if (v == null || v === "" || !Number.isFinite(n)) return null;
+    return Math.min(hi, Math.max(lo, n));
+  };
+  const rules: PropRules = {
+    dailyLossLimitPct: pct(raw.dailyLossLimitPct, 1, 50),
+    maxDrawdownPct: pct(raw.maxDrawdownPct, 1, 50),
+    profitTargetPct: pct(raw.profitTargetPct, 1, 100),
+    minTradingDays: Math.min(60, Math.max(0, Math.floor(Number(raw.minTradingDays) || 0))),
+    maxLotsTotal: pct(raw.maxLotsTotal, 0.01, 100),
+    maxLotsPerOrder: pct(raw.maxLotsPerOrder, 0.01, 100),
+    maxOpenPositions: raw.maxOpenPositions == null ? null : Math.min(30, Math.max(1, Math.floor(Number(raw.maxOpenPositions) || 1))),
+  };
+  // at least one constraint must be set for it to count as a challenge
+  const hasAny = rules.dailyLossLimitPct != null || rules.maxDrawdownPct != null
+    || rules.profitTargetPct != null || rules.minTradingDays > 0
+    || rules.maxLotsTotal != null || rules.maxLotsPerOrder != null || rules.maxOpenPositions != null;
+  return hasAny ? rules : null;
+}
+
+export async function createAccount(uid: string, label?: string, startingBalance?: number, opts: CreateAccountOptions = {}) {
   const existing = await accountsCol(uid).get();
   if (existing.size >= MAX_ACCOUNTS) throw new HttpError(409, "TOO_MANY_ACCOUNTS", `Maximum ${MAX_ACCOUNTS} accounts`);
   const balance = Math.round(Math.min(5_000_000, Math.max(1_000, Number(startingBalance) || 100_000)) * 100) / 100;
+  const rules = sanitizeRules(opts.rules);
+  const levRaw = Number(opts.leverage);
+  const leverage = ALLOWED_LEVERAGES.includes(levRaw) ? levRaw : DEFAULT_LEVERAGE;
   const today = dayKey();
   const doc = {
-    label: String(label || "DEMO").slice(0, 32) || "DEMO",
-    type: "DEMO" as const,
+    label: String(label || (rules ? "CHALLENGE" : "DEMO")).slice(0, 32) || "DEMO",
+    type: rules ? ("CHALLENGE" as const) : ("DEMO" as const),
     balance, startingBalance: balance,
-    leverage: DEFAULT_LEVERAGE,
-    status: "active" as const,
+    leverage,
+    status: "active" as AccountStatus,
+    rules,
+    failedReason: null,
+    peakEquity: balance,
+    tradingDays: {},
     createdAt: Date.now(),
     dayStart: { [today]: balance },
   };
   const ref = await accountsCol(uid).add(doc);
-  return { id: ref.id, ...doc, metrics: computeMetrics(balance, [], {}, {}, DEFAULT_LEVERAGE), positions: [], orders: [] };
+  return { id: ref.id, ...doc, metrics: computeMetrics(balance, [], {}, {}, leverage), positions: [], orders: [] };
 }
 
 export async function resetAccount(uid: string, aid: string) {
@@ -248,6 +422,11 @@ export async function resetAccount(uid: string, aid: string) {
     const balance = account.startingBalance;
     tx.update(accRef, {
       balance,
+      // a reset starts a fresh attempt: challenge status back to active
+      status: "active" as AccountStatus,
+      failedReason: null,
+      peakEquity: balance,
+      tradingDays: {},
       dayStart: { [dayKey()]: balance },
       metrics: { ...computeMetrics(balance, [], {}, {}, account.leverage || DEFAULT_LEVERAGE), updatedAt: Date.now() },
       balanceUpdatedAt: Date.now(),
@@ -312,14 +491,36 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
 
   return dbRef.runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, req.accountId);
-    // bring the account fully up to date first (SL/TP/pending/stop-out)
+    // bring the account fully up to date first (SL/TP/pending/stop-out/rules)
     applyEvaluationTx(tx, uid, req.accountId, state, quotes, prices);
 
     const leverage = state.account.leverage || DEFAULT_LEVERAGE;
     const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
+
+    // terminated challenges cannot trade
+    if (state.account.rules && state.account.status !== "active") {
+      throw new HttpError(
+        403, "ACCOUNT_NOT_ACTIVE",
+        state.account.status === "failed"
+          ? `Challenge failed: ${state.account.failedReason || "rule breached"} — trading is disabled`
+          : "Challenge passed — trading is disabled",
+      );
+    }
+
+    const lots = Number(req.lots);
     const quote = requireQuote(quotes, spec.symbol);
+    const rules = state.account.rules ?? null;
+    const rulesCheck = validateAgainstRules({
+      rules,
+      lots,
+      openPositions: state.positions.length,
+      openOrders: state.orders.length,
+      openLots: state.positions.reduce((s, p) => s + p.lots, 0) + state.orders.reduce((s, o) => s + o.lots, 0),
+    });
+    if (!rulesCheck.ok) throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
+
     const v = validateNewOrder({
-      spec, side: req.side, kind, lots: Number(req.lots), price: req.price ?? null,
+      spec, side: req.side, kind, lots, price: req.price ?? null,
       sl: req.sl ?? null, tp: req.tp ?? null, quote,
       balance: state.account.balance, floatingPnl: metrics.floatingPnl, usedMargin: metrics.usedMargin,
       prices, leverage,
@@ -332,14 +533,18 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
       }
       const posRef = posCol(uid, req.accountId).doc();
       const pos = {
-        symbol: spec.symbol, side: req.side, lots: Number(req.lots),
+        symbol: spec.symbol, side: req.side, lots,
         entry: v.entry!, sl: req.sl ?? null, tp: req.tp ?? null,
         openedAt: Date.now(), comment: String(req.comment || "").slice(0, 120) || null,
+        swapAccrued: 0, swapNights: 0,
       };
       tx.set(posRef, pos);
       const m2 = computeMetrics(state.account.balance, [...state.positions, { id: posRef.id, ...pos }], quotes, prices, leverage);
       tx.update(accRef, {
         dayStart: state.account.dayStart,
+        peakEquity: state.account.peakEquity ?? state.account.balance,
+        tradingDays: state.account.tradingDays || {},
+        status: state.account.status || "active",
         metrics: { ...m2, updatedAt: Date.now() },
         balanceUpdatedAt: Date.now(),
       });
@@ -351,7 +556,7 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
     }
     const ordRef = ordCol(uid, req.accountId).doc();
     const order = {
-      symbol: spec.symbol, side: req.side, kind, lots: Number(req.lots),
+      symbol: spec.symbol, side: req.side, kind, lots,
       price: Number(req.price), sl: req.sl ?? null, tp: req.tp ?? null,
       createdAt: Date.now(),
     };
@@ -378,19 +583,30 @@ export async function closePosition(uid: string, accountId: string, positionId: 
     const closeLots = lots == null ? pos.lots : Math.round(Number(lots) * 100) / 100;
     if (!Number.isFinite(closeLots) || closeLots < MIN_LOTS) throw new HttpError(400, "BAD_LOTS", `Minimum close size ${MIN_LOTS}`);
     if (closeLots > pos.lots) throw new HttpError(400, "BAD_LOTS", `Position holds ${pos.lots} lots`);
+    // settle any unsettled overnight swap before realizing the close
+    const lotsBefore = pos.lots;
+    const swapTotal = settleSwap(state, pos, Date.now());
+    const swapShare = closeLots === lotsBefore
+      ? swapTotal
+      : Math.round(swapTotal * (closeLots / lotsBefore) * 100) / 100;
     const pnl = positionPnlUsd(spec, pos.side, closeLots, pos.entry, exit, prices);
     state.account.balance = Math.round((state.account.balance + pnl) * 100) / 100;
     const outcome: CloseOutcome = {
       symbol: pos.symbol, side: pos.side, lots: closeLots, entry: pos.entry, exit,
-      pnl, reason: "manual", openedAt: pos.openedAt, closedAt: Date.now(), positionId: pos.id,
+      pnl, swap: swapShare, reason: "manual", openedAt: pos.openedAt, closedAt: Date.now(), positionId: pos.id,
     };
     writeTradeDoc(tx, uid, accountId, outcome);
+    bumpTradingDay(state.account, outcome.closedAt);
     if (closeLots === pos.lots) {
       tx.delete(posCol(uid, accountId).doc(pos.id));
       state.positions = state.positions.filter((p) => p.id !== pos.id);
     } else {
       const remaining = Math.round((pos.lots - closeLots) * 100) / 100;
-      tx.update(posCol(uid, accountId).doc(pos.id), { lots: remaining });
+      tx.update(posCol(uid, accountId).doc(pos.id), {
+        lots: remaining,
+        swapAccrued: Math.round((swapTotal - swapShare) * 100) / 100,
+        swapNights: pos.swapNights ?? 0,
+      });
       pos.lots = remaining;
     }
     const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
@@ -398,28 +614,93 @@ export async function closePosition(uid: string, accountId: string, positionId: 
   });
 }
 
-export async function modifyPosition(uid: string, accountId: string, positionId: string, sl: number | null, tp: number | null) {
-  const snap = await posCol(uid, accountId).doc(positionId).get();
-  const data = snap.data();
-  if (!data) throw new HttpError(404, "NO_POSITION", "Position not found");
-  const entry = Number(data.entry);
-  const num = (x: unknown) => (x == null || x === "" ? null : Number(x));
-  const slNum = num(sl), tpNum = num(tp);
-  const side: Side = data.side;
-  if (slNum != null && !Number.isFinite(slNum)) throw new HttpError(400, "BAD_SL", "Invalid Stop Loss");
-  if (tpNum != null && !Number.isFinite(tpNum)) throw new HttpError(400, "BAD_TP", "Invalid Take Profit");
-  if (side === "buy") {
-    if (slNum != null && slNum >= entry) throw new HttpError(400, "BAD_SL", "For a BUY, Stop Loss must be below the entry price");
-    if (tpNum != null && tpNum <= entry) throw new HttpError(400, "BAD_TP", "For a BUY, Take Profit must be above the entry price");
-  } else {
-    if (slNum != null && slNum <= entry) throw new HttpError(400, "BAD_SL", "For a SELL, Stop Loss must be above the entry price");
-    if (tpNum != null && tpNum >= entry) throw new HttpError(400, "BAD_TP", "For a SELL, Take Profit must be below the entry price");
-  }
-  const patch: Record<string, unknown> = { slModifiedAt: Date.now() };
-  if (sl !== undefined) patch.sl = slNum;
-  if (tp !== undefined) patch.tp = tpNum;
-  await posCol(uid, accountId).doc(positionId).update(patch);
-  return { ok: true, ...patch, sl: slNum, tp: tpNum };
+export async function modifyPosition(uid: string, accountId: string, positionId: string, sl: number | null | undefined, tp: number | null | undefined) {
+  const preState = await readState(uid, accountId);
+  const { quotes, prices } = await quotesForState(preState);
+  return db().runTransaction(async (tx: any) => {
+    const state = await txGetState(tx, uid, accountId);
+    // evaluate first so SL/TP set is current (a stale TP would fail validation)
+    applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
+    const pos = state.positions.find((p) => p.id === positionId);
+    if (!pos) throw new HttpError(404, "NO_POSITION", "Position not found (maybe SL/TP already closed it)");
+    const quote = requireQuote(quotes, pos.symbol);
+    const num = (x: unknown) => (x == null || x === "" ? null : Number(x));
+    // undefined = leave the field unchanged; null = clear it
+    const slNum = sl !== undefined ? num(sl) : pos.sl;
+    const tpNum = tp !== undefined ? num(tp) : pos.tp;
+    const v = validatePositionModify({ pos, quote, sl: slNum, tp: tpNum });
+    if (!v.ok) throw new HttpError(400, "BAD_SLTP", v.error || "Invalid SL/TP");
+    tx.update(posCol(uid, accountId).doc(positionId), { sl: slNum, tp: tpNum, slModifiedAt: Date.now() });
+    const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
+    return { ok: true, sl: slNum, tp: tpNum, metrics };
+  });
+}
+
+export async function modifyOrder(
+  uid: string, accountId: string, orderId: string,
+  patch: { price?: number | null; sl?: number | null; tp?: number | null; lots?: number | null },
+) {
+  const preState = await readState(uid, accountId);
+  const { quotes, prices } = await quotesForState(preState);
+  return db().runTransaction(async (tx: any) => {
+    const state = await txGetState(tx, uid, accountId);
+    applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order) throw new HttpError(404, "NO_ORDER", "Order not found (maybe it already filled)");
+    const spec = getInstrument(order.symbol);
+    if (!spec) throw new HttpError(400, "BAD_SYMBOL", `Unknown instrument: ${order.symbol}`);
+    const quote = requireQuote(quotes, order.symbol);
+    const num = (x: unknown, fallback: number | null) => (x == null || x === "" ? fallback : Number(x));
+    const newPrice = patch.price != null ? Number(patch.price) : order.price;
+    const newLots = patch.lots != null ? Math.round(Number(patch.lots) * 100) / 100 : order.lots;
+    const newSl = num(patch.sl, order.sl);
+    const newTp = num(patch.tp, order.tp);
+    if (!Number.isFinite(newLots) || newLots < MIN_LOTS || newLots > MAX_LOTS) {
+      throw new HttpError(400, "BAD_LOTS", `Volume must be ${MIN_LOTS}–${MAX_LOTS} lots`);
+    }
+    const rules = state.account.rules ?? null;
+    const othersLots = state.orders.filter((o) => o.id !== orderId).reduce((s, o) => s + o.lots, 0)
+      + state.positions.reduce((s, p) => s + p.lots, 0);
+    const rulesCheck = validateAgainstRules({ rules, lots: newLots, openPositions: state.positions.length, openOrders: state.orders.length - 1, openLots: othersLots });
+    if (!rulesCheck.ok) throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
+    const v = validateOrderModify({ order, quote, price: newPrice, sl: newSl, tp: newTp });
+    if (!v.ok) throw new HttpError(400, "BAD_ORDER", v.error || "Invalid order modification");
+    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, modifiedAt: Date.now() };
+    tx.update(ordCol(uid, accountId).doc(orderId), updated);
+    const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
+    return { ok: true, order: { ...order, ...updated, modifiedAt: undefined }, metrics };
+  });
+}
+
+/** Close every open position at market (evaluates first so SL/TP settle). */
+export async function closeAll(uid: string, accountId: string) {
+  const preState = await readState(uid, accountId);
+  const { quotes, prices } = await quotesForState(preState);
+  return db().runTransaction(async (tx: any) => {
+    const state = await txGetState(tx, uid, accountId);
+    applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
+    const closed: CloseOutcome[] = [];
+    const now = Date.now();
+    for (const pos of [...state.positions]) {
+      const spec = getInstrument(pos.symbol)!;
+      const quote = requireQuote(quotes, pos.symbol);
+      const exit = exitPriceFor(pos.side, quote);
+      const swap = settleSwap(state, pos, now);
+      const pnl = positionPnlUsd(spec, pos.side, pos.lots, pos.entry, exit, prices);
+      state.account.balance = Math.round((state.account.balance + pnl) * 100) / 100;
+      const outcome: CloseOutcome = {
+        symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, exit,
+        pnl, swap, reason: "manual", openedAt: pos.openedAt, closedAt: now, positionId: pos.id,
+      };
+      closed.push(outcome);
+      writeTradeDoc(tx, uid, accountId, outcome);
+      bumpTradingDay(state.account, outcome.closedAt);
+      tx.delete(posCol(uid, accountId).doc(pos.id));
+    }
+    state.positions = [];
+    const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
+    return { closed, metrics };
+  });
 }
 
 export async function cancelOrder(uid: string, accountId: string, orderId: string) {
