@@ -52,7 +52,7 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
   }
   if (!last || bar.time > last.time) {
     bars.push(bar);
-    if (bars.length > 3000) bars.splice(0, bars.length - 3000);
+    if (bars.length > 6000) bars.splice(0, bars.length - 6000);
     return bars;
   }
   // rare out-of-order insert (resync path) — keep the safe copy+sort
@@ -62,7 +62,7 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
   else {
     out.push(bar);
     out.sort((a, b) => a.time - b.time);
-    if (out.length > 3000) out.splice(0, out.length - 3000);
+    if (out.length > 6000) out.splice(0, out.length - 6000);
   }
   return out;
 }
@@ -114,13 +114,24 @@ class BinanceProvider {
   }
 
   /** REST klines fetch — used for history AND for gap-fill / safety polling. */
-  private async fetchRecent(symbol: string, tf: Timeframe, limit: number): Promise<Bar[]> {
+  private async fetchRecent(symbol: string, tf: Timeframe, limit: number, endTime?: number): Promise<Bar[]> {
     const inst = getInstrument(symbol)!;
-    const raw: any[] = await this.restGet(`/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=${limit}`);
+    const endQ = endTime != null ? `&endTime=${endTime}` : "";
+    const raw: any[] = await this.restGet(`/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=${limit}${endQ}`);
     return raw.map((k) => ({
       time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
       takerBuy: k[9] != null ? +k[9] : undefined,
     }));
+  }
+
+  /**
+   * Progressive history: fetch up to `limit` closed candles OLDER than
+   * `beforeTime` (exclusive). The chart prepends them when the user scrolls
+   * or zooms out to the left edge. Binance-only — Yahoo ranges are fixed.
+   */
+  async loadOlder(symbol: string, tf: Timeframe, beforeTime: number, limit = 1000): Promise<Bar[]> {
+    const raw = await this.fetchRecent(symbol, tf, limit, beforeTime * 1000 - 1);
+    return raw.filter((b) => b.time < beforeTime);
   }
 
   /** REST with mirror failover: api.binance.com blocked → data-api.binance.vision. */

@@ -39,6 +39,7 @@ export default function TerminalPage() {
   const {
     accounts, account, positions, orders, metrics,
     loading, busy, setActiveId, resetAccount, refreshNow,
+    modifyPosition,
   } = useTrading();
   const [newAccountOpen, setNewAccountOpen] = useState(false);
 
@@ -50,23 +51,16 @@ export default function TerminalPage() {
   useEffect(() => { localStorage.setItem(SYMBOL_KEY, symbol); }, [symbol]);
   useEffect(() => { localStorage.setItem(TF_KEY, timeframe); }, [timeframe]);
 
-  // Chart price lines: entry / SL / TP for open positions + pending order
-  // levels of the selected symbol.
+  // Chart price lines: pending-order levels of the selected symbol only.
+  // Open positions render as draggable entry/SL/TP trade lines inside the chart.
   const marks = useMemo<PriceMark[]>(() => {
     const out: PriceMark[] = [];
-    for (const p of positions) {
-      if (p.symbol !== symbol) continue;
-      const qty = p.lots.toFixed(2);
-      out.push({ id: `e-${p.id}`, price: p.entry, color: "#3b82f6", title: `${p.side} ${qty} @`, dashed: true });
-      if (p.sl) out.push({ id: `sl-${p.id}`, price: p.sl, color: "#ef4444", title: "SL", dashed: true });
-      if (p.tp) out.push({ id: `tp-${p.id}`, price: p.tp, color: "#22c55e", title: "TP", dashed: true });
-    }
     for (const o of orders) {
       if (o.symbol !== symbol) continue;
       out.push({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true });
     }
     return out;
-  }, [positions, orders, symbol]);
+  }, [orders, symbol]);
 
   if (loading && !account) {
     return (
@@ -89,7 +83,16 @@ export default function TerminalPage() {
       {/* chart + order ticket */}
       <div className="flex min-h-0 flex-[3] gap-2">
         <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
-          <PriceChart symbol={symbol} timeframe={timeframe} marks={marks} />
+          <PriceChart
+            symbol={symbol}
+            timeframe={timeframe}
+            marks={marks}
+            accountId={account?.id ?? null}
+            positions={positions.filter((p) => p.symbol === symbol)}
+            onModifyPosition={modifyPosition}
+            onSymbolChange={setSymbol}
+            onTimeframeChange={setTimeframe}
+          />
         </div>
         <TradingPanel symbol={symbol} className="w-[340px] shrink-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60" />
       </div>
