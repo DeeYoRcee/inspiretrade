@@ -13,10 +13,30 @@ import { cn } from "@/lib/utils";
 interface CalEvent { title?: string; name?: string; country?: string; currency?: string; time?: number; date?: string; impact?: string; forecast?: string | number; previous?: string | number; actual?: string | number }
 interface NewsItem { title: string; link?: string; url?: string; source?: string }
 
+const PANEL_KEY = "inspire_cal_panel_state";
+
+function loadPanelState(): { tab: "calendar" | "news"; impact: "all" | "high" | "medium" } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PANEL_KEY) || "{}");
+    return {
+      tab: raw.tab === "news" ? "news" : "calendar",
+      impact: raw.impact === "high" || raw.impact === "medium" ? raw.impact : "all",
+    };
+  } catch {
+    return { tab: "calendar", impact: "all" };
+  }
+}
+
 export function CalendarPanel({ symbol, className }: { symbol: string; className?: string }) {
   const { t, language } = useLanguage();
-  const [tab, setTab] = useState<"calendar" | "news">("calendar");
-  const [impact, setImpact] = useState<"all" | "high" | "medium">("all");
+  const initial = loadPanelState();
+  const [tab, setTab] = useState<"calendar" | "news">(initial.tab);
+  const [impact, setImpact] = useState<"all" | "high" | "medium">(initial.impact);
+
+  // persist the panel state so filters survive reloads and terminal remounts
+  useEffect(() => {
+    try { localStorage.setItem(PANEL_KEY, JSON.stringify({ tab, impact })); } catch { /* private mode */ }
+  }, [tab, impact]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["terminalNews", symbol, language],

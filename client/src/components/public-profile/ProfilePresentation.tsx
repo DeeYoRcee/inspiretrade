@@ -46,8 +46,12 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full bg-emerald-400/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-40 left-[20%] h-72 w-96 rounded-full bg-cyan-300/[0.06] blur-3xl" />
 
-        <div className="relative mx-auto flex h-24 w-24 items-center justify-center rounded-full border-2 border-emerald-200/30 bg-emerald-100/10 text-2xl font-black text-emerald-50 shadow-[0_8px_40px_-8px_rgba(16,185,129,0.5)]">
-          {initials}
+        <div className="relative mx-auto flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-200/30 bg-emerald-100/10 text-2xl font-black text-emerald-50 shadow-[0_8px_40px_-8px_rgba(16,185,129,0.5)]">
+          {profile.avatar ? (
+            <img src={profile.avatar} alt={profile.displayName} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+          ) : (
+            initials
+          )}
         </div>
 
         <h2 className="relative mt-3 text-2xl font-bold tracking-tight">{profile.displayName}</h2>

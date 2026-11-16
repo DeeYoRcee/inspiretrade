@@ -89,6 +89,7 @@ export interface ChartPrefs {
   crossLabelBg: string;  // axis label pill background
   legend: boolean;       // OHLC values in the legend bar
   countdown: boolean;    // bar-close timer
+  clock: boolean;        // live local + UTC clock chip
   watermark: string;     // faint text behind the chart ("" = off)
 }
 
@@ -99,7 +100,7 @@ export const DEFAULT_CHART_PREFS: ChartPrefs = {
   candleBorder: true, candleWick: true, volumeOpacity: 0.45,
   crossVert: true, crossHorz: true, crossStyle: "large-dashed",
   crossColor: "rgba(154,164,178,0.4)", crossLabelBg: "#1f2937",
-  legend: true, countdown: true, watermark: "",
+  legend: true, countdown: true, clock: true, watermark: "",
 };
 
 /** hex/known-color → rgba with alpha (for indicator shade variants). */
@@ -225,6 +226,7 @@ export function TerminalChart({
   const replayRef = useRef<{ active: boolean; upToTime: number } | null>(null);
   const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
   const countdownRef = useRef<HTMLSpanElement>(null);
+  const clockRef = useRef<HTMLSpanElement>(null);
   const overlayCfgRef = useRef<OverlayConfig | null>(overlayCfg ?? null);
   overlayCfgRef.current = overlayCfg ?? null;
   const onReplayBarRef = useRef(onReplayBar);
@@ -988,6 +990,23 @@ export function TerminalChart({
     return () => clearInterval(id);
   }, [timeframe, dataVersion]);
 
+  // live clock chip — local + UTC side by side. The chart axis labels use the
+  // browser timezone, so this makes the reference visible and any perceived
+  // "clock error" instantly diagnosable (UTC vs local vs session panels).
+  useEffect(() => {
+    const el = clockRef.current;
+    if (!el) return;
+    const tick = () => {
+      const d = new Date();
+      const local = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+      const utc = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "UTC" });
+      el.textContent = `${local} · ${utc} UTC`;
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
   // analysis overlay config
   useEffect(() => {
     if (!overlayRef.current) return;
@@ -1183,11 +1202,16 @@ export function TerminalChart({
           )}
           <canvas ref={overlayCanvasRef} className="pointer-events-none absolute inset-0 z-[9]" />
           <canvas ref={drawCanvasRef} className="absolute inset-0 z-10" style={{ touchAction: "none" }} />
-          {/* bar-close countdown (bottom-right, above the time axis) */}
+          {/* bar-close countdown + live clock (bottom-right, above the time axis) */}
           {prefsRef.current.countdown && (
             <span ref={countdownRef} style={{ display: "none" }}
               className="pointer-events-none absolute bottom-[34px] right-[74px] z-[12] rounded bg-[#131a24]/90 px-1.5 py-0.5 font-number text-[11px] font-bold text-emerald-400 shadow"
               title="Time until this candle closes" />
+          )}
+          {(prefsRef.current.clock ?? true) && (
+            <span ref={clockRef}
+              className="pointer-events-none absolute bottom-[60px] right-[74px] z-[12] rounded bg-[#131a24]/85 px-1.5 py-0.5 font-number text-[10px] font-semibold text-muted-foreground shadow"
+              title="Current time — browser local and UTC (the chart axis follows the browser timezone)" />
           )}
 
           {/* loading state */}

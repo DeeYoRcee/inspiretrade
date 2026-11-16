@@ -45,6 +45,8 @@ export interface PublicProfileSnapshot {
   ceo?: boolean;
   /** Steam-style animated background shown on the public page header. */
   background?: string;
+  /** profile picture — 256px JPEG data URL or the auth photoURL */
+  avatar?: string | null;
   statistics?: PublicProfileStats;
   winRate?: {
     rate: number;
@@ -134,12 +136,14 @@ export function createPublicProfileSnapshot({
   displayName,
   trades,
   settings,
+  avatar,
 }: {
   uid: string;
   username: string;
   displayName: string;
   trades: Trade[];
   settings: PublicProfileSettings;
+  avatar?: string | null;
 }): PublicProfileSnapshot {
   const usernameKey = username.trim().toLowerCase();
   const snapshot: PublicProfileSnapshot = {
@@ -149,6 +153,10 @@ export function createPublicProfileSnapshot({
     displayName: displayName.trim() || username.trim(),
     updatedAt: Date.now(),
   };
+
+  // look & feel of the header — background choice + profile picture
+  if (settings.background) snapshot.background = settings.background;
+  if (avatar) snapshot.avatar = avatar;
 
   if (settings.visibility.statistics) {
     snapshot.statistics = calculateStatistics(trades);

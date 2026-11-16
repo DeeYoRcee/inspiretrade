@@ -149,7 +149,6 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div><p className="mb-1 flex items-center gap-2 text-xs font-semibold tracking-wider text-primary"><BarChart3 className="h-4 w-4" />PROP TRADING</p><h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Prop Firm Hub</h1><p className="mt-1 text-sm text-muted-foreground">Pick a challenge format and start your funded journey.</p></div>
-          <Link href="/" className="inline-flex items-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Journal</Link>
         </div>
         <DemoLine />
 

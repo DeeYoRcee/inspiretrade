@@ -37,6 +37,21 @@ export function SessionsPanel({ symbol, timeframe, overlay, setOverlay }: {
     return () => clearInterval(id);
   }, []);
 
+  // live clocks (1s): browser local, UTC and the selected display timezone —
+  // makes "what hour is what" verifiable at a glance
+  const [clockNow, setClockNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setClockNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const fmtTz = (tz: string) => {
+    try {
+      return clockNow.toLocaleTimeString([], { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    } catch {
+      return "—";
+    }
+  };
+
   const nowSec = Date.now() / 1000;
   const next = useMemo(() => nextSessionChange(nowSec), [nowSec]);
   const minutesLeft = Math.max(0, Math.round((next.nextChangeUTC - nowSec) / 60));
@@ -62,6 +77,20 @@ export function SessionsPanel({ symbol, timeframe, overlay, setOverlay }: {
           <span className="text-muted-foreground">
             {next.current ? "closes" : "opens"} in <b className="font-number text-foreground">{Math.floor(minutesLeft / 60)}h {minutesLeft % 60}m</b> ({next.next.label})
           </span>
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-1.5 text-center">
+          <div className="rounded-lg border border-border/50 bg-card/60 px-1 py-1">
+            <div className="text-[8px] font-bold uppercase tracking-wide text-muted-foreground">Local</div>
+            <div className="font-number text-[11px] font-bold text-foreground">{fmtTz(Intl.DateTimeFormat().resolvedOptions().timeZone)}</div>
+          </div>
+          <div className="rounded-lg border border-border/50 bg-card/60 px-1 py-1">
+            <div className="text-[8px] font-bold uppercase tracking-wide text-muted-foreground">UTC</div>
+            <div className="font-number text-[11px] font-bold text-foreground">{fmtTz("UTC")}</div>
+          </div>
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-1 py-1">
+            <div className="text-[8px] font-bold uppercase tracking-wide text-muted-foreground">{tz.split("/")[1] ?? tz}</div>
+            <div className="font-number text-[11px] font-bold text-emerald-400">{fmtTz(tz)}</div>
+          </div>
         </div>
       </section>
 

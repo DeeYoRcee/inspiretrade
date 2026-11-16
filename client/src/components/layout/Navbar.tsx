@@ -18,6 +18,7 @@ export function Navbar() {
   const { theme, setTheme } = useTheme();
   const { t, language, setLanguage } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
   const { data: isPremium = false } = usePremiumStatus();
   const { data: economy } = useEconomy();
   const isAdmin = useIsAdmin();
@@ -74,22 +75,23 @@ export function Navbar() {
               <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("me-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ms-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu modal={false}>
+            <DropdownMenu modal={false} onOpenChange={(o) => { if (!o) setLangOpen(false); }}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("settings")} title={t("settings")} className="h-9 gap-1.5 rounded-full px-2.5"><Settings className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">{t("settings")}</span></Button></DropdownMenuTrigger>
-              {/* settings sections INLINE (no submenus): Radix submenus open
-                  off-screen at the right edge and need hover — on touch they
-                  looked like "click Language → nothing happens" */}
+              {/* settings accordion: the 4 languages stay COLLAPSED behind a
+                  single Language row until it is clicked (the old always-open
+                  list pushed everything far down); theme section removed —
+                  the dedicated Theme button next to Settings already does it */}
               <DropdownMenuContent align="end" className="glass-panel max-h-[70vh] w-52 overflow-y-auto border-border/60">
-                <div className="px-2 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{t("language")}</div>
-                {(Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => (
-                  <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer gap-2", language === code && "bg-primary/10 font-semibold text-primary")}>
+                <DropdownMenuItem
+                  onSelect={(e) => { e.preventDefault(); setLangOpen((v) => !v); }}
+                  className="cursor-pointer gap-2"
+                >
+                  <Globe2 className="h-4 w-4" />{t("language")}
+                  <span className="ms-auto text-xs text-muted-foreground">{langOpen ? "▾" : "▸"}</span>
+                </DropdownMenuItem>
+                {langOpen && (Object.keys(LANGUAGE_LABELS) as Language[]).map((code) => (
+                  <DropdownMenuItem key={code} onSelect={() => setLanguage(code)} className={cn("cursor-pointer gap-2 ps-8", language === code && "bg-primary/10 font-semibold text-primary")}>
                     <span aria-hidden>{LANG_FLAGS[code]}</span>{LANGUAGE_LABELS[code]}{language === code && <span className="ms-auto text-xs">✓</span>}
-                  </DropdownMenuItem>
-                ))}
-                <div className="px-2 pb-1 pt-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{t("themeTitle")}</div>
-                {THEMES.map((themeOption: Theme) => (
-                  <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer gap-2", theme === themeOption && "bg-primary/10 font-semibold text-primary")}>
-                    <span className={cn("h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ms-auto text-xs">✓</span>}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />

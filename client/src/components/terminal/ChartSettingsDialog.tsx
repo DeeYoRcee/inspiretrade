@@ -132,6 +132,7 @@ export function ChartSettingsDialog({
             <>
               <Toggle label="OHLC legend (top bar)" on={prefs.legend} onToggle={() => onChange({ legend: !prefs.legend })} />
               <Toggle label="Bar-close countdown" on={prefs.countdown} onToggle={() => onChange({ countdown: !prefs.countdown })} />
+              <Toggle label="Clock chip (local · UTC)" on={prefs.clock ?? true} onToggle={() => onChange({ clock: !(prefs.clock ?? true) })} />
               <Toggle label="Alert sound (beep on trigger)" on={sound} onToggle={() => onSoundChange(!sound)} />
               <TextRow label="Watermark text" value={prefs.watermark} placeholder="e.g. XAUUSD — empty = off"
                 onCommit={(v) => onChange({ watermark: v.slice(0, 18) })} />

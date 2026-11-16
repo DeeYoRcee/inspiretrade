@@ -53,11 +53,28 @@ function csvToQuotes(csv: string): Record<string, { price: number | null; previo
   return out;
 }
 
-/** stooq intraday/daily CSV → bars. Intraday timestamps are CET (UTC+1). */
+/** stooq intraday/daily CSV → bars. Intraday timestamps are German local
+ * wall time (CET in winter, CEST in summer) — the offset is resolved per bar
+ * date via the Intl timezone DB, never hardcoded (a fixed +1h shifted every
+ * candle by one hour across the whole summer half of the year). */
 function stooqCsvToBars(csv: string): { time: number; open: number; high: number; low: number; close: number; volume: number }[] {
   const bars: { time: number; open: number; high: number; low: number; close: number; volume: number }[] = [];
   const lines = csv.trim().split(/\r?\n/);
-  const CET = 60 * 60 * 1000; // stooq intraday stamps are CET (UTC+1)
+  // Europe/Berlin UTC offset (ms) at 12:00 UTC of the given date (CET/CEST aware)
+  const tzOffsetMs = (dateStr: string): number => {
+    try {
+      const noonUTC = Date.parse(`${dateStr}T12:00:00Z`);
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Europe/Berlin", hour12: false,
+        year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+      }).formatToParts(new Date(noonUTC));
+      const get = (k: string) => Number(parts.find((p) => p.type === k)?.value ?? 0);
+      const asUTC = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+      return asUTC - noonUTC;
+    } catch {
+      return 3600_000; // fall back to CET
+    }
+  };
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(",");
     if (cols.length < 5) continue;
@@ -66,7 +83,7 @@ function stooqCsvToBars(csv: string): { time: number; open: number; high: number
     if (![open, high, low, close].every((x) => Number.isFinite(x) && x > 0)) continue;
     let time: number;
     if (t && /^\d{2}:\d{2}$/.test(t)) {
-      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - CET) / 1000);
+      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - tzOffsetMs(d)) / 1000);
     } else {
       time = Math.floor(Date.parse(`${d}T00:00:00Z`) / 1000);
     }

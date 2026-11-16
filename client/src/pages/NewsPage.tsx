@@ -322,9 +322,11 @@ export default function NewsPage() {
   // re-mount the widget whenever the user switches themes.
   const widgetTheme = theme === "light" ? 2 : 1;
 
-  // The widget effect is bound to the container element + theme: a theme
-  // switch re-injects the widget with the matching dark/light variant, while
-  // tab switches do nothing (the container keeps existing).
+  // The widget effect is bound to the container element ONLY. Deliberately
+  // NOT re-run on theme change: re-injecting the script destroys the iframe
+  // and with it every filter the user set inside the calendar (dates,
+  // currencies, importance) — the #1 "my calendar changes don't save" bug.
+  // A dark iframe on a light theme is the acceptable tradeoff.
   useEffect(() => {
     if (!containerRef) return;
     const script = document.createElement("script");
@@ -343,7 +345,8 @@ export default function NewsPage() {
       const registeredCalendarIndex = calendarIds?.indexOf("economicCalendarWidget") ?? -1;
       if (registeredCalendarIndex >= 0) calendarIds?.splice(registeredCalendarIndex, 1);
     };
-  }, [containerRef, widgetTheme]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef]);
 
   return (
     <div className="container mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-8">

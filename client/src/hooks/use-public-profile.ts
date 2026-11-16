@@ -82,12 +82,24 @@ export function useSavePublicProfile() {
       }
 
       if (settings.enabled) {
+        // carry the profile picture into the public snapshot: custom avatar
+        // (users/{uid}/profile/avatar) with the auth photoURL as fallback
+        let avatar: string | null = null;
+        try {
+          const { get: rtdbGet } = await import("firebase/database");
+          const avatarSnap = await rtdbGet(ref(db, `users/${user.uid}/profile/avatar`));
+          const val = avatarSnap.val();
+          if (typeof val === "string" && val) avatar = val;
+        } catch { /* avatar read is best-effort */ }
+        if (!avatar) avatar = user.photoURL || null;
+
         updates[`publicProfiles/${usernameKey}`] = createPublicProfileSnapshot({
           uid: user.uid,
           username,
           displayName,
           trades,
           settings,
+          avatar,
         });
       } else if (previousUsernameKey) {
         updates[`publicProfiles/${previousUsernameKey}`] = null;

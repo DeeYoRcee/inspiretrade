@@ -126,7 +126,26 @@ function csvToQuotes(csv) {
 function stooqCsvToBars(csv) {
   const bars = [];
   const lines = csv.trim().split(/\r?\n/);
-  const CET = 60 * 60 * 1e3;
+  const tzOffsetMs = (dateStr) => {
+    try {
+      const noonUTC = Date.parse(`${dateStr}T12:00:00Z`);
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Europe/Berlin",
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }).formatToParts(new Date(noonUTC));
+      const get = (k) => Number(parts.find((p) => p.type === k)?.value ?? 0);
+      const asUTC = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+      return asUTC - noonUTC;
+    } catch {
+      return 36e5;
+    }
+  };
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(",");
     if (cols.length < 5) continue;
@@ -135,7 +154,7 @@ function stooqCsvToBars(csv) {
     if (![open, high, low, close].every((x) => Number.isFinite(x) && x > 0)) continue;
     let time;
     if (t && /^\d{2}:\d{2}$/.test(t)) {
-      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - CET) / 1e3);
+      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - tzOffsetMs(d)) / 1e3);
     } else {
       time = Math.floor(Date.parse(`${d}T00:00:00Z`) / 1e3);
     }
