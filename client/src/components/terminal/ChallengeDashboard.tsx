@@ -7,19 +7,28 @@
  */
 import { Progress } from "@/components/ui/progress";
 import { useLanguage } from "@/lib/language-context";
-import { useTerminalTrading, computeChallengeMetrics, type ChallengeMetrics } from "@/hooks/use-terminal-trading";
+import { computeChallengeMetrics, type ChallengeMetrics } from "@/hooks/use-terminal-trading";
+import { useTrading } from "@/hooks/use-trading";
+import { usePriceMap } from "@/lib/price-store";
 import { cn } from "@/lib/utils";
 
 export function ChallengeDashboard({
-  prices, className,
+  className,
 }: {
-  prices: Record<string, number>;
   className?: string;
 }) {
   const { t } = useLanguage();
-  const { account, positions, resetAccount } = useTerminalTrading();
+  const { account, resetAccount, busy } = useTrading();
+  const prices = usePriceMap();
   if (!account) return null;
-  const m: ChallengeMetrics = computeChallengeMetrics(account, positions, prices);
+  const m: ChallengeMetrics = computeChallengeMetrics({
+    balance: account.balance,
+    startingBalance: account.startingBalance,
+    leverage: account.leverage,
+    dayStart: account.dayStart,
+    metrics: account.metrics,
+    positions: account.positions,
+  }, prices);
   const usd = (v: number) => `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 
   const rows: { label: string; value: string; pct: number; tone: "good" | "warn" | "bad" }[] = [
@@ -67,7 +76,7 @@ export function ChallengeDashboard({
 
       <div className="flex items-center justify-between border-t border-border/40 pt-2 text-[10px] text-muted-foreground">
         <span>{t("chOpenRisk")}: <b className="text-foreground">{usd(m.openRisk)}</b></span>
-        <button onClick={() => { if (window.confirm("Reset DEMO account to starting balance?")) resetAccount(m.startingBalance); }} className="rounded border border-border/60 px-2 py-1 hover:text-foreground">
+        <button onClick={async () => { if (window.confirm("Reset DEMO account to starting balance? Close all positions first.")) { const ok = await resetAccount(); if (!ok) window.alert("Reset failed — close all positions and pending orders first."); } }} disabled={busy} className="rounded border border-border/60 px-2 py-1 hover:text-foreground disabled:opacity-40">
           {t("resetDemo")}
         </button>
       </div>

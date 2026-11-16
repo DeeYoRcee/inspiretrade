@@ -19,6 +19,7 @@ import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import { GroupedOptions } from "@/components/terminal/SymbolOptions";
 import type { TerminalAlertV2, AlertKind } from "@/lib/terminal/alert-engine";
 import { cn } from "@/lib/utils";
+import { usePriceMap } from "@/lib/price-store";
 
 export type { TerminalAlertV2 };
 
@@ -78,11 +79,11 @@ function describe(a: TerminalAlertV2): string {
   }
 }
 
-export function AlertsPanel({ prices, drawings, className }: {
-  prices: Record<string, number>;
+export function AlertsPanel({ drawings, className }: {
   drawings: { id: string; tool: string }[];
   className?: string;
 }) {
+  const prices = usePriceMap();
   const { t } = useLanguage();
   const { user } = useAuth();
   const { alerts, add, removeAlert, patchAlert } = useTerminalAlerts();

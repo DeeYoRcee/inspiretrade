@@ -196,3 +196,9 @@ export async function logLedger(entry: Record<string, unknown>) {
     console.error("[api] ledger write failed", e);
   }
 }
+
+/** Firestore handle for the trading domain (accounts/orders/trades). */
+export function firestore(): any {
+  ensureApp();
+  return admin.firestore();
+}

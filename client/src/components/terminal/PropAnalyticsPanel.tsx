@@ -8,20 +8,28 @@
  * and trading frequency.
  */
 import { useMemo } from "react";
-import { useTerminalTrading } from "@/hooks/use-terminal-trading";
+import { useQuery } from "@tanstack/react-query";
+import { useTrading, tradesToHistory } from "@/hooks/use-trading";
+import { tradingApi } from "@/lib/trading-api";
 import { computePropAnalytics } from "@/lib/terminal/prop-analytics";
 import { Stat, Sparkline } from "./ToolDrawer";
 import { cn } from "@/lib/utils";
 
 export function PropAnalyticsPanel({ className }: { className?: string }) {
-  const { account, positions, loading } = useTerminalTrading();
+  const { account, loading } = useTrading();
+  const historyQ = useQuery({
+    queryKey: ["propAnalyticsHistory", account?.id],
+    enabled: !!account,
+    queryFn: () => tradingApi.getHistory(account!.id, 500),
+  });
+  const closed = useMemo(() => (historyQ.data ? tradesToHistory(historyQ.data) : []), [historyQ.data]);
 
   const analytics = useMemo(
-    () => (account && positions.length ? computePropAnalytics(positions, account.startingBalance) : null),
-    [account, positions],
+    () => (account && closed.length ? computePropAnalytics(closed, account.startingBalance) : null),
+    [account, closed],
   );
 
-  if (loading) return <div className={cn("flex items-center justify-center py-8 text-xs text-muted-foreground", className)}>Loading trade history…</div>;
+  if (loading || historyQ.isLoading) return <div className={cn("flex items-center justify-center py-8 text-xs text-muted-foreground", className)}>Loading trade history…</div>;
   if (!analytics) {
     return (
       <div className={cn("flex flex-col items-center justify-center gap-1 py-8 text-center text-xs text-muted-foreground", className)}>

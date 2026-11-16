@@ -8,6 +8,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "baseUrl": ".",
+    "allowImportingTsExtensions": true,
     "paths": { "@/*": ["client/src/*"], "@shared/*": ["shared/*"] }
   },
   "include": ["client/src", "shared", "api"]

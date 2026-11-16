@@ -22,7 +22,8 @@ import { dirname } from "path";
 // news is a public read-only feed aggregator.
 // alerts-cron is the server-side alert evaluator + web-push sender, and ALSO
 // serves the push registration: POST /api/push is rewritten to it (vercel.json)
-// — that keeps the count at 12/12 (health.ts + the 11 entries below).
+// — that keeps the count at 12/12 (trading.js also serves /api/health —
+// health.ts was merged into its default action to free a slot).
 const entries = [
   ["api/_src/rewards/claim.ts", "api/rewards/claim.js"],
   ["api/_src/cases/open.ts", "api/cases/open.js"],
@@ -34,6 +35,7 @@ const entries = [
   ["api/_src/referral/index.ts", "api/referral.js"],
   ["api/_src/news/index.ts", "api/news.js"],
   ["api/_src/quotes.ts", "api/quotes.js"],
+  ["api/_src/trading/index.ts", "api/trading.js"],
   ["api/_src/alerts-cron.ts", "api/alerts-cron.js"],
 ];
 

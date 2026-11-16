@@ -39,7 +39,23 @@ function dedupSort(bars: Bar[]): Bar[] {
   return [...map.values()].sort((a, b) => a.time - b.time);
 }
 
+/**
+ * Upsert one bar into the live series. Hot path: called on EVERY tick.
+ * Same-time ticks update the last element IN PLACE (no copy, no sort) — the
+ * old copy+sort per tick was O(n log n) of main-thread work per chart.
+ */
 function upsert(bars: Bar[], bar: Bar): Bar[] {
+  const last = bars.length ? bars[bars.length - 1] : null;
+  if (last && bar.time === last.time) {
+    bars[bars.length - 1] = bar;
+    return bars;
+  }
+  if (!last || bar.time > last.time) {
+    bars.push(bar);
+    if (bars.length > 3000) bars.splice(0, bars.length - 3000);
+    return bars;
+  }
+  // rare out-of-order insert (resync path) — keep the safe copy+sort
   const out = bars.slice();
   const i = out.findIndex((b) => b.time === bar.time);
   if (i >= 0) out[i] = bar;

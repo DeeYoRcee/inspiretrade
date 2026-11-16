@@ -24,7 +24,8 @@ import { useLanguage } from "@/lib/language-context";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTerminalWorkspace, useDrawingsStore, type TerminalSettings } from "@/hooks/use-terminal-workspace";
-import { useTerminalTrading } from "@/hooks/use-terminal-trading";
+import { useTrading } from "@/hooks/use-trading";
+import { priceBusUpdate, getAllPrices } from "@/lib/price-store";
 import { TerminalChart, CHART_THEMES, type ActiveIndicator } from "@/components/terminal/TerminalChart";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
 import { ChallengeDashboard } from "@/components/terminal/ChallengeDashboard";
@@ -150,7 +151,7 @@ export default function TerminalPage() {
   const { toast } = useToast();
   const { settings, update } = useTerminalWorkspace();
   const { alerts, patchAlert } = useTerminalAlerts();
-  const { positions } = useTerminalTrading();
+  const { positions } = useTrading();
 
   const [activeTool, setActiveTool] = useState<DrawingTool>("cursor");
   // TradingView-style drawing-tool favorites: pinned to the top of the rail,
@@ -265,7 +266,6 @@ export default function TerminalPage() {
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>("trade");
   const [mobilePanel, setMobilePanel] = useState(false);
-  const [prices, setPrices] = useState<Record<string, number>>({});
   const [fullscreen, setFullscreen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -313,8 +313,10 @@ export default function TerminalPage() {
 
   const { drawings, save } = useDrawingsStore(user?.uid, settings.symbol);
 
+  // live ticks go into the external price store — components that display a
+  // price subscribe there; the page itself NEVER re-renders on ticks
   const onLastBar = useMemo(
-    () => (bar: { time: number; close: number }) => setPrices((p) => ({ ...p, [settings.symbol]: bar.close })),
+    () => (bar: { time: number; close: number }) => priceBusUpdate(settings.symbol, bar.close),
     [settings.symbol],
   );
 
@@ -352,7 +354,7 @@ export default function TerminalPage() {
       if (busy || !alerts.length) return;
       busy = true;
       const ctx: AlertContext = {
-        prices,
+        prices: getAllPrices(),
         bars: (sym, tf) => alertBarsRef.current.get(`${sym}:${tf}`),
         drawings: (sym) => (sym === settings.symbol ? drawings : []),
       };
@@ -374,10 +376,9 @@ export default function TerminalPage() {
     const id = setInterval(evaluate, 30_000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alerts, prices, drawings, settings.symbol]);
+  }, [alerts, drawings, settings.symbol]);
 
-  const openCount = positions.filter((p) => p.status === "open").length;
-  const price = prices[settings.symbol] ?? null;
+  const openCount = positions.length; // server positions are open by definition
 
   const toggleFullscreen = () => {
     const el = gridRef.current?.parentElement;
@@ -616,9 +617,9 @@ export default function TerminalPage() {
   );
 
   const sidePanel = (cls?: string) =>
-    sideTab === "trade" ? <TradingPanel symbol={settings.symbol} price={price} className={cls} /> :
-    sideTab === "challenge" ? <ChallengeDashboard prices={prices} className={cls} /> :
-    sideTab === "alerts" ? <AlertsPanel prices={prices} drawings={drawings} className={cls} /> :
+    sideTab === "trade" ? <TradingPanel symbol={settings.symbol} className={cls} /> :
+    sideTab === "challenge" ? <ChallengeDashboard className={cls} /> :
+    sideTab === "alerts" ? <AlertsPanel drawings={drawings} className={cls} /> :
     <ReplayTradingPanel rs={rs} onJournal={(t) => setJournalDraft({ trade: t, sessionId: `${settings.symbol}-${settings.timeframe}`, symbol: settings.symbol, timeframe: settings.timeframe, captureChart })} />;
 
   const chartGrid = (

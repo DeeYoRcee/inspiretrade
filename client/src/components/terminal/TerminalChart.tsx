@@ -226,6 +226,9 @@ export function TerminalChart({
   // against out-of-order arrivals (an older bar would make lightweight-charts
   // throw "Cannot update oldest data" and kill the render loop)
   const lastAppliedTimeRef = useRef(0);
+  // indicator recompute throttle: full-series recompute happens on bar close
+  // or at most every 2s intra-bar — NOT on every tick (main-thread hot path)
+  const lastIndRecomputeRef = useRef<{ time: number; at: number }>({ time: 0, at: 0 });
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<ChartOverlay | null>(null);
   const avwapRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -788,23 +791,30 @@ export function TerminalChart({
       volSeriesRef.current.update({ time: t, value: bar.volume, color: bar.close >= bar.open ? withAlpha(colors.up, prefsRef.current.volumeOpacity) : withAlpha(colors.down, prefsRef.current.volumeOpacity) });
     }
 
-    // indicators: recompute and update their last points
+    // indicators: recompute their last points ONLY on a bar close or at most
+    // every 2s intra-bar. Recomputing every indicator's FULL series on every
+    // tick made the main thread churn with several indicators on deep series.
     const bars = barsRef.current;
-    for (let i = 0; i < indicators.length; i++) {
-      const def = getIndicator(indicators[i].id);
-      if (!def) continue;
-      const named = def.compute(bars, { ...def.defaults, ...indicators[i].params });
-      if (def.placement === "overlay") {
-        const group = overlayGroupsRef.current.find((g) => g.series.length === named.length) ?? overlayGroupsRef.current[0];
-        if (!group) continue;
-        for (let li = 0; li < named.length && li < group.series.length; li++) {
-          const pts = named[li].data;
-          const last = pts[pts.length - 1];
-          if (last) group.series[li].update({ time: last.time as UTCTimestamp, value: last.value });
+    const isBarClose = bar.time !== lastIndRecomputeRef.current.time;
+    const due = isBarClose || Date.now() - lastIndRecomputeRef.current.at > 2000;
+    if (due) {
+      lastIndRecomputeRef.current = { time: bar.time, at: Date.now() };
+      for (let i = 0; i < indicators.length; i++) {
+        const def = getIndicator(indicators[i].id);
+        if (!def) continue;
+        const named = def.compute(bars, { ...def.defaults, ...indicators[i].params });
+        if (def.placement === "overlay") {
+          const group = overlayGroupsRef.current.find((g) => g.series.length === named.length) ?? overlayGroupsRef.current[0];
+          if (!group) continue;
+          for (let li = 0; li < named.length && li < group.series.length; li++) {
+            const pts = named[li].data;
+            const last = pts[pts.length - 1];
+            if (last) group.series[li].update({ time: last.time as UTCTimestamp, value: last.value });
+          }
         }
       }
+      updatePanesLive(bars);
     }
-    updatePanesLive(bars);
     engineRef.current?.redraw();
   }
 

@@ -2,10 +2,23 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/api/push", "destination": "/api/alerts-cron" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/api/push",
+      "destination": "/api/alerts-cron"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/trading"
+    }
   ],
   "crons": [
-    { "path": "/api/alerts-cron", "schedule": "0 6 * * *" }
+    {
+      "path": "/api/alerts-cron",
+      "schedule": "0 6 * * *"
+    }
   ]
 }
