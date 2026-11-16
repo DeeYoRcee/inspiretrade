@@ -207,6 +207,60 @@ async function cachedPayload(cache, key, freshMs, staleMs, fetcher) {
     throw e;
   }
 }
+var SPOT_API_MAP = { "GC=F": "XAU", "SI=F": "XAG" };
+var SPOT_TTL_MS = 3e4;
+var SPOT_MAX_AGE_MS = 6e5;
+var spotCache = /* @__PURE__ */ new Map();
+async function fetchSpot(code) {
+  const cached = spotCache.get(code);
+  if (cached && Date.now() - cached.at < SPOT_TTL_MS) return cached.price;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6e3);
+    const res = await fetch(`https://api.gold-api.com/price/${code}`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    const price = Number(data?.price);
+    const updatedAt = Date.parse(data?.updatedAt || "") || 0;
+    if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
+    if (updatedAt && Date.now() - updatedAt > SPOT_MAX_AGE_MS) throw new Error("STALE_SPOT");
+    spotCache.set(code, { at: Date.now(), price });
+    return price;
+  } catch {
+    return cached?.price ?? null;
+  }
+}
+var INTERVAL_SECONDS = {
+  "1m": 60,
+  "2m": 120,
+  "3m": 180,
+  "5m": 300,
+  "15m": 900,
+  "30m": 1800,
+  "60m": 3600,
+  "1h": 3600,
+  "90m": 5400,
+  "1d": 86400
+};
+function mergeSpotBars(bars, spot, interval) {
+  const sec = INTERVAL_SECONDS[interval];
+  if (!sec || bars.length === 0) return false;
+  const now = Math.floor(Date.now() / 1e3);
+  const bucket = sec >= 86400 ? Math.floor(now / 86400) * 86400 : Math.floor(now / sec) * sec;
+  const last = bars[bars.length - 1];
+  if (last.time === bucket) {
+    last.close = spot;
+    if (spot > last.high) last.high = spot;
+    if (spot < last.low) last.low = spot;
+    return true;
+  }
+  if (bucket > last.time) {
+    bars.push({ time: bucket, open: last.close, high: Math.max(last.close, spot), low: Math.min(last.close, spot), close: spot, volume: 0 });
+    return true;
+  }
+  return false;
+}
 var quotes_default = handle(async (req, res) => {
   await requireUser(req);
   const url = new URL(req.url || "/", "http://localhost");
@@ -263,6 +317,12 @@ var quotes_default = handle(async (req, res) => {
           }
         }
       }
+      await Promise.all(list.map(async (sym, i) => {
+        const code = SPOT_API_MAP[sym];
+        if (!code) return;
+        const spot = await fetchSpot(code);
+        if (spot != null && quotes[i]) quotes[i].price = spot;
+      }));
       if (quotes.every((q) => q.price == null)) throw new Error("ALL_SOURCES_FAILED");
       return { ok: true, quotes };
     });
@@ -294,12 +354,18 @@ var quotes_default = handle(async (req, res) => {
       bars.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v ?? 0 });
     }
     const meta = result.meta || {};
+    const spotCode = SPOT_API_MAP[symbols];
+    let live = false;
+    if (spotCode) {
+      const spot = await fetchSpot(spotCode);
+      if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
+    }
     return {
-      source: "yahoo",
-      delayed: true,
+      source: live ? "spot+yahoo" : "yahoo",
+      delayed: !live,
       symbol: meta.symbol || symbols,
       currency: meta.currency || null,
-      regularMarketPrice: meta.regularMarketPrice ?? null,
+      regularMarketPrice: live ? bars[bars.length - 1].close : meta.regularMarketPrice ?? null,
       previousClose: meta.chartPreviousClose ?? meta.previousClose ?? null,
       bars
     };
@@ -353,5 +419,6 @@ var quotes_default = handle(async (req, res) => {
   }
 });
 export {
-  quotes_default as default
+  quotes_default as default,
+  mergeSpotBars
 };

@@ -253,15 +253,15 @@ class QuotesProvider {
     return bars;
   }
 
-  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; delayed: boolean; source?: string }> {
+  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; source?: string }> {
     const key = `${symbol}:${tf}`;
     // short-lived fresh cache: instant timeframe switching + remounts
     const fresh = this.history.get(key);
     if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) {
-      return { bars: fresh, delayed: true, source: this.source.get(key) };
+      return { bars: fresh, source: this.source.get(key) };
     }
     const bars = await this.loadNetwork(symbol, tf);
-    return { bars, delayed: true, source: this.source.get(key) };
+    return { bars, source: this.source.get(key) };
   }
 
   subscribe(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {
@@ -321,8 +321,13 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const bars = await binanceProvider.load(symbol, tf);
     return { bars, status: "live" };
   }
-  const { bars, delayed, source } = await quotesProvider.load(symbol, tf);
-  return { bars, status: "polling", message: delayed ? `Delayed data (${source || "Yahoo"})` : undefined };
+  const { bars, source } = await quotesProvider.load(symbol, tf);
+  // "spot+yahoo" = live gold-api spot painted onto the current bar, older
+  // bars are Yahoo's (5-15 min delayed) — honest labelling for both cases
+  const message = source?.startsWith("spot")
+    ? "Live spot (gold-api) · older bars delayed"
+    : `Delayed data (${source || "Yahoo"})`;
+  return { bars, status: "polling", message };
 }
 
 /** Subscribe to live updates. Returns an unsubscribe function. */

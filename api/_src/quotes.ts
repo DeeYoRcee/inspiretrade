@@ -165,6 +165,74 @@ async function cachedPayload(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Live spot overlay for precious metals (gold / silver).
+//
+// Yahoo's own chart candles trail 5-15 min behind the market — that is the
+// whole "gold chart always lags" complaint. gold-api.com serves a free,
+// keyless spot price that (verified live) matches Yahoo's GC=F
+// regularMarketPrice to the cent, refreshing within seconds. We paint that
+// spot onto the current bar so the tail of the chart is live while older
+// bars stay Yahoo's. Fail-open everywhere: if the spot service is down,
+// stale, or the interval is unknown, we simply return plain Yahoo data.
+// ---------------------------------------------------------------------------
+const SPOT_API_MAP: Record<string, string> = { "GC=F": "XAU", "SI=F": "XAG" };
+const SPOT_TTL_MS = 30000;       // spot refresh window (gold-api updates every few seconds)
+const SPOT_MAX_AGE_MS = 600000;  // spot older than 10 min = closed market — never paint it
+const spotCache = new Map<string, { at: number; price: number }>();
+
+async function fetchSpot(code: string): Promise<number | null> {
+  const cached = spotCache.get(code);
+  if (cached && Date.now() - cached.at < SPOT_TTL_MS) return cached.price;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(`https://api.gold-api.com/price/${code}`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(String(res.status));
+    const data: any = await res.json();
+    const price = Number(data?.price);
+    const updatedAt = Date.parse(data?.updatedAt || "") || 0;
+    if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
+    if (updatedAt && Date.now() - updatedAt > SPOT_MAX_AGE_MS) throw new Error("STALE_SPOT"); // weekend / closed
+    spotCache.set(code, { at: Date.now(), price });
+    return price;
+  } catch {
+    return cached?.price ?? null; // transient error → last known spot
+  }
+}
+
+const INTERVAL_SECONDS: Record<string, number> = {
+  "1m": 60, "2m": 120, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+  "60m": 3600, "1h": 3600, "90m": 5400, "1d": 86400,
+};
+
+/** Paint the live spot onto the current bar: update the open bucket in place,
+ * or open the next bucket (open = previous close — the candle body stays
+ * continuous, no seam jump even if the basis moves). */
+export function mergeSpotBars(
+  bars: { time: number; open: number; high: number; low: number; close: number; volume: number }[],
+  spot: number,
+  interval: string,
+): boolean {
+  const sec = INTERVAL_SECONDS[interval];
+  if (!sec || bars.length === 0) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const bucket = sec >= 86400 ? Math.floor(now / 86400) * 86400 : Math.floor(now / sec) * sec;
+  const last = bars[bars.length - 1];
+  if (last.time === bucket) {
+    last.close = spot;
+    if (spot > last.high) last.high = spot;
+    if (spot < last.low) last.low = spot;
+    return true;
+  }
+  if (bucket > last.time) {
+    bars.push({ time: bucket, open: last.close, high: Math.max(last.close, spot), low: Math.min(last.close, spot), close: spot, volume: 0 });
+    return true;
+  }
+  return false; // spot bucket precedes the last bar (clock skew) — leave bars untouched
+}
+
 export default handle(async (req, res) => {
   await requireUser(req);
 
@@ -223,6 +291,15 @@ export default handle(async (req, res) => {
       }
     }
 
+    // live spot overwrite for mapped metals — Yahoo's batch meta is delayed,
+    // the gold-api spot is fresh (Market Watch should move in real time too)
+    await Promise.all(list.map(async (sym, i) => {
+      const code = SPOT_API_MAP[sym];
+      if (!code) return;
+      const spot = await fetchSpot(code);
+      if (spot != null && quotes[i]) quotes[i].price = spot;
+    }));
+
     // total upstream failure must not poison the cache — throw so the caller
     // falls back to the last known payload or surfaces the offline state
     if (quotes.every((q) => q.price == null)) throw new Error("ALL_SOURCES_FAILED");
@@ -261,12 +338,20 @@ export default handle(async (req, res) => {
       bars.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v ?? 0 });
     }
     const meta = result.meta || {};
+    // live spot overlay: Yahoo's candles trail 5-15 min behind — paint the
+    // fresh gold-api spot onto the current bar (fail-open, see fetchSpot)
+    const spotCode = SPOT_API_MAP[symbols];
+    let live = false;
+    if (spotCode) {
+      const spot = await fetchSpot(spotCode);
+      if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
+    }
     return {
-      source: "yahoo",
-      delayed: true,
+      source: live ? "spot+yahoo" : "yahoo",
+      delayed: !live,
       symbol: meta.symbol || symbols,
       currency: meta.currency || null,
-      regularMarketPrice: meta.regularMarketPrice ?? null,
+      regularMarketPrice: live ? bars[bars.length - 1].close : (meta.regularMarketPrice ?? null),
       previousClose: meta.chartPreviousClose ?? meta.previousClose ?? null,
       bars,
     };
