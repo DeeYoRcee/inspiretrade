@@ -94,6 +94,77 @@ function stooqCsvToBars(csv: string): { time: number; open: number; high: number
 
 const STOOQ_INTERVAL: Record<string, string> = { "1m": "5", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "1d": "d" };
 
+// ---------------------------------------------------------------------------
+// In-process cache (per warm serverless instance) with stale-while-revalidate.
+//
+// WHY: the client calls us through authedFetch, which sends an Authorization
+// header — and Vercel never edge-caches responses to authorized requests, so
+// the s-maxage headers below are dead code. Every client poll (10s × every
+// user) therefore hit Yahoo directly, which is exactly what triggers Yahoo's
+// IP rate limits (429/999) and silently pushed whole sessions onto the stooq
+// fallback — 15+ minutes old data, i.e. the chart "always lagging behind".
+// This cache collapses concurrent polls into at most one upstream call per
+// TTL window per instance: fewer 429s → fewer stooq fallbacks → the chart
+// stays on the fresher Yahoo source.
+// ---------------------------------------------------------------------------
+type CacheEntry = { at: number; payload: unknown };
+const barsCache = new Map<string, CacheEntry>();
+const batchCache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<unknown>>();
+const BARS_FRESH_MS = 12000; // client polls every 10s → every 2nd poll served from cache
+const BARS_STALE_MS = 60000; // beyond this revalidate in place; stale still beats an error
+const BATCH_FRESH_MS = 30000;
+const BATCH_STALE_MS = 120000;
+
+function pruneCache(cache: Map<string, CacheEntry>, staleMs: number) {
+  if (cache.size < 64) return;
+  const cutoff = Date.now() - staleMs * 2;
+  for (const [k, v] of cache) if (v.at < cutoff) cache.delete(k);
+}
+
+/** Coalesced upstream fetch: one request per key regardless of caller count. */
+async function doFetch(cache: Map<string, CacheEntry>, key: string, fetcher: () => Promise<unknown>): Promise<unknown> {
+  let p = inflight.get(key);
+  if (!p) {
+    p = (async () => {
+      const payload = await fetcher();
+      cache.set(key, { at: Date.now(), payload });
+      return payload;
+    })().finally(() => { inflight.delete(key); });
+    inflight.set(key, p);
+  }
+  return p;
+}
+
+/**
+ * fresh → serve as-is; stale → serve immediately + background revalidate;
+ * miss → fetch (falling back to the last known payload instead of an error
+ * when both upstream sources die).
+ */
+async function cachedPayload(
+  cache: Map<string, CacheEntry>,
+  key: string,
+  freshMs: number,
+  staleMs: number,
+  fetcher: () => Promise<unknown>,
+): Promise<unknown> {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < freshMs) return hit.payload;
+  if (hit && Date.now() - hit.at < staleMs) {
+    if (!inflight.has(key)) void doFetch(cache, key, fetcher).catch(() => { /* keep stale */ });
+    pruneCache(cache, staleMs);
+    return hit.payload;
+  }
+  try {
+    const payload = await doFetch(cache, key, fetcher);
+    pruneCache(cache, staleMs);
+    return payload;
+  } catch (e) {
+    if (hit) return hit.payload; // old data beats an error state
+    throw e;
+  }
+}
+
 export default handle(async (req, res) => {
   await requireUser(req);
 
@@ -107,7 +178,9 @@ export default handle(async (req, res) => {
   // Light last-price snapshot for the Market Watch panel.
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
-    const quotes = await Promise.all(
+    if (!list.length) return res.status(200).json({ ok: true, quotes: [] });
+    const payload = await cachedPayload(batchCache, list.slice().sort().join(","), BATCH_FRESH_MS, BATCH_STALE_MS, async () => {
+      const quotes = await Promise.all(
       list.map(async (sym) => {
         try {
           const controller = new AbortController();
@@ -150,8 +223,14 @@ export default handle(async (req, res) => {
       }
     }
 
+    // total upstream failure must not poison the cache — throw so the caller
+    // falls back to the last known payload or surfaces the offline state
+    if (quotes.every((q) => q.price == null)) throw new Error("ALL_SOURCES_FAILED");
+    return { ok: true, quotes };
+    });
+
     res.setHeader("Cache-Control", "s-maxage=30, stale-while-revalidate=60");
-    return res.status(200).json({ ok: true, quotes });
+    return res.status(200).json(payload);
   }
 
   if (!/^[A-Z0-9^.=\-]{1,20}$/i.test(symbols)) {
@@ -228,16 +307,20 @@ export default handle(async (req, res) => {
   };
 
   try {
-    const payload = await fromYahoo();
-    res.setHeader("Cache-Control", "s-maxage=30, stale-while-revalidate=60");
-    return res.status(200).json({ ok: true, ...payload });
-  } catch (e: any) {
-    try {
-      const payload = await fromStooq();
-      res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=120");
-      return res.status(200).json({ ok: true, ...payload });
-    } catch (e2: any) {
-      return res.status(200).json({ ok: false, error: "FEED_UNAVAILABLE", detail: `yahoo: ${String(e?.message || e)}; stooq: ${String(e2?.message || e2)}` });
-    }
+    const payload = await cachedPayload(barsCache, `${symbols}|${range}|${interval}`, BARS_FRESH_MS, BARS_STALE_MS, async () => {
+      try {
+        return { ok: true, ...(await fromYahoo()) };
+      } catch (e: any) {
+        try {
+          return { ok: true, ...(await fromStooq()) };
+        } catch (e2: any) {
+          throw new Error(`yahoo: ${String(e?.message || e)}; stooq: ${String(e2?.message || e2)}`);
+        }
+      }
+    });
+    res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");
+    return res.status(200).json(payload);
+  } catch (err: any) {
+    return res.status(200).json({ ok: false, error: "FEED_UNAVAILABLE", detail: String(err?.message || err) });
   }
 });

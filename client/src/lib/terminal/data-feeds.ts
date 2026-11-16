@@ -225,6 +225,7 @@ class QuotesProvider {
   private history = new Map<string, Bar[]>();
   private loadedAt = new Map<string, number>();
   private inflight = new Set<string>();
+  private source = new Map<string, string>(); // "yahoo" | "stooq" — surfaced in the feed message
 
   // network fetch + aggregation, always bypasses the fresh cache (poll path)
   private async loadNetwork(symbol: string, tf: Timeframe): Promise<Bar[]> {
@@ -239,6 +240,7 @@ class QuotesProvider {
       : cfg;
     const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo!)}&range=${useCfg.range}&interval=${useCfg.interval}`);
     if (!res?.ok) throw new Error(res?.detail || "FEED_UNAVAILABLE");
+    if (res.source) this.source.set(key, res.source);
     let bars: Bar[] = res.bars;
     // bucket length = the TARGET timeframe in minutes (3m→3, 2h→120, 4h→240).
     // The old TF_SECONDS[tf]/TF_SECONDS[agg] ratio only happens to be minutes
@@ -251,15 +253,15 @@ class QuotesProvider {
     return bars;
   }
 
-  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; delayed: boolean }> {
+  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; delayed: boolean; source?: string }> {
     const key = `${symbol}:${tf}`;
     // short-lived fresh cache: instant timeframe switching + remounts
     const fresh = this.history.get(key);
     if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) {
-      return { bars: fresh, delayed: true };
+      return { bars: fresh, delayed: true, source: this.source.get(key) };
     }
     const bars = await this.loadNetwork(symbol, tf);
-    return { bars, delayed: true };
+    return { bars, delayed: true, source: this.source.get(key) };
   }
 
   subscribe(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {
@@ -319,8 +321,8 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const bars = await binanceProvider.load(symbol, tf);
     return { bars, status: "live" };
   }
-  const { bars, delayed } = await quotesProvider.load(symbol, tf);
-  return { bars, status: "polling", message: delayed ? "Delayed data (Yahoo)" : undefined };
+  const { bars, delayed, source } = await quotesProvider.load(symbol, tf);
+  return { bars, status: "polling", message: delayed ? `Delayed data (${source || "Yahoo"})` : undefined };
 }
 
 /** Subscribe to live updates. Returns an unsubscribe function. */

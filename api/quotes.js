@@ -163,6 +163,50 @@ function stooqCsvToBars(csv) {
   return bars;
 }
 var STOOQ_INTERVAL = { "1m": "5", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "1d": "d" };
+var barsCache = /* @__PURE__ */ new Map();
+var batchCache = /* @__PURE__ */ new Map();
+var inflight = /* @__PURE__ */ new Map();
+var BARS_FRESH_MS = 12e3;
+var BARS_STALE_MS = 6e4;
+var BATCH_FRESH_MS = 3e4;
+var BATCH_STALE_MS = 12e4;
+function pruneCache(cache, staleMs) {
+  if (cache.size < 64) return;
+  const cutoff = Date.now() - staleMs * 2;
+  for (const [k, v] of cache) if (v.at < cutoff) cache.delete(k);
+}
+async function doFetch(cache, key, fetcher) {
+  let p = inflight.get(key);
+  if (!p) {
+    p = (async () => {
+      const payload = await fetcher();
+      cache.set(key, { at: Date.now(), payload });
+      return payload;
+    })().finally(() => {
+      inflight.delete(key);
+    });
+    inflight.set(key, p);
+  }
+  return p;
+}
+async function cachedPayload(cache, key, freshMs, staleMs, fetcher) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < freshMs) return hit.payload;
+  if (hit && Date.now() - hit.at < staleMs) {
+    if (!inflight.has(key)) void doFetch(cache, key, fetcher).catch(() => {
+    });
+    pruneCache(cache, staleMs);
+    return hit.payload;
+  }
+  try {
+    const payload = await doFetch(cache, key, fetcher);
+    pruneCache(cache, staleMs);
+    return payload;
+  } catch (e) {
+    if (hit) return hit.payload;
+    throw e;
+  }
+}
 var quotes_default = handle(async (req, res) => {
   await requireUser(req);
   const url = new URL(req.url || "/", "http://localhost");
@@ -172,53 +216,58 @@ var quotes_default = handle(async (req, res) => {
   const interval = (url.searchParams.get("interval") || "1m").trim();
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
-    const quotes = await Promise.all(
-      list.map(async (sym) => {
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 6e3);
-          const yres = await fetch(
-            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1d`,
-            { headers: { "User-Agent": UA, Accept: "application/json" }, signal: controller.signal }
-          );
-          clearTimeout(timer);
-          if (!yres.ok) throw new Error(String(yres.status));
-          const data = await yres.json();
-          const meta = data?.chart?.result?.[0]?.meta || {};
-          return { symbol: meta.symbol || sym, price: meta.regularMarketPrice ?? null, previousClose: meta.chartPreviousClose ?? null };
-        } catch {
-          return { symbol: sym, price: null, previousClose: null };
-        }
-      })
-    );
-    const failed = quotes.filter((q) => q.price == null);
-    if (failed.length > 0) {
-      const stooqSyms = failed.map((q) => stooqOf(q.symbol)).filter(Boolean);
-      if (stooqSyms.length > 0) {
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 6e3);
-          const sres = await fetch(`https://stooq.com/q/l/?s=${stooqSyms.join("+")}&f=sd2t2ohlcv&h&e=csv`, {
-            headers: { "User-Agent": UA },
-            signal: controller.signal
-          });
-          clearTimeout(timer);
-          if (sres.ok) {
-            const bySym = csvToQuotes(await sres.text());
-            for (const q of failed) {
-              const sq = bySym[stooqOf(q.symbol)?.toLowerCase() || ""];
-              if (sq?.price != null) {
-                q.price = sq.price;
-                q.previousClose = sq.previousClose;
+    if (!list.length) return res.status(200).json({ ok: true, quotes: [] });
+    const payload = await cachedPayload(batchCache, list.slice().sort().join(","), BATCH_FRESH_MS, BATCH_STALE_MS, async () => {
+      const quotes = await Promise.all(
+        list.map(async (sym) => {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 6e3);
+            const yres = await fetch(
+              `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1d`,
+              { headers: { "User-Agent": UA, Accept: "application/json" }, signal: controller.signal }
+            );
+            clearTimeout(timer);
+            if (!yres.ok) throw new Error(String(yres.status));
+            const data = await yres.json();
+            const meta = data?.chart?.result?.[0]?.meta || {};
+            return { symbol: meta.symbol || sym, price: meta.regularMarketPrice ?? null, previousClose: meta.chartPreviousClose ?? null };
+          } catch {
+            return { symbol: sym, price: null, previousClose: null };
+          }
+        })
+      );
+      const failed = quotes.filter((q) => q.price == null);
+      if (failed.length > 0) {
+        const stooqSyms = failed.map((q) => stooqOf(q.symbol)).filter(Boolean);
+        if (stooqSyms.length > 0) {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 6e3);
+            const sres = await fetch(`https://stooq.com/q/l/?s=${stooqSyms.join("+")}&f=sd2t2ohlcv&h&e=csv`, {
+              headers: { "User-Agent": UA },
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+            if (sres.ok) {
+              const bySym = csvToQuotes(await sres.text());
+              for (const q of failed) {
+                const sq = bySym[stooqOf(q.symbol)?.toLowerCase() || ""];
+                if (sq?.price != null) {
+                  q.price = sq.price;
+                  q.previousClose = sq.previousClose;
+                }
               }
             }
+          } catch {
           }
-        } catch {
         }
       }
-    }
+      if (quotes.every((q) => q.price == null)) throw new Error("ALL_SOURCES_FAILED");
+      return { ok: true, quotes };
+    });
     res.setHeader("Cache-Control", "s-maxage=30, stale-while-revalidate=60");
-    return res.status(200).json({ ok: true, quotes });
+    return res.status(200).json(payload);
   }
   if (!/^[A-Z0-9^.=\-]{1,20}$/i.test(symbols)) {
     return res.status(400).json({ ok: false, error: "BAD_SYMBOL" });
@@ -286,17 +335,21 @@ var quotes_default = handle(async (req, res) => {
     };
   };
   try {
-    const payload = await fromYahoo();
-    res.setHeader("Cache-Control", "s-maxage=30, stale-while-revalidate=60");
-    return res.status(200).json({ ok: true, ...payload });
-  } catch (e) {
-    try {
-      const payload = await fromStooq();
-      res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=120");
-      return res.status(200).json({ ok: true, ...payload });
-    } catch (e2) {
-      return res.status(200).json({ ok: false, error: "FEED_UNAVAILABLE", detail: `yahoo: ${String(e?.message || e)}; stooq: ${String(e2?.message || e2)}` });
-    }
+    const payload = await cachedPayload(barsCache, `${symbols}|${range}|${interval}`, BARS_FRESH_MS, BARS_STALE_MS, async () => {
+      try {
+        return { ok: true, ...await fromYahoo() };
+      } catch (e) {
+        try {
+          return { ok: true, ...await fromStooq() };
+        } catch (e2) {
+          throw new Error(`yahoo: ${String(e?.message || e)}; stooq: ${String(e2?.message || e2)}`);
+        }
+      }
+    });
+    res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");
+    return res.status(200).json(payload);
+  } catch (err) {
+    return res.status(200).json({ ok: false, error: "FEED_UNAVAILABLE", detail: String(err?.message || err) });
   }
 });
 export {
