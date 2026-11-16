@@ -277,6 +277,11 @@ var buy_default = handle(async (req, res) => {
   const sellerReceives = (priceCents - feeCents) / 100;
   const fee = feeCents / 100;
   await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c) => (c || 0) + sellerReceives);
+  if (listing.kind === "username") {
+    await deliverUsername(db, user.uid, listing, revertListing, sellerReceives);
+    res.status(200).json({ ok: true, listing: reserved, coinsLeft: coinsAfter, username: listing.username });
+    return;
+  }
   if (listing.kind === "case") {
     const caseId = String(listing.caseId || "");
     let deliverRef;
@@ -312,6 +317,73 @@ var buy_default = handle(async (req, res) => {
     coinsLeft: coinsAfter
   });
 });
+async function deliverUsername(db, buyerUid, listing, revertListing, sellerReceives) {
+  const key = String(listing.usernameKey || "");
+  const username = String(listing.username || "");
+  const sellerUid = String(listing.sellerUid || "");
+  const mapTx = await db.ref(`usernames/${key}`).transaction((current) => {
+    if (current === null || current === sellerUid) return buyerUid;
+    return current;
+  });
+  const mapOwner = mapTx?.snapshot?.val?.();
+  if (!mapTx?.committed || mapOwner !== buyerUid) {
+    await revertListing();
+    await db.ref(`economy/${buyerUid}/coins`).transaction((c) => (c || 0) + listing.price);
+    await db.ref(`economy/${sellerUid}/coins`).transaction((c) => (c || 0) - sellerReceives);
+    throw new HttpError(409, "USERNAME_TAKEN", "That username was just taken by someone else \u2014 your coins are refunded");
+  }
+  const profileSnap = await db.ref(`users/${buyerUid}/profile`).once("value");
+  const profile = profileSnap.val() || {};
+  const oldKey = typeof profile.username === "string" ? profile.username.toLowerCase() : "";
+  const held = { ...profile.usernames || {} };
+  const oldWasCollectible = !!held[oldKey];
+  if (oldKey && oldKey !== key) {
+    if (oldWasCollectible) {
+      await db.ref(`usernames/${oldKey}`).set(buyerUid);
+    } else {
+      await db.ref(`usernames/${oldKey}`).set(null);
+    }
+  }
+  await db.ref(`users/${buyerUid}/profile`).transaction((p) => ({
+    ...p || {},
+    uid: buyerUid,
+    username,
+    usernames: { ...(p || {}).usernames || {}, [key]: { username, at: Date.now() } }
+  }));
+  const sellerHeldSnap = await db.ref(`users/${sellerUid}/profile/usernames/${key}`).get();
+  if (sellerHeldSnap.exists()) await db.ref(`users/${sellerUid}/profile/usernames/${key}`).set(null);
+  if (oldKey && oldKey !== key) {
+    const oldSnap = await db.ref(`publicProfiles/${oldKey}`).once("value");
+    if (oldSnap.exists()) {
+      const snap = oldSnap.val();
+      await db.ref(`publicProfiles/${key}`).set({
+        ...snap,
+        username,
+        usernameKey: key,
+        updatedAt: Date.now(),
+        usernames: buildUsernamesList(held, { [key]: { username } })
+      });
+      await db.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
+    }
+  }
+  await logLedger({
+    type: "username_transfer",
+    buyerUid,
+    sellerUid,
+    listingId: listing.id,
+    usernameKey: key,
+    price: listing.price
+  });
+}
+function buildUsernamesList(held, extra) {
+  const merged = {};
+  for (const [k, v] of Object.entries(held)) {
+    const name = v?.username || k;
+    merged[k.toLowerCase()] = name;
+  }
+  for (const [k, v] of Object.entries(extra)) merged[k.toLowerCase()] = v.username;
+  return Object.entries(merged).slice(0, 20).map(([k, name]) => ({ username: name, key: k }));
+}
 
 // api/_src/market/cancel.ts
 var cancel_default = handle(async (req, res) => {
@@ -344,6 +416,41 @@ var cancel_default = handle(async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+// api/_src/market/usernames.ts
+var MAX_REGISTRY = 300;
+var usernames_default = handle(async (req, res) => {
+  await requireUser(req);
+  const db = rtdb();
+  const [rawMap, rawMarket] = await Promise.all([
+    db.ref("usernames").once("value"),
+    db.ref("market").once("value")
+  ]);
+  const map = rawMap.val() || {};
+  const market = rawMarket.val() || {};
+  const listings = Object.entries(market).filter(([, l]) => l && l.kind === "username" && l.status === "active").map(([id, l]) => ({ id, username: l.username, usernameKey: l.usernameKey, price: l.price, listedAt: l.listedAt, sellerName: l.sellerName })).sort((a, b) => a.price - b.price);
+  const keys = Object.keys(map).slice(0, MAX_REGISTRY);
+  const taken = await Promise.all(
+    keys.map(async (key) => {
+      let owner = key;
+      let ceo = false;
+      let avatar = null;
+      try {
+        const snap = await db.ref(`publicProfiles/${key}`).once("value");
+        const p = snap.val();
+        if (p && typeof p === "object") {
+          if (typeof p.username === "string") owner = p.username;
+          if (typeof p.displayName === "string" && p.displayName) owner = p.displayName;
+          ceo = p.ceo === true;
+          if (typeof p.avatar === "string") avatar = p.avatar;
+        }
+      } catch {
+      }
+      return { username: owner, key, ceo, avatar };
+    })
+  );
+  res.status(200).json({ ok: true, taken, listings, total: Object.keys(map).length });
+});
+
 // api/_src/market/index.ts
 function safeParse(raw) {
   try {
@@ -371,6 +478,8 @@ async function handler(req, res) {
       return buy_default(req, res);
     case "cancel":
       return cancel_default(req, res);
+    case "usernames":
+      return usernames_default(req, res);
     default:
       return res.status(400).json({ error: "BAD_ACTION", message: "Unknown market action (use ?action=list|buy|cancel)" });
   }

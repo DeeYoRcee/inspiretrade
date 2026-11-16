@@ -13,6 +13,14 @@ export interface UserProfile {
   avatar?: string | null;
   /** Steam-style animated profile background — one of PROFILE_BACKGROUNDS ids. */
   background?: string | null;
+  /** platform owner badge (stamped by the server on set-username) */
+  ceo?: boolean;
+  /** Telegram-collectible style: every handle this account holds */
+  usernames?: Record<string, { username: string; at: number }>;
+  /** profile video (CEO-only for now) — catalog id or a direct video URL */
+  profileVideo?: string | null;
+  /** social handles shown on the profile + public profile */
+  social?: { instagram?: string; telegram?: string; x?: string };
 }
 
 export function useUserProfile() {

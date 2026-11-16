@@ -4,10 +4,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ref } from "firebase/database";
 import {
-  Award, Camera, Clapperboard, Copy, Crown, Globe2, Loader2, Package, Pencil, Trash2,
+  Award, Camera, Clapperboard, Copy, Crown, Globe2, Instagram, Loader2, Package, Pencil, Send, Trash2, Twitter, Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { saveUserProfile, useUserProfile } from "@/hooks/use-premium";
@@ -18,7 +20,7 @@ import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-publ
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createDefaultPublicProfileSettings } from "@/lib/public-profile";
-import { getProfileBackground } from "@/lib/profile-backgrounds";
+import { getProfileBackground, PROFILE_BACKGROUNDS } from "@/lib/profile-backgrounds";
 import { useLanguage } from "@/lib/language-context";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -132,6 +134,11 @@ export default function ProfilePage() {
   const [bioDraft, setBioDraft] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
+  const [igDraft, setIgDraft] = useState("");
+  const [tgDraft, setTgDraft] = useState("");
+  const [xDraft, setXDraft] = useState("");
+  const [videoDraft, setVideoDraft] = useState("");
+  const [videoUrlDraft, setVideoUrlDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const displayName = user?.displayName || profile?.username || user?.email?.split("@")[0] || "Trader";
@@ -139,6 +146,20 @@ export default function ProfilePage() {
   const gradient = useMemo(() => gradientFor(user?.uid || displayName), [user?.uid, displayName]);
   const initials = useMemo(() => initialsOf(displayName), [displayName]);
   const avatarSrc = profile?.avatar || user?.photoURL || null;
+  // Telegram-collectible style: every handle this account holds
+  const heldUsernames = useMemo(
+    () => Object.entries(profile?.usernames || {})
+      .map(([key, v]) => ({ key: key.toLowerCase(), username: v?.username || key }))
+      .sort((a, b) => (a.key === username?.toLowerCase() ? -1 : b.key === username?.toLowerCase() ? 1 : 0)),
+    [profile?.usernames, username],
+  );
+  // profile video (CEO-only): catalog id or a direct video URL
+  const profileVideoSrc = useMemo(() => {
+    const v = profile?.profileVideo;
+    if (!v) return null;
+    if (/^https?:\/\//i.test(v)) return v;
+    return PROFILE_BACKGROUNDS.find((b) => b.id === v)?.src || null;
+  }, [profile?.profileVideo]);
 
   const memberSince = useMemo(() => {
     const ts = user?.metadata?.creationTime;
@@ -179,6 +200,13 @@ export default function ProfilePage() {
 
   const openEdit = () => {
     setBioDraft(bio);
+    // prefill the social handles + profile video pickers
+    setIgDraft(profile?.social?.instagram || "");
+    setTgDraft(profile?.social?.telegram || "");
+    setXDraft(profile?.social?.x || "");
+    const cur = profile?.profileVideo || "";
+    if (/^https?:\/\//i.test(cur)) { setVideoDraft("__url"); setVideoUrlDraft(cur); }
+    else { setVideoDraft(cur || "__none"); setVideoUrlDraft(""); }
     setEditOpen(true);
   };
 
@@ -254,6 +282,19 @@ export default function ProfilePage() {
       return;
     }
     try {
+      // social handles + profile video persist to the private profile first
+      const clean = (v: string) => v.trim().replace(/^@/, "").slice(0, 40);
+      const social = {
+        instagram: clean(igDraft) || undefined,
+        telegram: clean(tgDraft) || undefined,
+        x: clean(xDraft) || undefined,
+      };
+      const videoValue = videoUrlDraft.trim().startsWith("http")
+        ? videoUrlDraft.trim()
+        : videoDraft === "__none" || videoDraft === "__url" ? null : videoDraft;
+      await saveUserProfile(user.uid, { social, profileVideo: videoValue });
+      queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
+
       await savePublicProfile.mutateAsync({
         username,
         displayName: user.displayName || username,
@@ -346,7 +387,17 @@ export default function ProfilePage() {
           <span className="text-xs">{t("profileEdit")}</span>
         </Button>
         <div className="relative">
-          {avatarSrc ? (
+          {profileVideoSrc ? (
+            <video
+              src={profileVideoSrc}
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="metadata"
+              className="mx-auto h-24 w-24 rounded-full border-4 border-background object-cover shadow-lg"
+            />
+          ) : avatarSrc ? (
             <img
               src={avatarSrc}
               alt={displayName}
@@ -365,6 +416,62 @@ export default function ProfilePage() {
           <p className="mt-0.5 text-[15px] font-medium text-[#3390ec]">
             {username ? `@${username}` : t("profileNoUsername")}
           </p>
+          {/* Telegram-collectible style — every handle this account holds */}
+          {heldUsernames.length > 1 && (
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 px-6">
+              {heldUsernames.slice(0, 10).map((u) => (
+                <span
+                  key={u.key}
+                  className={cn(
+                    "inline-flex max-w-[130px] items-center truncate rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                    u.key === username?.toLowerCase()
+                      ? "border-[#3390ec]/40 bg-[#3390ec]/15 text-[#3390ec]"
+                      : "border-border/60 bg-black/25 text-white/70",
+                  )}
+                >
+                  @{u.username}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* social handles — Instagram / Telegram / X */}
+          {(profile?.social?.instagram || profile?.social?.telegram || profile?.social?.x) && (
+            <div className="mt-2.5 flex items-center justify-center gap-2">
+              {profile?.social?.instagram && (
+                <a
+                  href={`https://instagram.com/${profile.social.instagram}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Instagram"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/80 transition-colors hover:bg-black/50 hover:text-white"
+                >
+                  <Instagram className="h-4 w-4" />
+                </a>
+              )}
+              {profile?.social?.telegram && (
+                <a
+                  href={`https://t.me/${profile.social.telegram}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Telegram"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/80 transition-colors hover:bg-black/50 hover:text-white"
+                >
+                  <Send className="h-4 w-4" />
+                </a>
+              )}
+              {profile?.social?.x && (
+                <a
+                  href={`https://x.com/${profile.social.x}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="X"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/80 transition-colors hover:bg-black/50 hover:text-white"
+                >
+                  <Twitter className="h-4 w-4" />
+                </a>
+              )}
+            </div>
+          )}
           <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             {profile?.isPremium && <Crown className="h-3.5 w-3.5 text-amber-400" />}
             {profile?.isPremium ? t("profilePremium") : t("profileStatus")}
@@ -540,6 +647,71 @@ export default function ProfilePage() {
                 {profileBackground ? profileBackground.name : t("profileBackgroundNone")}
               </span>
             </button>
+
+            {/* Social handles — Instagram / Telegram / X */}
+            <div className="w-full space-y-2 rounded-xl border border-border/60 px-3 py-2.5">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("socialLinks")}</p>
+              <div className="flex items-center gap-2">
+                <Instagram className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <Input
+                  value={igDraft}
+                  onChange={(e) => setIgDraft(e.target.value)}
+                  placeholder="instagram"
+                  className="h-8 rounded-lg text-sm"
+                  maxLength={40}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Send className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <Input
+                  value={tgDraft}
+                  onChange={(e) => setTgDraft(e.target.value)}
+                  placeholder="telegram"
+                  className="h-8 rounded-lg text-sm"
+                  maxLength={40}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Twitter className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <Input
+                  value={xDraft}
+                  onChange={(e) => setXDraft(e.target.value)}
+                  placeholder="x / twitter"
+                  className="h-8 rounded-lg text-sm"
+                  maxLength={40}
+                />
+              </div>
+            </div>
+
+            {/* Profile video — Telegram-style avatar video (CEO-only for now) */}
+            {profile?.ceo && (
+              <div className="w-full space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5">
+                <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-amber-400">
+                  <Video className="h-3.5 w-3.5" />
+                  {t("profileVideo")}
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-300">
+                    <Crown className="h-2.5 w-2.5" />CEO
+                  </span>
+                </p>
+                <Select value={videoDraft} onValueChange={setVideoDraft}>
+                  <SelectTrigger className="h-8 rounded-lg text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent className="glass-panel border-border/60">
+                    <SelectItem value="__none">{t("profileVideoNone")}</SelectItem>
+                    {PROFILE_BACKGROUNDS.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                    <SelectItem value="__url">URL</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={videoUrlDraft}
+                  onChange={(e) => setVideoUrlDraft(e.target.value)}
+                  placeholder="https://…mp4"
+                  className="h-8 rounded-lg text-sm"
+                  maxLength={300}
+                />
+              </div>
+            )}
 
             {/* Public profile toggle */}
             <div className="flex w-full items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2.5">

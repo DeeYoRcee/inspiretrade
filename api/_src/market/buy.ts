@@ -73,6 +73,12 @@ export default handle(async (req, res) => {
   const fee = feeCents / 100;
   await db.ref(`economy/${listing.sellerUid}/coins`).transaction((c: any) => (c || 0) + sellerReceives);
 
+  if (listing.kind === "username") {
+    await deliverUsername(db, user.uid, listing, revertListing, sellerReceives);
+    res.status(200).json({ ok: true, listing: reserved, coinsLeft: coinsAfter, username: listing.username });
+    return;
+  }
+
   if (listing.kind === "case") {
     // Case listing — deliver to the matching economy counter. A custom case
     // whose definition was deleted by the owner is undeliverable: revert.
@@ -117,3 +123,99 @@ export default handle(async (req, res) => {
     coinsLeft: coinsAfter,
   });
 });
+
+/**
+ * Username delivery — Telegram-collectible style transfer.
+ * The mapping moves atomically; the buyer's primary handle switches to the
+ * purchased username and it joins the buyer's held-usernames map. The buyer's
+ * previous handle: released when it was an original claim, KEPT when it was a
+ * collectible the buyer already owns. Old public URLs keep working via
+ * redirect records. On a lost race (someone claimed the handle meanwhile)
+ * everything is reverted and refunded.
+ */
+async function deliverUsername(db: any, buyerUid: string, listing: any, revertListing: () => Promise<void>, sellerReceives: number) {
+  const key = String(listing.usernameKey || "");
+  const username = String(listing.username || "");
+  const sellerUid = String(listing.sellerUid || "");
+
+  // 1) transfer the handle mapping atomically (free OR held by the seller)
+  const mapTx = await db.ref(`usernames/${key}`).transaction((current: any) => {
+    if (current === null || current === sellerUid) return buyerUid;
+    return current; // someone else owns it — no-op
+  });
+  const mapOwner = mapTx?.snapshot?.val?.();
+  if (!mapTx?.committed || mapOwner !== buyerUid) {
+    await revertListing();
+    await db.ref(`economy/${buyerUid}/coins`).transaction((c: any) => (c || 0) + listing.price);
+    await db.ref(`economy/${sellerUid}/coins`).transaction((c: any) => (c || 0) - sellerReceives);
+    throw new HttpError(409, "USERNAME_TAKEN", "That username was just taken by someone else — your coins are refunded");
+  }
+
+  // 2) buyer profile: primary switch + accumulate the held-usernames map
+  const profileSnap = await db.ref(`users/${buyerUid}/profile`).once("value");
+  const profile = profileSnap.val() || {};
+  const oldKey = typeof profile.username === "string" ? profile.username.toLowerCase() : "";
+  const held: Record<string, unknown> = { ...((profile.usernames as Record<string, unknown>) || {}) };
+  const oldWasCollectible = !!held[oldKey];
+
+  if (oldKey && oldKey !== key) {
+    if (oldWasCollectible) {
+      // keep the old collectible handle owned by the buyer
+      await db.ref(`usernames/${oldKey}`).set(buyerUid);
+    } else {
+      // original handle — release it back to the pool
+      await db.ref(`usernames/${oldKey}`).set(null);
+    }
+  }
+  await db.ref(`users/${buyerUid}/profile`).transaction((p: any) => ({
+    ...(p || {}),
+    uid: buyerUid,
+    username,
+    usernames: { ...(((p || {}).usernames as Record<string, unknown>) || {}), [key]: { username, at: Date.now() } },
+  }));
+
+  // 3) if the seller HELD this collectible, remove it from their map
+  const sellerHeldSnap = await db.ref(`users/${sellerUid}/profile/usernames/${key}`).get();
+  if (sellerHeldSnap.exists()) await db.ref(`users/${sellerUid}/profile/usernames/${key}`).set(null);
+
+  // 4) move the public snapshot so the new URL works; old URL follows via redirect
+  if (oldKey && oldKey !== key) {
+    const oldSnap = await db.ref(`publicProfiles/${oldKey}`).once("value");
+    if (oldSnap.exists()) {
+      const snap = oldSnap.val();
+      await db.ref(`publicProfiles/${key}`).set({
+        ...snap,
+        username,
+        usernameKey: key,
+        updatedAt: Date.now(),
+        usernames: buildUsernamesList(held, { [key]: { username } }),
+      });
+      await db.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
+    }
+  }
+
+  await logLedger({
+    type: "username_transfer",
+    buyerUid,
+    sellerUid,
+    listingId: listing.id,
+    usernameKey: key,
+    price: listing.price,
+  });
+}
+
+/** Merge a held-usernames map into the snapshot's compact list shape. */
+function buildUsernamesList(
+  held: Record<string, unknown>,
+  extra: Record<string, { username: string }>,
+): { username: string; key: string }[] {
+  const merged: Record<string, string> = {};
+  for (const [k, v] of Object.entries(held)) {
+    const name = (v as any)?.username || k;
+    merged[k.toLowerCase()] = name;
+  }
+  for (const [k, v] of Object.entries(extra)) merged[k.toLowerCase()] = v.username;
+  return Object.entries(merged)
+    .slice(0, 20)
+    .map(([k, name]) => ({ username: name, key: k }));
+}

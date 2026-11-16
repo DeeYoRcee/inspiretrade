@@ -47,6 +47,14 @@ export interface PublicProfileSnapshot {
   background?: string;
   /** profile picture — 256px JPEG data URL or the auth photoURL */
   avatar?: string | null;
+  /** Telegram-collectible style: every handle this profile holds */
+  usernames?: { username: string; key: string }[];
+  /** profile video (CEO-only for now) — plays inside the avatar circle */
+  profileVideo?: string | null;
+  /** social handles — rendered as Instagram / Telegram / X links */
+  social?: { instagram?: string; telegram?: string; x?: string };
+  /** a moved profile leaves this at the old handle — the page follows it */
+  redirect?: string;
   statistics?: PublicProfileStats;
   winRate?: {
     rate: number;
@@ -137,6 +145,7 @@ export function createPublicProfileSnapshot({
   trades,
   settings,
   avatar,
+  profile,
 }: {
   uid: string;
   username: string;
@@ -144,6 +153,8 @@ export function createPublicProfileSnapshot({
   trades: Trade[];
   settings: PublicProfileSettings;
   avatar?: string | null;
+  /** full private profile — carries usernames/social/profileVideo */
+  profile?: { usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null } | null;
 }): PublicProfileSnapshot {
   const usernameKey = username.trim().toLowerCase();
   const snapshot: PublicProfileSnapshot = {
@@ -157,6 +168,23 @@ export function createPublicProfileSnapshot({
   // look & feel of the header — background choice + profile picture
   if (settings.background) snapshot.background = settings.background;
   if (avatar) snapshot.avatar = avatar;
+
+  // Telegram-collectible usernames + profile video + social handles
+  const held = profile?.usernames || {};
+  const list = Object.entries(held)
+    .slice(0, 20)
+    .map(([key, v]) => ({ username: v?.username || key, key: key.toLowerCase() }));
+  // the current primary is always part of the collection
+  if (!list.some((u) => u.key === usernameKey)) list.push({ username: username.trim(), key: usernameKey });
+  snapshot.usernames = list;
+  if (profile?.profileVideo) snapshot.profileVideo = profile.profileVideo;
+  if (profile?.social?.instagram || profile?.social?.telegram || profile?.social?.x) {
+    snapshot.social = {
+      instagram: profile.social.instagram || undefined,
+      telegram: profile.social.telegram || undefined,
+      x: profile.social.x || undefined,
+    };
+  }
 
   if (settings.visibility.statistics) {
     snapshot.statistics = calculateStatistics(trades);

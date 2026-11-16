@@ -19,6 +19,7 @@ import deposits from "./deposits";
 import chatDelete from "./chat-delete";
 import chatSend from "./chat-send";
 import setUsername from "./set-username";
+import usernameMarket from "./username-market";
 import caseAdmin from "./cases";
 
 function safeParse(raw: string): any {
@@ -58,6 +59,9 @@ export default async function handler(req: any, res: any) {
       return chatSend(req, res);
     case "set-username":
       return setUsername(req, res);
+    case "usernameList":
+    case "usernameUnlist":
+      return usernameMarket(req, res);
     case "caseCreate":
     case "caseDelete":
     case "caseGrant":

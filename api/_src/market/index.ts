@@ -12,6 +12,7 @@
 import list from "./list";
 import buy from "./buy";
 import cancel from "./cancel";
+import usernames from "./usernames";
 
 function safeParse(raw: string): any {
   try {
@@ -42,6 +43,9 @@ export default async function handler(req: any, res: any) {
       return buy(req, res);
     case "cancel":
       return cancel(req, res);
+    case "usernames":
+      // GET — the taken-handle registry + active username listings
+      return usernames(req, res);
     default:
       return res
         .status(400)

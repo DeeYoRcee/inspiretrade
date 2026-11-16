@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { useMutation } from "@tanstack/react-query";
-import { Coins, Store, Tag, XCircle, ShoppingBag, Info, Crown, Gem, Box } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { AtSign, Coins, Crown, Store, Tag, XCircle, ShoppingBag, Info, Gem, Box } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
 import { useEconomy, useInventory, useEconomyInvalidator, useCustomCases, type CustomCaseDef } from "@/hooks/use-economy";
-import { useMarketListings, type MarketListing } from "@/hooks/use-market";
+import { useMarketListings, useUsernameDirectory, type MarketListing } from "@/hooks/use-market";
+import { useIsAdmin } from "@/hooks/use-admin";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
 import { ALL_FRAGMENTS, getFragment, CASES, MARKET_FEE_PERCENT, MIN_LISTING_PRICE, MAX_LISTING_PRICE, sellerReceives, type FragmentDef } from "@shared/fragments";
 import { cn } from "@/lib/utils";
@@ -20,9 +21,12 @@ import { cn } from "@/lib/utils";
 export default function MarketPage() {
   const { t } = useLanguage();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: economy } = useEconomy();
   const { data: inventory } = useInventory();
   const { data: listings } = useMarketListings();
+  const { data: directory } = useUsernameDirectory();
+  const isAdmin = useIsAdmin();
   const invalidate = useEconomyInvalidator();
 
   const coins = economy?.coins ?? 0;
@@ -30,6 +34,9 @@ export default function MarketPage() {
   // "f:<fragmentId>" or "c:<caseId>" — one selector sells fragments AND cases
   const [sellItem, setSellItem] = useState<string>("");
   const [sellPrice, setSellPrice] = useState<string>("");
+  // username market — owner-only sale form
+  const [uName, setUName] = useState("");
+  const [uPrice, setUPrice] = useState("");
 
   const ownedSellable = useMemo(
     () => ALL_FRAGMENTS.filter((f) => (inventory?.[f.id] || 0) >= 1),
@@ -80,16 +87,69 @@ export default function MarketPage() {
 
   const buyMutation = useMutation({
     mutationFn: async (listingId: string) => authedFetch("/api/market?action=buy", { listingId }),
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       toast({ title: t("purchaseSuccess") });
       invalidate();
+      // a username purchase changes the buyer's identity — refresh everything
+      if (result?.username) {
+        queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+        queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
+        queryClient.invalidateQueries({ queryKey: ["publicProfileSettings"] });
+        queryClient.invalidateQueries({ queryKey: ["publicProfile"] });
+      }
     },
     onError: (error: any) => {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
     },
   });
 
-  const myListings = (listings || []).filter((listing) => listing.isOwn);
+  // owner-only: put a handle up for sale / pull it back
+  const uListMutation = useMutation({
+    mutationFn: async () => {
+      const price = Number(uPrice);
+      return authedFetch("/api/admin?action=usernameList", { username: uName.trim(), price });
+    },
+    onSuccess: () => {
+      toast({ title: t("usernameListedOk") });
+      setUName("");
+      setUPrice("");
+      queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
+      queryClient.invalidateQueries({ queryKey: ["market"] });
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  const uUnlistMutation = useMutation({
+    mutationFn: async (listingId: string) => authedFetch("/api/admin?action=usernameUnlist", { listingId }),
+    onSuccess: () => {
+      toast({ title: t("usernameUnlistedOk") });
+      queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
+      queryClient.invalidateQueries({ queryKey: ["market"] });
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  // owner-only: take a claimed handle as the primary username
+  const takeMutation = useMutation({
+    mutationFn: async (username: string) => authedFetch("/api/admin?action=set-username", { username }),
+    onSuccess: (_r, username) => {
+      toast({ title: t("ownerClaimDone"), description: `@${String(username).toLowerCase()}` });
+      queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+      queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  const usernameListings = (listings || []).filter((l) => l.kind === "username");
+  const uPriceValid = Number(uPrice) >= MIN_LISTING_PRICE && Number(uPrice) <= MAX_LISTING_PRICE;
+
+  const myListings = (listings || []).filter((listing) => listing.isOwn && listing.kind !== "username");
 
   // Prices are decimal INSP with up to 2 decimals (e.g. 0.03).
   const rawPrice = Number(sellPrice);
@@ -121,12 +181,13 @@ export default function MarketPage() {
       <Tabs defaultValue="market">
         <TabsList className="glass-panel rounded-full border border-border/60">
           <TabsTrigger value="market" className="gap-1.5 rounded-full"><Store className="h-4 w-4" />{t("marketTab")}</TabsTrigger>
+          <TabsTrigger value="usernames" className="gap-1.5 rounded-full"><AtSign className="h-4 w-4" />{t("usernamesTab")}</TabsTrigger>
           <TabsTrigger value="mine" className="gap-1.5 rounded-full"><ShoppingBag className="h-4 w-4" />{t("myListings")}</TabsTrigger>
         </TabsList>
 
         {/* Marketplace */}
         <TabsContent value="market" className="mt-4">
-          {!listings?.length ? (
+          {!listings?.filter((l) => l.kind !== "username").length ? (
             <Card className="glass-panel border-border/50">
               <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
                 <Store className="h-10 w-10 text-muted-foreground/50" />
@@ -135,7 +196,7 @@ export default function MarketPage() {
             </Card>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {listings.map((listing) => (
+              {listings.filter((l) => l.kind !== "username").map((listing) => (
                 <motion.div key={listing.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-2">
                   {listing.kind === "case" ? (
                     <CaseListCard listing={listing} customCases={customCases}>
@@ -176,6 +237,142 @@ export default function MarketPage() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* Usernames — Telegram-collectible style handle market */}
+        <TabsContent value="usernames" className="mt-4 space-y-6">
+          <p className="text-sm text-muted-foreground">{t("usernameMarketSubtitle")}</p>
+
+          {/* active username listings */}
+          {!usernameListings.length ? (
+            <Card className="glass-panel border-border/50">
+              <CardContent className="flex flex-col items-center gap-2 py-10 text-center">
+                <AtSign className="h-9 w-9 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">{t("noListings")}</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {usernameListings.map((listing) => (
+                <Card key={listing.id} className="glass-panel flex flex-col items-center gap-2 border-amber-500/40 py-6">
+                  <CardContent className="flex flex-col items-center gap-2 py-0">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-500/40 bg-gradient-to-br from-amber-500/25 via-amber-500/5 to-transparent">
+                      <AtSign className="h-7 w-7 text-amber-400" />
+                    </div>
+                    <p className="max-w-[180px] truncate text-sm font-bold">@{listing.username}</p>
+                    <Badge variant="outline" className="rounded-full border-amber-500/40 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                      <Crown className="mr-1 h-2.5 w-2.5" />CEO
+                    </Badge>
+                    <div className="mt-2 w-full space-y-2 text-left">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="max-w-[120px] truncate">@{listing.sellerName}</span>
+                        <span className="font-number font-bold text-amber-400">{listing.price} INSP</span>
+                      </div>
+                      {isAdmin ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full rounded-xl"
+                          disabled={uUnlistMutation.isPending}
+                          onClick={() => uUnlistMutation.mutate(listing.id)}
+                        >
+                          <XCircle className="mr-1.5 h-4 w-4" />{t("cancelListing")}
+                        </Button>
+                      ) : (
+                        <ListingAction listing={listing} coins={coins} buyMutation={buyMutation} t={t} />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* owner-only sale form */}
+          {isAdmin && (
+            <Card className="glass-panel border-amber-500/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Tag className="h-5 w-5 text-amber-400" />
+                  {t("sellUsernameTitle")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs leading-relaxed text-muted-foreground">{t("sellUsernameHint")}</p>
+                <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
+                  <Input
+                    value={uName}
+                    onChange={(e) => setUName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
+                    placeholder="@username"
+                    maxLength={20}
+                    className="rounded-xl"
+                  />
+                  <Input
+                    type="number"
+                    min={MIN_LISTING_PRICE}
+                    max={MAX_LISTING_PRICE}
+                    step={0.01}
+                    value={uPrice}
+                    onChange={(e) => setUPrice(e.target.value)}
+                    placeholder="0.10"
+                    className="rounded-xl"
+                  />
+                </div>
+                <Button
+                  className="w-full rounded-xl font-semibold"
+                  disabled={!/^[a-zA-Z0-9_]{3,20}$/.test(uName.trim()) || !uPriceValid || uListMutation.isPending}
+                  onClick={() => uListMutation.mutate()}
+                >
+                  {uListMutation.isPending ? t("listing") : t("listForSale")}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* taken-handle registry — who owns what */}
+          <Card className="glass-panel border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">{t("takenUsernames")}</CardTitle>
+              <p className="text-xs text-muted-foreground">{t("usernamesTotal").replace("{n}", String(directory?.total ?? directory?.taken.length ?? 0))}</p>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              {(directory?.taken || []).map((u) => (
+                <span
+                  key={u.key}
+                  className={cn(
+                    "inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/60 bg-card/50 py-1 pl-1 pr-2.5",
+                    u.ceo && "border-amber-500/40 bg-amber-500/[0.08]",
+                  )}
+                >
+                  {u.ceo ? (
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
+                      <Crown className="h-3 w-3" />
+                    </span>
+                  ) : u.avatar ? (
+                    <img src={u.avatar} alt="" className="h-6 w-6 rounded-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/15 text-[10px] font-bold text-primary">
+                      {u.username.slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="max-w-[140px] truncate text-xs font-semibold">@{u.username}</span>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      className="rounded-full px-1.5 text-[10px] font-bold uppercase text-amber-400 underline-offset-2 hover:underline"
+                      onClick={() => {
+                        if (window.confirm(t("ownerTakeConfirm").replace("{u}", u.username))) {
+                          takeMutation.mutate(u.username);
+                        }
+                      }}
+                    >
+                      {t("ownerTake")}
+                    </button>
+                  )}
+                </span>
+              ))}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* My listings + sell form */}

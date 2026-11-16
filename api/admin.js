@@ -354,19 +354,19 @@ var set_username_default = handle(async (req, res) => {
   const changedKey = oldKey !== key;
   if (changedKey) {
     await db.ref(`usernames/${key}`).set(admin2.uid);
-    await db.ref(`usernames/${oldKey}`).set(null);
   }
   await db.ref(`users/${admin2.uid}/profile`).transaction((p) => ({
     ...p || {},
     uid: admin2.uid,
     username,
-    ceo: true
+    ceo: true,
+    usernames: { ...p && p.usernames || {}, [key]: { username, at: Date.now() } }
   }));
   if (changedKey && oldKey) {
     const oldSnap = await db.ref(`publicProfiles/${oldKey}`).once("value");
     if (oldSnap.exists()) {
       await db.ref(`publicProfiles/${key}`).set({ ...oldSnap.val(), username, usernameKey: key, ceo: true, updatedAt: Date.now() });
-      await db.ref(`publicProfiles/${oldKey}`).set(null);
+      await db.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
     }
   }
   await db.ref(`publicProfiles/${key}/ceo`).set(true);
@@ -412,9 +412,70 @@ var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var MIN_LISTING_PRICE = 0.01;
+var MAX_LISTING_PRICE = 1e6;
 
-// api/_src/admin/cases.ts
-var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
+// api/_src/admin/username-market.ts
+var USERNAME_RE2 = /^[a-zA-Z0-9_]{3,20}$/;
+var username_market_default = handle(async (req, res) => {
+  assertPost(req);
+  const admin2 = await requireAdmin(req);
+  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
+  const action = new URL(req.url || "/", "http://localhost").searchParams.get("action") || "";
+  const db = rtdb();
+  if (action === "usernameUnlist") {
+    const listingId = String(body.listingId || "");
+    const snap = await db.ref(`market/${listingId}`).get();
+    const listing2 = snap.val();
+    if (!listing2 || listing2.kind !== "username") throw new HttpError(404, "NO_LISTING", "Listing not found");
+    await db.ref(`market/${listingId}`).set(null);
+    await logLedger({ type: "username_unlist", listingId, usernameKey: listing2.usernameKey, by: admin2.email || admin2.uid });
+    res.status(200).json({ ok: true });
+    return;
+  }
+  const username = String(body.username || "").trim();
+  if (!USERNAME_RE2.test(username)) {
+    throw new HttpError(400, "INVALID_USERNAME", "3-20 chars: letters, digits, underscore");
+  }
+  const key = username.toLowerCase();
+  const rawPrice = Number(body.price);
+  const priceCents = Math.round(rawPrice * 100);
+  const price = priceCents / 100;
+  if (!Number.isFinite(rawPrice) || Math.abs(rawPrice - price) > 1e-9 || price < MIN_LISTING_PRICE || price > MAX_LISTING_PRICE) {
+    throw new HttpError(400, "BAD_PRICE", `Price must be between ${MIN_LISTING_PRICE} and ${MAX_LISTING_PRICE} INSP (up to 2 decimals)`);
+  }
+  const ownerUid = (await db.ref(`usernames/${key}`).get()).val() || null;
+  if (ownerUid && ownerUid !== admin2.uid) {
+    throw new HttpError(409, "USERNAME_TAKEN", "That username belongs to another user");
+  }
+  if (ownerUid === admin2.uid) {
+    const profile = (await db.ref(`users/${admin2.uid}/profile`).get()).val() || {};
+    if (String(profile.username || "").toLowerCase() === key) {
+      throw new HttpError(409, "PRIMARY_HANDLE", "Switch to another username first \u2014 the primary handle can't be sold from under the profile");
+    }
+  }
+  const all = (await db.ref("market").get()).val() || {};
+  for (const [id, l] of Object.entries(all)) {
+    if (l && l.kind === "username" && l.usernameKey === key) await db.ref(`market/${id}`).set(null);
+  }
+  const listingRef = db.ref("market").push();
+  const listing = {
+    id: listingRef.key,
+    kind: "username",
+    username,
+    usernameKey: key,
+    sellerUid: admin2.uid,
+    sellerName: "InspireTrade",
+    itemName: `@${username}`,
+    fragmentId: "",
+    price,
+    status: "active",
+    listedAt: Date.now()
+  };
+  await listingRef.set(listing);
+  await logLedger({ type: "username_list", listingId: listingRef.key, usernameKey: key, price, by: admin2.email || admin2.uid });
+  res.status(200).json({ ok: true, listing });
+});
 function safeParse7(raw) {
   try {
     return JSON.parse(raw);
@@ -422,8 +483,18 @@ function safeParse7(raw) {
     return {};
   }
 }
+
+// api/_src/admin/cases.ts
+var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
+function safeParse8(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
 function getBody(req) {
-  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body;
   return body || {};
 }
 function getAction(req) {
@@ -527,7 +598,7 @@ var cases_default = handle(async (req, res) => {
 });
 
 // api/_src/admin/index.ts
-function safeParse8(raw) {
+function safeParse9(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -541,7 +612,7 @@ function getAction2(req) {
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse9(req.body) : req.body;
   return String(body?.action || "");
 }
 async function handler(req, res) {
@@ -559,6 +630,9 @@ async function handler(req, res) {
       return chat_send_default(req, res);
     case "set-username":
       return set_username_default(req, res);
+    case "usernameList":
+    case "usernameUnlist":
+      return username_market_default(req, res);
     case "caseCreate":
     case "caseDelete":
     case "caseGrant":

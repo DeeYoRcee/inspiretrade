@@ -1,18 +1,21 @@
 /**
  * POST /api/admin?action=set-username   (owner only)
  * Body: { username }
- * Owner-grade username claim: takes ANY handle — even one that is already
- * taken or was released — and moves the owner's public profile to it.
+ * Owner-grade username claim, Telegram-collectible style: the owner can hold
+ * MANY usernames at once — each new claim is ADDED to the owner's profile
+ * (previous ones stay owned by the owner, not released) and the public
+ * profile moves to the newest handle; old public URLs keep working via a
+ * lightweight redirect record.
  * Regular users must go through the atomic claim in UsernameDialog; this
  * endpoint deliberately bypasses the "taken" check because the owner IS
  * the platform (e.g. @CEO, @gold, celebrity-style handles).
  *
  * Side effects:
- *   usernames/{key}              → owner uid (overwrites the previous owner)
- *   users/{uid}/profile          → username + ceo:true
- *   usernames/{oldKey}           → released (null)
- *   publicProfiles/{newKey}      ← old snapshot copied, + ceo:true
- *   publicProfiles/{oldKey}      → removed (the old URL stops resolving)
+ *   usernames/{key}                  → owner uid (overwrites any owner)
+ *   users/{uid}/profile.username     → new primary handle
+ *   users/{uid}/profile.usernames/   → { key: { username, at } } accumulation
+ *   publicProfiles/{newKey}          ← snapshot copied, + ceo:true
+ *   publicProfiles/{oldKey}          → { redirect: newKey } (old URL follows)
  */
 import { handle, requireAdmin, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
 
@@ -29,32 +32,33 @@ export default handle(async (req, res) => {
   const key = username.toLowerCase();
   const db = rtdb();
 
-  // current username of the owner (to release + move the public snapshot)
+  // current username of the owner (the primary that moves to the new handle)
   const profileSnap = await db.ref(`users/${admin.uid}/profile`).once("value");
   const profile = profileSnap.val() || {};
   const oldKey = typeof profile.username === "string" ? profile.username.toLowerCase() : "";
   const changedKey = oldKey !== key;
 
+  // claim the handle — the OLD one stays owned (owner accumulates, TG-style)
   if (changedKey) {
-    // steal the handle: overwrite whatever mapping is there (owner override)
     await db.ref(`usernames/${key}`).set(admin.uid);
-    await db.ref(`usernames/${oldKey}`).set(null);
   }
 
-  // profile — username + permanent CEO badge
+  // profile — primary username + permanent CEO badge + the held-usernames map
   await db.ref(`users/${admin.uid}/profile`).transaction((p: any) => ({
     ...(p || {}),
     uid: admin.uid,
     username,
     ceo: true,
+    usernames: { ...((p && p.usernames) || {}), [key]: { username, at: Date.now() } },
   }));
 
-  // move the public snapshot so the new URL works immediately
+  // move the public snapshot so the new URL works immediately; the old URL
+  // keeps resolving through a redirect record (public profile page follows it)
   if (changedKey && oldKey) {
     const oldSnap = await db.ref(`publicProfiles/${oldKey}`).once("value");
     if (oldSnap.exists()) {
       await db.ref(`publicProfiles/${key}`).set({ ...oldSnap.val(), username, usernameKey: key, ceo: true, updatedAt: Date.now() });
-      await db.ref(`publicProfiles/${oldKey}`).set(null);
+      await db.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
     }
   }
   // (re)stamp ceo on whatever snapshot is live under the new key

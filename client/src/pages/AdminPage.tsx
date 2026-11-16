@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { useUserProfile } from "@/hooks/use-premium";
 import { useCustomCases, useEconomyInvalidator } from "@/hooks/use-economy";
 import { ALL_FRAGMENTS, CASES } from "@shared/fragments";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,7 @@ export default function AdminPage() {
   const { t } = useLanguage();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { data: ownerProfile, refetch: refetchOwnerProfile } = useUserProfile();
 
   // Gift form
   const [target, setTarget] = useState("");
@@ -232,6 +234,7 @@ export default function AdminPage() {
     onSuccess: () => {
       toast({ title: t("ownerClaimDone"), description: `@${claimName.trim().toLowerCase()}` });
       setClaimName("");
+      refetchOwnerProfile();
     },
     onError: (error: any) => {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
@@ -297,6 +300,23 @@ export default function AdminPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-xs leading-relaxed text-muted-foreground">{t("ownerClaimHint")}</p>
+                {/* Telegram-collectible style: every handle the owner holds */}
+                {Object.keys(ownerProfile?.usernames || {}).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(ownerProfile?.usernames || {}).map(([key, v]) => (
+                      <span
+                        key={key}
+                        className={
+                          key === ownerProfile?.username?.toLowerCase()
+                            ? "inline-flex items-center rounded-full border border-amber-500/50 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-300"
+                            : "inline-flex items-center rounded-full border border-border/60 bg-card/50 px-2.5 py-0.5 text-[11px] font-semibold text-muted-foreground"
+                        }
+                      >
+                        @{v?.username || key}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">{t("ownerClaimLabel")}</label>
                   <Input

@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
 import { getProfileBackground } from "@/lib/profile-backgrounds";
@@ -20,6 +20,13 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
   const stats = profile.statistics;
   const recent = [...(profile.history || [])].slice(0, 5);
   const background = getProfileBackground(profile.background);
+  // profile video (CEO-only for now) plays inside the avatar circle
+  const videoSrc = (() => {
+    const v = profile.profileVideo;
+    if (!v) return null;
+    if (/^https?:\/\//i.test(v)) return v;
+    return getProfileBackground(v)?.src || null;
+  })();
 
   return (
     <article className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-[0_24px_90px_rgba(0,0,0,.28)]">
@@ -47,7 +54,17 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         <div className="pointer-events-none absolute -bottom-40 left-[20%] h-72 w-96 rounded-full bg-cyan-300/[0.06] blur-3xl" />
 
         <div className="relative mx-auto flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-200/30 bg-emerald-100/10 text-2xl font-black text-emerald-50 shadow-[0_8px_40px_-8px_rgba(16,185,129,0.5)]">
-          {profile.avatar ? (
+          {videoSrc ? (
+            <video
+              src={videoSrc}
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="metadata"
+              className="h-full w-full object-cover"
+            />
+          ) : profile.avatar ? (
             <img src={profile.avatar} alt={profile.displayName} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
           ) : (
             initials
@@ -56,6 +73,63 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
 
         <h2 className="relative mt-3 text-2xl font-bold tracking-tight">{profile.displayName}</h2>
         <p className="relative text-sm text-emerald-50/60">@{profile.username}</p>
+
+        {/* Telegram-collectible style — every handle this profile holds */}
+        {(profile.usernames?.length ?? 0) > 1 && (
+          <div className="relative mt-2 flex flex-wrap items-center justify-center gap-1.5 px-4">
+            {profile.usernames!.slice(0, 10).map((u) => (
+              <span
+                key={u.key}
+                className={
+                  u.key === profile.usernameKey
+                    ? "inline-flex max-w-[130px] items-center truncate rounded-full border border-white/30 bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold text-white"
+                    : "inline-flex max-w-[130px] items-center truncate rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] font-semibold text-white/60"
+                }
+              >
+                @{u.username}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* social handles — Instagram / Telegram / X */}
+        {(profile.social?.instagram || profile.social?.telegram || profile.social?.x) && (
+          <div className="relative mt-2.5 flex items-center justify-center gap-2">
+            {profile.social?.instagram && (
+              <a
+                href={`https://instagram.com/${profile.social.instagram}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Instagram"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+              >
+                <Instagram className="h-4 w-4" />
+              </a>
+            )}
+            {profile.social?.telegram && (
+              <a
+                href={`https://t.me/${profile.social.telegram}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Telegram"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+              >
+                <Send className="h-4 w-4" />
+              </a>
+            )}
+            {profile.social?.x && (
+              <a
+                href={`https://x.com/${profile.social.x}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="X"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+              >
+                <Twitter className="h-4 w-4" />
+              </a>
+            )}
+          </div>
+        )}
 
         {/* single-line stats chips — like "12 posts · 4.5K subscribers" */}
         {stats && (
