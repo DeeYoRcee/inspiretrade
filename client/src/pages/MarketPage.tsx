@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
 import { useEconomy, useInventory, useEconomyInvalidator, useCustomCases, type CustomCaseDef } from "@/hooks/use-economy";
-import { useMarketListings, useUsernameDirectory, type MarketListing } from "@/hooks/use-market";
+import { useMarketListings, type MarketListing } from "@/hooks/use-market";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
 import { ALL_FRAGMENTS, getFragment, CASES, MARKET_FEE_PERCENT, MIN_LISTING_PRICE, MAX_LISTING_PRICE, sellerReceives, type FragmentDef } from "@shared/fragments";
@@ -25,7 +25,6 @@ export default function MarketPage() {
   const { data: economy } = useEconomy();
   const { data: inventory } = useInventory();
   const { data: listings } = useMarketListings();
-  const { data: directory } = useUsernameDirectory();
   const isAdmin = useIsAdmin();
   const invalidate = useEconomyInvalidator();
 
@@ -93,7 +92,6 @@ export default function MarketPage() {
       // a username purchase changes the buyer's identity — refresh everything
       if (result?.username) {
         queryClient.invalidateQueries({ queryKey: ["userProfile"] });
-        queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
         queryClient.invalidateQueries({ queryKey: ["publicProfileSettings"] });
         queryClient.invalidateQueries({ queryKey: ["publicProfile"] });
       }
@@ -113,7 +111,6 @@ export default function MarketPage() {
       toast({ title: t("usernameListedOk") });
       setUName("");
       setUPrice("");
-      queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
       queryClient.invalidateQueries({ queryKey: ["market"] });
     },
     onError: (error: any) => {
@@ -125,21 +122,7 @@ export default function MarketPage() {
     mutationFn: async (listingId: string) => authedFetch("/api/admin?action=usernameUnlist", { listingId }),
     onSuccess: () => {
       toast({ title: t("usernameUnlistedOk") });
-      queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
       queryClient.invalidateQueries({ queryKey: ["market"] });
-    },
-    onError: (error: any) => {
-      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
-    },
-  });
-
-  // owner-only: take a claimed handle as the primary username
-  const takeMutation = useMutation({
-    mutationFn: async (username: string) => authedFetch("/api/admin?action=set-username", { username }),
-    onSuccess: (_r, username) => {
-      toast({ title: t("ownerClaimDone"), description: `@${String(username).toLowerCase()}` });
-      queryClient.invalidateQueries({ queryKey: ["userProfile"] });
-      queryClient.invalidateQueries({ queryKey: ["usernameDirectory"] });
     },
     onError: (error: any) => {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
@@ -328,51 +311,6 @@ export default function MarketPage() {
               </CardContent>
             </Card>
           )}
-
-          {/* taken-handle registry — who owns what */}
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg">{t("takenUsernames")}</CardTitle>
-              <p className="text-xs text-muted-foreground">{t("usernamesTotal").replace("{n}", String(directory?.total ?? directory?.taken.length ?? 0))}</p>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              {(directory?.taken || []).map((u) => (
-                <span
-                  key={u.key}
-                  className={cn(
-                    "inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/60 bg-card/50 py-1 pl-1 pr-2.5",
-                    u.ceo && "border-amber-500/40 bg-amber-500/[0.08]",
-                  )}
-                >
-                  {u.ceo ? (
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
-                      <Crown className="h-3 w-3" />
-                    </span>
-                  ) : u.avatar ? (
-                    <img src={u.avatar} alt="" className="h-6 w-6 rounded-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/15 text-[10px] font-bold text-primary">
-                      {u.username.slice(0, 1).toUpperCase()}
-                    </span>
-                  )}
-                  <span className="max-w-[140px] truncate text-xs font-semibold">@{u.username}</span>
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      className="rounded-full px-1.5 text-[10px] font-bold uppercase text-amber-400 underline-offset-2 hover:underline"
-                      onClick={() => {
-                        if (window.confirm(t("ownerTakeConfirm").replace("{u}", u.username))) {
-                          takeMutation.mutate(u.username);
-                        }
-                      }}
-                    >
-                      {t("ownerTake")}
-                    </button>
-                  )}
-                </span>
-              ))}
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* My listings + sell form */}

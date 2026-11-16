@@ -416,41 +416,6 @@ var cancel_default = handle(async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-// api/_src/market/usernames.ts
-var MAX_REGISTRY = 300;
-var usernames_default = handle(async (req, res) => {
-  await requireUser(req);
-  const db = rtdb();
-  const [rawMap, rawMarket] = await Promise.all([
-    db.ref("usernames").once("value"),
-    db.ref("market").once("value")
-  ]);
-  const map = rawMap.val() || {};
-  const market = rawMarket.val() || {};
-  const listings = Object.entries(market).filter(([, l]) => l && l.kind === "username" && l.status === "active").map(([id, l]) => ({ id, username: l.username, usernameKey: l.usernameKey, price: l.price, listedAt: l.listedAt, sellerName: l.sellerName })).sort((a, b) => a.price - b.price);
-  const keys = Object.keys(map).slice(0, MAX_REGISTRY);
-  const taken = await Promise.all(
-    keys.map(async (key) => {
-      let owner = key;
-      let ceo = false;
-      let avatar = null;
-      try {
-        const snap = await db.ref(`publicProfiles/${key}`).once("value");
-        const p = snap.val();
-        if (p && typeof p === "object") {
-          if (typeof p.username === "string") owner = p.username;
-          if (typeof p.displayName === "string" && p.displayName) owner = p.displayName;
-          ceo = p.ceo === true;
-          if (typeof p.avatar === "string") avatar = p.avatar;
-        }
-      } catch {
-      }
-      return { username: owner, key, ceo, avatar };
-    })
-  );
-  res.status(200).json({ ok: true, taken, listings, total: Object.keys(map).length });
-});
-
 // api/_src/market/index.ts
 function safeParse(raw) {
   try {
@@ -478,8 +443,6 @@ async function handler(req, res) {
       return buy_default(req, res);
     case "cancel":
       return cancel_default(req, res);
-    case "usernames":
-      return usernames_default(req, res);
     default:
       return res.status(400).json({ error: "BAD_ACTION", message: "Unknown market action (use ?action=list|buy|cancel)" });
   }
