@@ -55,6 +55,9 @@ interface DragState {
 
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   converterRef: React.RefObject<ChartConverter | null>;
+  /** element the capture-phase listeners attach to — MUST be an ancestor that
+   *  also contains the chart, so events reach the chart unless we consume them */
+  attachRef: React.RefObject<HTMLDivElement | null>;
   drawings: Drawing[];
   onChange: (drawings: Drawing[]) => void;
   activeTool: DrawingType | null;
@@ -68,11 +71,13 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   onTradeLineMove: (positionId: string, kind: TradeLine["kind"], price: number) => void;
   toolDefaults?: Partial<Drawing["style"]>;
 }>(({
-  converterRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
+  converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
   onSelect, onDelete, onEdit, onContextMenu, tradeLines, onTradeLineMove,
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  /** pointer target: the chart-area wrapper (host itself is pointer-events:none) */
+  const attachEl = () => attachRef.current ?? hostRef.current;
 
   // mutable interaction state (kept OUT of React state — zero re-renders on drag)
   const dragRef = useRef<DragState | null>(null);
@@ -190,11 +195,16 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     return "default";
   };
 
+  /** pointer capture can throw (inactive/synthetic pointer ids) — never let it break the gesture */
+  const captureSafe = (target: HTMLElement, pointerId: number) => {
+    try { target.setPointerCapture(pointerId); } catch { /* synthetic or already-released pointer */ }
+  };
+
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return; // right button → context menu path
     const conv = converterRef.current;
-    const host = hostRef.current;
-    if (!conv || !host) return;
+    const target = attachEl();
+    if (!conv || !target) return;
     const p = localXY(e);
     if (p.x < 0 || p.y < 0 || p.x > conv.paneW || p.y > conv.paneH) return; // price scale etc.
 
@@ -204,9 +214,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const y = conv.y(t.price);
       if (y != null && Math.abs(p.y - y) <= 6) {
         dragRef.current = { mode: "trade", trade: { ...t } };
-        host.setPointerCapture(e.pointerId);
         e.stopPropagation();
         e.preventDefault();
+        captureSafe(target, e.pointerId);
         redraw();
         return;
       }
@@ -257,9 +267,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         startY: p.y,
         moved: false,
       };
-      host.setPointerCapture(e.pointerId);
       e.stopPropagation();
       e.preventDefault();
+      captureSafe(target, e.pointerId);
       redraw();
       return;
     }
@@ -274,10 +284,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const p = localXY(e);
     mouseRef.current = p;
     const drag = dragRef.current;
-    const host = hostRef.current;
+    const target = attachEl();
     if (!drag) {
       const c = cursorFor(p);
-      if (host && host.style.cursor !== c) host.style.cursor = c;
+      if (target && target.style.cursor !== c) target.style.cursor = c;
       // hover re-render is throttled by rAF below
       scheduleHover();
       return;
@@ -408,9 +418,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     return () => window.removeEventListener("keydown", onKey);
   }, [onDelete, onSelect]);
 
-  // ---- attach capture-phase listeners to the host ---------------------------
+  // ---- attach capture-phase listeners to the chart-area wrapper --------------
+  // The wrapper is an ancestor of the chart: events seen here FIRST, and only
+  // consumed gestures are stopped — pan/zoom/crosshair stay native otherwise.
   useEffect(() => {
-    const host = hostRef.current;
+    const host = attachEl();
     if (!host) return;
     host.addEventListener("pointerdown", onPointerDown as EventListener, true);
     host.addEventListener("pointermove", onPointerMove as EventListener, true);
@@ -433,7 +445,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   }, []);
 
   return (
-    <div ref={hostRef} className="absolute inset-0" style={{ cursor: activeTool ? "crosshair" : undefined }}>
+    // fully transparent to pointer events — the wrapper (attachRef) feeds us
+    // capture-phase events; this layer only renders. z-5 keeps the overlay
+    // above the lightweight-charts layers but below the legend/status chips.
+    <div ref={hostRef} className="pointer-events-none absolute inset-0 z-[5]">
       <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
     </div>
   );

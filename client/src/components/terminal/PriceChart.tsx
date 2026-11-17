@@ -107,6 +107,7 @@ export function PriceChart({
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const mainHostRef = useRef<HTMLDivElement | null>(null);
+  const chartAreaRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -210,6 +211,7 @@ export function PriceChart({
 
     // progressive history: near the left edge → prepend older Binance candles
     const onRangeChange = () => {
+      if (chartRef.current !== chart) return; // teardown race — chart already removed
       canvasRef.current?.redraw();
       const ts = chart.timeScale();
       const range = ts.getVisibleLogicalRange();
@@ -242,6 +244,7 @@ export function PriceChart({
 
     // crosshair → legend + sub-panes
     const onCross = (param: any) => {
+      if (chartRef.current !== chart) return; // teardown race — chart already removed
       updateLegend(param?.time ?? null);
       if (syncingRef.current) return;
       syncingRef.current = true;
@@ -255,17 +258,19 @@ export function PriceChart({
     const ro = new ResizeObserver(() => { canvasRef.current?.redraw(); });
     ro.observe(el);
     return () => {
+      // order matters: kill every handle that could touch the chart AFTER remove()
+      converterRef.current = null;
       ro.disconnect();
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
       chart.unsubscribeCrosshairMove(onCross as any);
+      for (const p of paneRef.current.values()) p.chart.remove();
+      paneRef.current.clear();
       chart.remove();
       chartRef.current = null;
       candleRef.current = null;
       volumeRef.current = null;
       overlayRef.current.clear();
       lineHandlesRef.current = [];
-      for (const p of paneRef.current.values()) p.chart.remove();
-      paneRef.current.clear();
     };
     // symbol/timeframe are handled by the feed effect — the chart instance persists
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -514,12 +519,13 @@ export function PriceChart({
       // time-scale sync: pane follows main; main follows pane (guarded)
       const syncHandler = (range: { from: number; to: number } | null) => {
         if (syncingRef.current || !range) return;
+        if (chartRef.current !== mainChart || !paneRef.current.has(cfg.id)) return; // teardown race
         syncingRef.current = true;
         try { mainChart.timeScale().setVisibleLogicalRange(range as any); } catch { /* race */ } finally { syncingRef.current = false; }
       };
       chart.timeScale().subscribeVisibleLogicalRangeChange((r) => syncHandler(r ? { from: r.from, to: r.to } : null));
       const crossHandler = (param: MouseEventParamsLite) => {
-        if (syncingRef.current) return;
+        if (syncingRef.current || !paneRef.current.has(cfg.id)) return; // teardown race
         const t = param?.time;
         if (t == null) { try { chart.clearCrosshairPosition(); } catch { /* noop */ } return; }
         const idx = timeIdxRef.current.get(t as number);
@@ -530,10 +536,10 @@ export function PriceChart({
           const v = s && indValuesRef.current.get(cfg.id);
           const val = v?.get((s as any).__key)?.[idx] ?? null;
           if (val != null) chart.setCrosshairPosition(val, t as UTCTimestamp, s as any);
-        } finally { syncingRef.current = false; }
+        } catch { /* chart removed mid-sync */ } finally { syncingRef.current = false; }
       };
       chart.subscribeCrosshairMove((param: any) => {
-        if (syncingRef.current) return;
+        if (syncingRef.current || !paneRef.current.has(cfg.id)) return; // teardown race
         syncingRef.current = true;
         try {
           const t = param?.time;
@@ -548,7 +554,7 @@ export function PriceChart({
             if (other.chart === chart) continue;
             other.crossHandler(param ?? {});
           }
-        } finally { syncingRef.current = false; }
+        } catch { /* main chart removed mid-sync */ } finally { syncingRef.current = false; }
       });
       paneRef.current.set(cfg.id, { chart, container: host, series, syncHandler, crossHandler });
       if (barsRef.current.length) applyBarsToSeries("set");
@@ -824,7 +830,7 @@ export function PriceChart({
         drawingsCount={drawings.length}
       />
 
-      <div className="relative min-h-0 flex-1">
+      <div ref={chartAreaRef} className="relative min-h-0 flex-1">
         {/* main pane */}
         <div ref={mainHostRef} className="absolute inset-x-0 top-0" style={{ bottom: subList.length * SUB_PANE_HEIGHT }} />
         {/* sub-panes */}
@@ -842,6 +848,7 @@ export function PriceChart({
         <DrawingCanvas
           ref={canvasRef}
           converterRef={converterRef}
+          attachRef={chartAreaRef}
           drawings={drawings}
           onChange={commitDrawings}
           activeTool={activeTool === "cursor" ? null : activeTool}
