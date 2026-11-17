@@ -7,6 +7,7 @@
  * This module is pure — the canvas layer (DrawingCanvas) renders and
  * interacts, and tests exercise the geometry directly.
  */
+import type { Timeframe } from "@shared/terminal";
 
 export type DrawingType =
   // trend lines
@@ -36,6 +37,16 @@ export interface DrawingStyle {
   fontSize: number;
   /** shape fill — undefined = no fill (outline only) */
   fill?: { color: string; opacity: number };
+  /** attached-text color (defaults to the line color) */
+  textColor?: string;
+  /** where the attached text sits relative to the anchors */
+  textPos?: "start" | "end" | "above" | "below";
+  /** trend-line extension: none = segment · right = ray · both = infinite */
+  extend?: "none" | "right" | "both";
+  /** endpoint price labels on line tools */
+  showLabels?: boolean;
+  /** endpoint time labels on line tools */
+  showTimeLabels?: boolean;
 }
 
 /** one configurable Fibonacci level (ratio is the multiple of the measured span) */
@@ -54,6 +65,10 @@ export interface Drawing {
   hidden?: boolean;
   /** Fibonacci tools: per-level overrides — falls back to the tool defaults */
   levels?: FibLevel[];
+  /** user-visible name (object tree); defaults to the tool type */
+  name?: string;
+  /** timeframe visibility — undefined/empty = visible on EVERY timeframe */
+  tfs?: Timeframe[];
 }
 
 export const FIB_RETRACEMENT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -135,6 +150,20 @@ export function levelsFor(d: Drawing): FibLevel[] {
   if (d.levels?.length) return d.levels;
   const defaults = FIB_DEFAULT_LEVELS[d.type];
   return defaults ? defaults.map((ratio) => ({ ratio, show: true })) : [];
+}
+
+/**
+ * Timeframe visibility — undefined/empty list = every timeframe. Hiding a
+ * drawing on one timeframe NEVER deletes it: the anchors stay in market
+ * coordinates and the setting lives on the drawing itself.
+ */
+export function isVisibleOnTf(d: Drawing, tf: Timeframe): boolean {
+  return !d.tfs || d.tfs.length === 0 || d.tfs.includes(tf);
+}
+
+/** Object-tree label: the user's rename wins over the tool type. */
+export function effectiveName(d: Drawing): string {
+  return d.name?.trim() || d.type;
 }
 
 /** Risk/reward for the position tools: (target − entry) / (entry − stop). */
@@ -597,6 +626,53 @@ function visibleLevels(d: Drawing): FibLevel[] {
   return levelsFor(d).filter((l) => l.show);
 }
 
+/**
+ * Attached text for line/shape/fib tools — lives ON the drawing (moves with
+ * it, saved with it). Text-rendering tools (text/note/callout/…) paint their
+ * own and are excluded by the caller.
+ */
+export const TEXT_RENDERED_EXPLICITLY: ReadonlySet<DrawingType> = new Set<DrawingType>([
+  "text", "anchored-text", "note", "price-note", "signpost", "comment", "flag", "callout", "price-label",
+]);
+
+function drawAttachedText(ctx: CanvasRenderingContext2D, d: Drawing, pts: XY[]): void {
+  if (!d.text || !pts.length || TEXT_RENDERED_EXPLICITLY.has(d.type)) return;
+  const pos = d.style.textPos || "start";
+  let at: XY;
+  if (pos === "end") at = pts[pts.length - 1];
+  else if (pos === "above" || pos === "below") {
+    const a = pts[0], b = pts[pts.length - 1];
+    at = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  } else at = pts[0];
+  const dy = pos === "below" ? d.style.fontSize + 6 : -6;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+  ctx.fillStyle = d.style.textColor || d.style.color;
+  ctx.fillText(d.text, at.x + 4, at.y + dy);
+  ctx.restore();
+}
+
+/** Endpoint price/time labels for line tools (both toggleable). */
+function drawEndpointLabels(ctx: CanvasRenderingContext2D, d: Drawing, pts: XY[]): void {
+  if (!(d.style.showLabels || d.style.showTimeLabels) || pts.length < 2) return;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.font = `${Math.max(9, d.style.fontSize - 1)}px ui-sans-serif, system-ui`;
+  for (let i = 0; i < pts.length; i++) {
+    const lines: string[] = [];
+    if (d.style.showLabels && d.points[i]) lines.push(String(d.points[i].price));
+    if (d.style.showTimeLabels && d.points[i]) {
+      const t = new Date(d.points[i].time * 1000);
+      lines.push(`${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")} ${String(t.getUTCHours()).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`);
+    }
+    lines.forEach((ln, k) => ctx.fillText(ln, pts[i].x + 4, pts[i].y - 4 - k * (d.style.fontSize - 1)));
+  }
+  ctx.restore();
+}
+
 /** Draw one committed drawing (interactive tools draw their own preview). */
 export function renderDrawing(
   ctx: CanvasRenderingContext2D,
@@ -610,9 +686,20 @@ export function renderDrawing(
   applyStyle(ctx, d.style, selected ? 1 : 0.92);
 
   switch (d.type) {
-    case "trend":
-      drawSegment(ctx, pts[0], pts[1]);
+    case "trend": {
+      const mode = d.style.extend || "none";
+      if (mode === "right") {
+        const ext = rayToEdge(pts[0], pts[1], canvasW, canvasH);
+        drawSegment(ctx, ext.a, ext.b);
+      } else if (mode === "both") {
+        const ext = extendedToEdge(pts[0], pts[1], canvasW, canvasH);
+        drawSegment(ctx, ext.a, ext.b);
+      } else {
+        drawSegment(ctx, pts[0], pts[1]);
+      }
+      drawEndpointLabels(ctx, d, pts);
       break;
+    }
     case "ray": {
       const ext = rayToEdge(pts[0], pts[1], canvasW, canvasH);
       drawSegment(ctx, ext.a, ext.b);
@@ -1275,6 +1362,8 @@ export function renderDrawing(
   }
 
   drawPointLabels(ctx, d, pts);
+  drawEndpointLabels(ctx, d, pts);
+  drawAttachedText(ctx, d, pts);
 
   if (selected) {
     for (const p of pts) drawHandle(ctx, p, false);

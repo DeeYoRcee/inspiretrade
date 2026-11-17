@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   arrowHead, bezierPoint, bezierPolyline, circumcenter, distToSegmentSq,
   extendedToEdge, hitTest, levelsFor, makeDrawing, pointInEllipse, pointInTri,
-  rayToEdge, regressionLine, riskReward,
+  rayToEdge, regressionLine, riskReward, isVisibleOnTf, effectiveName,
   FIB_DEFAULT_LEVELS, TOOL_POINT_COUNT, TOOL_LABELS, TEXT_TOOLS, CLICK_COLLECT_TOOLS,
   type Drawing, type DrawingType, type XY,
 } from "../client/src/lib/drawings.ts";
@@ -147,4 +147,51 @@ test("hit-test respects hidden and locked drawings", () => {
 test("segment distance sanity", () => {
   assert.equal(distToSegmentSq(p(5, 1), p(0, 0), p(10, 0)), 1);
   assert.equal(distToSegmentSq(p(-5, 3), p(0, 0), p(10, 0)), 9 + 25); // beyond the endpoint
+});
+
+
+// ---------------------------------------------------------------------------
+// Phase 12 — timeframe visibility · naming · attached text fields
+// ---------------------------------------------------------------------------
+test("timeframe visibility: default all, per-TF opt-in, never deletes", () => {
+  const d = makeDrawing("trend", [{ time: 0, price: 1 }, { time: 60, price: 2 }]);
+  // default: visible EVERYWHERE
+  for (const tf of ["1m", "5m", "1h", "4h", "1d", "1W"] as const) {
+    assert.equal(isVisibleOnTf(d, tf), true);
+  }
+  // H1+H4 only — hidden on M1/M5, visible on H1/H4, and the object SURVIVES
+  d.tfs = ["1h", "4h"];
+  assert.equal(isVisibleOnTf(d, "1m"), false);
+  assert.equal(isVisibleOnTf(d, "5m"), false);
+  assert.equal(isVisibleOnTf(d, "1h"), true);
+  assert.equal(isVisibleOnTf(d, "4h"), true);
+  assert.equal(d.points.length, 2, "anchors untouched by visibility");
+  // empty array = back to everywhere
+  d.tfs = [];
+  assert.equal(isVisibleOnTf(d, "1m"), true);
+});
+
+test("object naming: rename wins over tool type", () => {
+  const d = makeDrawing("trend", [{ time: 0, price: 1 }, { time: 60, price: 2 }]);
+  assert.equal(effectiveName(d), "trend");
+  d.name = "Resistance";
+  assert.equal(effectiveName(d), "Resistance");
+  d.name = "   ";
+  assert.equal(effectiveName(d), "trend", "blank rename falls back to type");
+});
+
+test("attached text / label / extension style fields round-trip", () => {
+  const d = makeDrawing("trend", [{ time: 0, price: 1 }, { time: 60, price: 2 }]);
+  d.text = "supply zone";
+  d.style.textColor = "#f59e0b";
+  d.style.textPos = "above";
+  d.style.extend = "both";
+  d.style.showLabels = true;
+  d.style.showTimeLabels = false;
+  assert.equal(d.text, "supply zone");
+  assert.equal(d.style.textColor, "#f59e0b");
+  assert.equal(d.style.textPos, "above");
+  assert.equal(d.style.extend, "both");
+  assert.equal(d.style.showLabels, true);
+  assert.equal(d.style.showTimeLabels, false);
 });

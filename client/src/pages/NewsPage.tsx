@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import { useLanguage } from "@/lib/language-context";
-import { useTheme } from "@/lib/theme-context";
 import { cn } from "@/lib/utils";
 import {
   CALENDAR_CURRENCIES,
@@ -18,15 +17,8 @@ import {
   type NewsSymbol,
 } from "@/lib/news-api";
 import { ArticleDialog } from "@/components/news/ArticleDialog";
+import CalendarWorkspace from "@/components/terminal/CalendarWorkspace";
 import { loadAlertSettings, saveAlertSettings, requestBrowserPermission, enableWebPush, disableWebPush, type AlertSettings } from "@/lib/notifications";
-
-const CALENDAR_WIDGET_CONFIG = {
-  width: "100%",
-  height: "100%",
-  mode: 2,
-  fw: "react",
-  lang: "en",
-};
 
 // ---- market news -----------------------------------------------------------
 // SYMBOLS / SYMBOL_COLOR / types come from @/lib/news-api (shared with the
@@ -302,7 +294,6 @@ function MarketNewsPanel() {
 
 export default function NewsPage() {
   const { t } = useLanguage();
-  const { theme } = useTheme();
   const [tab, setTab] = useState<"news" | "calendar">("news");
 
   // Entering the News section asks for Telegram-style browser notifications
@@ -314,39 +305,6 @@ export default function NewsPage() {
     }
   }, []);
 
-  // Keep a stable ref to the widget container: the tradays script mounts into
-  // it once and the iframe survives BOTH tab switches and route changes
-  // (CalendarKeepAlive keeps this whole page alive with display:none).
-  const [containerRef, setContainerRef] = useState<HTMLDivElement | null>(null);
-  // Widget themes: 1 = dark, 2 = light. Match the site's active theme and
-  // re-mount the widget whenever the user switches themes.
-  const widgetTheme = theme === "light" ? 2 : 1;
-
-  // The widget effect is bound to the container element ONLY. Deliberately
-  // NOT re-run on theme change: re-injecting the script destroys the iframe
-  // and with it every filter the user set inside the calendar (dates,
-  // currencies, importance) — the #1 "my calendar changes don't save" bug.
-  // A dark iframe on a light theme is the acceptable tradeoff.
-  useEffect(() => {
-    if (!containerRef) return;
-    const script = document.createElement("script");
-    script.src = "https://www.tradays.com/c/js/widgets/calendar/widget.js?v=15";
-    script.type = "text/javascript";
-    script.async = true;
-    script.dataset.type = "calendar-widget";
-    script.innerHTML = JSON.stringify({ ...CALENDAR_WIDGET_CONFIG, theme: widgetTheme });
-
-    containerRef.appendChild(script);
-
-    return () => {
-      script.remove();
-      containerRef.querySelector("iframe")?.remove();
-      const calendarIds = (window as Window & { calendarCompletedID?: string[] }).calendarCompletedID;
-      const registeredCalendarIndex = calendarIds?.indexOf("economicCalendarWidget") ?? -1;
-      if (registeredCalendarIndex >= 0) calendarIds?.splice(registeredCalendarIndex, 1);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef]);
 
   return (
     <div className="container mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-8">
@@ -391,23 +349,9 @@ export default function NewsPage() {
         <MarketNewsPanel />
       </div>
 
-      {/* Economic calendar widget (always mounted, hidden when inactive) */}
+      {/* Economic calendar — the SAME workspace the Terminal uses */}
       <div className={tab === "calendar" ? "" : "hidden"}>
-        <Card className="overflow-hidden border-border/60 bg-card/80 shadow-2xl">
-          <CardHeader className="flex flex-col items-start justify-between gap-3 border-b border-border/50 px-3 py-3 sm:flex-row sm:items-center sm:px-6">
-            <div className="min-w-0"><h2 className="font-display text-lg font-semibold">{t("economicCalendar")}</h2><p className="mt-0.5 text-xs text-muted-foreground">{t("calendarWidgetInstructions")}</p></div>
-            <a href="https://www.mql5.com/en/economic-calendar" target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground">{t("openSource")}<ArrowUpRight className="h-3.5 w-3.5" /></a>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="calendar-widget-shell overflow-hidden bg-background/40 p-1.5 sm:p-4">
-              <div ref={setContainerRef} className="calendar-widget-frame w-full">
-                <div id="economicCalendarWidget" />
-                <div className="ecw-copyright"><a href="https://www.metatrader.com/?utm_source=calendar.widget&utm_medium=link&utm_term=economic.calendar&utm_content=visit.mql5.calendar&utm_campaign=202.calendar.widget" rel="noopener nofollow" target="_blank">MetaTrader World Markets</a></div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <p className="mt-3 px-1 text-xs leading-relaxed text-muted-foreground">{t("calendarDataDisclaimer")}</p>
+        <CalendarWorkspace />
       </div>
     </div>
   );

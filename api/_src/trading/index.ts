@@ -267,7 +267,9 @@ export default handle(async (req, res) => {
   if (!route) {
     return json(res, 400, { error: "BAD_ACTION", message: "Unknown trading action" });
   }
-  if (action === "history" || action === "challenge-types" || action === "leaderboard") {
+  // read-only actions accept GET — everything else is POST-only (state changes)
+  const GET_ACTIONS = new Set(["history", "challenge-types", "leaderboard", "accounts"]);
+  if (GET_ACTIONS.has(action)) {
     // GET with bearer token (read-only)
     const user = await requireUser(req);
     return route(req, res, user, {});

@@ -65,7 +65,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   onToolCommitted: () => void;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /** multi-selection (Ctrl/Shift-click) — falls back to [selectedId] */
+  selectedIds?: string[];
+  onSelectIds?: (ids: string[]) => void;
   onDelete: (id: string) => void;
+  /** multi-selection delete (Delete key with Ctrl-selected objects) */
+  onDeleteMany?: (ids: string[]) => void;
   onEdit: (id: string) => void;
   onContextMenu: (x: number, y: number, hitId: string | null) => void;
   tradeLines: TradeLine[];
@@ -85,8 +90,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   hiddenAll?: boolean;
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
-  onSelect, onDelete, onEdit, onContextMenu, tradeLines, onTradeLineMove,
+  onSelect, onDelete, onDeleteMany, onEdit, onContextMenu, tradeLines, onTradeLineMove,
   tfSeconds = 0, digits = 2, locked = false, hiddenAll = false, getBars, cursorFallback = "default",
+  selectedIds, onSelectIds, toolDefaults,
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -115,6 +121,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   hiddenAllRef.current = hiddenAll;
   const cursorFallbackRef = useRef(cursorFallback);
   cursorFallbackRef.current = cursorFallback;
+  const multiIdsRef = useRef<string[]>(selectedIds ?? []);
+  multiIdsRef.current = selectedIds?.length ? selectedIds : (selectedId ? [selectedId] : []);
+  /** group-move snapshots (id → original points) captured at drag start */
+  const groupOrigRef = useRef<Map<string, DrawingPoint[]> | null>(null);
+  const toolDefaultsRef = useRef(toolDefaults);
+  toolDefaultsRef.current = toolDefaults;
 
   /** measure tool summary: Δprice (Δ%) over N bars — computed in MARKET space */
   const measureLabel = (a: DrawingPoint, b: DrawingPoint): string => {
@@ -152,9 +164,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       return pts;
     };
     if (!hiddenAllRef.current) {
+      const selSet = new Set(multiIdsRef.current);
       for (const d of drawingsRef.current) {
         const pts = toCanvas(d);
-        if (pts.length) renderDrawing(ctx, d, pts, W, H, d.id === selectedRef.current);
+        if (pts.length) renderDrawing(ctx, d, pts, W, H, selSet.has(d.id));
         // regression: least-squares line over the closes inside the selected span
         if (d.type === "regression" && getBars && d.points.length === 2) {
           const bars = getBars();
@@ -322,7 +335,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const drag = dragRef.current;
       const drawing = drag?.mode === "draw" && drag.drawing
         ? drag.drawing
-        : makeDrawing(tool, []);
+        : (() => {
+            const d = makeDrawing(tool, []);
+            d.style = { ...d.style, ...toolDefaultsRef.current };
+            return d;
+          })();
       drawing.points = [...drawing.points, { time, price }];
       const wanted = TOOL_POINT_COUNT[tool];
       // click-collected tools (path/polyline) wait for double-click / Enter
@@ -357,7 +374,28 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
     if (hit) {
       const d = drawingsRef.current[hit.index];
+      // Ctrl/Shift-click edits the multi-selection — no drag, no chart pan
+      if ((e.ctrlKey || e.metaKey || e.shiftKey) && onSelectIds) {
+        const cur = new Set(multiIdsRef.current);
+        if (cur.has(d.id)) cur.delete(d.id);
+        else cur.add(d.id);
+        const next = [...cur];
+        onSelectIds(next);
+        onSelect(next[next.length - 1] ?? null);
+        e.stopPropagation();
+        e.preventDefault();
+        redraw();
+        return;
+      }
       onSelect(d.id);
+      // plain-click on an already-multi-selected object moves the WHOLE group
+      const groupMove = multiIdsRef.current.length > 1 && multiIdsRef.current.includes(d.id);
+      groupOrigRef.current = groupMove
+        ? new Map(multiIdsRef.current.map((id) => {
+            const g = drawingsRef.current.find((x) => x.id === id);
+            return [id, g ? JSON.parse(JSON.stringify(g.points)) : []];
+          }))
+        : null;
       dragRef.current = {
         mode: hit.handle != null ? "handle" : "move",
         drawingIndex: hit.index,
@@ -376,6 +414,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
     // 4) empty space — deselect (do NOT block chart pan)
     if (selectedRef.current) onSelect(null);
+    if (onSelectIds && multiIdsRef.current.length > 1) onSelectIds([]);
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -463,8 +502,24 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       if (drag.drawing && drag.moved) {
         const next = drawingsRef.current.slice();
         next[drag.drawingIndex ?? -1] = drag.drawing;
+        // group move: every other selected drawing shifts by the SAME delta
+        if (groupOrigRef.current && drag.mode === "move") {
+          const d0 = drag.drawing.points[0];
+          const o0 = drag.original?.points[0];
+          if (d0 && o0) {
+            const dt = d0.time - o0.time;
+            const dp = d0.price - o0.price;
+            for (const [id, origPts] of groupOrigRef.current) {
+              if (id === drag.drawing.id) continue;
+              const idx = next.findIndex((x) => x.id === id);
+              if (idx < 0 || origPts.length !== next[idx].points.length) continue;
+              next[idx] = { ...next[idx], points: origPts.map((q) => ({ time: q.time + dt, price: q.price + dp })) };
+            }
+          }
+        }
         onChange(next);
       }
+      groupOrigRef.current = null;
     } else if (drag.mode === "trade" && drag.trade) {
       onTradeLineMove(drag.trade.positionId, drag.trade.kind, drag.trade.price);
     }
@@ -550,12 +605,20 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   // ---- keyboard: delete / escape --------------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedRef.current) {
+      if (e.key === "Delete" || e.key === "Backspace") {
         const target = e.target as HTMLElement | null;
         if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
-        e.preventDefault();
-        onDelete(selectedRef.current);
-        onSelect(null);
+        const multi = multiIdsRef.current;
+        if (multi.length > 1 && onDeleteMany) {
+          e.preventDefault();
+          onDeleteMany(multi);
+          onSelect(null);
+          if (onSelectIds) onSelectIds([]);
+        } else if (selectedRef.current) {
+          e.preventDefault();
+          onDelete(selectedRef.current);
+          onSelect(null);
+        }
       }
       if (e.key === "Escape") {
         dragRef.current = null;
@@ -581,7 +644,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onDelete, onSelect]);
+  }, [onDelete, onDeleteMany, onSelect, onSelectIds]);
 
   // ---- attach capture-phase listeners to the chart-area wrapper --------------
   // The wrapper is an ancestor of the chart: events seen here FIRST, and only

@@ -2136,7 +2136,8 @@ var index_default = handle(async (req, res) => {
   if (!route) {
     return json(res, 400, { error: "BAD_ACTION", message: "Unknown trading action" });
   }
-  if (action === "history" || action === "challenge-types" || action === "leaderboard") {
+  const GET_ACTIONS = /* @__PURE__ */ new Set(["history", "challenge-types", "leaderboard", "accounts"]);
+  if (GET_ACTIONS.has(action)) {
     const user2 = await requireUser(req);
     return route(req, res, user2, {});
   }

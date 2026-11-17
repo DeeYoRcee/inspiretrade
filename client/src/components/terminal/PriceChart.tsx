@@ -36,7 +36,7 @@ import {
 import {
   INDICATOR_CATALOG, newIndicatorConfig, type IndicatorConfig, type IndicatorType,
 } from "@/lib/indicators-config";
-import type { Drawing, DrawingType } from "@/lib/drawings";
+import { effectiveName, isVisibleOnTf, type Drawing, type DrawingType } from "@/lib/drawings";
 import {
   subscribeDrawings, saveDrawings, clearDrawings as clearDrawingsRemote,
   subscribeIndicators, saveIndicators,
@@ -261,6 +261,8 @@ export function PriceChart({
     try { return (localStorage.getItem("it_cursor_mode") as CursorMode) || "cross"; } catch { return "cross"; }
   });
   const [templates, setTemplates] = useState<DrawingTemplate[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const copyRef = useRef<Drawing[]>([]);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const drawingsRef = useRef(drawings);
   drawingsRef.current = drawings;
@@ -1149,13 +1151,34 @@ export function PriceChart({
         if (k === "y") { e.preventDefault(); redoDrawings(); return; }
       }
       if (e.key === "Escape") { setActiveTool("cursor"); return; }
+      // Ctrl+C / Ctrl+V / Ctrl+D — copy · paste · duplicate drawings
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const ids = selectedIds.length ? selectedIds : (selectedDrawingId ? [selectedDrawingId] : []);
+        const k = e.key.toLowerCase();
+        if (k === "c" && ids.length) {
+          copyRef.current = drawingsRef.current.filter((d) => ids.includes(d.id)).map((d) => JSON.parse(JSON.stringify(d)));
+          return;
+        }
+        if (k === "v" && copyRef.current.length) {
+          const dt = (TF_SECONDS[timeframe] || 3600) * 4;
+          const pasted = copyRef.current.map((d) => ({ ...d, id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${d.id}`, locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
+          commitDrawings([...drawingsRef.current, ...pasted]);
+          return;
+        }
+        if (k === "d" && ids.length) {
+          const dt = (TF_SECONDS[timeframe] || 3600) * 4;
+          const copies = drawingsRef.current.filter((d) => ids.includes(d.id)).map((d) => ({ ...d, id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${d.id}`, locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
+          commitDrawings([...drawingsRef.current, ...copies]);
+          return;
+        }
+      }
       const map: Record<string, DrawingType> = { t: "trend", h: "hline", v: "vline", r: "rect", f: "fib-retracement", x: "text", p: "channel", e: "fib-extension", i: "extended", m: "measure" };
       const k = map[e.key.toLowerCase()];
       if (k) { setActiveTool(k); e.preventDefault(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undoDrawings, redoDrawings]);
+  }, [undoDrawings, redoDrawings, selectedIds, selectedDrawingId, timeframe, commitDrawings]);
 
   // ---- fullscreen ---------------------------------------------------------------------
   const toggleFullscreen = useCallback(() => {
@@ -1293,10 +1316,30 @@ export function PriceChart({
           ref={canvasRef}
           converterRef={converterRef}
           attachRef={chartAreaRef}
-          drawings={drawings}
-          onChange={commitDrawings}
+          drawings={drawings.filter((d) => isVisibleOnTf(d, timeframe))}
+          onChange={(next) => {
+            // the canvas sees only the TF-visible subset — merge back so
+            // hidden-on-this-timeframe drawings are never lost
+            const byId = new Map(next.map((d) => [d.id, d]));
+            const kept = drawingsRef.current.map((d) => byId.get(d.id) ?? d);
+            const added = next.filter((d) => !drawingsRef.current.some((x) => x.id === d.id));
+            commitDrawings([...kept, ...added]);
+          }}
+          selectedIds={selectedIds}
+          onSelectIds={(ids) => { setSelectedIds(ids); setSelectedDrawingId(ids[ids.length - 1] ?? null); }}
+          onDeleteMany={(ids) => {
+            const drop = new Set(ids);
+            commitDrawings(drawingsRef.current.filter((d) => !drop.has(d.id)));
+            setSelectedIds([]);
+          }}
           activeTool={activeTool === "cursor" ? null : activeTool}
-          onToolCommitted={() => setActiveTool("cursor")}
+          onToolCommitted={() => { if (settingsRef.current.oneShot) setActiveTool("cursor"); }}
+          toolDefaults={{
+            color: settingsRef.current.drawColor,
+            width: settingsRef.current.drawWidth,
+            dash: settingsRef.current.drawDash,
+            fontSize: settingsRef.current.drawFontSize,
+          }}
           selectedId={selectedDrawingId}
           onSelect={setSelectedDrawingId}
           onDelete={(id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id))}
@@ -1434,12 +1477,31 @@ export function PriceChart({
                 <div key={d.id} className={cn("flex items-center gap-1 rounded px-1 py-0.5", selectedDrawingId === d.id && "bg-sky-500/15")}>
                   <button
                     className="min-w-0 flex-1 truncate text-left text-slate-300 hover:text-sky-300"
-                    onClick={() => setSelectedDrawingId(d.id)}
-                    onDoubleClick={() => setEditingDrawing(d)}
-                    title="Click to select · double-click to edit"
+                    onClick={() => {
+                      setSelectedDrawingId(d.id);
+                      // navigate: scroll the time scale to the drawing's first anchor
+                      const t0 = d.points[0]?.time;
+                      if (t0) {
+                        const data = barsRef.current;
+                        let idx = timeIdxRef.current.get(t0);
+                        if (idx == null && data.length) {
+                          idx = data.findIndex((b) => b.time >= t0);
+                          if (idx < 0) idx = data.length - 1;
+                        }
+                        if (idx != null && chartRef.current) {
+                          try { chartRef.current.timeScale().setVisibleLogicalRange({ from: idx - 30, to: idx + 30 }); } catch { /* race */ }
+                        }
+                      }
+                    }}
+                    onDoubleClick={() => {
+                      const name = window.prompt("Rename object", effectiveName(d));
+                      if (name != null) commitDrawings(drawingsRef.current.map((x) => (x.id === d.id ? { ...x, name: name.trim().slice(0, 60) || undefined } : x)));
+                    }}
+                    title="Click to select + jump to position · double-click to rename"
                   >
-                    {d.type === "fib-retracement" ? "fib" : d.type === "fib-extension" ? "fib ext" : d.type}
+                    {effectiveName(d)}
                     {d.hidden ? " (hidden)" : ""}
+                    {d.tfs?.length ? <span className="ml-1 text-[9px] text-sky-400">{d.tfs.map((x) => x.toUpperCase()).join(",")}</span> : null}
                   </button>
                   <button title={d.hidden ? "Show" : "Hide"} onClick={() => toggleDrawingHidden(d.id)} className="text-slate-500 hover:text-slate-200">
                     {d.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}

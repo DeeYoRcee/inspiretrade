@@ -227,6 +227,7 @@ export default function ProfilePage() {
         // avatar and avatarVideo are mutually exclusive — a video replaces the photo
         await saveUserProfile(user.uid, { avatarVideo: dataUrl, avatar: null });
         queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
+        await republishIfEnabled();
         toast({ title: t("profileSaved") });
       } catch {
         toast({ title: t("error"), variant: "destructive" });
@@ -245,6 +246,7 @@ export default function ProfilePage() {
       const dataUrl = await fileToAvatarDataUrl(file);
       await saveUserProfile(user.uid, { avatar: dataUrl, avatarVideo: null });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
+      await republishIfEnabled();
       toast({ title: t("profileSaved") });
     } catch {
       toast({ title: t("error"), variant: "destructive" });
@@ -259,6 +261,7 @@ export default function ProfilePage() {
     try {
       await saveUserProfile(user.uid, { avatar: null, avatarVideo: null });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
+      await republishIfEnabled();
       toast({ title: t("profileSaved") });
     } catch {
       toast({ title: t("error"), variant: "destructive" });
@@ -287,6 +290,19 @@ export default function ProfilePage() {
       });
       await queryClient.invalidateQueries({ queryKey: ["publicProfileSettings"] });
     }
+  };
+
+  /** Re-publish the public snapshot after avatar/video/social changed — the
+   *  snapshot only carries these AT publish time, so without this the public
+   *  page would show stale assets until the user toggled something. */
+  const republishIfEnabled = async () => {
+    if (!user || !isEnabled || !publishedUsername) return;
+    await savePublicProfile.mutateAsync({
+      username: publishedUsername,
+      displayName: user?.displayName || publishedUsername,
+      trades: trades ?? [],
+      settings: settings ?? createDefaultPublicProfileSettings(),
+    });
   };
 
   const onBackgroundSaved = (background: string | null) => {
@@ -319,7 +335,12 @@ export default function ProfilePage() {
         username,
         displayName: user.displayName || username,
         trades: trades ?? [],
-        settings: { ...(settings ?? createDefaultPublicProfileSettings()), strategy: bioDraft.trim() },
+        settings: {
+          ...(settings ?? createDefaultPublicProfileSettings()),
+          strategy: bioDraft.trim(),
+          // a bio typed in the profile dialog is meant to be seen
+          visibility: { ...(settings ?? createDefaultPublicProfileSettings()).visibility, strategy: bioDraft.trim() ? true : (settings ?? createDefaultPublicProfileSettings()).visibility.strategy },
+        },
       });
       toast({ title: t("profileSaved") });
     } catch (error) {

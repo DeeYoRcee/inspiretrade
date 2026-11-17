@@ -25,6 +25,13 @@ export interface ChartSettings {
   bidAsk: boolean;
   upColor: string;
   downColor: string;
+  // ---- drawing defaults (new objects take these) ----
+  drawColor: string;
+  drawWidth: number;
+  drawDash: "solid" | "dashed" | "dotted";
+  drawFontSize: number;
+  /** one-shot: after a drawing commits, snap back to the cursor (TradingView) */
+  oneShot: boolean;
 }
 
 // TradingView-reference palette: light bullish / gray bearish candles on the
@@ -32,6 +39,7 @@ export interface ChartSettings {
 export const DEFAULT_SETTINGS: ChartSettings = {
   grid: true, countdown: true, legend: true, magnet: true, volume: true, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
+  drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12, oneShot: true,
 };
 
 export function SettingsDialog({
@@ -68,6 +76,33 @@ export function SettingsDialog({
             <input type="color" value={draft.upColor} onChange={(e) => setDraft({ ...draft, upColor: e.target.value })} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>
           <label><span className="mb-0.5 block text-[10px] text-slate-400">Down candle</span>
             <input type="color" value={draft.downColor} onChange={(e) => setDraft({ ...draft, downColor: e.target.value })} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>
+        </div>
+        {/* drawing defaults — new objects take these */}
+        <p className="pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Drawing</p>
+        <label className="flex cursor-pointer items-center justify-between">
+          <span className="text-slate-300">One-shot drawing (back to cursor after each object)</span>
+          <input
+            type="checkbox"
+            checked={draft.oneShot}
+            onChange={(e) => setDraft({ ...draft, oneShot: e.target.checked })}
+            className="h-4 w-4 accent-sky-500"
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default color</span>
+            <input type="color" value={draft.drawColor} onChange={(e) => setDraft({ ...draft, drawColor: e.target.value })} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>
+          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default width</span>
+            <select value={draft.drawWidth} onChange={(e) => setDraft({ ...draft, drawWidth: Number(e.target.value) })} className="h-7 w-full rounded border border-slate-700 bg-slate-950 px-1">
+              {[1, 2, 3, 4].map((w) => <option key={w} value={w}>{w}px</option>)}
+            </select></label>
+          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default style</span>
+            <select value={draft.drawDash} onChange={(e) => setDraft({ ...draft, drawDash: e.target.value as ChartSettings["drawDash"] })} className="h-7 w-full rounded border border-slate-700 bg-slate-950 px-1">
+              <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option>
+            </select></label>
+          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default text size</span>
+            <select value={draft.drawFontSize} onChange={(e) => setDraft({ ...draft, drawFontSize: Number(e.target.value) })} className="h-7 w-full rounded border border-slate-700 bg-slate-950 px-1">
+              {[10, 12, 14, 16, 20, 24].map((s) => <option key={s} value={s}>{s}px</option>)}
+            </select></label>
         </div>
         <DialogFooter
           onCancel={onClose}

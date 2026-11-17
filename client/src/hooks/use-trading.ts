@@ -18,11 +18,14 @@ export interface TradingState {
   activeId: string | null;
   loading: boolean;
   busy: boolean;
+  /** set by ORDER actions only — the panel toasts "Order failed" from it */
   error: string | null;
+  /** set by account polling (mount/heartbeat) — never shown as "Order failed" */
+  syncError: string | null;
   lastSync: number;
 }
 
-let state: TradingState = { accounts: [], activeId: null, loading: true, busy: false, error: null, lastSync: 0 };
+let state: TradingState = { accounts: [], activeId: null, loading: true, busy: false, error: null, syncError: null, lastSync: 0 };
 let snapshot = state;
 const listeners = new Set<() => void>();
 
@@ -73,8 +76,11 @@ async function refresh(silent = true) {
       : accounts[0]?.id ?? null;
     patch({ accounts, activeId, loading: false, error: null, lastSync: Date.now() });
   } catch (e: any) {
-    if (!silent) patch({ error: String(e?.message || e), loading: false });
-    else if (!state.accounts.length) patch({ error: String(e?.message || e), loading: false });
+    // polling failures surface as syncError — "Order failed" stays reserved
+    // for real order actions so a terminal-mount hiccup never fakes one
+    const msg = String(e?.message || e);
+    if (!state.accounts.length) patch({ syncError: msg, loading: false });
+    else patch({ syncError: msg });
   } finally {
     inFlight = false;
   }
@@ -102,7 +108,7 @@ function setUser(uid: string | null) {
   currentUid = uid;
   stopHeartbeat();
   if (!uid) {
-    state = { accounts: [], activeId: null, loading: false, busy: false, error: null, lastSync: 0 };
+    state = { accounts: [], activeId: null, loading: false, busy: false, error: null, syncError: null, lastSync: 0 };
     emit();
     return;
   }

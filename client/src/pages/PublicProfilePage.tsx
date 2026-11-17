@@ -22,7 +22,7 @@ export default function PublicProfilePage({ username }: { username: string }) {
         <div className="container mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" asChild className="rounded-xl" aria-label={t("backToDashboard")}>
-              <Link href="/dashboard"><ArrowLeft className="h-4 w-4" /></Link>
+              <Link href="/"><ArrowLeft className="h-4 w-4" /></Link>
             </Button>
             <Link href="/" className="flex items-center gap-2.5 text-sm font-semibold">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">

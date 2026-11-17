@@ -1,16 +1,16 @@
 /**
  * DrawingPropsBar — floating properties toolbar for the SELECTED drawing
- * (TradingView-style): color, width, dash, fill, text size, Fibonacci level
- * toggles, and object actions (duplicate / lock / hide / delete).
- * Imperative positioning — a bar at the bottom-center of the chart area.
+ * (TradingView-style): color, width, dash, fill, attached text (color · size
+ · position), line extension, endpoint labels, Fibonacci level toggles,
+ * TIMEFRAME VISIBILITY grid, per-anchor coordinate editing, and object
+ * actions (duplicate / lock / hide / delete).
  */
-import {
-  Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine,
-} from "lucide-react";
+import { Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine } from "lucide-react";
 import {
   FIB_TOOLS, levelsFor, FIB_DEFAULT_LEVELS,
   type Drawing, type DrawingType, type FibLevel,
 } from "@/lib/drawings";
+import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import { cn } from "@/lib/utils";
 
 const COLORS = ["#38bdf8", "#22c55e", "#f59e0b", "#ef4444", "#a78bfa", "#e2e8f0", "#14b8a6", "#f472b6"];
@@ -19,9 +19,8 @@ const SHAPE_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
   "rect", "rrect", "triangle", "circle", "ellipse", "channel", "hchannel", "dchannel",
   "price-range", "date-range", "datetime-range", "long-position", "short-position", "polyline",
 ]);
-const TEXT_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
-  "text", "anchored-text", "note", "price-note", "signpost", "comment", "flag", "callout",
-]);
+
+const tfLabel = (tf: Timeframe) => (tf === "1W" ? "W1" : tf === "1M" ? "MN" : tf.toUpperCase());
 
 export function DrawingPropsBar({
   drawing, onChange, onDuplicate, onDelete, onEditText,
@@ -33,7 +32,20 @@ export function DrawingPropsBar({
   onEditText: () => void;
 }) {
   const isFib = FIB_TOOLS.has(drawing.type);
+  const isTrend = drawing.type === "trend";
   const levels = levelsFor(drawing);
+  const style = drawing.style;
+  const tfs = drawing.tfs ?? [];
+
+  const setStyle = (patch: Partial<Drawing["style"]>) => onChange({ style: { ...style, ...patch } });
+  const toggleTf = (tf: Timeframe) => {
+    const cur = new Set(drawing.tfs ?? []);
+    if (cur.has(tf)) cur.delete(tf);
+    else cur.add(tf);
+    const list = TIMEFRAMES.filter((t) => cur.has(t));
+    onChange({ tfs: list.length === TIMEFRAMES.length ? undefined : list });
+  };
+
   return (
     <div className="pointer-events-auto absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-900/95 px-2 py-1.5 shadow-2xl backdrop-blur">
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
@@ -43,10 +55,10 @@ export function DrawingPropsBar({
             <button
               key={c}
               title={`Color ${c}`}
-              onClick={() => onChange({ style: { ...drawing.style, color: c } })}
+              onClick={() => setStyle({ color: c, fill: style.fill ? { ...style.fill, color: c } : undefined })}
               className={cn(
                 "h-4 w-4 rounded-full border",
-                drawing.style.color === c ? "border-white ring-1 ring-white/60" : "border-transparent",
+                style.color === c ? "border-white ring-1 ring-white/60" : "border-transparent",
               )}
               style={{ background: c }}
             />
@@ -54,8 +66,8 @@ export function DrawingPropsBar({
           <input
             type="color"
             title="Custom color"
-            value={drawing.style.color}
-            onChange={(e) => onChange({ style: { ...drawing.style, color: e.target.value } })}
+            value={style.color}
+            onChange={(e) => setStyle({ color: e.target.value })}
             className="h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
           />
         </div>
@@ -65,10 +77,10 @@ export function DrawingPropsBar({
           {[1, 2, 3, 4].map((w) => (
             <button
               key={w}
-              onClick={() => onChange({ style: { ...drawing.style, width: w } })}
+              onClick={() => setStyle({ width: w })}
               className={cn(
                 "flex h-5 w-5 items-center justify-center rounded",
-                drawing.style.width === w ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800",
+                style.width === w ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800",
               )}
             >
               <span className="rounded-full bg-current" style={{ height: w, width: w + 4 }} />
@@ -81,10 +93,10 @@ export function DrawingPropsBar({
             <button
               key={dash}
               title={dash}
-              onClick={() => onChange({ style: { ...drawing.style, dash } })}
+              onClick={() => setStyle({ dash })}
               className={cn(
                 "flex h-5 items-center justify-center rounded px-1",
-                drawing.style.dash === dash ? "bg-sky-600" : "hover:bg-slate-800",
+                style.dash === dash ? "bg-sky-600" : "hover:bg-slate-800",
               )}
             >
               <svg width="16" height="6">
@@ -101,42 +113,90 @@ export function DrawingPropsBar({
               <span>Fill</span>
               <input
                 type="range" min={0} max={0.4} step={0.02}
-                value={drawing.style.fill?.opacity ?? 0}
+                value={style.fill?.opacity ?? 0}
                 onChange={(e) => {
                   const opacity = Number(e.target.value);
-                  onChange({ style: { ...drawing.style, fill: opacity > 0 ? { color: drawing.style.color, opacity } : undefined } });
+                  setStyle({ fill: opacity > 0 ? { color: style.color, opacity } : undefined });
                 }}
                 className="h-3 w-14 accent-sky-500"
               />
-              <span className="font-number w-8 text-slate-300">
-                {Math.round((drawing.style.fill?.opacity ?? 0) * 250)}%
-              </span>
             </label>
           </>
         )}
-        {/* text size + edit */}
-        {TEXT_TOOLS.has(drawing.type) && (
+        {/* trend extension + endpoint labels */}
+        {isTrend && (
           <>
             <span className="h-4 w-px bg-slate-700" />
             <select
-              title="Text size"
-              value={drawing.style.fontSize}
-              onChange={(e) => onChange({ style: { ...drawing.style, fontSize: Number(e.target.value) } })}
+              title="Line extension"
+              value={style.extend || "none"}
+              onChange={(e) => setStyle({ extend: e.target.value as "none" | "right" | "both" })}
               className="h-5 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200"
             >
-              {[10, 12, 14, 16, 20, 24].map((s) => <option key={s} value={s}>{s}px</option>)}
+              <option value="none">Segment</option>
+              <option value="right">Extend right (ray)</option>
+              <option value="both">Extend both (infinite)</option>
             </select>
-            <button title="Edit text" onClick={onEditText} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
-              <PenLine className="h-3.5 w-3.5" />
+            <button
+              title="Toggle endpoint price labels"
+              onClick={() => setStyle({ showLabels: !style.showLabels })}
+              className={cn("rounded px-1.5 py-0.5", style.showLabels ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800")}
+            >
+              $
+            </button>
+            <button
+              title="Toggle endpoint time labels"
+              onClick={() => setStyle({ showTimeLabels: !style.showTimeLabels })}
+              className={cn("rounded px-1.5 py-0.5", style.showTimeLabels ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800")}
+            >
+              T
             </button>
           </>
         )}
+        {/* attached text — every drawing can carry a label that moves with it */}
+        <span className="h-4 w-px bg-slate-700" />
+        <input
+          value={drawing.text ?? ""}
+          onChange={(e) => onChange({ text: e.target.value.slice(0, 200) || undefined })}
+          placeholder="Label…"
+          className="h-5 w-24 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200 placeholder:text-slate-500"
+        />
+        <input
+          type="color"
+          title="Text color"
+          value={style.textColor || style.color}
+          onChange={(e) => setStyle({ textColor: e.target.value })}
+          className="h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+        />
+        <select
+          title="Text size"
+          value={style.fontSize}
+          onChange={(e) => setStyle({ fontSize: Number(e.target.value) })}
+          className="h-5 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200"
+        >
+          {[10, 12, 14, 16, 20, 24].map((s) => <option key={s} value={s}>{s}px</option>)}
+        </select>
+        <select
+          title="Text position"
+          value={style.textPos || "start"}
+          onChange={(e) => setStyle({ textPos: e.target.value as "start" | "end" | "above" | "below" })}
+          className="h-5 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200"
+        >
+          <option value="start">At start</option>
+          <option value="end">At end</option>
+          <option value="above">Above middle</option>
+          <option value="below">Below middle</option>
+        </select>
+        <button title="Edit text" onClick={onEditText} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
+          <PenLine className="h-3.5 w-3.5" />
+        </button>
+
         {/* Fibonacci level toggles */}
         {isFib && (
           <>
             <span className="h-4 w-px bg-slate-700" />
             <details className="relative">
-              <summary className="cursor-pointer list-none rounded px-1 text-slate-400 hover:bg-slate-800" title="Fibonacci levels">Levels</summary>
+              <summary className="cursor-pointer list-none rounded px-1 text-slate-400 hover:bg-slate-800" title="Fibonacci levels">Levels ({levels.filter((l) => l.show).length})</summary>
               <div className="absolute bottom-6 left-0 z-40 w-44 rounded-lg border border-slate-700 bg-slate-900/97 p-2 shadow-2xl">
                 {(drawing.levels?.length
                   ? drawing.levels
@@ -158,7 +218,7 @@ export function DrawingPropsBar({
                     <span className="font-number">{(lvl.ratio * 100).toFixed(1)}%</span>
                     <input
                       type="color"
-                      value={lvl.color || drawing.style.color}
+                      value={lvl.color || style.color}
                       title="Level color"
                       onChange={(e) => {
                         const base: FibLevel[] = drawing.levels?.length
@@ -181,6 +241,82 @@ export function DrawingPropsBar({
             </details>
           </>
         )}
+
+        {/* timeframe visibility — empty selection = visible on EVERY timeframe */}
+        <span className="h-4 w-px bg-slate-700" />
+        <details className="relative">
+          <summary
+            className="cursor-pointer list-none rounded px-1 text-slate-400 hover:bg-slate-800"
+            title="Timeframe visibility — which timeframes show this object"
+          >
+            TF {tfs.length ? `(${tfs.length})` : "(all)"}
+          </summary>
+          <div className="absolute bottom-6 right-0 z-40 w-56 rounded-lg border border-slate-700 bg-slate-900/97 p-2 shadow-2xl">
+            <p className="mb-1 text-[10px] text-slate-500">Visible on timeframes — empty = all</p>
+            <div className="grid grid-cols-4 gap-1">
+              {TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => toggleTf(tf)}
+                  className={cn(
+                    "rounded px-1 py-0.5 text-[10px] font-semibold transition-colors",
+                    (!drawing.tfs?.length || drawing.tfs.includes(tf))
+                      ? "bg-sky-600 text-white"
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700",
+                  )}
+                >
+                  {tfLabel(tf)}
+                </button>
+              ))}
+            </div>
+            {drawing.tfs?.length ? (
+              <button onClick={() => onChange({ tfs: undefined })} className="mt-1 text-[10px] text-slate-500 hover:text-slate-300">
+                Show on all timeframes
+              </button>
+            ) : null}
+          </div>
+        </details>
+
+        {/* per-anchor coordinate editor */}
+        <details className="relative">
+          <summary className="cursor-pointer list-none rounded px-1 text-slate-400 hover:bg-slate-800" title="Edit anchor coordinates">XY</summary>
+          <div className="absolute bottom-6 right-0 z-40 max-h-64 w-64 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/97 p-2 shadow-2xl">
+            {drawing.points.map((pt, i) => {
+              const dt = new Date(pt.time * 1000);
+              const pad = (n: number) => String(n).padStart(2, "0");
+              const local = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+              return (
+                <div key={i} className="mb-1 border-b border-slate-800 pb-1 text-[10px] text-slate-400">
+                  <span className="mr-1 font-semibold">P{i}</span>
+                  <input
+                    type="number"
+                    value={pt.price}
+                    step="any"
+                    title="Anchor price"
+                    onChange={(e) => {
+                      const price = Number(e.target.value);
+                      if (!Number.isFinite(price)) return;
+                      onChange({ points: drawing.points.map((q, k) => (k === i ? { ...q, price } : q)) });
+                    }}
+                    className="ml-1 w-24 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-slate-200"
+                  />
+                  <input
+                    type="datetime-local"
+                    value={local}
+                    title="Anchor time (local)"
+                    onChange={(e) => {
+                      const ms = new Date(e.target.value).getTime();
+                      if (!Number.isFinite(ms)) return;
+                      onChange({ points: drawing.points.map((q, k) => (k === i ? { ...q, time: Math.floor(ms / 1000) } : q)) });
+                    }}
+                    className="ml-1 w-40 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-slate-200"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </details>
+
         <span className="h-4 w-px bg-slate-700" />
         {/* object actions */}
         <button title="Duplicate" onClick={onDuplicate} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
