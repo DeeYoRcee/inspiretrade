@@ -230,6 +230,70 @@ async function musicStream(id, hint) {
   return firstOk(tube);
 }
 
+// api/_src/lib/firebase.ts
+import * as adminNamespace from "firebase-admin";
+var admin = adminNamespace.default ?? adminNamespace;
+var HttpError = class extends Error {
+  constructor(status, code, message) {
+    super(message || code);
+    this.status = status;
+    this.code = code;
+  }
+};
+var app = null;
+function getServiceAccount() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.project_id && parsed.client_email && parsed.private_key) {
+        return {
+          projectId: parsed.project_id,
+          clientEmail: parsed.client_email,
+          privateKey: String(parsed.private_key).replace(/\\n/g, "\n")
+        };
+      }
+    } catch {
+      throw new Error("FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON");
+    }
+  }
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  if (projectId && clientEmail && privateKey) {
+    return {
+      projectId,
+      clientEmail,
+      privateKey: privateKey.replace(/\\n/g, "\n")
+    };
+  }
+  return null;
+}
+function ensureApp() {
+  if (app) return app;
+  const account = getServiceAccount();
+  if (!account) {
+    throw new HttpError(
+      500,
+      "SERVER_NOT_CONFIGURED",
+      "Missing FIREBASE_SERVICE_ACCOUNT (or FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY) environment variables on the server."
+    );
+  }
+  app = admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: account.projectId,
+      clientEmail: account.clientEmail,
+      privateKey: account.privateKey
+    }),
+    databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${account.projectId}-default-rtdb.firebaseio.com`
+  });
+  return app;
+}
+function rtdb() {
+  ensureApp();
+  return admin.database();
+}
+
 // shared/econ.ts
 var COUNTRY_META = {
   US: { currency: "USD", name: "United States", flag: "\u{1F1FA}\u{1F1F8}" },
@@ -669,11 +733,27 @@ async function fetchEconRange(range) {
       const { events, ok } = normalizeFfCalendar(JSON.parse(body));
       if (!ok) throw new Error("unusable payload");
       econCache.set(range, { at: Date.now(), events, ok });
+      try {
+        rtdb().ref(`econCache/${range}`).set({ at: Date.now(), events: events.slice(0, 400) });
+      } catch {
+      }
       return { events, ok, stale: false };
     } catch {
     }
   }
   if (hit) return { events: hit.events, ok: hit.ok, stale: true };
+  try {
+    const snap = await rtdb().ref(`econCache/${range}`).get();
+    if (snap.exists()) {
+      const data = snap.val();
+      const events = Array.isArray(data?.events) ? data.events : [];
+      if (events.length > 0) {
+        econCache.set(range, { at: data.at ?? Date.now(), events, ok: true });
+        return { events, ok: true, stale: true };
+      }
+    }
+  } catch {
+  }
   return { events: [], ok: false, stale: false };
 }
 async function handler(req, res) {

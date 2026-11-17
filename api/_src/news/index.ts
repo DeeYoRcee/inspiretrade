@@ -465,6 +465,7 @@ async function extractArticle(rawUrl: string): Promise<ArticleData> {
 }
 
 import { musicSearch, musicStream } from "../music/index";
+import { rtdb } from "../lib/firebase";
 
 /**
  * Cron hook (alerts-cron): one UNCACHED fetch of every feed + the calendar,
@@ -538,13 +539,29 @@ async function fetchEconRange(range: string): Promise<{ events: CalEventFull[]; 
       const { events, ok } = normalizeFfCalendar(JSON.parse(body));
       if (!ok) throw new Error("unusable payload");
       econCache.set(range, { at: Date.now(), events, ok });
+      // persist for every future cold instance — the admin SDK bypasses RTDB
+      // rules, and clients never read this node directly
+      try {
+        rtdb().ref(`econCache/${range}`).set({ at: Date.now(), events: events.slice(0, 400) });
+      } catch { /* mirror cache is best-effort */ }
       return { events, ok, stale: false };
     } catch {
-      // fall through to the retry, then to the stale cache
+      // fall through to the retry, then to the caches
     }
   }
-  // Rate-limited / unreachable — serve the last good payload if we have one
+  // Rate-limited / unreachable — in-memory stale first, then the RTDB mirror
   if (hit) return { events: hit.events, ok: hit.ok, stale: true };
+  try {
+    const snap = await rtdb().ref(`econCache/${range}`).get();
+    if (snap.exists()) {
+      const data = snap.val() as { at: number; events: CalEventFull[] };
+      const events = Array.isArray(data?.events) ? data.events : [];
+      if (events.length > 0) {
+        econCache.set(range, { at: data.at ?? Date.now(), events, ok: true });
+        return { events, ok: true, stale: true };
+      }
+    }
+  } catch { /* no persisted copy either */ }
   return { events: [], ok: false, stale: false };
 }
 
