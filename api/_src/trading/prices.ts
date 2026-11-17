@@ -11,6 +11,7 @@
  */
 import { getInstrument, INSTRUMENTS } from "../../../shared/terminal";
 import { quoteFromMid, type Quote } from "../../../shared/trading-engine";
+import { getPlatformSettings } from "../lib/platform";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const BINANCE_HOSTS = ["api.binance.com", "data-api.binance.vision"];
@@ -137,14 +138,23 @@ export function withConversionSymbols(symbols: string[]): string[] {
   return [...set];
 }
 
-/** Two-sided executable quotes (bid/ask around the mid, spread by instrument). */
+/** Two-sided executable quotes (bid/ask around the mid, spread by instrument,
+ *  scaled by the platform spreadMultiplier setting). */
 export async function getQuotes(symbols: string[]): Promise<Record<string, Quote>> {
   const mids = await getMids(withConversionSymbols(symbols));
+  const settings = await getPlatformSettings();
+  const mult = settings.spreadMultiplier || 1;
   const out: Record<string, Quote> = {};
   for (const [sym, info] of Object.entries(mids)) {
     const inst = getInstrument(sym);
     if (!inst) continue;
-    out[sym] = quoteFromMid(info.mid, inst, info.source, info.live, info.time);
+    const q = quoteFromMid(info.mid, inst, info.source, info.live, info.time);
+    if (mult !== 1) {
+      const spread = (q.ask - q.bid) * mult;
+      q.bid = q.mid - spread / 2;
+      q.ask = q.mid + spread / 2;
+    }
+    out[sym] = q;
   }
   return out;
 }

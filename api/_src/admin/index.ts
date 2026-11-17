@@ -21,13 +21,12 @@ import chatSend from "./chat-send";
 import setUsername from "./set-username";
 import usernameMarket from "./username-market";
 import caseAdmin from "./cases";
+import * as platform from "./platform";
+import { getAdminRole } from "../lib/platform";
+import { requireUser } from "../lib/firebase";
 
 function safeParse(raw: string): any {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(raw); } catch { return {}; }
 }
 
 function getAction(req: any): string {
@@ -42,8 +41,48 @@ function getAction(req: any): string {
   return String(body?.action || "");
 }
 
+// Phase 7 platform management — role-resolved surface. GET actions read
+// query params; POST actions read the JSON body. Every handler enforces its
+// permission server-side via assertRole (shared/roles.ts matrix).
+const PLATFORM_ACTIONS: Record<string, { GET: boolean; run: (req: any, res: any, admin: any, role: any, body: any) => Promise<void> }> = {
+  "users-list": { GET: true, run: (_q, res, a, r, b) => platform.listUsers(a, r, b).then((x) => res.json(x)) },
+  "user-detail": { GET: true, run: (_q, res, a, r, b) => platform.userDetail(a, r, b).then((x) => res.json(x)) },
+  "analytics": { GET: true, run: (_q, res, a, r) => platform.analytics(a, r).then((x) => res.json(x)) },
+  "live-monitor": { GET: true, run: (_q, res, a, r) => platform.liveMonitor(a, r).then((x) => res.json(x)) },
+  "admin-alerts": { GET: true, run: (_q, res, a, r) => platform.listAlerts(a, r).then((x) => res.json(x)) },
+  "admin-settings-get": { GET: true, run: (_q, res, a, r) => platform.getSettings(a, r).then((x) => res.json(x)) },
+  "admin-roles-get": { GET: true, run: (_q, res, a, r) => platform.getRoles(a, r).then((x) => res.json(x)) },
+  "user-set-state": { GET: false, run: (_q, res, a, r, b) => platform.setUserState(a, r, b).then((x) => res.json(x)) },
+  "user-note": { GET: false, run: (_q, res, a, r, b) => platform.addNote(a, r, b).then((x) => res.json(x)) },
+  "admin-account-create": { GET: false, run: (_q, res, a, r, b) => platform.createAccount(a, r, b).then((x) => res.json(x)) },
+  "admin-alerts-read": { GET: false, run: (_q, res, a, r, b) => platform.markAlertsRead(a, r, b).then((x) => res.json(x)) },
+  "admin-settings-save": { GET: false, run: (_q, res, a, r, b) => platform.saveSettings(a, r, b).then((x) => res.json(x)) },
+  "admin-roles-set": { GET: false, run: (_q, res, a, r, b) => platform.setRole(a, r, b).then((x) => res.json(x)) },
+};
+
 export default async function handler(req: any, res: any) {
   const action = getAction(req);
+
+  // Phase 7 platform surface — auth + role resolution + per-action matrix
+  const platformEntry = PLATFORM_ACTIONS[action];
+  if (platformEntry) {
+    try {
+      const admin = await requireUser(req);
+      const role = await getAdminRole(admin);
+      let body: any = {};
+      if (platformEntry.GET) {
+        const url = new URL(req.url || "/", "http://localhost");
+        body = Object.fromEntries(url.searchParams.entries());
+      } else {
+        body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+      }
+      return await platformEntry.run(req, res, admin, role, body);
+    } catch (e: any) {
+      const status = e?.status || e?.statusCode || (String(e?.message || "").includes("token") ? 401 : 500);
+      return res.status(status).json({ error: e?.code || "INTERNAL", message: e?.message || "server error" });
+    }
+  }
+
   switch (action) {
     case "gift":
       return gift(req, res);

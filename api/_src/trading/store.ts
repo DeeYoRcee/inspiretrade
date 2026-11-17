@@ -8,7 +8,8 @@
  * always in a consistent, fully-evaluated state before and after the change.
  * Fills use the server price service — never a client-reported price.
  */
-import { HttpError, firestore } from "../lib/firebase";
+import { HttpError, firestore, rtdb } from "../lib/firebase";
+import { getPlatformSettings, writeAdminAlert } from "../lib/platform";
 import { getInstrument } from "../../../shared/terminal";
 import {
   DEFAULT_LEVERAGE, MIN_LOTS, MAX_LOTS, computeMetrics, evaluateAccount, exitPriceFor,
@@ -70,6 +71,8 @@ interface AccountState {
   account: AccountDoc;
   positions: StorePosition[];
   orders: OrderLike[];
+  /** USD commission per closed lot from platform settings (0 = off) */
+  commissionRate: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +102,7 @@ function requireQuote(quotes: Record<string, Quote>, symbol: string): Quote {
 // Evaluation application (shared by every mutation)
 // ---------------------------------------------------------------------------
 
-interface CloseOutcome { symbol: string; side: Side; lots: number; entry: number; exit: number; pnl: number; swap: number; reason: string; openedAt: number; closedAt: number; positionId: string }
+interface CloseOutcome { symbol: string; side: Side; lots: number; entry: number; exit: number; pnl: number; swap: number; reason: string; openedAt: number; closedAt: number; positionId: string; commission?: number }
 
 function writeTradeDoc(tx: any, uid: string, aid: string, o: CloseOutcome) {
   tx.set(tradeCol(uid, aid).doc(), { ...o });
@@ -114,6 +117,12 @@ function writeTradeDoc(tx: any, uid: string, aid: string, o: CloseOutcome) {
  * GROUP scope has no closedAt index exemption, which 500s that query).
  */
 function recordClose(state: AccountState, tx: any, uid: string, aid: string, o: CloseOutcome) {
+  // platform commission (settings) is charged on top of the raw P/L
+  const commission = Math.round((o.lots || 0) * (state.commissionRate || 0) * 100) / 100;
+  if (commission > 0) {
+    o.commission = commission;
+    state.account.balance = Math.round((state.account.balance - commission) * 100) / 100;
+  }
   writeTradeDoc(tx, uid, aid, o);
   bumpTradingDay(state.account, o.closedAt);
   state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
@@ -122,7 +131,7 @@ function recordClose(state: AccountState, tx: any, uid: string, aid: string, o: 
       at: o.closedAt,
       uid,
       aid,
-      net: Math.round((o.pnl + o.swap) * 100) / 100,
+      net: Math.round((o.pnl + o.swap - (o.commission || 0)) * 100) / 100,
     });
   }
 }
@@ -246,6 +255,7 @@ function applyEvaluationTx(
   // ---- prop-rule enforcement ----------------------------------------------
   const rules = state.account.rules ?? null;
   if (rules && state.account.status !== "failed") {
+    const prevStatus = state.account.status || "active";
     const leverage2 = state.account.leverage || DEFAULT_LEVERAGE;
     const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage2);
     const ruleState = evaluatePropRules({
@@ -264,6 +274,21 @@ function applyEvaluationTx(
     state.account.peakEquity = ruleState.peakEquity;
     state.account.status = ruleState.status;
     state.account.failedReason = ruleState.status === "failed" ? ruleState.failedReason : null;
+    // admin notifications on PASSED / FAILED transitions (fire-and-forget —
+    // must never block or fail the trading transaction)
+    if (ruleState.status !== prevStatus && ruleState.status === "passed") {
+      void writeAdminAlert({
+        type: "challenge_passed", severity: "info",
+        text: `Challenge PASSED — profit target reached on ${state.account.challengeName || state.account.label}`,
+        uid, details: { aid, balance: state.account.balance },
+      });
+    } else if (ruleState.status !== prevStatus && ruleState.status === "failed") {
+      void writeAdminAlert({
+        type: "challenge_failed", severity: "critical",
+        text: `Challenge FAILED — ${state.account.failedReason || "rule breached"}`,
+        uid, details: { aid, reason: state.account.failedReason },
+      });
+    }
 
     if (ruleState.hardBreach) {
       // terminate the account: close the whole book at market, kill pendings
@@ -330,13 +355,20 @@ function persistAccountTx(tx: any, uid: string, aid: string, state: AccountState
 async function readState(uid: string, aid: string): Promise<AccountState> {
   const accSnap = await accountsCol(uid).doc(aid).get();
   if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
-  const [posSnap, ordSnap] = await Promise.all([
+  const [posSnap, ordSnap, settings] = await Promise.all([
     posCol(uid, aid).get(),
     ordCol(uid, aid).get(),
+    getPlatformSettings(),
   ]);
   const positions = posSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
   const orders = ordSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-  return { id: aid, account: accSnap.data() as AccountDoc, positions, orders };
+  return {
+    id: aid,
+    account: accSnap.data() as AccountDoc,
+    positions,
+    orders,
+    commissionRate: settings.commissionPerLotUsd || 0,
+  };
 }
 
 export async function listAccounts(uid: string) {
@@ -436,10 +468,12 @@ function sanitizeRules(raw: any): PropRules | null {
 export async function createAccount(uid: string, label?: string, startingBalance?: number, opts: CreateAccountOptions = {}) {
   const existing = await accountsCol(uid).get();
   if (existing.size >= MAX_ACCOUNTS) throw new HttpError(409, "TOO_MANY_ACCOUNTS", `Maximum ${MAX_ACCOUNTS} accounts`);
-  const balance = Math.round(Math.min(5_000_000, Math.max(1_000, Number(startingBalance) || 100_000)) * 100) / 100;
+  const settings = await getPlatformSettings();
+  const balance = Math.round(Math.min(5_000_000, Math.max(1_000, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
   const rules = sanitizeRules(opts.rules);
-  const levRaw = Number(opts.leverage);
-  const leverage = ALLOWED_LEVERAGES.includes(levRaw) ? levRaw : DEFAULT_LEVERAGE;
+  const leverageRaw = Number(opts.leverage) || settings.defaultLeverage;
+  const allowed = settings.allowedLeverages?.length ? settings.allowedLeverages : ALLOWED_LEVERAGES;
+  const leverage = allowed.includes(leverageRaw) ? leverageRaw : allowed.includes(settings.defaultLeverage) ? settings.defaultLeverage : DEFAULT_LEVERAGE;
   const today = dayKey();
   const doc = {
     label: String(label || (rules ? "CHALLENGE" : "DEMO")).slice(0, 32) || "DEMO",
@@ -524,11 +558,13 @@ async function txGetState(tx: any, uid: string, aid: string): Promise<AccountSta
     tx.get(ordCol(uid, aid)),
   ]);
   if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
+  const settings = await getPlatformSettings();
   return {
     id: aid,
     account: accSnap.data() as AccountDoc,
     positions: posSnap.docs.map((d: any) => ({ id: d.id, ...d.data() })),
     orders: ordSnap.docs.map((d: any) => ({ id: d.id, ...d.data() })),
+    commissionRate: settings.commissionPerLotUsd || 0,
   };
 }
 
@@ -552,8 +588,31 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
   const dbRef = db();
   const accRef = accountsCol(uid).doc(req.accountId);
 
+  // platform-level guards (Phase 7): maintenance mode, user restriction,
+  // instrument whitelist and the global lot cap — all server-side
+  const settings = await getPlatformSettings();
+  if (settings.maintenanceMode) {
+    throw new HttpError(503, "MAINTENANCE", "Trading is temporarily disabled for platform maintenance");
+  }
+  if ((await rtdb().ref(`restricted/${uid}`).once("value")).val()) {
+    throw new HttpError(403, "ACCOUNT_RESTRICTED", "Trading is restricted for this account by an administrator");
+  }
+  if (settings.symbolsMode === "custom" && !settings.customSymbols.includes(spec.symbol)) {
+    throw new HttpError(403, "SYMBOL_DISABLED", `${spec.symbol} is not enabled on the platform right now`);
+  }
+  if (settings.maxLotPerOrder != null && Number(req.lots) > settings.maxLotPerOrder) {
+    throw new HttpError(403, "LOT_LIMIT", `Max lot per order is ${settings.maxLotPerOrder}`);
+  }
+
   const preState = await readState(uid, req.accountId);
   const { quotes, prices } = await quotesForState(preState, [spec.symbol]);
+  if (!quotes[spec.symbol]) {
+    void writeAdminAlert({
+      type: "engine_error", severity: "warning",
+      text: `No executable price for ${spec.symbol}`,
+      uid, details: { aid: req.accountId, symbol: spec.symbol },
+    }, `no_quote:${spec.symbol}`, 30 * 60_000);
+  }
 
   return dbRef.runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, req.accountId);
@@ -587,7 +646,14 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
       openOrders: state.orders.length,
       openLots: state.positions.reduce((s, p) => s + p.lots, 0) + state.orders.reduce((s, o) => s + o.lots, 0),
     });
-    if (!rulesCheck.ok) throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
+    if (!rulesCheck.ok) {
+      void writeAdminAlert({
+        type: "order_rejected", severity: "warning",
+        text: `Order rejected by prop rules: ${rulesCheck.error}`,
+        uid, details: { aid: req.accountId, symbol: spec.symbol, lots },
+      }, `order_reject:${uid}`);
+      throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
+    }
 
     const v = validateNewOrder({
       spec, side: req.side, kind, lots, price: req.price ?? null,

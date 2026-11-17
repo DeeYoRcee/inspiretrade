@@ -14,6 +14,7 @@ import {
   type ChallengeTypeInfo, type ServerAccount, type ServerTrade,
 } from "@/lib/trading-api";
 import { useLanguage } from "@/lib/language-context";
+import { LeaderboardPanel } from "@/components/leaderboard/LeaderboardPanel";
 import { cn } from "@/lib/utils";
 
 type Phase6Type = {
@@ -378,7 +379,7 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
-  const [tab, setTab] = useState<"marketplace" | "accounts">("marketplace");
+  const [tab, setTab] = useState<"rankings" | "marketplace" | "accounts">("rankings");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // evaluated account ids — evaluate is idempotent but we run it once per mount
   const evaluatedRef = useRef<Set<string>>(new Set());
@@ -434,6 +435,7 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   }
 
   const tabs = [
+    { id: "rankings" as const, label: t("pfTabRankings") },
     { id: "marketplace" as const, label: t("pfTabMarket") },
     ...(user ? [{ id: "accounts" as const, label: t("pfTabMine") }] : []),
   ];
@@ -447,7 +449,7 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Prop Firm Hub</h1>
             <p className="mt-1 text-sm text-muted-foreground">Pick a challenge format and start your funded journey.</p>
           </div>
-          <Button variant="outline" className="gap-2 rounded-xl border-border" onClick={() => navigate("/leaderboard")}>
+          <Button variant="outline" className="gap-2 rounded-xl border-border" onClick={() => setTab("rankings")}>
             <Trophy className="h-4 w-4 text-amber-400" />{t("lbTitle")}
           </Button>
         </div>
@@ -461,6 +463,12 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
             >{item.label}</button>
           ))}
         </div>
+
+        {tab === "rankings" && (
+          <div className="mx-auto max-w-3xl">
+            <LeaderboardPanel />
+          </div>
+        )}
 
         {tab === "marketplace" && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

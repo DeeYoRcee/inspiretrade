@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Briefcase, Plus, RefreshCw, Send, Trash2, PauseCircle, PlayCircle, RotateCcw, Eye,
+  Briefcase, Plus, RefreshCw, Send, Trash2, PauseCircle, PlayCircle, RotateCcw, Eye, Download,
   ShieldCheck, ListChecks, Trophy, X, CircleCheck, CircleX, Activity, Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { propApi, type AdminAccountRow, type ChallengeTypeInfo, type AdminAuditEntry } from "@/lib/trading-api";
+import { exportTradesCsv } from "@/components/admin/PlatformAdmin";
 import { cn } from "@/lib/utils";
 
 const money = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
@@ -61,6 +62,7 @@ export function PropFirmAdmin() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [detail, setDetail] = useState<{ uid: string; aid: string } | null>(null);
   const [confirmReset, setConfirmReset] = useState<AdminAccountRow | null>(null);
+  const [csvBusy, setCsvBusy] = useState(false);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["admin-pf-types"] });
@@ -416,7 +418,22 @@ export function PropFirmAdmin() {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center justify-between text-lg">
               <span className="flex items-center gap-2"><ListChecks className="h-5 w-5 text-primary" />{detailQ.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{d ? `${d.traderName} — ${d.account.challengeName || d.account.label}` : ""}</span>
-              <Button variant="outline" size="sm" className="h-8 gap-1 rounded-full" onClick={() => setDetail(null)}><X className="h-3.5 w-3.5" />{t("adminClose")}</Button>
+              <div className="flex gap-1.5">
+                <Button
+                  variant="outline" size="sm" className="h-8 gap-1 rounded-full" disabled={csvBusy}
+                  onClick={async () => {
+                    setCsvBusy(true);
+                    try {
+                      const trades = await propApi.adminTrades(detail.uid, detail.aid, 500);
+                      exportTradesCsv(trades as unknown as Record<string, unknown>[], detail.aid);
+                      toast({ title: t("adminCsvExported") });
+                    } finally { setCsvBusy(false); }
+                  }}
+                >
+                  {csvBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{t("adminExportCsv")}
+                </Button>
+                <Button variant="outline" size="sm" className="h-8 gap-1 rounded-full" onClick={() => setDetail(null)}><X className="h-3.5 w-3.5" />{t("adminClose")}</Button>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">

@@ -29,7 +29,9 @@
  *                                          reactivate/reset, audit log, leaderboard switch
  *   (no action)                           → health probe
  */
-import { handle, requireUser, requireAdmin, json, assertPost, type AuthedUser } from "../lib/firebase";
+import { handle, requireUser, json, assertPost, type AuthedUser } from "../lib/firebase";
+import { getAdminRole, getPlatformSettings } from "../lib/platform";
+import { assertRole } from "../admin/platform-guard";
 import * as store from "./store";
 import * as propAdmin from "./admin";
 import * as leaderboard from "./leaderboard";
@@ -168,8 +170,21 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
   },
 };
 
-// ---- admin routes (requireAdmin; POST unless listed in ADMIN_GET_ACTIONS) ---
+// ---- admin routes (role-resolved; POST unless listed in ADMIN_GET_ACTIONS) ---
 const ADMIN_GET_ACTIONS = new Set(["admin-challenge-types", "admin-accounts", "admin-account-detail", "admin-audit", "admin-trades"]);
+
+/** Minimum-role action per admin route (shared/roles.ts matrix, server-enforced). */
+const ADMIN_MIN_ACTION: Record<string, string> = {
+  "admin-challenge-types": "settings.read",
+  "admin-challenge-type-save": "challenge.write",
+  "admin-challenge-type-delete": "challenge.write",
+  "admin-accounts": "analytics.read",
+  "admin-account-detail": "users.read",
+  "admin-assign": "account.assign",
+  "admin-leaderboard-toggle": "leaderboard.toggle",
+  "admin-audit": "audit.read",
+  "admin-trades": "trades.read",
+};
 
 const adminRoutes: Record<string, (req: any, res: any, admin: AuthedUser, body: any) => Promise<void>> = {
   async "admin-challenge-types"(_req, res) {
@@ -226,13 +241,26 @@ export default handle(async (req, res) => {
   const action = getAction(req);
   if (!action) return health(res);
 
-  // admin surface — separate guard (ADMIN_EMAILS / admins flag), own routes
+  // public platform-status probe (no auth) — maintenance/registration flags
+  if (action === "platform-status") {
+    const settings = await getPlatformSettings();
+    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen });
+  }
+
+  // admin surface — role matrix enforced server-side (never frontend checks)
   if (action.startsWith("admin-")) {
     const route = adminRoutes[action];
     if (!route) return json(res, 400, { error: "BAD_ACTION", message: "Unknown admin action" });
     if (!ADMIN_GET_ACTIONS.has(action)) assertPost(req);
-    const admin = await requireAdmin(req);
-    return route(req, res, admin, bodyOf(req));
+    const admin = await requireUser(req);
+    const role = await getAdminRole(admin);
+    const body = bodyOf(req);
+    if (action === "admin-account-action") {
+      assertRole(role, body?.action === "reset" ? "account.reset" : "account.suspend");
+    } else {
+      assertRole(role, ADMIN_MIN_ACTION[action] || "settings.write");
+    }
+    return route(req, res, admin, body);
   }
 
   const route = routes[action];

@@ -175,6 +175,165 @@ var init_firebase = __esm({
 // api/_src/trading/index.ts
 init_firebase();
 
+// api/_src/lib/platform.ts
+init_firebase();
+
+// shared/roles.ts
+var ROLE_RANK = {
+  analyst: 1,
+  moderator: 2,
+  admin: 3,
+  super_admin: 4
+};
+var ADMIN_ROLES = ["analyst", "moderator", "admin", "super_admin"];
+var ACTION_MIN_RANK = {
+  // read-only surface — every admin role
+  "users.read": 1,
+  "analytics.read": 1,
+  "monitor.read": 1,
+  "audit.read": 1,
+  "alerts.read": 1,
+  "trades.read": 1,
+  "settings.read": 1,
+  "roles.read": 1,
+  // moderator-level — account freezes + notes
+  "account.suspend": 2,
+  "user.note": 2,
+  "alerts.manage": 2,
+  // admin-level — mutations, assignments, destructive resets
+  "user.suspend": 3,
+  "account.assign": 3,
+  "account.create": 3,
+  "account.reset": 3,
+  "challenge.write": 3,
+  "leaderboard.toggle": 3,
+  "settings.write": 3,
+  // super-admin only — role management
+  "roles.write": 4
+};
+function roleAtLeast(role, minRank) {
+  if (!role) return false;
+  return (ROLE_RANK[role] || 0) >= minRank;
+}
+function can(role, action) {
+  const min = ACTION_MIN_RANK[action];
+  return roleAtLeast(role, min === void 0 ? 99 : min);
+}
+var PLATFORM_SETTINGS_DEFAULTS = {
+  maintenanceMode: false,
+  registrationOpen: true,
+  symbolsMode: "all",
+  customSymbols: [],
+  defaultAccountBalance: 1e4,
+  defaultChallenge: {
+    profitTargetPct: 10,
+    dailyLossLimitPct: 5,
+    maxDrawdownPct: 10,
+    minTradingDays: 3,
+    maxTradingDays: 30,
+    maxOpenPositions: 10
+  },
+  allowedLeverages: [10, 20, 30, 50, 100, 200, 500],
+  defaultLeverage: 100,
+  maxLotPerOrder: null,
+  commissionPerLotUsd: 0,
+  spreadMultiplier: 1,
+  updatedAt: null,
+  updatedBy: null
+};
+var num = (v, lo, hi, fallback) => {
+  const n = Number(v);
+  if (v == null || v === "" || !Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+};
+var optNum = (v, lo, hi) => {
+  const n = Number(v);
+  if (v == null || v === "" || !Number.isFinite(n)) return null;
+  return Math.min(hi, Math.max(lo, n));
+};
+var KNOWN_LEVERAGES = [10, 20, 30, 50, 100, 200, 500];
+function sanitizePlatformSettings(raw, current) {
+  const base = current || PLATFORM_SETTINGS_DEFAULTS;
+  const allowed = Array.isArray(raw?.allowedLeverages) ? KNOWN_LEVERAGES.filter((l) => raw.allowedLeverages.includes(l)) : base.allowedLeverages;
+  const custom = Array.isArray(raw?.customSymbols) ? Array.from(new Set(raw.customSymbols.map((s) => String(s).trim().toUpperCase()).filter(Boolean))).slice(0, 60) : base.customSymbols;
+  const dc = raw?.defaultChallenge || {};
+  return {
+    maintenanceMode: raw?.maintenanceMode === void 0 ? base.maintenanceMode : !!raw.maintenanceMode,
+    registrationOpen: raw?.registrationOpen === void 0 ? base.registrationOpen : !!raw.registrationOpen,
+    symbolsMode: raw?.symbolsMode === "custom" ? "custom" : raw?.symbolsMode === "all" ? "all" : base.symbolsMode,
+    customSymbols: custom,
+    defaultAccountBalance: num(raw?.defaultAccountBalance, 1e3, 1e6, base.defaultAccountBalance),
+    defaultChallenge: {
+      profitTargetPct: dc.profitTargetPct === void 0 ? base.defaultChallenge.profitTargetPct : optNum(dc.profitTargetPct, 0.5, 100),
+      dailyLossLimitPct: dc.dailyLossLimitPct === void 0 ? base.defaultChallenge.dailyLossLimitPct : optNum(dc.dailyLossLimitPct, 0.5, 50),
+      maxDrawdownPct: dc.maxDrawdownPct === void 0 ? base.defaultChallenge.maxDrawdownPct : optNum(dc.maxDrawdownPct, 0.5, 50),
+      minTradingDays: num(dc.minTradingDays, 0, 60, base.defaultChallenge.minTradingDays),
+      maxTradingDays: dc.maxTradingDays === void 0 ? base.defaultChallenge.maxTradingDays : optNum(dc.maxTradingDays, 0, 365),
+      maxOpenPositions: dc.maxOpenPositions === void 0 ? base.defaultChallenge.maxOpenPositions : optNum(dc.maxOpenPositions, 1, 30)
+    },
+    allowedLeverages: allowed.length ? allowed : base.allowedLeverages,
+    defaultLeverage: allowed.includes(Number(raw?.defaultLeverage)) ? Number(raw.defaultLeverage) : allowed.includes(base.defaultLeverage) ? base.defaultLeverage : base.defaultLeverage,
+    maxLotPerOrder: raw?.maxLotPerOrder === void 0 ? base.maxLotPerOrder : optNum(raw.maxLotPerOrder, 0.01, 100),
+    commissionPerLotUsd: num(raw?.commissionPerLotUsd, 0, 100, base.commissionPerLotUsd),
+    spreadMultiplier: num(raw?.spreadMultiplier, 0.5, 5, base.spreadMultiplier),
+    updatedAt: Date.now(),
+    updatedBy: null
+  };
+}
+
+// api/_src/lib/platform.ts
+async function getAdminRole(user) {
+  try {
+    const role = (await rtdb().ref(`adminRoles/${user.uid}`).once("value")).val();
+    if (typeof role === "string" && ADMIN_ROLES.includes(role)) return role;
+  } catch {
+  }
+  const email = String(user.email || "").toLowerCase();
+  const emails = String(process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+  if (emails.includes(email)) return emails.indexOf(email) === 0 ? "super_admin" : "admin";
+  return null;
+}
+async function writeAdminAlert(alert, throttleKey, cooldownMs = 10 * 6e4) {
+  try {
+    if (throttleKey) {
+      const stateRef = rtdb().ref(`adminAlertsState/${throttleKey.replace(/[.#$/[\]]/g, "_")}`);
+      const last = (await stateRef.once("value")).val();
+      if (typeof last === "number" && Date.now() - last < cooldownMs) return false;
+      await stateRef.set(Date.now());
+    }
+    await rtdb().ref("adminAlerts").push({ ...alert, at: Date.now(), read: false });
+    return true;
+  } catch (e) {
+    console.error("[api] admin alert write failed", e);
+    return false;
+  }
+}
+var cache = null;
+var CACHE_MS = 6e4;
+async function getPlatformSettings(force = false) {
+  if (!force && cache && Date.now() - cache.at < CACHE_MS) return cache.settings;
+  let settings = PLATFORM_SETTINGS_DEFAULTS;
+  try {
+    const snap = await firestore().collection("platformSettings").doc("global").get();
+    if (snap.exists) {
+      const raw = snap.data() || {};
+      settings = sanitizePlatformSettings({ ...PLATFORM_SETTINGS_DEFAULTS, ...raw });
+    }
+  } catch (e) {
+    console.error("[api] platform settings read failed \u2014 using defaults", e);
+  }
+  cache = { at: Date.now(), settings };
+  return settings;
+}
+
+// api/_src/admin/platform-guard.ts
+init_firebase();
+function assertRole(role, action) {
+  if (!role || !can(role, action)) {
+    throw new HttpError(403, "FORBIDDEN", `Action "${action}" requires elevated admin permissions`);
+  }
+}
+
 // api/_src/trading/store.ts
 init_firebase();
 
@@ -542,7 +701,7 @@ var BINANCE_HOSTS = ["api.binance.com", "data-api.binance.vision"];
 var CRYPTO_TTL = 3e3;
 var SPOT_TTL = 5e3;
 var YAHOO_TTL = 45e3;
-var cache = /* @__PURE__ */ new Map();
+var cache2 = /* @__PURE__ */ new Map();
 async function fetchJson(url, timeoutMs = 6e3, headers = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -590,7 +749,7 @@ async function getMids(symbols) {
   const now = Date.now();
   const want = [];
   for (const s of symbols) {
-    const cached = cache.get(s);
+    const cached = cache2.get(s);
     if (cached && now - cached.time < (cached.live ? Math.min(CRYPTO_TTL, SPOT_TTL) : YAHOO_TTL)) out[s] = cached;
     else want.push(s);
   }
@@ -610,7 +769,7 @@ async function getMids(symbols) {
           const p = byBinance[getInstrument(s).binance];
           if (Number.isFinite(p)) {
             out[s] = { mid: p, source: "binance", live: true, time: Date.now() };
-            cache.set(s, out[s]);
+            cache2.set(s, out[s]);
           }
         }
       })(),
@@ -619,7 +778,7 @@ async function getMids(symbols) {
           try {
             const p = await fetchSpot(GOLD_CODES[s]);
             out[s] = { mid: p, source: "gold-api", live: true, time: Date.now() };
-            cache.set(s, out[s]);
+            cache2.set(s, out[s]);
           } catch {
           }
         }
@@ -631,7 +790,7 @@ async function getMids(symbols) {
           try {
             const p = await fetchYahooMid(inst.yahoo);
             out[s] = { mid: p, source: "yahoo", live: false, time: Date.now() };
-            cache.set(s, out[s]);
+            cache2.set(s, out[s]);
           } catch {
           }
         }
@@ -655,11 +814,19 @@ function withConversionSymbols(symbols) {
 }
 async function getQuotes(symbols) {
   const mids = await getMids(withConversionSymbols(symbols));
+  const settings = await getPlatformSettings();
+  const mult = settings.spreadMultiplier || 1;
   const out = {};
   for (const [sym, info] of Object.entries(mids)) {
     const inst = getInstrument(sym);
     if (!inst) continue;
-    out[sym] = quoteFromMid(info.mid, inst, info.source, info.live, info.time);
+    const q = quoteFromMid(info.mid, inst, info.source, info.live, info.time);
+    if (mult !== 1) {
+      const spread = (q.ask - q.bid) * mult;
+      q.bid = q.mid - spread / 2;
+      q.ask = q.mid + spread / 2;
+    }
+    out[sym] = q;
   }
   return out;
 }
@@ -696,6 +863,11 @@ function writeTradeDoc(tx, uid, aid, o) {
   tx.set(tradeCol(uid, aid).doc(), { ...o });
 }
 function recordClose(state, tx, uid, aid, o) {
+  const commission = Math.round((o.lots || 0) * (state.commissionRate || 0) * 100) / 100;
+  if (commission > 0) {
+    o.commission = commission;
+    state.account.balance = Math.round((state.account.balance - commission) * 100) / 100;
+  }
   writeTradeDoc(tx, uid, aid, o);
   bumpTradingDay(state.account, o.closedAt);
   state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
@@ -704,7 +876,7 @@ function recordClose(state, tx, uid, aid, o) {
       at: o.closedAt,
       uid,
       aid,
-      net: Math.round((o.pnl + o.swap) * 100) / 100
+      net: Math.round((o.pnl + o.swap - (o.commission || 0)) * 100) / 100
     });
   }
 }
@@ -811,6 +983,7 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
   state.account.dayStart = dayStart;
   const rules = state.account.rules ?? null;
   if (rules && state.account.status !== "failed") {
+    const prevStatus = state.account.status || "active";
     const leverage2 = state.account.leverage || DEFAULT_LEVERAGE;
     const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage2);
     const ruleState = evaluatePropRules({
@@ -829,6 +1002,23 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
     state.account.peakEquity = ruleState.peakEquity;
     state.account.status = ruleState.status;
     state.account.failedReason = ruleState.status === "failed" ? ruleState.failedReason : null;
+    if (ruleState.status !== prevStatus && ruleState.status === "passed") {
+      void writeAdminAlert({
+        type: "challenge_passed",
+        severity: "info",
+        text: `Challenge PASSED \u2014 profit target reached on ${state.account.challengeName || state.account.label}`,
+        uid,
+        details: { aid, balance: state.account.balance }
+      });
+    } else if (ruleState.status !== prevStatus && ruleState.status === "failed") {
+      void writeAdminAlert({
+        type: "challenge_failed",
+        severity: "critical",
+        text: `Challenge FAILED \u2014 ${state.account.failedReason || "rule breached"}`,
+        uid,
+        details: { aid, reason: state.account.failedReason }
+      });
+    }
     if (ruleState.hardBreach) {
       for (const p of [...state.positions]) {
         const q = requireQuote(quotes, p.symbol);
@@ -892,13 +1082,20 @@ function persistAccountTx(tx, uid, aid, state, quotes, prices) {
 async function readState(uid, aid) {
   const accSnap = await accountsCol(uid).doc(aid).get();
   if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
-  const [posSnap, ordSnap] = await Promise.all([
+  const [posSnap, ordSnap, settings] = await Promise.all([
     posCol(uid, aid).get(),
-    ordCol(uid, aid).get()
+    ordCol(uid, aid).get(),
+    getPlatformSettings()
   ]);
   const positions = posSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const orders = ordSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  return { id: aid, account: accSnap.data(), positions, orders };
+  return {
+    id: aid,
+    account: accSnap.data(),
+    positions,
+    orders,
+    commissionRate: settings.commissionPerLotUsd || 0
+  };
 }
 async function listAccounts(uid) {
   const snap = await accountsCol(uid).orderBy("createdAt", "asc").get();
@@ -978,10 +1175,12 @@ function sanitizeRules(raw) {
 async function createAccount(uid, label, startingBalance, opts = {}) {
   const existing = await accountsCol(uid).get();
   if (existing.size >= MAX_ACCOUNTS) throw new HttpError(409, "TOO_MANY_ACCOUNTS", `Maximum ${MAX_ACCOUNTS} accounts`);
-  const balance = Math.round(Math.min(5e6, Math.max(1e3, Number(startingBalance) || 1e5)) * 100) / 100;
+  const settings = await getPlatformSettings();
+  const balance = Math.round(Math.min(5e6, Math.max(1e3, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
   const rules = sanitizeRules(opts.rules);
-  const levRaw = Number(opts.leverage);
-  const leverage = ALLOWED_LEVERAGES.includes(levRaw) ? levRaw : DEFAULT_LEVERAGE;
+  const leverageRaw = Number(opts.leverage) || settings.defaultLeverage;
+  const allowed = settings.allowedLeverages?.length ? settings.allowedLeverages : ALLOWED_LEVERAGES;
+  const leverage = allowed.includes(leverageRaw) ? leverageRaw : allowed.includes(settings.defaultLeverage) ? settings.defaultLeverage : DEFAULT_LEVERAGE;
   const today = dayKey();
   const doc = {
     label: String(label || (rules ? "CHALLENGE" : "DEMO")).slice(0, 32) || "DEMO",
@@ -1062,11 +1261,13 @@ async function txGetState(tx, uid, aid) {
     tx.get(ordCol(uid, aid))
   ]);
   if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
+  const settings = await getPlatformSettings();
   return {
     id: aid,
     account: accSnap.data(),
     positions: posSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
-    orders: ordSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    orders: ordSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    commissionRate: settings.commissionPerLotUsd || 0
   };
 }
 async function placeOrder(uid, req) {
@@ -1076,8 +1277,30 @@ async function placeOrder(uid, req) {
   const kind = req.kind === "limit" || req.kind === "stop" ? req.kind : "market";
   const dbRef = db();
   const accRef = accountsCol(uid).doc(req.accountId);
+  const settings = await getPlatformSettings();
+  if (settings.maintenanceMode) {
+    throw new HttpError(503, "MAINTENANCE", "Trading is temporarily disabled for platform maintenance");
+  }
+  if ((await rtdb().ref(`restricted/${uid}`).once("value")).val()) {
+    throw new HttpError(403, "ACCOUNT_RESTRICTED", "Trading is restricted for this account by an administrator");
+  }
+  if (settings.symbolsMode === "custom" && !settings.customSymbols.includes(spec.symbol)) {
+    throw new HttpError(403, "SYMBOL_DISABLED", `${spec.symbol} is not enabled on the platform right now`);
+  }
+  if (settings.maxLotPerOrder != null && Number(req.lots) > settings.maxLotPerOrder) {
+    throw new HttpError(403, "LOT_LIMIT", `Max lot per order is ${settings.maxLotPerOrder}`);
+  }
   const preState = await readState(uid, req.accountId);
   const { quotes, prices } = await quotesForState(preState, [spec.symbol]);
+  if (!quotes[spec.symbol]) {
+    void writeAdminAlert({
+      type: "engine_error",
+      severity: "warning",
+      text: `No executable price for ${spec.symbol}`,
+      uid,
+      details: { aid: req.accountId, symbol: spec.symbol }
+    }, `no_quote:${spec.symbol}`, 30 * 6e4);
+  }
   return dbRef.runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, req.accountId);
     applyEvaluationTx(tx, uid, req.accountId, state, quotes, prices);
@@ -1103,7 +1326,16 @@ async function placeOrder(uid, req) {
       openOrders: state.orders.length,
       openLots: state.positions.reduce((s, p) => s + p.lots, 0) + state.orders.reduce((s, o) => s + o.lots, 0)
     });
-    if (!rulesCheck.ok) throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
+    if (!rulesCheck.ok) {
+      void writeAdminAlert({
+        type: "order_rejected",
+        severity: "warning",
+        text: `Order rejected by prop rules: ${rulesCheck.error}`,
+        uid,
+        details: { aid: req.accountId, symbol: spec.symbol, lots }
+      }, `order_reject:${uid}`);
+      throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
+    }
     const v = validateNewOrder({
       spec,
       side: req.side,
@@ -1227,9 +1459,9 @@ async function modifyPosition(uid, accountId, positionId, sl, tp) {
     const pos = state.positions.find((p) => p.id === positionId);
     if (!pos) throw new HttpError(404, "NO_POSITION", "Position not found (maybe SL/TP already closed it)");
     const quote = requireQuote(quotes, pos.symbol);
-    const num = (x) => x == null || x === "" ? null : Number(x);
-    const slNum = sl !== void 0 ? num(sl) : pos.sl;
-    const tpNum = tp !== void 0 ? num(tp) : pos.tp;
+    const num2 = (x) => x == null || x === "" ? null : Number(x);
+    const slNum = sl !== void 0 ? num2(sl) : pos.sl;
+    const tpNum = tp !== void 0 ? num2(tp) : pos.tp;
     const v = validatePositionModify({ pos, quote, sl: slNum, tp: tpNum });
     if (!v.ok) throw new HttpError(400, "BAD_SLTP", v.error || "Invalid SL/TP");
     tx.update(posCol(uid, accountId).doc(positionId), { sl: slNum, tp: tpNum, slModifiedAt: Date.now() });
@@ -1248,11 +1480,11 @@ async function modifyOrder(uid, accountId, orderId, patch) {
     const spec = getInstrument(order.symbol);
     if (!spec) throw new HttpError(400, "BAD_SYMBOL", `Unknown instrument: ${order.symbol}`);
     const quote = requireQuote(quotes, order.symbol);
-    const num = (x, fallback) => x == null || x === "" ? fallback : Number(x);
+    const num2 = (x, fallback) => x == null || x === "" ? fallback : Number(x);
     const newPrice = patch.price != null ? Number(patch.price) : order.price;
     const newLots = patch.lots != null ? Math.round(Number(patch.lots) * 100) / 100 : order.lots;
-    const newSl = num(patch.sl, order.sl);
-    const newTp = num(patch.tp, order.tp);
+    const newSl = num2(patch.sl, order.sl);
+    const newTp = num2(patch.tp, order.tp);
     if (!Number.isFinite(newLots) || newLots < MIN_LOTS || newLots > MAX_LOTS) {
       throw new HttpError(400, "BAD_LOTS", `Volume must be ${MIN_LOTS}\u2013${MAX_LOTS} lots`);
     }
@@ -1814,6 +2046,17 @@ var routes = {
   }
 };
 var ADMIN_GET_ACTIONS = /* @__PURE__ */ new Set(["admin-challenge-types", "admin-accounts", "admin-account-detail", "admin-audit", "admin-trades"]);
+var ADMIN_MIN_ACTION = {
+  "admin-challenge-types": "settings.read",
+  "admin-challenge-type-save": "challenge.write",
+  "admin-challenge-type-delete": "challenge.write",
+  "admin-accounts": "analytics.read",
+  "admin-account-detail": "users.read",
+  "admin-assign": "account.assign",
+  "admin-leaderboard-toggle": "leaderboard.toggle",
+  "admin-audit": "audit.read",
+  "admin-trades": "trades.read"
+};
 var adminRoutes = {
   async "admin-challenge-types"(_req, res) {
     json(res, 200, { types: await listChallengeTypes(false) });
@@ -1865,12 +2108,23 @@ var adminRoutes = {
 var index_default = handle(async (req, res) => {
   const action = getAction(req);
   if (!action) return health(res);
+  if (action === "platform-status") {
+    const settings = await getPlatformSettings();
+    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen });
+  }
   if (action.startsWith("admin-")) {
     const route2 = adminRoutes[action];
     if (!route2) return json(res, 400, { error: "BAD_ACTION", message: "Unknown admin action" });
     if (!ADMIN_GET_ACTIONS.has(action)) assertPost(req);
-    const admin2 = await requireAdmin(req);
-    return route2(req, res, admin2, bodyOf(req));
+    const admin2 = await requireUser(req);
+    const role = await getAdminRole(admin2);
+    const body = bodyOf(req);
+    if (action === "admin-account-action") {
+      assertRole(role, body?.action === "reset" ? "account.reset" : "account.suspend");
+    } else {
+      assertRole(role, ADMIN_MIN_ACTION[action] || "settings.write");
+    }
+    return route2(req, res, admin2, body);
   }
   const route = routes[action];
   if (!route) {
