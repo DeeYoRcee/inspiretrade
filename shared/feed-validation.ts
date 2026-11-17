@@ -225,3 +225,22 @@ export function spotMergeGuard(
   }
   return { ok: true };
 }
+
+
+/**
+ * Phase 13 — feed-identity guard: a response whose prices sit outside the
+ * instrument's sanity band is ANOTHER instrument's data (wrong cache,
+ * mislabeled upstream response) — refuse it loudly instead of rendering it
+ * silently. Pure and shared: the chart calls it after every load.
+ */
+export function assertPriceIdentity(
+  inst: { symbol: string; priceBand?: [number, number] },
+  bars: { close: number }[],
+): void {
+  if (!bars.length || !inst.priceBand) return;
+  const [lo, hi] = inst.priceBand;
+  const last = bars[bars.length - 1].close;
+  if (!Number.isFinite(last) || last < lo || last > hi) {
+    throw new Error(`FEED_IDENTITY: ${last} is outside ${inst.symbol}'s price band [${lo}, ${hi}] — refusing another instrument's data`);
+  }
+}

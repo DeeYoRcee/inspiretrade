@@ -393,6 +393,9 @@ export default handle(async (req, res) => {
       source: live ? "spot+yahoo" : "yahoo",
       delayed: !live,
       delaySec,
+      // what the yahoo identifier actually represents for THIS request —
+      // GC=F/SI=F are COMEX futures; the badge must never pass them off as spot
+      identity: SPOT_API_MAP[symbols] ? "futures" : "spot",
       invalidBars: checked.invalid + deduped.dropped, // aligned-only bars are normalizations, not invalid
       symbol: meta.symbol || symbols,
       currency: meta.currency || null,
@@ -429,9 +432,19 @@ export default handle(async (req, res) => {
       : bars.slice(Math.max(0, bars.length - days * perDay));
     capped = capped as any[];
     const last = capped[capped.length - 1];
+    // live spot paint works for the stooq source too — stooq's own tail lags
+    // several minutes, and the gold-api spot is the genuine spot price
+    let live = false;
+    const spotCode2 = SPOT_API_MAP[symbols];
+    if (spotCode2 && !periodMode && last) {
+      const spot = await fetchSpot(spotCode2);
+      if (spot != null && mergeSpotBars(capped, spot, si === "d" ? "1d" : interval === "5m" ? "5m" : interval)) live = true;
+    }
     return {
-      source: "stooq",
-      delayed: true,
+      source: live ? "spot+stooq" : "stooq",
+      delayed: !live,
+      delaySec: live ? 0 : undefined,
+      identity: "spot",
       symbol: symbols,
       currency: null,
       regularMarketPrice: last?.close ?? null,
@@ -444,16 +457,31 @@ export default handle(async (req, res) => {
     const cacheKey = periodMode
       ? `${symbols}|p:${Math.floor((period1 as number) / 600)}-${Math.floor((period2 as number) / 600)}|${interval}`
       : `${symbols}|${range}|${interval}`;
+    // Instrument identity: for METALS the yahoo identifier is a COMEX
+    // futures contract, but the instrument the user charts is SPOT gold /
+    // silver. stooq's CSV IS spot — try it FIRST and fall back to Yahoo's
+    // futures only as a clearly-labelled last resort (identity: "futures").
+    // For FX and indices the yahoo symbol is already the genuine underlying.
+    const METALS_FIRST = symbols in SPOT_API_MAP;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      try {
-        return { ok: true, ...(await fromYahoo()) };
-      } catch (e: any) {
+      const chain = METALS_FIRST
+        ? [fromStooq, fromYahoo]
+        : [fromYahoo, fromStooq];
+      let firstErr: unknown = null;
+      for (const attempt of chain) {
         try {
-          return { ok: true, ...(await fromStooq()) };
-        } catch (e2: any) {
-          throw new Error(`yahoo: ${String(e?.message || e)}; stooq: ${String(e2?.message || e2)}`);
+          return { ok: true, ...(await attempt()) };
+        } catch (e: any) {
+          // stooq has no 1m CSV at all — skip it silently for 1m and let the
+          // next source answer instead of burying the real error
+          if (attempt === fromStooq && String(e?.message).includes("STOOQ_NO_1M")) {
+            if (!firstErr) firstErr = e;
+            continue;
+          }
+          if (!firstErr) firstErr = e;
         }
       }
+      throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");
     return res.status(200).json(payload);

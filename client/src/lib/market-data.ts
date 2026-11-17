@@ -15,7 +15,7 @@
  */
 import { authedFetch } from "@/lib/api";
 import {
-  getInstrument, INSTRUMENTS, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS,
+  getInstrument, INSTRUMENTS, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS, type InstrumentSpec,
   aggregateBars, type Bar, type Timeframe,
 } from "@shared/terminal";
 
@@ -317,6 +317,7 @@ class QuotesProvider {
   private loadedAt = new Map<string, number>();
   private inflight = new Set<string>();
   private source = new Map<string, string>(); // "yahoo" | "stooq" — surfaced in the feed message
+  private identity = new Map<string, string>(); // "spot" | "futures" — what the response actually represented
 
   // network fetch + aggregation, always bypasses the fresh cache (poll path)
   private async loadNetwork(symbol: string, tf: Timeframe): Promise<Bar[]> {
@@ -332,6 +333,7 @@ class QuotesProvider {
     const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo!)}&range=${useCfg.range}&interval=${useCfg.interval}`);
     if (!res?.ok) throw new Error(res?.detail || "FEED_UNAVAILABLE");
     if (res.source) this.source.set(key, res.source);
+    if (res.identity) this.identity.set(key, res.identity);
     if (res.delaySec != null) statsState.delaySec = res.delaySec;
     // client-side defense-in-depth: the server already validates, but the
     // chart must never trust the wire — repair/drop before aggregation
@@ -352,15 +354,15 @@ class QuotesProvider {
     return bars;
   }
 
-  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; source?: string }> {
+  async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; source?: string; identity?: string }> {
     const key = `${symbol}:${tf}`;
     // short-lived fresh cache: instant timeframe switching + remounts
     const fresh = this.history.get(key);
     if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) {
-      return { bars: fresh, source: this.source.get(key) };
+      return { bars: fresh, source: this.source.get(key), identity: this.identity.get(key) };
     }
     const bars = await this.loadNetwork(symbol, tf);
-    return { bars, source: this.source.get(key) };
+    return { bars, source: this.source.get(key), identity: this.identity.get(key) };
   }
 
   subscribe(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {
@@ -507,24 +509,42 @@ export interface LoadResult {
  * Throws a descriptive error on failure — the chart shows an error state with
  * a retry button. No generated/random prices, ever.
  */
+import { assertPriceIdentity } from "@shared/feed-validation";
+export { assertPriceIdentity };
+
 export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResult> {
   const inst = getInstrument(symbol);
   if (!inst) throw new Error(`Unknown instrument: ${symbol}`);
   if (inst.feed === "binance") {
     const bars = await binanceProvider.load(symbol, tf);
+    assertPriceIdentity(inst, bars);
     return { bars, status: "live" };
   }
-  const { bars, source } = await quotesProvider.load(symbol, tf);
-  // "spot+yahoo" = live gold-api spot painted onto the current bar, older
-  // bars are Yahoo's (delayed) — honest labelling with the MEASURED delay
-  // (provider's own market-time lag), never presented as real-time
+  const { bars, source, identity } = await quotesProvider.load(symbol, tf);
+  assertPriceIdentity(inst, bars);
+  // honest labelling — the badge names the ACTUAL underlier of every bar:
+  // "spot+stooq"/"spot+yahoo" = gold-api live spot tail + spot history,
+  // plain "yahoo" for a metals instrument = COMEX futures fallback and the
+  // user must see that, plain "yahoo"/"stooq" for FX = delayed spot candles
   const delaySec = statsState.delaySec;
   const delayNote = delaySec != null && delaySec >= 60 ? ` · ~${Math.max(1, Math.round(delaySec / 60))} min` : delaySec != null && delaySec > 5 ? ` · ~${delaySec}s` : "";
-  const message = source?.startsWith("spot")
-    ? `Live spot (gold-api) · older bars delayed${delayNote}`
-    : `Delayed data (${source || "Yahoo"})${delayNote}`;
+  const metal = inst.assetClass === "metal";
+  let message: string;
+  if (source?.startsWith("spot+stooq") || source === "stooq") {
+    message = `Gold spot · live gold-api tail + stooq spot history${delayNote}`;
+  } else if (source?.startsWith("spot+yahoo")) {
+    message = `Live spot (gold-api) tail · older bars delayed${delayNote}`;
+  } else if (metal && source === "yahoo") {
+    message = `⚠ COMEX futures fallback — spot history unavailable${delayNote}`;
+  } else if (inst.assetClass === "forex") {
+    message = `FX spot (Yahoo) — delayed${delayNote}`;
+  } else {
+    message = `Delayed data (${source || "Yahoo"})${delayNote}`;
+  }
+  if (identity === "futures" && !metal) message = `Futures fallback · ${message}`;
   return { bars, status: "polling", message, delaySec };
 }
+
 
 /** Subscribe to live updates. Returns an unsubscribe function. */
 export function subscribeFeed(symbol: string, tf: Timeframe, cb: UpdateCb): () => void {

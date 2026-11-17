@@ -32,37 +32,50 @@ export interface InstrumentSpec {
   yahoo?: string;
   /** human-readable provider label shown in the chart badge (defaults by feed) */
   feedLabel?: string;
+  /** what the yahoo symbol actually IS — the badge never misrepresents it */
+  underlier: "spot" | "futures" | "index";
+  /** trading session (UTC) — shown in the chart header */
+  session: string;
+  /** sanity envelope for feed identity: a response whose prices fall outside
+   *  this band is another instrument's data — the chart refuses to render it */
+  priceBand: [number, number];
+  /** minimum price increment (tick size) */
+  tickSize: number;
+  /** gold-api live-spot code when the provider has a keyless spot feed */
+  spotCode?: string;
 }
 
 export const INSTRUMENTS: InstrumentSpec[] = [
-  // ---- Metals -------------------------------------------------------------
-  // Gold now streams REAL-TIME from Binance: PAXG/USDT (each token = 1 troy oz
-  // of London-vault gold; trades 24/7 within ~0.3% of XAU spot). Yahoo's GC=F
-  // futures are kept only as provenance — every consumer routes by `feed`,
-  // so chart, watchlist and the server engine all share this one live source.
-  { symbol: "XAUUSD", name: "Gold / USD", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "binance", binance: "PAXGUSDT", yahoo: "GC=F", feedLabel: "Binance · PAXG/USDT (tokenized gold)" },
-  { symbol: "XAGUSD", name: "Silver / USD", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5000, quote: "USD", feed: "quotes", yahoo: "SI=F" },
-  // ---- Forex majors -------------------------------------------------------
-  // Euro streams REAL-TIME from Binance: EUR/USDT tracks the EURUSD spot rate
-  // (USDT ≈ USD; basis typically <0.1%). Replaces Yahoo's delayed FX candles.
-  { symbol: "EURUSD", name: "Euro / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "binance", binance: "EURUSDT", yahoo: "EURUSD=X", feedLabel: "Binance · EUR/USDT" },
-  { symbol: "GBPUSD", name: "British Pound / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X" },
-  { symbol: "USDJPY", name: "US Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 100000, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X" },
-  { symbol: "AUDUSD", name: "Australian Dollar / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X" },
-  { symbol: "NZDUSD", name: "New Zealand Dollar / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "NZDUSD=X" },
-  { symbol: "USDCAD", name: "US Dollar / Canadian Dollar", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "CAD", feed: "quotes", yahoo: "USDCAD=X" },
-  { symbol: "USDCHF", name: "US Dollar / Swiss Franc", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "CHF", feed: "quotes", yahoo: "USDCHF=X" },
-  // ---- Crypto (live via Binance public API, no key) -----------------------
-  { symbol: "BTCUSD", name: "Bitcoin / USD", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "BTCUSDT" },
-  { symbol: "ETHUSD", name: "Ethereum / USD", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "ETHUSDT" },
-  { symbol: "SOLUSD", name: "Solana / USD", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "SOLUSDT" },
-  { symbol: "XRPUSD", name: "XRP / USD", assetClass: "crypto", digits: 4, pipSize: 0.0001, contractSize: 1, quote: "USD", feed: "binance", binance: "XRPUSDT" },
-  // ---- Indices (CFD reference levels, quotes proxy) -----------------------
-  { symbol: "NAS100", name: "US Tech 100", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^NDX" },
-  { symbol: "US30", name: "Wall Street 30", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^DJI" },
-  { symbol: "SPX500", name: "US 500", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^GSPC" },
-  { symbol: "GER40", name: "Germany 40", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "EUR", feed: "quotes", yahoo: "^GDAXI" },
-  { symbol: "UK100", name: "UK 100", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "GBP", feed: "quotes", yahoo: "^FTSE" },
+  // ---- Metals — SPOT prices only. Yahoo has no spot gold/silver symbol
+  // (XAUUSD=X 404s), so history comes from stooq's spot CSV (primary) with
+  // Yahoo's COMEX contract as a LAST-RESORT fallback that the badge labels
+  // explicitly as futures. The live tail is gold-api's keyless spot feed.
+  // PAXGUSDT / XAUTUSDT are tokenized assets (~0.4% below spot) and are
+  // deliberately NOT used — they are different financial instruments.
+  { symbol: "XAUUSD", name: "Gold Spot / U.S. Dollar", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F", spotCode: "XAU", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.01, priceBand: [1000, 20000], feedLabel: "gold-api spot · history stooq (spot)" },
+  { symbol: "XAGUSD", name: "Silver Spot / U.S. Dollar", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5000, quote: "USD", feed: "quotes", yahoo: "SI=F", spotCode: "XAG", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.001, priceBand: [5, 200], feedLabel: "gold-api spot · history stooq (spot)" },
+  // ---- Forex majors — Yahoo's FX identifiers ARE the genuine interbank
+  // spot market (EURUSD=X = "EUR/USD"), delayed by Yahoo's own distribution.
+  // The badge reports the measured delay and never claims real-time.
+  { symbol: "EURUSD", name: "Euro / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "EURUSD=X", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.00001, priceBand: [0.5, 2], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "GBPUSD", name: "British Pound / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.00001, priceBand: [0.9, 2.2], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "USDJPY", name: "U.S. Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 100000, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.001, priceBand: [80, 250], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "AUDUSD", name: "Australian Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.00001, priceBand: [0.4, 1.3], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "NZDUSD", name: "New Zealand Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "NZDUSD=X", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.00001, priceBand: [0.4, 1.2], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "USDCAD", name: "U.S. Dollar / Canadian Dollar", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "CAD", feed: "quotes", yahoo: "USDCAD=X", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.00001, priceBand: [0.9, 2], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "USDCHF", name: "U.S. Dollar / Swiss Franc", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "CHF", feed: "quotes", yahoo: "USDCHF=X", underlier: "spot", session: "Sun 22:00 – Fri 21:00 UTC (24/5)", tickSize: 0.00001, priceBand: [0.6, 1.6], feedLabel: "Yahoo FX spot (delayed)" },
+  // ---- Crypto — Binance is the industry-standard price venue. Binance
+  // quotes USDT pairs (BTC/USDT), the badge discloses that basis (USDT ≈ USD).
+  { symbol: "BTCUSD", name: "Bitcoin / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "BTCUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5000, 500000], feedLabel: "Binance · BTC/USDT (USDT ≈ USD)" },
+  { symbol: "ETHUSD", name: "Ethereum / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "ETHUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [100, 20000], feedLabel: "Binance · ETH/USDT (USDT ≈ USD)" },
+  { symbol: "SOLUSD", name: "Solana / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "SOLUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5, 2000], feedLabel: "Binance · SOL/USDT (USDT ≈ USD)" },
+  { symbol: "XRPUSD", name: "XRP / U.S. Dollar", assetClass: "crypto", digits: 4, pipSize: 0.0001, contractSize: 1, quote: "USD", feed: "binance", binance: "XRPUSDT", underlier: "spot", session: "24/7", tickSize: 0.0001, priceBand: [0.05, 20], feedLabel: "Binance · XRP/USDT (USDT ≈ USD)" },
+  // ---- Indices — CFD reference levels tracked from the underlying index.
+  { symbol: "NAS100", name: "US Tech 100 (NDX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^NDX", underlier: "index", session: "Mon–Fri 13:30–20:00 UTC (US cash)", tickSize: 0.25, priceBand: [3000, 40000], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "US30", name: "Wall Street 30 (DJI)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^DJI", underlier: "index", session: "Mon–Fri 13:30–20:00 UTC (US cash)", tickSize: 1, priceBand: [10000, 80000], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "SPX500", name: "US 500 (S&P 500)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^GSPC", underlier: "index", session: "Mon–Fri 13:30–20:00 UTC (US cash)", tickSize: 0.25, priceBand: [1500, 15000], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "GER40", name: "Germany 40 (DAX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "EUR", feed: "quotes", yahoo: "^GDAXI", underlier: "index", session: "Mon–Fri 08:00–21:00 UTC (Xetra)", tickSize: 1, priceBand: [5000, 50000], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "UK100", name: "UK 100 (FTSE 100)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "GBP", feed: "quotes", yahoo: "^FTSE", underlier: "index", session: "Mon–Fri 08:00–16:30 UTC (LSE)", tickSize: 0.5, priceBand: [3000, 20000], feedLabel: "Yahoo index (delayed)" },
 ];
 
 export function getInstrument(symbol: string): InstrumentSpec | undefined {

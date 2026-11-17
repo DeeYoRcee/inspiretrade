@@ -1074,7 +1074,8 @@ export function PriceChart({
     const ts2 = new Date(b.time * 1000);
     const hh = (n: number) => String(n).padStart(2, "0");
     const stamp = `${hh(ts2.getUTCDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getUTCMonth()]} ${hh(ts2.getUTCHours())}:${hh(ts2.getUTCMinutes())}`;
-    let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span> <span class="text-slate-500 font-number">${stamp}</span>`;
+    const instL2 = getInstrument(symbolRef.current);
+    let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> <span class="text-slate-400">— ${instL2?.name ?? ""}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span> <span class="text-slate-500 font-number">${stamp}</span>`;
     if (b.volume) html += ` <span class="text-slate-500">Vol</span> <span class="font-number text-slate-400">${compactNum(b.volume)}</span>`;
     if (settingsRef.current.bidAsk && lastMidRef.current != null) {
       const instL = getInstrument(symbolRef.current);

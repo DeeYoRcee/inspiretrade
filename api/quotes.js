@@ -459,6 +459,9 @@ var quotes_default = handle(async (req, res) => {
       source: live ? "spot+yahoo" : "yahoo",
       delayed: !live,
       delaySec,
+      // what the yahoo identifier actually represents for THIS request —
+      // GC=F/SI=F are COMEX futures; the badge must never pass them off as spot
+      identity: SPOT_API_MAP[symbols] ? "futures" : "spot",
       invalidBars: checked.invalid + deduped.dropped,
       // aligned-only bars are normalizations, not invalid
       symbol: meta.symbol || symbols,
@@ -489,9 +492,17 @@ var quotes_default = handle(async (req, res) => {
     let capped = periodMode ? bars.filter((b) => b.time >= period1 && b.time <= period2) : bars.slice(Math.max(0, bars.length - days * perDay));
     capped = capped;
     const last = capped[capped.length - 1];
+    let live = false;
+    const spotCode2 = SPOT_API_MAP[symbols];
+    if (spotCode2 && !periodMode && last) {
+      const spot = await fetchSpot(spotCode2);
+      if (spot != null && mergeSpotBars(capped, spot, si === "d" ? "1d" : interval === "5m" ? "5m" : interval)) live = true;
+    }
     return {
-      source: "stooq",
-      delayed: true,
+      source: live ? "spot+stooq" : "stooq",
+      delayed: !live,
+      delaySec: live ? 0 : void 0,
+      identity: "spot",
       symbol: symbols,
       currency: null,
       regularMarketPrice: last?.close ?? null,
@@ -501,16 +512,22 @@ var quotes_default = handle(async (req, res) => {
   };
   try {
     const cacheKey = periodMode ? `${symbols}|p:${Math.floor(period1 / 600)}-${Math.floor(period2 / 600)}|${interval}` : `${symbols}|${range}|${interval}`;
+    const METALS_FIRST = symbols in SPOT_API_MAP;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      try {
-        return { ok: true, ...await fromYahoo() };
-      } catch (e) {
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromStooq];
+      let firstErr = null;
+      for (const attempt of chain) {
         try {
-          return { ok: true, ...await fromStooq() };
-        } catch (e2) {
-          throw new Error(`yahoo: ${String(e?.message || e)}; stooq: ${String(e2?.message || e2)}`);
+          return { ok: true, ...await attempt() };
+        } catch (e) {
+          if (attempt === fromStooq && String(e?.message).includes("STOOQ_NO_1M")) {
+            if (!firstErr) firstErr = e;
+            continue;
+          }
+          if (!firstErr) firstErr = e;
         }
       }
+      throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");
     return res.status(200).json(payload);
