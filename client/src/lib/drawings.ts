@@ -10,7 +10,7 @@
 
 export type DrawingType =
   | "trend" | "hline" | "vline" | "rect" | "ray" | "extended"
-  | "fib-retracement" | "fib-extension" | "channel" | "text" | "measure";
+  | "fib-retracement" | "fib-extension" | "channel" | "text" | "measure" | "brush";
 
 export interface DrawingPoint { time: number; price: number }
 
@@ -24,7 +24,7 @@ export interface DrawingStyle {
 export interface Drawing {
   id: string;
   type: DrawingType;
-  /** 1 point: hline/vline/text · 2: trend/rect/ray/extended/measure/fib-retr · 3: fib-ext/channel */
+  /** 1 point: hline/vline/text · 2: trend/rect/ray/extended/measure/fib-retr · 3: fib-ext/channel · freehand: brush (N points) */
   points: DrawingPoint[];
   style: DrawingStyle;
   text?: string;
@@ -52,6 +52,8 @@ export function makeDrawing(type: DrawingType, points: DrawingPoint[], text?: st
 export const TOOL_POINT_COUNT: Record<DrawingType, number> = {
   trend: 2, hline: 1, vline: 1, rect: 2, ray: 2, extended: 2,
   "fib-retracement": 2, "fib-extension": 3, channel: 3, text: 1, measure: 2,
+  /** freehand: points collected until the pointer is released */
+  brush: -1,
 };
 
 // ---------------------------------------------------------------------------
@@ -203,6 +205,12 @@ export function hitTest(
       case "measure":
         if (pointInRect(p, pts[0], pts[1], LINE_HIT)) return { index: i };
         break;
+      case "brush": {
+        for (let k = 1; k < pts.length; k++) {
+          if (distToSegmentSq(p, pts[k - 1], pts[k]) <= LINE_HIT * LINE_HIT) return { index: i };
+        }
+        break;
+      }
       case "channel": {
         const off = channelOffset(pts[0], pts[1], pts[2]);
         if (distToSegmentSq(p, pts[0], pts[1]) <= LINE_HIT * LINE_HIT) return { index: i };
@@ -385,6 +393,10 @@ export function renderDrawing(
         ctx.fillText(`${(lvl * 100).toFixed(1)}%`, x2 - 58, y - 3);
         ctx.restore();
       }
+      break;
+    }
+    case "brush": {
+      for (let k = 1; k < pts.length; k++) drawSegment(ctx, pts[k - 1], pts[k]);
       break;
     }
     case "measure": {

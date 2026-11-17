@@ -24,8 +24,9 @@ import { useReplay } from "@/hooks/use-replay";
 import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
 import { TradingBlotter } from "@/components/terminal/TradingBlotter";
-import { Watchlist } from "@/components/terminal/Watchlist";
-import { TerminalShell } from "@/components/terminal/TerminalShell";
+import { Watchlist, MarketInfoPanel } from "@/components/terminal/Watchlist";
+import { TerminalShell, type ShellPanel } from "@/components/terminal/TerminalShell";
+import AlertsPanel from "@/components/terminal/AlertsPanel";
 import { NewAccountDialog } from "@/components/terminal/NewAccountDialog";
 import {
   ReplayOverlay, ReplayBadge, ReplayControls, ReplayTicket, ReplayBook, useReplayJournalAutoSave,
@@ -50,6 +51,7 @@ import { cn } from "@/lib/utils";
 const SYMBOL_KEY = "it_terminal_symbol";
 const TF_KEY = "it_terminal_tf";
 const MODE_KEY = "it_terminal_mode";
+const PANEL_KEY = "it_terminal_panel";
 
 type TerminalMode = "live" | "replay" | "backtest" | "analytics" | "calendar" | "news";
 const MODES: { id: TerminalMode; label: string }[] = [
@@ -78,6 +80,15 @@ export default function TerminalPage() {
   const [mode, setMode] = useState<TerminalMode>(
     () => (localStorage.getItem(MODE_KEY) as TerminalMode) || "live",
   );
+  // right rail panel (watchlist / ticket / alerts / info) — persisted
+  const [rightPanel, setRightPanel] = useState<ShellPanel>(() => {
+    const v = localStorage.getItem(PANEL_KEY);
+    return v === "watchlist" || v === "ticket" || v === "alerts" || v === "info" ? v : "ticket";
+  });
+  const selectPanel = (p: ShellPanel) => {
+    setRightPanel(p);
+    try { if (p) localStorage.setItem(PANEL_KEY, p); else localStorage.removeItem(PANEL_KEY); } catch { /* private mode */ }
+  };
 
   const [symbol, setSymbol] = useState(() => localStorage.getItem(SYMBOL_KEY) || "BTCUSD");
   const [timeframe, setTimeframe] = useState<Timeframe>(
@@ -175,7 +186,26 @@ export default function TerminalPage() {
 
       {mode === "live" ? (
         <TerminalShell
-          watchlist={<Watchlist symbol={symbol} onSymbolChange={setSymbol} />}
+          activePanel={rightPanel}
+          onPanelSelect={selectPanel}
+          panel={
+            rightPanel === "watchlist" ? <Watchlist symbol={symbol} onSymbolChange={setSymbol} className="h-full w-full" />
+              : rightPanel === "ticket" ? (
+                <TradingPanel
+                  symbol={symbol}
+                  eventGuard={eventGuard}
+                  className="h-full w-full overflow-y-auto"
+                />
+              )
+              : rightPanel === "alerts" ? <div className="h-full w-full overflow-y-auto"><AlertsPanel /></div>
+              : rightPanel === "info" ? (
+                <div className="h-full w-full overflow-y-auto">
+                  <p className="border-b border-slate-800 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">Instrument details</p>
+                  <MarketInfoPanel symbol={symbol} />
+                </div>
+              )
+              : null
+          }
           chart={
             <div ref={chartBoxRef} className="relative h-full min-h-0 w-full overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
               <PriceChart
@@ -187,15 +217,10 @@ export default function TerminalPage() {
                 onModifyPosition={modifyPosition}
                 onSymbolChange={setSymbol}
                 onTimeframeChange={setTimeframe}
+                onOpenAlerts={() => selectPanel("alerts")}
+                onOpenReplay={() => setMode("replay")}
               />
             </div>
-          }
-          ticket={
-            <TradingPanel
-              symbol={symbol}
-              eventGuard={eventGuard}
-              className="h-full w-full overflow-y-auto"
-            />
           }
           blotter={<TradingBlotter symbol={symbol} className="h-full w-full" />}
         />

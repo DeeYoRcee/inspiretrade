@@ -14,12 +14,15 @@
  * heartbeat and every live tick cause ZERO React re-renders here.
  * Real feeds only: on failure an error state with retry is shown, never fake data.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  createChart, ColorType, CrosshairMode, LineStyle,
+  createChart, ColorType, CrosshairMode, LineStyle, PriceScaleMode,
   type IChartApi, type IPriceLine, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
-import { loadFeed, subscribeFeed, binanceProvider, type FeedStatus } from "@/lib/market-data";
+import {
+  loadFeed, subscribeFeed, binanceProvider, getConnectionState, subscribeConnection,
+  type FeedStatus,
+} from "@/lib/market-data";
 import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/terminal";
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
@@ -43,10 +46,12 @@ import {
   DrawingCanvas, type ChartConverter, type DrawingCanvasHandle, type TradeLine,
 } from "@/components/terminal/chart/DrawingCanvas";
 import { ChartToolbar } from "@/components/terminal/chart/ChartToolbar";
+import { LeftRail } from "@/components/terminal/chart/LeftRail";
 import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, SymbolSearchDialog, type ContextMenuState,
 } from "@/components/terminal/chart/dialogs";
+import { Eye, EyeOff, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface PriceMark {
@@ -167,6 +172,8 @@ export function PriceChart({
   onModifyPosition,
   onSymbolChange,
   onTimeframeChange,
+  onOpenAlerts,
+  onOpenReplay,
   className,
   height,
   replayBars = null,
@@ -183,6 +190,10 @@ export function PriceChart({
   onModifyPosition: (positionId: string, patch: { sl?: number | null; tp?: number | null }) => Promise<unknown>;
   onSymbolChange: (symbol: string) => void;
   onTimeframeChange: (tf: Timeframe) => void;
+  /** toolbar alert button → open the alerts panel (right rail) */
+  onOpenAlerts?: () => void;
+  /** toolbar replay button → switch to replay mode */
+  onOpenReplay?: () => void;
   className?: string;
   /** Fixed pixel height; omit to fill the parent box. */
   height?: number;
@@ -225,6 +236,16 @@ export function PriceChart({
   const [chartType, setChartTypeState] = useState<ChartType>(() => loadChartType());
   const chartTypeRef = useRef(chartType);
   chartTypeRef.current = chartType;
+  // TradingView object-state controls (persisted)
+  const [locked, setLocked] = useState(() => { try { return localStorage.getItem("it_chart_lock") === "1"; } catch { return false; } });
+  const [hiddenAll, setHiddenAll] = useState(() => { try { return localStorage.getItem("it_chart_hideall") === "1"; } catch { return false; } });
+  const [scaleMode, setScaleMode] = useState<"normal" | "log" | "percent">(() => {
+    try { const v = localStorage.getItem("it_chart_scale"); return v === "log" || v === "percent" ? v : "normal"; } catch { return "normal"; }
+  });
+  // honest connection state (transitions only — never per tick)
+  const conn = useSyncExternalStore(subscribeConnection, getConnectionState);
+  const lastTickRef = useRef<HTMLSpanElement | null>(null);
+  const [objectsOpen, setObjectsOpen] = useState(false);
   // drawing undo/redo (past/future snapshots of the committed list)
   const historyRef = useRef<Drawing[][]>([]);
   const futureRef = useRef<Drawing[][]>([]);
@@ -861,6 +882,38 @@ export function PriceChart({
   }, [accountId, applyMarkers]);
   useEffect(() => { applyMarkers(); }, [symbol, applyMarkers]);
 
+  // ---- price scale mode: auto / log / percent (persisted) ----------------------
+  useEffect(() => {
+    try { localStorage.setItem("it_chart_scale", scaleMode); } catch { /* private mode */ }
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.priceScale("right").applyOptions({
+      mode: scaleMode === "log" ? PriceScaleMode.Logarithmic : scaleMode === "percent" ? PriceScaleMode.Percentage : PriceScaleMode.Normal,
+    });
+  }, [scaleMode]);
+
+  // ---- historical range shortcuts ---------------------------------------------
+  const applyRange = useCallback((key: string) => {
+    const ts = chartRef.current?.timeScale();
+    const data = barsRef.current;
+    if (!ts || !data.length) return;
+    if (key === "all") { ts.fitContent(); ts.scrollToRealTime(); return; }
+    const now = Math.floor(Date.now() / 1000);
+    let cutoff: number;
+    if (key === "ytd") {
+      const d = new Date();
+      cutoff = Math.floor(Date.UTC(d.getUTCFullYear(), 0, 1) / 1000);
+    } else {
+      const days: Record<string, number> = { "1d": 1, "5d": 5, "1mo": 30, "3mo": 91, "6mo": 182, "1y": 365, "5y": 1825 };
+      cutoff = now - (days[key] ?? 30) * 86400;
+    }
+    if (data[0].time > cutoff) { ts.fitContent(); ts.scrollToRealTime(); return; } // history doesn't reach that far — show everything we have
+    let lo = 0;
+    let hi = data.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (data[mid].time >= cutoff) hi = mid; else lo = mid + 1; }
+    ts.setVisibleLogicalRange({ from: Math.max(0, lo - 2), to: data.length + 5 });
+  }, []);
+
   // ---- pending-order price lines (re-hung after every main-series swap) --------
   const [seriesEpoch, setSeriesEpoch] = useState(0);
   useEffect(() => {
@@ -1028,6 +1081,12 @@ export function PriceChart({
       el.style.top = `${Math.max(2, Math.min(el.parentElement!.clientHeight - 20, y - 9))}px`;
       el.style.right = `${scaleW + 4}px`;
       el.textContent = text;
+      // last real data update stamp (badge) — imperative, no re-renders
+      const tickEl = lastTickRef.current;
+      if (tickEl) {
+        const at = getConnectionState().lastTickAt;
+        tickEl.textContent = at ? `· upd ${new Date(at).toLocaleTimeString([], { hour12: false })}` : "";
+      }
     }, 500);
     return () => clearInterval(timer);
   }, []);
@@ -1093,27 +1152,35 @@ export function PriceChart({
     if (snap.settings) setSettings({ ...DEFAULT_SETTINGS, ...(snap.settings as unknown as Partial<ChartSettings>) });
   }, [onSymbolChange, onTimeframeChange, uid]);
 
-  const statusChip = loaded.status !== "error" && (
-    <div className="absolute left-2 top-8 z-10 flex items-center gap-2 rounded-md border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-[11px] text-slate-300 backdrop-blur">
-      <span
-        className={cn(
-          "inline-block h-2 w-2 rounded-full",
-          loaded.status === "live" && "bg-emerald-400",
-          loaded.status === "polling" && "bg-amber-400",
-          loaded.status === "connecting" && "bg-sky-400 animate-pulse",
-        )}
-      />
-      {loaded.status === "live" && "LIVE"}
-      {loaded.status === "polling" && (loaded.message || "POLL")}
-      {loaded.status === "connecting" && "Loading…"}
-    </div>
-  );
+  // honest connection badge: crypto reflects the REAL ws/rest state machine,
+  // quotes feeds are labelled delayed with the provider source — never "LIVE"
+  const isCryptoFeed = getInstrument(symbol)?.feed === "binance";
+  const statusChip = loaded.status !== "error" && (() => {
+    const c = conn.binance;
+    let dot = "bg-emerald-400";
+    let label = "LIVE";
+    if (isCryptoFeed) {
+      if (c === "connected") { dot = "bg-emerald-400"; label = "LIVE"; }
+      else if (c === "connecting") { dot = "bg-sky-400 animate-pulse"; label = "Connecting…"; }
+      else if (c === "reconnecting") { dot = "bg-amber-400 animate-pulse"; label = "RECONNECTING…"; }
+      else { dot = "bg-slate-500"; label = "OFFLINE"; }
+    } else {
+      dot = "bg-amber-400";
+      label = loaded.message || "DELAYED";
+    }
+    return (
+      <div className="absolute left-2 top-8 z-10 flex items-center gap-2 rounded-md border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-[11px] text-slate-300 backdrop-blur">
+        <span className={cn("inline-block h-2 w-2 rounded-full", dot)} />
+        <span>{label}</span>
+        <span ref={lastTickRef} className="font-number text-[10px] text-slate-500" title="Last real data update" />
+      </div>
+    );
+  })();
 
   return (
     <div ref={wrapperRef} className={cn("relative flex h-full w-full min-h-0 flex-col bg-[#0b1220]", className)} style={height ? { height } : undefined}>
       <ChartToolbar
-        activeTool={activeTool}
-        onToolSelect={(t) => setActiveTool((cur) => (cur === t ? "cursor" : t))}
+        symbol={symbol}
         indicators={indicators}
         onAddIndicator={(type) => commitIndicators([...indicatorsRef.current, newIndicatorConfig(type)])}
         onIndicatorToggle={(id) => commitIndicators(indicatorsRef.current.map((i) => (i.id === id ? { ...i, visible: !i.visible } : i)))}
@@ -1130,8 +1197,8 @@ export function PriceChart({
         onOpenSearch={() => setOpenDialog("search")}
         onReset={resetView}
         onFullscreen={toggleFullscreen}
-        onClearDrawings={() => { commitDrawings([]); setSelectedDrawingId(null); if (uid) clearDrawingsRemote(uid, symbolRef.current); }}
-        drawingsCount={drawings.length}
+        onOpenAlerts={() => onOpenAlerts?.()}
+        onOpenReplay={() => onOpenReplay?.()}
         chartType={chartType}
         onChartTypeChange={setChartTypeState}
         canUndo={histLens.u > 0}
@@ -1141,7 +1208,22 @@ export function PriceChart({
         onScreenshot={screenshot}
       />
 
-      <div ref={chartAreaRef} className="relative min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <LeftRail
+          activeTool={activeTool}
+          onToolSelect={(t) => setActiveTool((cur) => (cur === t ? "cursor" : t))}
+          magnet={settings.magnet}
+          onMagnetToggle={() => setSettings((s) => ({ ...s, magnet: !s.magnet }))}
+          locked={locked}
+          onLockToggle={() => setLocked((v) => { try { localStorage.setItem("it_chart_lock", v ? "0" : "1"); } catch { /* private mode */ } return !v; })}
+          hiddenAll={hiddenAll}
+          onHideAllToggle={() => setHiddenAll((v) => { try { localStorage.setItem("it_chart_hideall", v ? "0" : "1"); } catch { /* private mode */ } return !v; })}
+          drawingsCount={drawings.length}
+          onDeleteAll={() => { commitDrawings([]); setSelectedDrawingId(null); if (uid) clearDrawingsRemote(uid, symbolRef.current); }}
+          objectsOpen={objectsOpen}
+          onObjectsToggle={() => setObjectsOpen((v) => !v)}
+        />
+        <div ref={chartAreaRef} className="relative min-h-0 min-w-0 flex-1">
         {/* main pane */}
         <div ref={mainHostRef} className="absolute inset-x-0 top-0" style={{ bottom: subList.length * SUB_PANE_HEIGHT }} />
         {/* sub-panes */}
@@ -1182,6 +1264,8 @@ export function PriceChart({
           onTradeLineMove={handleTradeLineMove}
           tfSeconds={TF_SECONDS[timeframe] ?? 0}
           digits={digits}
+          locked={locked}
+          hiddenAll={hiddenAll}
         />
 
         {/* OHLC legend */}
@@ -1198,6 +1282,65 @@ export function PriceChart({
           style={{ display: "none" }}
         />
         {statusChip}
+        {/* object tree — drawings & indicators (real objects, real actions) */}
+        {objectsOpen && (
+          <div className="absolute right-10 top-8 z-30 w-60 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Objects · {drawings.length}</p>
+            <div className="max-h-40 overflow-y-auto">
+              {drawings.length === 0 && <p className="py-1 text-slate-600">No drawings yet</p>}
+              {drawings.map((d) => (
+                <div key={d.id} className={cn("flex items-center gap-1 rounded px-1 py-0.5", selectedDrawingId === d.id && "bg-sky-500/15")}>
+                  <button
+                    className="min-w-0 flex-1 truncate text-left text-slate-300 hover:text-sky-300"
+                    onClick={() => setSelectedDrawingId(d.id)}
+                    onDoubleClick={() => setEditingDrawing(d)}
+                    title="Click to select · double-click to edit"
+                  >
+                    {d.type === "fib-retracement" ? "fib" : d.type === "fib-extension" ? "fib ext" : d.type}
+                    {d.hidden ? " (hidden)" : ""}
+                  </button>
+                  <button title={d.hidden ? "Show" : "Hide"} onClick={() => toggleDrawingHidden(d.id)} className="text-slate-500 hover:text-slate-200">
+                    {d.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  </button>
+                  <button
+                    title="Delete"
+                    disabled={locked}
+                    onClick={() => commitDrawings(drawingsRef.current.filter((x) => x.id !== d.id))}
+                    className="text-slate-500 hover:text-red-400 disabled:opacity-30"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="mb-1 mt-2 border-t border-slate-800 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Indicators · {indicators.length}</p>
+            <div className="max-h-32 overflow-y-auto">
+              {indicators.length === 0 && <p className="py-1 text-slate-600">No indicators</p>}
+              {indicators.map((cfg) => (
+                <div key={cfg.id} className="flex items-center gap-1 rounded px-1 py-0.5">
+                  <button className="min-w-0 flex-1 truncate text-left text-slate-300 hover:text-sky-300" onClick={() => setEditingIndicator(cfg)}>
+                    {INDICATOR_CATALOG[cfg.type].label}
+                  </button>
+                  <button title={cfg.visible ? "Hide" : "Show"} onClick={() => commitIndicators(indicatorsRef.current.map((i) => (i.id === cfg.id ? { ...i, visible: !i.visible } : i)))} className="text-slate-500 hover:text-slate-200">
+                    {cfg.visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                  </button>
+                  <button
+                    title="Remove"
+                    onClick={() => {
+                      commitIndicators(indicatorsRef.current.filter((i) => i.id !== cfg.id));
+                      for (const [key, s] of [...overlayRef.current]) {
+                        if (key.startsWith(`${cfg.id}:`)) { try { chartRef.current?.removeSeries(s); } catch { /* gone */ } overlayRef.current.delete(key); }
+                      }
+                    }}
+                    className="text-slate-500 hover:text-red-400"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {loaded.status === "error" && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950/80 text-center">
             <p className="max-w-md text-sm text-slate-300">
@@ -1211,6 +1354,44 @@ export function PriceChart({
             </button>
           </div>
         )}
+        </div>
+      </div>
+
+      {/* bottom bar: historical range shortcuts + scale mode (TV-style) */}
+      <div className="flex h-7 shrink-0 items-center gap-0.5 border-t border-slate-800 bg-slate-900/80 px-2">
+        {[["1d", "1D"], ["5d", "5D"], ["1mo", "1M"], ["3mo", "3M"], ["6mo", "6M"], ["ytd", "YTD"], ["1y", "1Y"], ["5y", "5Y"], ["all", "All"]].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => applyRange(key)}
+            title={`Show last ${label === "All" ? "history" : label === "YTD" ? "year to date" : label} on the chart`}
+            className="rounded px-2 py-0.5 text-[10px] font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+          >
+            {label}
+          </button>
+        ))}
+        <div className="ml-auto flex items-center gap-0.5">
+          <button
+            onClick={() => chartRef.current?.timeScale().scrollToRealTime()}
+            title="Jump to the latest candle"
+            className="rounded px-2 py-0.5 text-[10px] font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+          >
+            ⇥ Now
+          </button>
+          <div className="mx-1 h-4 w-px bg-slate-800" />
+          {[["normal", "Auto"], ["log", "Log"], ["percent", "%"]].map(([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => setScaleMode(mode as "normal" | "log" | "percent")}
+              title={mode === "log" ? "Logarithmic price scale" : mode === "percent" ? "Percent price scale" : "Automatic (linear) scale"}
+              className={cn(
+                "rounded px-2 py-0.5 text-[10px] font-semibold transition-colors",
+                scaleMode === mode ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* dialogs + context menu */}

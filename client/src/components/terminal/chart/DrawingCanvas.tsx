@@ -74,10 +74,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   tfSeconds?: number;
   /** instrument digits — measure tool formats the price delta */
   digits?: number;
+  /** LOCK mode: drawings can be created but never selected/moved/deleted */
+  locked?: boolean;
+  /** global visibility toggle — hides every drawing (render + hit-test) */
+  hiddenAll?: boolean;
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
   onSelect, onDelete, onEdit, onContextMenu, tradeLines, onTradeLineMove,
-  tfSeconds = 0, digits = 2,
+  tfSeconds = 0, digits = 2, locked = false, hiddenAll = false,
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -100,6 +104,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   tfRef.current = tfSeconds;
   const digitsRef = useRef(digits);
   digitsRef.current = digits;
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
+  const hiddenAllRef = useRef(hiddenAll);
+  hiddenAllRef.current = hiddenAll;
 
   /** measure tool summary: Δprice (Δ%) over N bars — computed in MARKET space */
   const measureLabel = (a: DrawingPoint, b: DrawingPoint): string => {
@@ -136,9 +144,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       }
       return pts;
     };
-    for (const d of drawingsRef.current) {
-      const pts = toCanvas(d);
-      if (pts.length) renderDrawing(ctx, d, pts, W, H, d.id === selectedRef.current);
+    if (!hiddenAllRef.current) {
+      for (const d of drawingsRef.current) {
+        const pts = toCanvas(d);
+        if (pts.length) renderDrawing(ctx, d, pts, W, H, d.id === selectedRef.current);
+      }
     }
 
     // ---- in-progress drag preview ------------------------------------------
@@ -213,7 +223,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   const cursorFor = (p: XY): string => {
     const conv = converterRef.current;
     if (!conv) return "default";
-    if (toolRef.current) return "crosshair";
+    if (toolRef.current) return lockedRef.current ? "not-allowed" : "crosshair";
+    if (hiddenAllRef.current || lockedRef.current) return "default";
     const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
     if (hit?.handle != null) return "grab";
     if (hit) return "move";
@@ -254,6 +265,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
     // 2) drawing tool in progress → add a point / commit
     const tool = toolRef.current;
+    if (tool && lockedRef.current) return; // LOCK: no new drawings either
     if (tool) {
       const time = conv.time(p.x);
       const price = conv.price(p.y);
@@ -287,6 +299,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
 
     // 3) hit-test drawings → select + begin move/handle
+    if (lockedRef.current || hiddenAllRef.current) return; // LOCK/HIDE: objects are frozen
     const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
     if (hit) {
       const d = drawingsRef.current[hit.index];
@@ -327,6 +340,20 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
     e.stopPropagation();
     if (drag.mode === "draw") {
+      // brush is freehand: append a point every ≥4px of travel (capped at 800)
+      if (drag.drawing?.type === "brush" && toolRef.current === "brush") {
+        const time = conv.time(p.x);
+        const price = conv.price(p.y);
+        const pts = drag.drawing.points;
+        if (time != null && price != null && pts.length < 800) {
+          const lastPt = pts[pts.length - 1];
+          const lx = lastPt ? conv.x(lastPt.time) : null;
+          const ly = lastPt ? conv.y(lastPt.price) : null;
+          if (lx == null || ly == null || Math.hypot(p.x - lx, p.y - ly) >= 4) {
+            drag.drawing.points = [...pts, { time, price }];
+          }
+        }
+      }
       redraw(); // preview follows the mouse
       return;
     }
@@ -391,6 +418,20 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   };
 
   const onPointerUpCapture = (e: PointerEvent) => {
+    const drag = dragRef.current;
+    if (drag?.mode === "draw" && drag.drawing?.type === "brush") {
+      // freehand stroke ends → commit (or discard a stray dot)
+      e.stopPropagation();
+      const d = drag.drawing;
+      dragRef.current = null;
+      if (d.points.length >= 2) {
+        onChange([...drawingsRef.current, d]);
+        onSelect(d.id);
+      }
+      onToolCommitted();
+      redraw();
+      return;
+    }
     if (dragRef.current) {
       e.stopPropagation();
       finishDrag();
@@ -400,6 +441,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   const onDoubleClickCapture = (e: MouseEvent) => {
     const conv = converterRef.current;
     if (!conv) return;
+    if (lockedRef.current || hiddenAllRef.current) return;
     const p = localXY(e);
     const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
     if (hit) {
@@ -416,7 +458,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     e.preventDefault();
     e.stopPropagation();
     if (p.x > conv.paneW || p.y > conv.paneH) return;
-    const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
+    const hit = (lockedRef.current || hiddenAllRef.current) ? null
+      : hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
     onContextMenu(e.clientX, e.clientY, hit ? drawingsRef.current[hit.index].id : null);
   };
 

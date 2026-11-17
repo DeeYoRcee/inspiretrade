@@ -183,6 +183,7 @@ class BinanceProvider {
     if (!changed) return;
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
+    markTick();
     const lastBar = bars[bars.length - 1];
     this.listeners.get(key)?.forEach((c) => c({ bars, lastBar, isRealtime }));
   }
@@ -256,6 +257,7 @@ class BinanceProvider {
   private openSocket() {
     const list = [...this.streams.values()];
     if (!list.length || this.ws) return;
+    setConn({ binance: "connecting" });
     const host = WS_ENDPOINTS[this.wsEpIdx];
     const ws = new WebSocket(`${host}/stream?streams=${list.join("/")}`);
     this.ws = ws;
@@ -265,6 +267,7 @@ class BinanceProvider {
     ws.onopen = () => {
       if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
       this.backoff = 1000;
+      setConn({ binance: "connected" });
       // explicit SUBSCRIBE covers streams added while the socket was opening
       try { ws.send(JSON.stringify({ method: "SUBSCRIBE", params: [...this.streams.values()], id: Date.now() % 1e9 })); } catch { /* the combined URL already carries them */ }
       for (const key of this.streams.keys()) void this.resync(key).catch(() => { /* the WS stream will still update from now on */ });
@@ -272,6 +275,7 @@ class BinanceProvider {
     ws.onmessage = (ev) => {
       this.lastMsgAt = Date.now();
       this.wsWorks = true;
+      setConn({ binance: "connected" });
       try {
         const payload = JSON.parse(ev.data);
         const k = payload?.data?.k ?? payload?.k;
@@ -284,13 +288,15 @@ class BinanceProvider {
         const bars = upsert(this.history.get(key) || [], bar);
         this.history.set(key, bars);
         this.loadedAt.set(key, Date.now());
+        markTick();
         this.listeners.get(key)?.forEach((cb) => cb({ bars, lastBar: bar, isRealtime: true }));
       } catch { /* malformed frame — skip */ }
     };
     ws.onclose = () => {
       if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
       this.ws = null;
-      if (this.streams.size === 0) return; // last chart unmounted — normal shutdown
+      if (this.streams.size === 0) { setConn({ binance: "offline" }); return; } // last chart unmounted — normal shutdown
+      setConn({ binance: "reconnecting" });
       // an endpoint that never delivered a frame is effectively blocked → rotate
       if (!this.wsWorks) this.wsEpIdx = (this.wsEpIdx + 1) % WS_ENDPOINTS.length;
       this.wsWorks = false;
@@ -363,7 +369,7 @@ class QuotesProvider {
       try {
         await this.loadNetwork(symbol, tf);
         const bars = this.history.get(key)!;
-        if (bars.length) this.listeners.get(key)?.forEach((c) => cb({ bars, lastBar: bars[bars.length - 1], isRealtime: false }));
+        if (bars.length) { markTick(); this.listeners.get(key)?.forEach((c) => cb({ bars, lastBar: bars[bars.length - 1], isRealtime: false })); }
       } catch { /* transient — next poll retries */ } finally {
         this.inflight.delete(key);
       }
@@ -389,6 +395,50 @@ class QuotesProvider {
 
 export const binanceProvider = new BinanceProvider();
 export const quotesProvider = new QuotesProvider();
+
+// ---------------------------------------------------------------------------
+// Connection state store — honest feed status for the chart badge.
+// binance: connecting → connected | reconnecting (WS down, REST safety poll
+// keeps the candle moving) · lastTickAt: the moment the latest real update
+// arrived (WS frame OR REST resync/poll — never fabricated).
+// ---------------------------------------------------------------------------
+
+export type BinanceConn = "connecting" | "connected" | "reconnecting" | "offline";
+
+export interface ConnectionState {
+  binance: BinanceConn;
+  /** epoch ms of the last real data update (any provider) */
+  lastTickAt: number;
+}
+
+const connState: ConnectionState = { binance: "connecting", lastTickAt: 0 };
+const connListeners = new Set<() => void>();
+let connSnapshot: ConnectionState = { ...connState };
+
+function setConn(patch: Partial<ConnectionState>) {
+  let changed = false;
+  for (const [k, v] of Object.entries(patch)) {
+    if ((connState as any)[k] !== v) { (connState as any)[k] = v; changed = true; }
+  }
+  if (changed) {
+    connSnapshot = { ...connState };
+    connListeners.forEach((l) => l());
+  }
+}
+
+/** Mark a real data delivery (WS frame, REST resync, quotes poll tick). */
+export function markTick() {
+  setConn({ lastTickAt: Date.now() });
+}
+
+export function getConnectionState(): ConnectionState {
+  return connSnapshot;
+}
+
+export function subscribeConnection(cb: () => void): () => void {
+  connListeners.add(cb);
+  return () => connListeners.delete(cb);
+}
 
 export interface LoadResult {
   bars: Bar[];

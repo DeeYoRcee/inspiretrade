@@ -5,40 +5,25 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowUpRight, Camera, Crosshair, Eye, EyeOff, LayoutTemplate, Maximize2, Minus, MoveUpRight,
-  MoveVertical, Plus, Redo2, RotateCcw, Ruler, Search, Settings, Square, TrendingUp, Type, Undo2, X,
-  Trash2, SlidersHorizontal, Waves,
+  Bell, Camera, ChevronDown, Eye, EyeOff, LayoutTemplate, Maximize2, Plus, Redo2, RotateCcw, Rewind,
+  Search, Settings, Undo2, X, SlidersHorizontal, Waves,
 } from "lucide-react";
 import type { ChartType } from "@/lib/chart-types";
 import type { DrawingType } from "@/lib/drawings";
 import { INDICATOR_CATALOG, indicatorLabel, type IndicatorConfig, type IndicatorType } from "@/lib/indicators-config";
 import { cn } from "@/lib/utils";
 
-const TOOLS: { id: DrawingType | "cursor"; label: string; icon: React.ReactNode; title: string }[] = [
-  { id: "cursor", label: "", icon: <Crosshair className="h-3.5 w-3.5" />, title: "Cursor / select (Esc)" },
-  { id: "trend", label: "", icon: <TrendingUp className="h-3.5 w-3.5" />, title: "Trend line" },
-  { id: "ray", label: "", icon: <ArrowUpRight className="h-3.5 w-3.5" />, title: "Ray" },
-  { id: "hline", label: "", icon: <Minus className="h-3.5 w-3.5" />, title: "Horizontal line" },
-  { id: "vline", label: "", icon: <MoveVertical className="h-3.5 w-3.5" />, title: "Vertical line" },
-  { id: "extended", label: "", icon: <MoveUpRight className="h-3.5 w-3.5" />, title: "Extended line (infinite both ways)" },
-  { id: "rect", label: "", icon: <Square className="h-3.5 w-3.5" />, title: "Rectangle" },
-  { id: "channel", label: "ch", icon: null, title: "Parallel channel (3 clicks)" },
-  { id: "fib-retracement", label: "fib", icon: null, title: "Fibonacci retracement" },
-  { id: "fib-extension", label: "fib ext", icon: null, title: "Fibonacci extension (3 clicks)" },
-  { id: "measure", label: "", icon: <Ruler className="h-3.5 w-3.5" />, title: "Price range measure (Δprice, Δ%, bars)" },
-  { id: "text", label: "", icon: <Type className="h-3.5 w-3.5" />, title: "Text annotation" },
-];
+
 
 export function ChartToolbar({
-  activeTool, onToolSelect,
+  symbol,
   indicators, onAddIndicator, onIndicatorToggle, onIndicatorRemove, onIndicatorConfigure,
-  onOpenSettings, onOpenLayouts, onOpenSearch, onReset, onFullscreen, onClearDrawings,
-  drawingsCount,
+  onOpenSettings, onOpenLayouts, onOpenSearch, onReset, onFullscreen,
+  onOpenAlerts, onOpenReplay,
   chartType, onChartTypeChange,
   canUndo, canRedo, onUndo, onRedo, onScreenshot,
 }: {
-  activeTool: DrawingType | "cursor";
-  onToolSelect: (t: DrawingType | "cursor") => void;
+  symbol: string;
   indicators: IndicatorConfig[];
   onAddIndicator: (t: IndicatorType) => void;
   onIndicatorToggle: (id: string) => void;
@@ -49,8 +34,8 @@ export function ChartToolbar({
   onOpenSearch: () => void;
   onReset: () => void;
   onFullscreen: () => void;
-  onClearDrawings: () => void;
-  drawingsCount: number;
+  onOpenAlerts: () => void;
+  onOpenReplay: () => void;
   chartType: ChartType;
   onChartTypeChange: (t: ChartType) => void;
   canUndo: boolean;
@@ -76,40 +61,15 @@ export function ChartToolbar({
 
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 bg-slate-900/80 px-1.5 py-1">
-      {/* drawing tools */}
-      <div className="flex items-center gap-0.5 rounded-md border border-slate-700/70 p-0.5">
-        {TOOLS.map((t) => (
-          <button
-            key={t.id}
-            title={t.title}
-            onClick={() => onToolSelect(t.id)}
-            className={cn(
-              "flex h-6 min-w-6 items-center justify-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors",
-              activeTool === t.id ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
-            )}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
-        <button title="Undo drawing (Ctrl+Z)" onClick={onUndo} disabled={!canUndo}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30 disabled:hover:bg-transparent">
-          <Undo2 className="h-3.5 w-3.5" />
-        </button>
-        <button title="Redo drawing (Ctrl+Y)" onClick={onRedo} disabled={!canRedo}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30 disabled:hover:bg-transparent">
-          <Redo2 className="h-3.5 w-3.5" />
-        </button>
-        {drawingsCount > 0 && (
-          <button
-            title="Clear all drawings"
-            onClick={onClearDrawings}
-            className="flex h-6 items-center justify-center rounded px-1.5 text-slate-400 hover:bg-red-500/15 hover:text-red-400"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
+      {/* symbol — TV-style: opens the search dialog */}
+      <button
+        onClick={onOpenSearch}
+        title="Symbol search (/)"
+        className="flex h-6 items-center gap-1.5 rounded-md border border-slate-700/70 px-2 text-[11px] font-bold text-slate-100 hover:bg-slate-800"
+      >
+        {symbol}
+        <ChevronDown className="h-3 w-3 text-slate-500" />
+      </button>
 
       {/* chart type selector */}
       <div ref={typeRef} className="relative">
@@ -182,10 +142,19 @@ export function ChartToolbar({
         </div>
       ))}
 
+      {/* alert + replay — real features, TV positions */}
+      <div className="mx-1 h-5 w-px bg-slate-800" />
+      <ToolButton title="Add alert" onClick={onOpenAlerts}><Bell className="h-3.5 w-3.5" /></ToolButton>
+      <ToolButton title="Bar replay" onClick={onOpenReplay}><Rewind className="h-3.5 w-3.5" /></ToolButton>
+
+      {/* undo / redo drawings */}
+      <div className="mx-1 h-5 w-px bg-slate-800" />
+      <ToolButton title="Undo drawing (Ctrl+Z)" onClick={onUndo} disabled={!canUndo}><Undo2 className="h-3.5 w-3.5" /></ToolButton>
+      <ToolButton title="Redo drawing (Ctrl+Y)" onClick={onRedo} disabled={!canRedo}><Redo2 className="h-3.5 w-3.5" /></ToolButton>
+
       {/* right cluster */}
       <div className="ml-auto flex items-center gap-0.5">
         <ToolButton title="Screenshot (PNG)" onClick={onScreenshot}><Camera className="h-3.5 w-3.5" /></ToolButton>
-        <ToolButton title="Symbol search" onClick={onOpenSearch}><Search className="h-3.5 w-3.5" /></ToolButton>
         <ToolButton title="Chart settings" onClick={onOpenSettings}><Settings className="h-3.5 w-3.5" /></ToolButton>
         <ToolButton title="Chart layouts" onClick={onOpenLayouts}><LayoutTemplate className="h-3.5 w-3.5" /></ToolButton>
         <ToolButton title="Reset chart view" onClick={onReset}><RotateCcw className="h-3.5 w-3.5" /></ToolButton>
@@ -229,12 +198,13 @@ function AreaIcon() {
   );
 }
 
-function ToolButton({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
+function ToolButton({ title, onClick, disabled, children }: { title: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
   return (
     <button
       title={title}
       onClick={onClick}
-      className="flex h-6 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+      disabled={disabled}
+      className={`flex h-6 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 ${disabled ? "opacity-30 hover:bg-transparent hover:text-slate-400" : ""}`}
     >
       {children}
     </button>

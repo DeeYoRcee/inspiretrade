@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { INSTRUMENTS, getInstrument } from "@shared/terminal";
+import { SPREAD_PIPS } from "@shared/trading-engine";
 import { fetchWatchlistQuotes, type WatchlistQuote } from "@/lib/market-data";
 import { usePrice, priceBusUpdateMany } from "@/lib/price-store";
 import { cn } from "@/lib/utils";
@@ -136,6 +137,47 @@ export function Watchlist({
         })}
         {!filtered.length && <p className="py-6 text-center text-[11px] text-slate-500">No match</p>}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MarketInfoPanel — instrument details rail panel (real catalog + live quote)
+// ---------------------------------------------------------------------------
+
+export function MarketInfoPanel({ symbol }: { symbol: string }) {
+  const inst = getInstrument(symbol);
+  const mid = usePrice(symbol);
+  if (!inst) return <p className="p-3 text-[11px] text-slate-500">Unknown instrument</p>;
+  const spread = (SPREAD_PIPS[symbol] ?? 2) * inst.pipSize;
+  const bid = mid != null ? mid - spread / 2 : null;
+  const ask = mid != null ? mid + spread / 2 : null;
+  const rows: [string, string][] = [
+    ["Name", inst.name],
+    ["Asset class", inst.assetClass],
+    ["Price precision", `${inst.digits} digits`],
+    ["Pip size", String(inst.pipSize)],
+    ["Contract size", String(inst.contractSize)],
+    ["Quote currency", inst.quote],
+    ["Data feed", inst.feed === "binance" ? "Binance · real-time stream" : "Quotes proxy · delayed"],
+    ["Spread (engine)", `${SPREAD_PIPS[symbol] ?? 2} pips`],
+  ];
+  return (
+    <div className="p-2 text-[11px]">
+      <p className="mb-1 text-sm font-bold text-slate-100">{symbol}</p>
+      <div className="mb-2 grid grid-cols-3 gap-1 rounded-lg border border-slate-800 p-1.5 text-center">
+        <div><p className="text-[9px] uppercase text-slate-500">Bid</p><p className="font-number font-semibold text-red-400">{bid != null ? bid.toFixed(inst.digits) : "—"}</p></div>
+        <div><p className="text-[9px] uppercase text-slate-500">Mid</p><p className="font-number font-semibold text-slate-100">{mid != null ? mid.toFixed(inst.digits) : "—"}</p></div>
+        <div><p className="text-[9px] uppercase text-slate-500">Ask</p><p className="font-number font-semibold text-emerald-400">{ask != null ? ask.toFixed(inst.digits) : "—"}</p></div>
+      </div>
+      <dl className="space-y-1">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex justify-between gap-2 border-b border-slate-800/60 py-1">
+            <dt className="text-slate-500">{k}</dt>
+            <dd className="text-right font-medium text-slate-200">{v}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }

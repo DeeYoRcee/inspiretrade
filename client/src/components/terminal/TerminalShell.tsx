@@ -1,36 +1,37 @@
 /**
- * TerminalShell — the professional multi-panel terminal layout.
+ * TerminalShell — the professional multi-panel terminal layout (TradingView-style).
  *
- *  ┌────────────┬──────────────────────────────┬──────────┐
- *  │ watchlist  │  chart (flex)                │ order    │
- *  │ (resize,   │──────────────────────────────│ ticket   │
- *  │  collapse) │  blotter (resize, collapse)  │ (resize, │
- *  └────────────┴──────────────────────────────┴──────────┘
+ *  ┌──────────────────────────────────────┬─────────────┬──────┐
+ *  │ chart (+ left drawing rail, top      │ active      │ icon │
+ *  │ toolbar, bottom range bar)           │ right panel │ rail │
+ *  │──────────────────────────────────────│ (resize,    │      │
+ *  │ blotter (resize, collapse)           │  close)     │      │
+ *  └──────────────────────────────────────┴─────────────┴──────┘
  *
- * Dividers are pointer-draggable; every size and visibility flag persists in
- * localStorage. On narrow viewports (< 1024px) the shell degrades to the
- * stacked layout (watchlist hidden, ticket + blotter below the chart) — the
- * desktop panels only exist when there is room for them.
+ * The right icon rail toggles ONE panel at a time (watchlist / order ticket /
+ * alerts / market info) — clicking the active button closes it and the chart
+ * grows. Dividers are pointer-draggable; sizes persist in localStorage.
+ * Below 1024px the shell degrades to the stacked mobile layout.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import {
+  ArrowLeftRight, BellRing, ChevronLeft, Info, ListOrdered, PanelRightClose, PanelRightOpen,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const KEY = "it_terminal_shell_v1";
+const KEY = "it_terminal_shell_v2";
+
+export type ShellPanel = "watchlist" | "ticket" | "alerts" | "info" | null;
 
 export interface ShellState {
-  /** watchlist width px */
-  left: number;
-  /** order ticket width px */
+  /** right panel width px */
   right: number;
   /** blotter height px */
   bottom: number;
-  leftOpen: boolean;
-  rightOpen: boolean;
   bottomOpen: boolean;
 }
 
-const DEFAULTS: ShellState = { left: 210, right: 340, bottom: 250, leftOpen: true, rightOpen: true, bottomOpen: true };
+const DEFAULTS: ShellState = { right: 330, bottom: 250, bottomOpen: true };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -38,11 +39,8 @@ function loadShell(): ShellState {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || "{}");
     return {
-      left: clamp(Number(raw.left) || DEFAULTS.left, 170, 360),
-      right: clamp(Number(raw.right) || DEFAULTS.right, 280, 460),
+      right: clamp(Number(raw.right) || DEFAULTS.right, 260, 460),
       bottom: clamp(Number(raw.bottom) || DEFAULTS.bottom, 140, 480),
-      leftOpen: raw.leftOpen !== false,
-      rightOpen: raw.rightOpen !== false,
       bottomOpen: raw.bottomOpen !== false,
     };
   } catch {
@@ -50,7 +48,7 @@ function loadShell(): ShellState {
   }
 }
 
-/** true when the viewport has room for the 3-column desktop layout */
+/** true when the viewport has room for the desktop layout */
 function useIsWide(): boolean {
   const [wide, setWide] = useState(() => (typeof window === "undefined" ? true : window.matchMedia("(min-width: 1024px)").matches));
   useEffect(() => {
@@ -64,11 +62,10 @@ function useIsWide(): boolean {
 
 /** one draggable divider; `onDelta` receives the px delta since drag start */
 function Divider({
-  orientation, onDelta, onDoubleClick, children,
+  orientation, onDelta, children,
 }: {
   orientation: "v" | "h";
   onDelta: (deltaPx: number) => void;
-  onDoubleClick?: () => void;
   children?: React.ReactNode;
 }) {
   const startRef = useRef<number | null>(null);
@@ -91,7 +88,6 @@ function Divider({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onDoubleClick={onDoubleClick}
       className={cn(
         "group relative z-10 flex shrink-0 touch-none items-center justify-center bg-slate-800/70 transition-colors hover:bg-sky-600/50",
         orientation === "v" ? "w-[5px] cursor-col-resize" : "h-[5px] cursor-row-resize",
@@ -102,13 +98,22 @@ function Divider({
   );
 }
 
+const RAIL_BUTTONS: { id: Exclude<ShellPanel, null>; icon: React.ReactNode; title: string }[] = [
+  { id: "watchlist", icon: <ListOrdered className="h-4 w-4" />, title: "Watchlist" },
+  { id: "ticket", icon: <ArrowLeftRight className="h-4 w-4" />, title: "Order ticket" },
+  { id: "alerts", icon: <BellRing className="h-4 w-4" />, title: "Alerts" },
+  { id: "info", icon: <Info className="h-4 w-4" />, title: "Instrument details" },
+];
+
 export function TerminalShell({
-  watchlist, ticket, chart, blotter,
+  chart, blotter, panel, activePanel, onPanelSelect,
 }: {
-  watchlist: React.ReactNode;
-  ticket: React.ReactNode;
   chart: React.ReactNode;
   blotter: React.ReactNode;
+  /** content of the currently open right panel (null when closed) */
+  panel: React.ReactNode;
+  activePanel: ShellPanel;
+  onPanelSelect: (p: ShellPanel) => void;
 }) {
   const wide = useIsWide();
   const [shell, setShell] = useState<ShellState>(loadShell);
@@ -119,11 +124,11 @@ export function TerminalShell({
   const patch = useCallback((p: Partial<ShellState>) => setShell((s) => ({ ...s, ...p })), []);
 
   if (!wide) {
-    // stacked mobile/tablet layout — identical to the pre-shell order
+    // stacked mobile/tablet layout
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2">
         {chart}
-        {ticket}
+        {panel}
         {blotter}
       </div>
     );
@@ -131,32 +136,6 @@ export function TerminalShell({
 
   return (
     <div className="flex min-h-0 flex-1">
-      {/* left — watchlist */}
-      {shell.leftOpen ? (
-        <>
-          <div style={{ width: shell.left }} className="min-h-0 shrink-0 overflow-hidden rounded-lg border border-slate-800">
-            {watchlist}
-          </div>
-          <Divider orientation="v" onDelta={(d) => patch({ left: clamp(shell.left + d, 170, 360) })}>
-            <button
-              title="Collapse watchlist"
-              onClick={() => patch({ leftOpen: false })}
-              className="opacity-0 transition-opacity group-hover:opacity-100"
-            >
-              <PanelLeftClose className="h-3.5 w-3.5 text-slate-400 hover:text-sky-300" />
-            </button>
-          </Divider>
-        </>
-      ) : (
-        <button
-          title="Show watchlist"
-          onClick={() => patch({ leftOpen: true })}
-          className="flex w-6 shrink-0 items-start justify-center rounded-lg border border-slate-800 bg-slate-900/60 py-2 text-slate-500 hover:text-sky-300"
-        >
-          <PanelLeftOpen className="h-4 w-4" />
-        </button>
-      )}
-
       {/* center — chart + bottom blotter */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="min-h-0 flex-1">{chart}</div>
@@ -186,31 +165,51 @@ export function TerminalShell({
         )}
       </div>
 
-      {/* right — order ticket */}
-      {shell.rightOpen ? (
+      {/* right panel (one at a time) */}
+      {activePanel && panel && (
         <>
-          <Divider orientation="v" onDelta={(d) => patch({ right: clamp(shell.right - d, 280, 460) })}>
+          <Divider orientation="v" onDelta={(d) => patch({ right: clamp(shell.right - d, 260, 460) })}>
             <button
-              title="Collapse order ticket"
-              onClick={() => patch({ rightOpen: false })}
+              title="Collapse panel"
+              onClick={() => onPanelSelect(null)}
               className="opacity-0 transition-opacity group-hover:opacity-100"
             >
               <PanelRightClose className="h-3.5 w-3.5 text-slate-400 hover:text-sky-300" />
             </button>
           </Divider>
-          <div style={{ width: shell.right }} className="min-h-0 shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/60">
-            {ticket}
+          <div style={{ width: shell.right }} className="min-h-0 shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
+            {panel}
           </div>
         </>
-      ) : (
-        <button
-          title="Show order ticket"
-          onClick={() => patch({ rightOpen: true })}
-          className="flex w-6 shrink-0 items-start justify-center rounded-lg border border-slate-800 bg-slate-900/60 py-2 text-slate-500 hover:text-sky-300"
-        >
-          <PanelRightOpen className="h-4 w-4" />
-        </button>
       )}
+
+      {/* right icon rail */}
+      <div className="flex w-10 shrink-0 flex-col items-center gap-0.5 border-l border-slate-800 bg-[#0b1220] py-1.5">
+        {RAIL_BUTTONS.map((b) => (
+          <button
+            key={b.id}
+            title={b.title}
+            onClick={() => onPanelSelect(activePanel === b.id ? null : b.id)}
+            className={cn(
+              "flex h-7 w-7 items-center justify-center rounded transition-colors",
+              activePanel === b.id
+                ? "bg-sky-600 text-white"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
+            )}
+          >
+            {b.icon}
+          </button>
+        ))}
+        {activePanel && (
+          <button
+            title="Close panel"
+            onClick={() => onPanelSelect(null)}
+            className="mt-1 flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+          >
+            <PanelRightOpen className="h-4 w-4" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
