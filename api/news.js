@@ -649,27 +649,32 @@ var econCache = /* @__PURE__ */ new Map();
 async function fetchEconRange(range) {
   const hit = econCache.get(range);
   if (hit && Date.now() - hit.at < ECON_TTL) return { events: hit.events, ok: hit.ok, stale: false };
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8e3);
-    const res = await fetch(FF_RANGE_URL[range], {
-      headers: {
-        "User-Agent": UA2,
-        Accept: "application/json, text/plain, */*",
-        Referer: "https://www.forexfactory.com/calendar"
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { events, ok } = normalizeFfCalendar(await res.json());
-    if (!ok) throw new Error("unusable payload");
-    econCache.set(range, { at: Date.now(), events, ok });
-    return { events, ok, stale: false };
-  } catch {
-    if (hit) return { events: hit.events, ok: hit.ok, stale: true };
-    return { events: [], ok: false, stale: false };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8e3);
+      const res = await fetch(FF_RANGE_URL[range], {
+        headers: {
+          "User-Agent": UA2,
+          Accept: "application/json, text/plain, */*",
+          Referer: "https://www.forexfactory.com/calendar"
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.text();
+      if (!body.trim().startsWith("[")) throw new Error("rate-limit page");
+      const { events, ok } = normalizeFfCalendar(JSON.parse(body));
+      if (!ok) throw new Error("unusable payload");
+      econCache.set(range, { at: Date.now(), events, ok });
+      return { events, ok, stale: false };
+    } catch {
+    }
   }
+  if (hit) return { events: hit.events, ok: hit.ok, stale: true };
+  return { events: [], ok: false, stale: false };
 }
 async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") {

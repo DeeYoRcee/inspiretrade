@@ -397,6 +397,9 @@ function HistoryTabPane() {
         <span className="text-[10px] text-slate-500">
           Updated {updatedAt ? timeFmt.format(updatedAt) : "—"}{stale ? " · cached copy" : ""}
         </span>
+        <span className="ml-auto text-[10px] text-slate-500">
+          The mirror publishes forecast & previous; "Actual" fills in only when the upstream provides it.
+        </span>
       </div>
       <FilterBar
         search={search} onSearch={setSearch}

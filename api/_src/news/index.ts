@@ -516,28 +516,36 @@ const econCache = new Map<string, { at: number; events: CalEventFull[]; ok: bool
 async function fetchEconRange(range: string): Promise<{ events: CalEventFull[]; ok: boolean; stale: boolean }> {
   const hit = econCache.get(range);
   if (hit && Date.now() - hit.at < ECON_TTL) return { events: hit.events, ok: hit.ok, stale: false };
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(FF_RANGE_URL[range], {
-      headers: {
-        "User-Agent": UA,
-        Accept: "application/json, text/plain, */*",
-        Referer: "https://www.forexfactory.com/calendar",
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { events, ok } = normalizeFfCalendar(await res.json());
-    if (!ok) throw new Error("unusable payload");
-    econCache.set(range, { at: Date.now(), events, ok });
-    return { events, ok, stale: false };
-  } catch {
-    // Rate-limited / unreachable — serve the last good payload if we have one
-    if (hit) return { events: hit.events, ok: hit.ok, stale: true };
-    return { events: [], ok: false, stale: false };
+  // one retry with a short backoff — the mirror sometimes answers an HTML
+  // rate-limit page on the first hit, then succeeds
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(FF_RANGE_URL[range], {
+        headers: {
+          "User-Agent": UA,
+          Accept: "application/json, text/plain, */*",
+          Referer: "https://www.forexfactory.com/calendar",
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.text();
+      if (!body.trim().startsWith("[")) throw new Error("rate-limit page");
+      const { events, ok } = normalizeFfCalendar(JSON.parse(body));
+      if (!ok) throw new Error("unusable payload");
+      econCache.set(range, { at: Date.now(), events, ok });
+      return { events, ok, stale: false };
+    } catch {
+      // fall through to the retry, then to the stale cache
+    }
   }
+  // Rate-limited / unreachable — serve the last good payload if we have one
+  if (hit) return { events: hit.events, ok: hit.ok, stale: true };
+  return { events: [], ok: false, stale: false };
 }
 
 // ---- handler ----------------------------------------------------------------
