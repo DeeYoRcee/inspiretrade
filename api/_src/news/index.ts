@@ -520,9 +520,9 @@ let econRaw: { at: number; events: CalEventFull[]; ok: boolean } | null = null;
 function filterRange(events: CalEventFull[], range: string): CalEventFull[] {
   const now = new Date();
   if (range === "nextweek") {
-    // next Monday 00:00 UTC … +7d
+    // NEXT Monday 00:00 UTC … +7d (Sunday → tomorrow, otherwise Monday+7)
     const day = now.getUTCDay(); // 0 Sun … 6 Sat
-    const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - day + 1 + (day === 0 ? -7 : 0));
+    const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day === 0 ? now.getUTCDate() + 1 : now.getUTCDate() - day + 8);
     const end = monday + 7 * 86400000;
     return events.filter((e) => e.date >= monday && e.date < end);
   }

@@ -710,7 +710,7 @@ function filterRange(events, range) {
   const now = /* @__PURE__ */ new Date();
   if (range === "nextweek") {
     const day = now.getUTCDay();
-    const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - day + 1 + (day === 0 ? -7 : 0));
+    const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day === 0 ? now.getUTCDate() + 1 : now.getUTCDate() - day + 8);
     const end = monday + 7 * 864e5;
     return events.filter((e) => e.date >= monday && e.date < end);
   }
