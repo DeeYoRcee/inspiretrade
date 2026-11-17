@@ -1783,7 +1783,12 @@ var routes = {
     const url = new URL(req.url || "/", "http://localhost");
     const periodRaw = String(url.searchParams.get("period") || "all");
     const period = isPeriod(periodRaw) ? periodRaw : "all";
-    json(res, 200, await getLeaderboard(period));
+    try {
+      json(res, 200, await getLeaderboard(period));
+    } catch (e) {
+      console.error("[api] leaderboard failed:", e?.code, e?.message);
+      json(res, 500, { error: "INTERNAL", code: e?.code || null, message: e?.message || "leaderboard failed" });
+    }
   }
 };
 var ADMIN_GET_ACTIONS = /* @__PURE__ */ new Set(["admin-challenge-types", "admin-accounts", "admin-account-detail", "admin-audit", "admin-trades"]);

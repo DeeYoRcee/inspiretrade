@@ -158,7 +158,13 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     const url = new URL(req.url || "/", "http://localhost");
     const periodRaw = String(url.searchParams.get("period") || "all");
     const period = leaderboard.isPeriod(periodRaw) ? periodRaw : "all";
-    json(res, 200, await leaderboard.getLeaderboard(period));
+    try {
+      json(res, 200, await leaderboard.getLeaderboard(period));
+    } catch (e: any) {
+      // read-only endpoint — surface the failure code so ops can diagnose
+      console.error("[api] leaderboard failed:", e?.code, e?.message);
+      json(res, 500, { error: "INTERNAL", code: e?.code || null, message: e?.message || "leaderboard failed" });
+    }
   },
 };
 
