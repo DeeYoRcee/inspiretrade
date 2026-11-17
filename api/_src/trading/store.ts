@@ -108,11 +108,32 @@ function writeTradeDoc(tx: any, uid: string, aid: string, o: CloseOutcome) {
 /**
  * Record one realized close against the account: immutable trade doc +
  * trading-day count (min-days rule) + win/loss stats (dashboard/leaderboard).
+ * CHALLENGE accounts also append a top-level leaderboardLog entry — the
+ * public leaderboard must range-filter by close time, and TOP-LEVEL
+ * collections keep the automatic single-field index (the trades COLLECTION
+ * GROUP scope has no closedAt index exemption, which 500s that query).
  */
 function recordClose(state: AccountState, tx: any, uid: string, aid: string, o: CloseOutcome) {
   writeTradeDoc(tx, uid, aid, o);
   bumpTradingDay(state.account, o.closedAt);
   state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
+  if (state.account.type === "CHALLENGE") {
+    tx.set(firestore().collection("leaderboardLog").doc(), {
+      at: o.closedAt,
+      uid,
+      aid,
+      net: Math.round((o.pnl + o.swap) * 100) / 100,
+    });
+  }
+}
+
+/** Delete the leaderboardLog feed of one account (on authorized resets). */
+export async function clearLeaderboardLog(aid: string) {
+  const snap = await firestore().collection("leaderboardLog").where("aid", "==", aid).limit(500).get();
+  if (snap.empty) return;
+  const batch = firestore().batch();
+  for (const d of snap.docs) batch.delete(d.ref);
+  await batch.commit();
 }
 
 /**
@@ -445,6 +466,8 @@ export async function createAccount(uid: string, label?: string, startingBalance
 export async function resetAccount(uid: string, aid: string) {
   const dbRef = db();
   const accRef = accountsCol(uid).doc(aid);
+  // the fresh attempt also drops the account's public leaderboard feed
+  await clearLeaderboardLog(aid);
   return dbRef.runTransaction(async (tx: any) => {
     const accSnap = await tx.get(accRef);
     if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");

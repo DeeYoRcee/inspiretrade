@@ -74,43 +74,54 @@ export async function getLeaderboard(period: LeaderboardPeriod): Promise<{ enabl
   if (!enabled) return { enabled: false, period, rows: [] };
 
   const start = periodStart(period);
+  // leaderboardLog is a TOP-LEVEL feed written on every challenge close —
+  // top-level single-field indexes are automatic, so the `at` range query
+  // needs no manual index (the trades collection-group scope does).
   const snap = await firestore()
-    .collectionGroup("trades")
-    .where("closedAt", ">=", start)
+    .collection("leaderboardLog")
+    .where("at", ">=", start)
     .limit(2000)
     .get();
 
-  // group fills by parent account, then fetch only CHALLENGE account docs
-  const byAccount = new Map<string, { net: number; trades: number; wins: number; ref: any }>();
+  // group fills by account, then fetch only CHALLENGE account docs
+  const byAccount = new Map<string, { uid: string; net: number; trades: number; wins: number }>();
   for (const doc of snap.docs) {
-    const parent = doc.ref.parent.parent;
-    if (!parent) continue;
-    const t = doc.data() || {};
-    const key = parent.path;
-    const cur = byAccount.get(key) || { net: 0, trades: 0, wins: 0, ref: parent };
-    const net = (Number(t.pnl) || 0) + (Number(t.swap) || 0);
+    const e = doc.data() || {};
+    const aid = String(e.aid || "");
+    if (!aid) continue;
+    const net = Number(e.net) || 0;
+    const cur = byAccount.get(aid) || { uid: String(e.uid || ""), net: 0, trades: 0, wins: 0 };
     cur.net += net;
     cur.trades += 1;
     if (net > 0) cur.wins += 1;
-    byAccount.set(key, cur);
+    byAccount.set(aid, cur);
   }
 
   const accounts: Acc[] = [];
-  const parents = [...byAccount.values()];
-  const accSnaps = await Promise.all(parents.map((p) => p.ref.get()));
-  for (let i = 0; i < parents.length; i++) {
+  const entries = [...byAccount.entries()];
+  const db = firestore();
+  const accSnaps = await Promise.all(entries.map(([aid, e]) => db.collection("users").doc(e.uid).collection("accounts").doc(aid).get()));
+  for (let i = 0; i < entries.length; i++) {
     const data = accSnaps[i].data() || {};
     if (data.type !== "CHALLENGE") continue;
-    const p = parents[i];
+    const e = entries[i][1];
     accounts.push({
-      uid: p.ref.parent.parent?.id || "",
+      uid: e.uid,
       startingBalance: Number(data.startingBalance) || 0,
       status: data.status || "active",
       challengeName: data.challengeName ?? null,
-      net: Math.round(p.net * 100) / 100,
-      trades: p.trades,
-      wins: p.wins,
+      net: Math.round(e.net * 100) / 100,
+      trades: e.trades,
+      wins: e.wins,
     });
+  }
+
+  // opportunistic prune — the feed keeps 90 days of history
+  const old = await firestore().collection("leaderboardLog").where("at", "<", Date.now() - 90 * 86_400_000).limit(500).get();
+  if (!old.empty) {
+    const batch = firestore().batch();
+    for (const d of old.docs) batch.delete(d.ref);
+    await batch.commit();
   }
 
   const names = await traderNames();

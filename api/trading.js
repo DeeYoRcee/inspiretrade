@@ -699,6 +699,21 @@ function recordClose(state, tx, uid, aid, o) {
   writeTradeDoc(tx, uid, aid, o);
   bumpTradingDay(state.account, o.closedAt);
   state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
+  if (state.account.type === "CHALLENGE") {
+    tx.set(firestore().collection("leaderboardLog").doc(), {
+      at: o.closedAt,
+      uid,
+      aid,
+      net: Math.round((o.pnl + o.swap) * 100) / 100
+    });
+  }
+}
+async function clearLeaderboardLog(aid) {
+  const snap = await firestore().collection("leaderboardLog").where("aid", "==", aid).limit(500).get();
+  if (snap.empty) return;
+  const batch = firestore().batch();
+  for (const d of snap.docs) batch.delete(d.ref);
+  await batch.commit();
 }
 function settleSwap(state, pos, now) {
   const spec = getInstrument(pos.symbol);
@@ -993,6 +1008,7 @@ async function createAccount(uid, label, startingBalance, opts = {}) {
 async function resetAccount(uid, aid) {
   const dbRef = db();
   const accRef = accountsCol(uid).doc(aid);
+  await clearLeaderboardLog(aid);
   return dbRef.runTransaction(async (tx) => {
     const accSnap = await tx.get(accRef);
     if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
@@ -1612,36 +1628,42 @@ async function getLeaderboard(period) {
   const enabled = await getLeaderboardEnabled();
   if (!enabled) return { enabled: false, period, rows: [] };
   const start = periodStart(period);
-  const snap = await firestore().collectionGroup("trades").where("closedAt", ">=", start).limit(2e3).get();
+  const snap = await firestore().collection("leaderboardLog").where("at", ">=", start).limit(2e3).get();
   const byAccount = /* @__PURE__ */ new Map();
   for (const doc of snap.docs) {
-    const parent = doc.ref.parent.parent;
-    if (!parent) continue;
-    const t = doc.data() || {};
-    const key = parent.path;
-    const cur = byAccount.get(key) || { net: 0, trades: 0, wins: 0, ref: parent };
-    const net = (Number(t.pnl) || 0) + (Number(t.swap) || 0);
+    const e = doc.data() || {};
+    const aid = String(e.aid || "");
+    if (!aid) continue;
+    const net = Number(e.net) || 0;
+    const cur = byAccount.get(aid) || { uid: String(e.uid || ""), net: 0, trades: 0, wins: 0 };
     cur.net += net;
     cur.trades += 1;
     if (net > 0) cur.wins += 1;
-    byAccount.set(key, cur);
+    byAccount.set(aid, cur);
   }
   const accounts = [];
-  const parents = [...byAccount.values()];
-  const accSnaps = await Promise.all(parents.map((p) => p.ref.get()));
-  for (let i = 0; i < parents.length; i++) {
+  const entries = [...byAccount.entries()];
+  const db2 = firestore();
+  const accSnaps = await Promise.all(entries.map(([aid, e]) => db2.collection("users").doc(e.uid).collection("accounts").doc(aid).get()));
+  for (let i = 0; i < entries.length; i++) {
     const data = accSnaps[i].data() || {};
     if (data.type !== "CHALLENGE") continue;
-    const p = parents[i];
+    const e = entries[i][1];
     accounts.push({
-      uid: p.ref.parent.parent?.id || "",
+      uid: e.uid,
       startingBalance: Number(data.startingBalance) || 0,
       status: data.status || "active",
       challengeName: data.challengeName ?? null,
-      net: Math.round(p.net * 100) / 100,
-      trades: p.trades,
-      wins: p.wins
+      net: Math.round(e.net * 100) / 100,
+      trades: e.trades,
+      wins: e.wins
     });
+  }
+  const old = await firestore().collection("leaderboardLog").where("at", "<", Date.now() - 90 * 864e5).limit(500).get();
+  if (!old.empty) {
+    const batch = firestore().batch();
+    for (const d of old.docs) batch.delete(d.ref);
+    await batch.commit();
   }
   const names = await traderNames2();
   const ranked = accounts.filter((a) => a.startingBalance > 0).map((a) => ({
