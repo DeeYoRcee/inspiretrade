@@ -413,7 +413,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
 
     // 4) empty space — deselect (do NOT block chart pan)
-    if (selectedRef.current) onSelect(null);
+    if (selectedRef.current) { (window as any).__nullSite = "step4-empty"; onSelect(null); }
     if (onSelectIds && multiIdsRef.current.length > 1) onSelectIds([]);
   };
 
@@ -623,6 +623,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       if (e.key === "Escape") {
         dragRef.current = null;
         toolRef.current = null;
+        (window as any).__nullSite = "escape";
         onSelect(null);
         redraw();
       }
