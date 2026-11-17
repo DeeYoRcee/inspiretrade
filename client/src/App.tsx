@@ -1,3 +1,4 @@
+import React from "react";
 import { Switch, Route, useLocation, useRoute } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
@@ -312,6 +313,59 @@ function Router() {
   );
 }
 
+/**
+ * Global render-crash guard: a thrown error in any route used to unmount the
+ * whole React tree → the user saw a blank dark screen with no information.
+ * The boundary keeps the shell alive and shows the error + a way forward.
+ */
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: unknown) {
+    console.error("[InspireTrade] render crash:", error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 p-6 text-center">
+          <div className="text-lg font-semibold text-red-400">Something broke on this page</div>
+          <div className="max-w-xl text-xs leading-relaxed text-slate-400">
+            {this.state.error.message || String(this.state.error)}
+            <br />
+            <span className="text-slate-500">
+              Your data is safe — this is a display error. Try reloading; if it persists, hard-refresh
+              (Ctrl+Shift+R) to pick up the latest build.
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => this.setState({ error: null })}
+              className="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+            >
+              Try again
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500"
+            >
+              Reload app
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -319,16 +373,18 @@ function App() {
         <ThemeProvider>
           <AuthProvider>
             <TooltipProvider>
-              <Toaster />
-              <Router />
-              <MusicPlayer />
-              <ReferralApplier />
-              <AlertsEngine />
-              <InstallPrompt />
-              {/* daily reward — auto-opens on site entry when today's reward
-                  is unclaimed (self-gated: only for signed-in users, once per
-                  day per session via "Later") */}
-              <DailyRewardDialog />
+              <AppErrorBoundary>
+                <Toaster />
+                <Router />
+                <MusicPlayer />
+                <ReferralApplier />
+                <AlertsEngine />
+                <InstallPrompt />
+                {/* daily reward — auto-opens on site entry when today's reward
+                    is unclaimed (self-gated: only for signed-in users, once per
+                    day per session via "Later") */}
+                <DailyRewardDialog />
+              </AppErrorBoundary>
             </TooltipProvider>
           </AuthProvider>
         </ThemeProvider>

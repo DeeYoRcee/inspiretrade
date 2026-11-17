@@ -40,6 +40,14 @@ let heartbeat: ReturnType<typeof setInterval> | null = null;
 let inFlight = false;
 let currentUid: string | null = null;
 
+/** RTDB/Firestore round-trips can turn empty arrays into `{}` — a hybrid or
+ *  older server payload must never leak a non-iterable into the UI. */
+function asArray<T>(v: unknown): T[] {
+  if (Array.isArray(v)) return v as T[];
+  if (v && typeof v === "object") return Object.values(v as Record<string, T>);
+  return [];
+}
+
 function activeAccount(): ServerAccount | null {
   return state.accounts.find((a) => a.id === state.activeId) ?? state.accounts[0] ?? null;
 }
@@ -217,9 +225,9 @@ export function useTrading(): UseTrading {
     ...snap,
     account,
     metrics: account?.metrics ?? null,
-    positions: account?.positions ?? [],
-    orders: account?.orders ?? [],
-    quotes: account?.quotes ?? {},
+    positions: asArray(account?.positions),
+    orders: asArray(account?.orders),
+    quotes: (account?.quotes && typeof account.quotes === "object" ? account.quotes : {}) as ServerAccount["quotes"],
     setActiveId: tradingActions.setActiveId,
     placeOrder: tradingActions.placeOrder,
     closePosition: tradingActions.closePosition,

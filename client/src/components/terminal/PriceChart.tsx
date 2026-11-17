@@ -151,12 +151,18 @@ export function PriceChart({
     [digits],
   );
 
+  // Defensive normalization: a stale/hybrid deploy or an RTDB-shaped payload can
+  // hand us non-array marks/positions — a broken iterable must never black-screen
+  // the terminal, so degrade to "no lines" instead of crashing.
+  const safeMarks = Array.isArray(marks) ? marks : [];
+  const safePositions = Array.isArray(positions) ? positions : [];
+
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const marksRef = useRef(marks);
-  marksRef.current = marks;
-  const positionsRef = useRef(positions);
-  positionsRef.current = positions;
+  const marksRef = useRef(safeMarks);
+  marksRef.current = safeMarks;
+  const positionsRef = useRef(safePositions);
+  positionsRef.current = safePositions;
   const onModifyRef = useRef(onModifyPosition);
   onModifyRef.current = onModifyPosition;
 
@@ -628,7 +634,7 @@ export function PriceChart({
       try { candle.removePriceLine(line); } catch { /* series gone */ }
     }
     lineHandlesRef.current = [];
-    for (const m of marks) {
+    for (const m of safeMarks) {
       if (!Number.isFinite(m.price) || m.price <= 0) continue;
       lineHandlesRef.current.push(
         candle.createPriceLine({
@@ -641,19 +647,19 @@ export function PriceChart({
         }),
       );
     }
-  }, [marks]);
+  }, [safeMarks]);
 
   // ---- trade lines (positions) ---------------------------------------------------
   const tradeLines = useMemo<TradeLine[]>(() => {
     const out: TradeLine[] = [];
-    for (const p of positions) {
+    for (const p of safePositions) {
       const color = p.side === "buy" ? "#3b82f6" : "#f97316";
       out.push({ positionId: p.id, kind: "entry", price: p.entry, color, label: `${p.side === "buy" ? "BUY" : "SELL"} ${p.lots}`, digits });
       if (p.sl) out.push({ positionId: p.id, kind: "sl", price: p.sl, color: "#ef4444", label: "SL", digits });
       if (p.tp) out.push({ positionId: p.id, kind: "tp", price: p.tp, color: "#22c55e", label: "TP", digits });
     }
     return out;
-  }, [positions, digits]);
+  }, [safePositions, digits]);
 
   const handleTradeLineMove = useCallback((positionId: string, kind: TradeLine["kind"], price: number) => {
     if (kind === "entry") return;
