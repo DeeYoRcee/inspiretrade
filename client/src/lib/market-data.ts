@@ -45,26 +45,12 @@ function dedupSort(bars: Bar[]): Bar[] {
  * old copy+sort per tick was O(n log n) of main-thread work per chart.
  */
 function upsert(bars: Bar[], bar: Bar): Bar[] {
-  const last = bars.length ? bars[bars.length - 1] : null;
-  if (last && bar.time === last.time) {
-    bars[bars.length - 1] = bar;
-    return bars;
-  }
-  if (!last || bar.time > last.time) {
-    bars.push(bar);
-    if (bars.length > 6000) bars.splice(0, bars.length - 6000);
-    return bars;
-  }
-  // rare out-of-order insert (resync path) — keep the safe copy+sort
-  const out = bars.slice();
-  const i = out.findIndex((b) => b.time === bar.time);
-  if (i >= 0) out[i] = bar;
-  else {
-    out.push(bar);
-    out.sort((a, b) => a.time - b.time);
-    if (out.length > 6000) out.splice(0, out.length - 6000);
-  }
-  return out;
+  // canonical hot-path implementation (shared/candle-core.ts, unit-tested):
+  // same-bucket in-place update · append on timeframe close · safe out-of-order insert
+  return upsertBar(bars, bar, {
+    onDuplicate: () => statsState.duplicateBars++,
+    onOutOfOrder: () => statsState.outOfOrderTicks++,
+  }) as Bar[];
 }
 
 /**
@@ -76,6 +62,9 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
 // ---------------------------------------------------------------------------
 // Binance (crypto — real live)
 // ---------------------------------------------------------------------------
+
+import { validateBars, dedupeBars, checkBar, type RawBar } from "@shared/feed-validation";
+import { upsertBar, wsBackoffDelay, nextEndpointIndex } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
 // second REST host are Binance's official PUBLIC MARKET-DATA mirrors on a
@@ -135,10 +124,16 @@ class BinanceProvider {
     const inst = getInstrument(symbol)!;
     const endQ = endTime != null ? `&endTime=${endTime}` : "";
     const raw: any[] = await this.restGet(`/api/v3/klines?symbol=${inst.binance}&interval=${BINANCE_INTERVAL[tf]}&limit=${limit}${endQ}`);
-    return raw.map((k) => ({
+    const mapped: RawBar[] = raw.map((k) => ({
       time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
       takerBuy: k[9] != null ? +k[9] : undefined,
     }));
+    // Phase 10: every provider response passes OHLC validation (repair H/L
+    // envelope, reject broken bars) before it can reach the chart
+    const checked = validateBars(mapped);
+    if (checked.invalid) statsState.invalidBars += checked.invalid;
+    if (checked.repaired) statsState.repairedBars += checked.repaired;
+    return checked.bars as Bar[];
   }
 
   /**
@@ -285,6 +280,9 @@ class BinanceProvider {
           : (this.streamToKey.size === 1 ? [...this.streamToKey.values()][0] : undefined);
         if (!key) return;
         const bar: Bar = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v, takerBuy: k.V != null ? +k.V : undefined };
+        const chk = checkBar(bar);
+        if (!chk.ok) { statsState.invalidBars++; return; } // corrupted frame — never reach the chart
+        if (chk.repaired) { statsState.repairedBars++; bar.high = Math.max(bar.high, bar.open, bar.close); bar.low = Math.min(bar.low, bar.open, bar.close); }
         const bars = upsert(this.history.get(key) || [], bar);
         this.history.set(key, bars);
         this.loadedAt.set(key, Date.now());
@@ -298,10 +296,10 @@ class BinanceProvider {
       if (this.streams.size === 0) { setConn({ binance: "offline" }); return; } // last chart unmounted — normal shutdown
       setConn({ binance: "reconnecting" });
       // an endpoint that never delivered a frame is effectively blocked → rotate
-      if (!this.wsWorks) this.wsEpIdx = (this.wsEpIdx + 1) % WS_ENDPOINTS.length;
+      this.wsEpIdx = nextEndpointIndex(this.wsEpIdx, WS_ENDPOINTS.length, this.wsWorks);
       this.wsWorks = false;
       const delay = this.backoff;
-      this.backoff = Math.min(this.backoff * 2, 15000);
+      this.backoff = wsBackoffDelay(this.backoff);
       setTimeout(() => { if (this.streams.size && !this.ws) this.openSocket(); }, delay);
     };
     ws.onerror = () => { try { ws.close(); } catch { /* nothing */ } };
@@ -334,7 +332,15 @@ class QuotesProvider {
     const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo!)}&range=${useCfg.range}&interval=${useCfg.interval}`);
     if (!res?.ok) throw new Error(res?.detail || "FEED_UNAVAILABLE");
     if (res.source) this.source.set(key, res.source);
-    let bars: Bar[] = res.bars;
+    if (res.delaySec != null) statsState.delaySec = res.delaySec;
+    // client-side defense-in-depth: the server already validates, but the
+    // chart must never trust the wire — repair/drop before aggregation
+    const checked = validateBars(res.bars as RawBar[]);
+    const deduped = dedupeBars(checked.bars);
+    statsState.invalidBars += checked.invalid;
+    statsState.repairedBars += checked.repaired;
+    statsState.duplicateBars += deduped.dropped;
+    let bars: Bar[] = deduped.bars as Bar[];
     // bucket length = the TARGET timeframe in minutes (3m→3, 2h→120, 4h→240).
     // The old TF_SECONDS[tf]/TF_SECONDS[agg] ratio only happens to be minutes
     // for the 1m base: from the 1h base it passed 2/4 "minutes" → 2- and
@@ -415,20 +421,68 @@ const connState: ConnectionState = { binance: "connecting", lastTickAt: 0 };
 const connListeners = new Set<() => void>();
 let connSnapshot: ConnectionState = { ...connState };
 
+// hot per-tick counters live OUTSIDE the connection snapshot: they change on
+// every data delivery, and firing React subscriptions per frame would
+// re-render the chart for every WS message (Phase 10 perf fix).
+export interface FeedStats {
+  invalidBars: number;
+  /** bars kept but High/Low widened to cover the body */
+  repairedBars: number;
+  duplicateBars: number;
+  outOfOrderTicks: number;
+  /** epoch ms of the last real data delivery (any provider) */
+  lastTickAt: number;
+  /** epoch ms of the last chart-applied update */
+  lastChartUpdateAt: number;
+  /** data ticks delivered in the last 10 seconds */
+  tps10s: number;
+  /** measured provider delay in seconds when the provider reports it */
+  delaySec: number | null;
+}
+
+const statsState: FeedStats = {
+  invalidBars: 0, repairedBars: 0, duplicateBars: 0, outOfOrderTicks: 0,
+  lastTickAt: 0, lastChartUpdateAt: 0, tps10s: 0, delaySec: null,
+};
+const tickTimes: number[] = [];
+
 function setConn(patch: Partial<ConnectionState>) {
   let changed = false;
   for (const [k, v] of Object.entries(patch)) {
+    if (k === "lastTickAt") continue; // hot field — stats store owns it
     if ((connState as any)[k] !== v) { (connState as any)[k] = v; changed = true; }
   }
   if (changed) {
-    connSnapshot = { ...connState };
+    connSnapshot = { binance: connState.binance, lastTickAt: statsState.lastTickAt };
     connListeners.forEach((l) => l());
   }
 }
 
 /** Mark a real data delivery (WS frame, REST resync, quotes poll tick). */
 export function markTick() {
-  setConn({ lastTickAt: Date.now() });
+  const now = Date.now();
+  statsState.lastTickAt = now;
+  tickTimes.push(now);
+  while (tickTimes.length && now - tickTimes[0] > 10000) tickTimes.shift();
+  statsState.tps10s = tickTimes.length;
+  connSnapshot = { binance: connState.binance, lastTickAt: now };
+}
+
+/** The chart applied an update to the series (bars actually moved). */
+export function markChartUpdate() {
+  statsState.lastChartUpdateAt = Date.now();
+}
+
+export function bumpStat(kind: "invalidBars" | "duplicateBars" | "outOfOrderTicks") {
+  statsState[kind]++;
+}
+
+export function setMeasuredDelay(sec: number | null) {
+  statsState.delaySec = sec;
+}
+
+export function getFeedStats(): FeedStats {
+  return { ...statsState, tps10s: tickTimes.length };
 }
 
 export function getConnectionState(): ConnectionState {
@@ -444,6 +498,8 @@ export interface LoadResult {
   bars: Bar[];
   status: FeedStatus;
   message?: string;
+  /** measured provider delay (seconds) when the provider reports it */
+  delaySec?: number | null;
 }
 
 /**
@@ -460,11 +516,14 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
   }
   const { bars, source } = await quotesProvider.load(symbol, tf);
   // "spot+yahoo" = live gold-api spot painted onto the current bar, older
-  // bars are Yahoo's (5-15 min delayed) — honest labelling for both cases
+  // bars are Yahoo's (delayed) — honest labelling with the MEASURED delay
+  // (provider's own market-time lag), never presented as real-time
+  const delaySec = statsState.delaySec;
+  const delayNote = delaySec != null && delaySec >= 60 ? ` · ~${Math.max(1, Math.round(delaySec / 60))} min` : delaySec != null && delaySec > 5 ? ` · ~${delaySec}s` : "";
   const message = source?.startsWith("spot")
-    ? "Live spot (gold-api) · older bars delayed"
-    : `Delayed data (${source || "Yahoo"})`;
-  return { bars, status: "polling", message };
+    ? `Live spot (gold-api) · older bars delayed${delayNote}`
+    : `Delayed data (${source || "Yahoo"})${delayNote}`;
+  return { bars, status: "polling", message, delaySec };
 }
 
 /** Subscribe to live updates. Returns an unsubscribe function. */

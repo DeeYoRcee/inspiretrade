@@ -20,7 +20,7 @@ import {
   type IChartApi, type IPriceLine, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import {
-  loadFeed, subscribeFeed, binanceProvider, getConnectionState, subscribeConnection,
+  loadFeed, subscribeFeed, binanceProvider, getConnectionState, subscribeConnection, getFeedStats, markChartUpdate,
   type FeedStatus,
 } from "@/lib/market-data";
 import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/terminal";
@@ -51,7 +51,8 @@ import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, SymbolSearchDialog, type ContextMenuState,
 } from "@/components/terminal/chart/dialogs";
-import { Eye, EyeOff, X } from "lucide-react";
+import { Eye, EyeOff, X, Activity } from "lucide-react";
+import { useIsAdmin } from "@/hooks/use-admin";
 import { cn } from "@/lib/utils";
 
 export interface PriceMark {
@@ -246,6 +247,8 @@ export function PriceChart({
   const conn = useSyncExternalStore(subscribeConnection, getConnectionState);
   const lastTickRef = useRef<HTMLSpanElement | null>(null);
   const [objectsOpen, setObjectsOpen] = useState(false);
+  const isAdmin = useIsAdmin();
+  const [diagOpen, setDiagOpen] = useState(false);
   // drawing undo/redo (past/future snapshots of the committed list)
   const historyRef = useRef<Drawing[][]>([]);
   const futureRef = useRef<Drawing[][]>([]);
@@ -393,7 +396,7 @@ export function PriceChart({
     if (!el) return;
     const chart = createChart(el, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: COLORS.bg }, textColor: COLORS.text, fontSize: 11 },
+      layout: { background: { type: ColorType.Solid, color: COLORS.bg }, textColor: COLORS.text, fontSize: 11, attributionLogo: false },
       grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.26 } },
@@ -666,6 +669,7 @@ export function PriceChart({
         unsub = subscribeFeed(symbol, timeframe, ({ lastBar }) => {
           barsRef.current = upsertLocal(barsRef.current, lastBar);
           applyBarsToSeries("update");
+          markChartUpdate();
           updateLegend(null);
           updateBidAsk(lastBar.close);
           canvasRef.current?.redraw();
@@ -752,7 +756,7 @@ export function PriceChart({
       if (!host) continue;
       const chart = createChart(host, {
         autoSize: true,
-        layout: { background: { type: ColorType.Solid, color: PANE_BG }, textColor: COLORS.text, fontSize: 10 },
+        layout: { background: { type: ColorType.Solid, color: PANE_BG }, textColor: COLORS.text, fontSize: 10, attributionLogo: false },
         grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
         crosshair: { mode: CrosshairMode.Normal },
         rightPriceScale: { borderVisible: false },
@@ -1282,6 +1286,21 @@ export function PriceChart({
           style={{ display: "none" }}
         />
         {statusChip}
+        {/* Phase 10 — admin-only feed diagnostics (temporary debugging tool) */}
+        {isAdmin && (
+          <button
+            onClick={() => setDiagOpen((v) => !v)}
+            title="Feed diagnostics (admin)"
+            className={cn(
+              "absolute left-2 top-[4.4rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
+              diagOpen ? "text-sky-300" : "text-slate-500 hover:text-slate-300",
+            )}
+          >
+            <Activity className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {isAdmin && diagOpen && <FeedDiagnostics symbol={symbol} conn={conn.binance} getBars={() => barsRef.current} />}
+
         {/* object tree — drawings & indicators (real objects, real actions) */}
         {objectsOpen && (
           <div className="absolute right-10 top-8 z-30 w-60 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
@@ -1498,6 +1517,47 @@ function logicalToTime(data: Bar[], tfSec: number, logical: number): number | nu
   if (logical >= last) return data[last].time + (logical - last) * tfSec;
   const i = Math.round(logical);
   return data[i].time + (logical - i) * tfSec;
+}
+
+/**
+ * Phase 10 — administrator-only feed diagnostics (temporary debugging tool).
+ * Renders from an imperative 1s snapshot of the hot stats store, so it never
+ * participates in the chart's render cycle.
+ */
+function FeedDiagnostics({ symbol, conn, getBars }: { symbol: string; conn: string; getBars: () => Bar[] }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const fmt = (ms: number | null) => (ms ? new Date(ms).toLocaleTimeString([], { hour12: false }) : "—");
+    const timer = setInterval(() => {
+      const el = ref.current;
+      if (!el) return;
+      const s = getFeedStats();
+      const bars = getBars();
+      const last = bars?.length ? bars[bars.length - 1] : null;
+      const lastAge = last ? Math.max(0, Math.floor(Date.now() / 1000) - last.time) : null;
+      const rows: [string, string][] = [
+        ["Provider", getInstrument(symbol)?.feed === "binance" ? "Binance WS+REST" : "Quotes proxy (Yahoo/stooq)"],
+        ["Connection", conn],
+        ["Last tick", `${fmt(s.lastTickAt)} (${s.tps10s} in 10s)`],
+        ["Last chart update", fmt(s.lastChartUpdateAt)],
+        ["Measured delay", s.delaySec != null ? `${s.delaySec}s` : "n/a (stream)"],
+        ["Latest candle", last ? `O ${last.open} H ${last.high} L ${last.low} C ${last.close}` : "—"],
+        ["Candle time (UTC)", last ? `${new Date(last.time * 1000).toISOString().slice(0, 19).replace("T", " ")} (${lastAge}s old)` : "—"],
+        ["Invalid bars", String(s.invalidBars)],
+        ["Repaired bars (H/L)", String(s.repairedBars)],
+        ["Duplicate deliveries", String(s.duplicateBars)],
+        ["Out-of-order ticks", String(s.outOfOrderTicks)],
+      ];
+      el.innerHTML = rows.map(([k, v]) => `<div class="flex justify-between gap-3 border-b border-slate-800/60 py-0.5"><span class="text-slate-500">${k}</span><span class="text-right font-number text-slate-200">${v}</span></div>`).join("");
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [symbol, conn, getBars]);
+  return (
+    <div className="absolute left-2 top-[6.6rem] z-30 w-72 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
+      <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Feed diagnostics</p>
+      <div ref={ref} />
+    </div>
+  );
 }
 
 function upsertLocal(bars: Bar[], bar: Bar): Bar[] {

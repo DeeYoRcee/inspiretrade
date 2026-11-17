@@ -89,6 +89,28 @@ function handle(fn) {
   };
 }
 
+// shared/feed-validation.ts
+function bucketStart(nowSec, sec) {
+  if (sec === 604800) {
+    const MONDAY_ANCHOR = 345600;
+    return Math.floor((nowSec - MONDAY_ANCHOR) / sec) * sec + MONDAY_ANCHOR;
+  }
+  if (sec >= 86400) return Math.floor(nowSec / 86400) * 86400;
+  return Math.floor(nowSec / sec) * sec;
+}
+function spotMergeGuard(bars, spot, g) {
+  if (!bars.length) return { ok: false, reason: "empty-bars" };
+  const now = g.nowSec ?? Math.floor(Date.now() / 1e3);
+  const bucket = bucketStart(now, g.sec);
+  const last = bars[bars.length - 1];
+  if (Math.abs(bucket - last.time) > g.sec) return { ok: false, reason: "stale-history" };
+  const maxDev = g.maxDeviationPct ?? 0.02;
+  if (last.close > 0 && Math.abs(spot / last.close - 1) > maxDev) {
+    return { ok: false, reason: "spot-outlier" };
+  }
+  return { ok: true };
+}
+
 // api/_src/quotes.ts
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 var STOOQ_MAP = {
@@ -245,9 +267,11 @@ var INTERVAL_SECONDS = {
 };
 function mergeSpotBars(bars, spot, interval) {
   const sec = INTERVAL_SECONDS[interval];
-  if (!sec || bars.length === 0) return false;
+  if (!sec) return false;
+  const guard = spotMergeGuard(bars, spot, { sec });
+  if (!guard.ok) return false;
   const now = Math.floor(Date.now() / 1e3);
-  const bucket = sec >= 86400 ? Math.floor(now / 86400) * 86400 : Math.floor(now / sec) * sec;
+  const bucket = bucketStart(now, sec);
   const last = bars[bars.length - 1];
   if (last.time === bucket) {
     last.close = spot;

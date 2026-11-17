@@ -202,6 +202,11 @@ async function fetchSpot(code: string): Promise<number | null> {
   }
 }
 
+import {
+  validateBars, alignAndDedupe, spotMergeGuard, bucketStart,
+  type RawBar,
+} from "../../shared/feed-validation";
+
 const INTERVAL_SECONDS: Record<string, number> = {
   "1m": 60, "2m": 120, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
   "60m": 3600, "1h": 3600, "90m": 5400, "1d": 86400,
@@ -209,16 +214,26 @@ const INTERVAL_SECONDS: Record<string, number> = {
 
 /** Paint the live spot onto the current bar: update the open bucket in place,
  * or open the next bucket (open = previous close — the candle body stays
- * continuous, no seam jump even if the basis moves). */
+ * continuous, no seam jump even if the basis moves).
+ *
+ * Phase 10 guards (root cause of the "thin last candles + abnormally long
+ * wicks" defect): Yahoo's REST history can lag minutes behind — painting the
+ * CURRENT spot bucket then fabricated a bar spanning |spot − delayed close|
+ * (giant wick) plus a run of empty buckets on the time axis. We now refuse
+ * to paint unless the history is at most ONE bucket behind, and reject spot
+ * outliers (|spot/lastClose − 1| > 2% — corrupted tick; metals cannot move
+ * 2% inside one candle). Genuine prices are never modified. */
 export function mergeSpotBars(
   bars: { time: number; open: number; high: number; low: number; close: number; volume: number }[],
   spot: number,
   interval: string,
 ): boolean {
   const sec = INTERVAL_SECONDS[interval];
-  if (!sec || bars.length === 0) return false;
+  if (!sec) return false;
+  const guard = spotMergeGuard(bars, spot, { sec });
+  if (!guard.ok) return false;
   const now = Math.floor(Date.now() / 1000);
-  const bucket = sec >= 86400 ? Math.floor(now / 86400) * 86400 : Math.floor(now / sec) * sec;
+  const bucket = bucketStart(now, sec);
   const last = bars[bars.length - 1];
   if (last.time === bucket) {
     last.close = spot;
