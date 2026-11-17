@@ -90,6 +90,63 @@ function handle(fn) {
 }
 
 // shared/feed-validation.ts
+var finitePositive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
+function checkBar(b) {
+  const { open: o, high: h, low: l, close: c } = b;
+  if (![o, h, l, c].every(finitePositive)) {
+    return { ok: false, repaired: false, reason: "non-finite-price" };
+  }
+  if (h < l) return { ok: false, repaired: false, reason: "high-low-inverted" };
+  if (h < Math.max(o, c)) return { ok: true, repaired: true, reason: "high-below-body" };
+  if (l > Math.min(o, c)) return { ok: true, repaired: true, reason: "low-above-body" };
+  return { ok: true, repaired: false };
+}
+function validateBars(bars) {
+  const out = [];
+  let invalid = 0;
+  let repaired = 0;
+  for (const b of bars) {
+    const check = checkBar(b);
+    if (!check.ok) {
+      invalid++;
+      continue;
+    }
+    if (check.repaired) {
+      repaired++;
+      out.push({
+        ...b,
+        high: Math.max(b.high, b.open, b.close),
+        low: Math.min(b.low, b.open, b.close)
+      });
+      continue;
+    }
+    out.push(b);
+  }
+  return { bars: out, invalid, repaired };
+}
+function alignAndDedupe(bars, sec) {
+  const byTime = /* @__PURE__ */ new Map();
+  let dropped = 0;
+  let aligned = 0;
+  for (const b of bars) {
+    const bucket = bucketStart(b.time, sec);
+    const time = bucket !== b.time ? bucket : b.time;
+    if (bucket !== b.time) aligned++;
+    const bar = time === b.time ? b : { ...b, time };
+    const prev = byTime.get(time);
+    if (!prev) {
+      byTime.set(time, bar);
+      continue;
+    }
+    dropped++;
+    const range = (x) => x.high - x.low;
+    const vol = (x) => typeof x.volume === "number" && x.volume > 0 ? 1 : 0;
+    if (range(bar) > range(prev)) byTime.set(time, bar);
+    else if (range(bar) === range(prev) && vol(bar) > vol(prev)) byTime.set(time, bar);
+  }
+  const out = [...byTime.values()].sort((a, b) => a.time - b.time);
+  return { bars: out, dropped, aligned };
+}
 function bucketStart(nowSec, sec) {
   if (sec === 604800) {
     const MONDAY_ANCHOR = 345600;
@@ -380,12 +437,15 @@ var quotes_default = handle(async (req, res) => {
     if (!result) throw new Error("EMPTY_RESULT");
     const ts = result.timestamp || [];
     const q = result.indicators?.quote?.[0] || {};
-    const bars = [];
+    const raw = [];
     for (let i = 0; i < ts.length; i++) {
       const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
       if ([o, h, l, c].some((x) => x == null || !Number.isFinite(x))) continue;
-      bars.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v ?? 0 });
+      raw.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v ?? 0 });
     }
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
     const meta = result.meta || {};
     const spotCode = SPOT_API_MAP[symbols];
     let live = false;
@@ -393,9 +453,14 @@ var quotes_default = handle(async (req, res) => {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
     }
+    const rmt = Number(meta.regularMarketTime);
+    const delaySec = live ? 0 : Number.isFinite(rmt) && rmt > 0 ? Math.max(0, Math.floor(Date.now() / 1e3) - rmt) : void 0;
     return {
       source: live ? "spot+yahoo" : "yahoo",
       delayed: !live,
+      delaySec,
+      invalidBars: checked.invalid + deduped.dropped,
+      // aligned-only bars are normalizations, not invalid
       symbol: meta.symbol || symbols,
       currency: meta.currency || null,
       regularMarketPrice: live ? bars[bars.length - 1].close : meta.regularMarketPrice ?? null,

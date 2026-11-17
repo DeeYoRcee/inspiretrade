@@ -359,15 +359,24 @@ export default handle(async (req, res) => {
     if (!result) throw new Error("EMPTY_RESULT");
     const ts: number[] = result.timestamp || [];
     const q = result.indicators?.quote?.[0] || {};
-    const bars = [];
+    const raw: RawBar[] = [];
     for (let i = 0; i < ts.length; i++) {
       const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
       if ([o, h, l, c].some((x) => x == null || !Number.isFinite(x))) continue;
-      bars.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v ?? 0 });
+      raw.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v ?? 0 });
     }
+    // Phase 10: validate every bar (repair H/L envelope, reject broken) and
+    // align+dedupe timestamps — Yahoo's stream ends with a phantom bar that
+    // is NOT minute-aligned (O=H=L=C, volume 0) and renders as a zero-width
+    // vertical line at the right edge of the chart.
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
     const meta = result.meta || {};
     // live spot overlay: Yahoo's candles trail 5-15 min behind — paint the
-    // fresh gold-api spot onto the current bar (fail-open, see fetchSpot).
+    // fresh gold-api spot onto the current bar ONLY when the history is
+    // fresh enough (spotMergeGuard inside mergeSpotBars refuses stale gaps
+    // and outlier ticks; the honest DELAYED badge reports the real lag).
     // Skipped in period mode: replay/backtest history must stay pure.
     const spotCode = SPOT_API_MAP[symbols];
     let live = false;
@@ -375,9 +384,16 @@ export default handle(async (req, res) => {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
     }
+    // measured delay: the provider's own market-time lag (0 when the live
+    // spot merge succeeded) — the chart says "Delayed data (yahoo) · ~9 min"
+    // instead of presenting delayed prices as real-time
+    const rmt = Number(meta.regularMarketTime);
+    const delaySec = live ? 0 : Number.isFinite(rmt) && rmt > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - rmt) : undefined;
     return {
       source: live ? "spot+yahoo" : "yahoo",
       delayed: !live,
+      delaySec,
+      invalidBars: checked.invalid + deduped.dropped, // aligned-only bars are normalizations, not invalid
       symbol: meta.symbol || symbols,
       currency: meta.currency || null,
       regularMarketPrice: live ? bars[bars.length - 1].close : (meta.regularMarketPrice ?? null),
