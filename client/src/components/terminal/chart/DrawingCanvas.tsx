@@ -458,6 +458,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const drag = dragRef.current;
     const conv = converterRef.current;
     if (!drag || !conv) return;
+    if (drag.mode === "draw") return; // multi-point tool in progress — the NEXT click commits it
     if (drag.mode === "move" || drag.mode === "handle") {
       if (drag.drawing && drag.moved) {
         const next = drawingsRef.current.slice();
@@ -488,7 +489,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
     if (dragRef.current) {
       e.stopPropagation();
-      finishDrag();
+      // draw-mode drags survive the pointer-up: trend/fib/rect/etc. collect
+      // one point per CLICK and commit when the tool's point count is reached
+      // (the old code nulled the in-progress drawing here — multi-point tools
+      // could never finish)
+      if (dragRef.current.mode !== "draw") finishDrag();
     }
   };
 
