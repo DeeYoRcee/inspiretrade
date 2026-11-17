@@ -22,10 +22,17 @@
  *   POST ?action=cancel                   { accountId, orderId }
  *   POST ?action=evaluate                 { accountId }   — SL/TP/pending/stop-out/rules (idempotent)
  *   POST ?action=reset                    { accountId }   — reset to starting balance (fresh challenge attempt)
+ *   GET  ?action=challenge-types          → active challenge formats (prop-firm marketplace)
+ *   GET  ?action=leaderboard&period=      → daily|weekly|monthly|all verified rankings
+ *   GET/POST ?action=admin-*              → admin surface (requireAdmin): challenge type
+ *                                          CRUD, assignment, monitoring, suspend/
+ *                                          reactivate/reset, audit log, leaderboard switch
  *   (no action)                           → health probe
  */
-import { handle, requireUser, json, assertPost, type AuthedUser } from "../lib/firebase";
+import { handle, requireUser, requireAdmin, json, assertPost, type AuthedUser } from "../lib/firebase";
 import * as store from "./store";
+import * as propAdmin from "./admin";
+import * as leaderboard from "./leaderboard";
 
 function safeParse(raw: string): any {
   try { return JSON.parse(raw); } catch { return {}; }
@@ -143,16 +150,90 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     json(res, 200, await store.resetAccount(user.uid, String(body.accountId)));
   },
+  // ---- user-facing prop-firm surface ---------------------------------------
+  async "challenge-types"(_req, res) {
+    json(res, 200, { types: await propAdmin.listChallengeTypes(true) });
+  },
+  async leaderboard(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    const periodRaw = String(url.searchParams.get("period") || "all");
+    const period = leaderboard.isPeriod(periodRaw) ? periodRaw : "all";
+    json(res, 200, await leaderboard.getLeaderboard(period));
+  },
+};
+
+// ---- admin routes (requireAdmin; POST unless listed in ADMIN_GET_ACTIONS) ---
+const ADMIN_GET_ACTIONS = new Set(["admin-challenge-types", "admin-accounts", "admin-account-detail", "admin-audit", "admin-trades"]);
+
+const adminRoutes: Record<string, (req: any, res: any, admin: AuthedUser, body: any) => Promise<void>> = {
+  async "admin-challenge-types"(_req, res) {
+    json(res, 200, { types: await propAdmin.listChallengeTypes(false) });
+  },
+  async "admin-challenge-type-save"(_req, res, admin, body) {
+    json(res, 200, await propAdmin.saveChallengeType(body, admin));
+  },
+  async "admin-challenge-type-delete"(_req, res, admin, body) {
+    json(res, 200, await propAdmin.deleteChallengeType(String(body?.id || ""), admin));
+  },
+  async "admin-accounts"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    json(res, 200, { accounts: await propAdmin.listAllChallengeAccounts(url.searchParams.get("status") || "all") });
+  },
+  async "admin-account-detail"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    const uid = String(url.searchParams.get("uid") || "");
+    const aid = String(url.searchParams.get("aid") || "");
+    if (!uid || !aid) throw Object.assign(new Error("uid and aid are required"), { status: 400 });
+    json(res, 200, await propAdmin.accountDetail(uid, aid));
+  },
+  async "admin-assign"(_req, res, admin, body) {
+    json(res, 200, await propAdmin.assignChallengeAccount(admin, body));
+  },
+  async "admin-account-action"(_req, res, admin, body) {
+    json(res, 200, await propAdmin.setAccountState(admin, body));
+  },
+  async "admin-leaderboard-toggle"(_req, res, admin, body) {
+    json(res, 200, await propAdmin.setLeaderboardEnabled(!!body?.enabled, admin));
+  },
+  async "admin-audit"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    json(res, 200, { entries: await propAdmin.listAudit({
+      uid: url.searchParams.get("uid") || undefined,
+      aid: url.searchParams.get("aid") || undefined,
+    }, Number(url.searchParams.get("limit") || 100)) });
+  },
+  async "admin-trades"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    const uid = String(url.searchParams.get("uid") || "");
+    const aid = String(url.searchParams.get("aid") || "");
+    if (!uid || !aid) throw Object.assign(new Error("uid and aid are required"), { status: 400 });
+    const limit = Number(url.searchParams.get("limit") || 200);
+    // complete trading activity of any account (audit view)
+    const db = (await import("../lib/firebase")).firestore();
+    const snap = await db.collection("users").doc(uid).collection("accounts").doc(aid)
+      .collection("trades").orderBy("closedAt", "desc").limit(Math.min(500, Math.max(1, limit))).get();
+    json(res, 200, { trades: snap.docs.map((d: any) => ({ id: d.id, ...d.data() })) });
+  },
 };
 
 export default handle(async (req, res) => {
   const action = getAction(req);
   if (!action) return health(res);
+
+  // admin surface — separate guard (ADMIN_EMAILS / admins flag), own routes
+  if (action.startsWith("admin-")) {
+    const route = adminRoutes[action];
+    if (!route) return json(res, 400, { error: "BAD_ACTION", message: "Unknown admin action" });
+    if (!ADMIN_GET_ACTIONS.has(action)) assertPost(req);
+    const admin = await requireAdmin(req);
+    return route(req, res, admin, bodyOf(req));
+  }
+
   const route = routes[action];
   if (!route) {
     return json(res, 400, { error: "BAD_ACTION", message: "Unknown trading action" });
   }
-  if (action === "history") {
+  if (action === "history" || action === "challenge-types" || action === "leaderboard") {
     // GET with bearer token (read-only)
     const user = await requireUser(req);
     return route(req, res, user, {});

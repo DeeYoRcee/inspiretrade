@@ -16,6 +16,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Prop-firm domain — also server-only: challenge templates, the admin
+    // audit log and the leaderboard settings switch. All writes happen with
+    // the Admin SDK behind requireAdmin; clients get sanitized reads via
+    // /api/trading (challenge-types, leaderboard) — never direct access.
+    match /challengeTypes/{document=**} {
+      allow read, write: if false;
+    }
+    match /propAudit/{document=**} {
+      allow read, write: if false;
+    }
+    match /settings/{document=**} {
+      allow read, write: if false;
+    }
+
     // Default deny for everything else in Firestore. The site's non-trading
     // data lives in Realtime Database; if a future feature moves to Firestore
     // it must add an explicit match block here.

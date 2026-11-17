@@ -13,9 +13,9 @@ import { getInstrument } from "../../../shared/terminal";
 import {
   DEFAULT_LEVERAGE, MIN_LOTS, MAX_LOTS, computeMetrics, evaluateAccount, exitPriceFor,
   positionPnlUsd, validateNewOrder, dayKey, evaluatePropRules, swapForPosition, nightsHeld,
-  validateAgainstRules, validateOrderModify, validatePositionModify,
+  validateAgainstRules, validateOrderModify, validatePositionModify, periodExpired, bumpTradeStats,
   type Quote, type PositionLike, type OrderLike, type OrderKind, type Side,
-  type PropRules, type AccountStatus, type RuleEvaluation,
+  type PropRules, type AccountStatus, type RuleEvaluation, type TradeStats,
 } from "../../../shared/trading-engine";
 import { getQuotes, withConversionSymbols } from "./prices";
 
@@ -38,6 +38,9 @@ const tradeCol = (uid: string, aid: string) => accountsCol(uid).doc(aid).collect
 interface AccountDoc {
   label: string;
   type: "DEMO" | "CHALLENGE";
+  /** challenge template this account was assigned from (admin-managed) */
+  challengeTypeId: string | null;
+  challengeName: string | null;
   balance: number;
   startingBalance: number;
   leverage: number;
@@ -46,10 +49,16 @@ interface AccountDoc {
   rules: PropRules | null;
   /** failed hard-breach reason (status failed) */
   failedReason: string | null;
+  /** admin freeze — trading is blocked while set; rules still evaluate */
+  adminSuspended: boolean;
+  /** challenge period start (resets on reset) */
+  startedAt: number;
   /** high-water mark for stats */
   peakEquity: number;
   /** dayKey → closed trades that day (minimum-trading-days rule) */
   tradingDays: Record<string, number>;
+  /** running win/loss counters (server-side only) */
+  stats: TradeStats;
   createdAt: number;
   dayStart: Record<string, number>;
 }
@@ -94,6 +103,16 @@ interface CloseOutcome { symbol: string; side: Side; lots: number; entry: number
 
 function writeTradeDoc(tx: any, uid: string, aid: string, o: CloseOutcome) {
   tx.set(tradeCol(uid, aid).doc(), { ...o });
+}
+
+/**
+ * Record one realized close against the account: immutable trade doc +
+ * trading-day count (min-days rule) + win/loss stats (dashboard/leaderboard).
+ */
+function recordClose(state: AccountState, tx: any, uid: string, aid: string, o: CloseOutcome) {
+  writeTradeDoc(tx, uid, aid, o);
+  bumpTradingDay(state.account, o.closedAt);
+  state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
 }
 
 /**
@@ -167,8 +186,7 @@ function applyEvaluationTx(
     state.positions = state.positions.filter((p) => p.id !== pos.id);
   }
   for (const o of closed) {
-    writeTradeDoc(tx, uid, aid, o);
-    bumpTradingDay(state.account, o.closedAt);
+    recordClose(state, tx, uid, aid, o);
   }
 
   // ---- pending fills -------------------------------------------------------
@@ -220,6 +238,7 @@ function applyEvaluationTx(
       tradingDays: Object.keys(state.account.tradingDays || {}).length,
       openPositions: state.positions.length,
       openLots: state.positions.reduce((s, p) => s + p.lots, 0),
+      periodExpired: periodExpired(rules, state.account.startedAt || state.account.createdAt, now),
     });
     state.account.peakEquity = ruleState.peakEquity;
     state.account.status = ruleState.status;
@@ -239,8 +258,7 @@ function applyEvaluationTx(
           pnl, swap, reason: "rule-breach", openedAt: p.openedAt, closedAt: now, positionId: p.id,
         };
         closed.push(outcome);
-        writeTradeDoc(tx, uid, aid, outcome);
-        bumpTradingDay(state.account, outcome.closedAt);
+        recordClose(state, tx, uid, aid, outcome);
         tx.delete(posCol(uid, aid).doc(p.id));
       }
       state.positions = [];
@@ -273,6 +291,11 @@ function persistAccountTx(tx: any, uid: string, aid: string, state: AccountState
     failedReason: state.account.failedReason ?? null,
     peakEquity: state.account.peakEquity ?? state.account.balance,
     tradingDays: state.account.tradingDays || {},
+    stats: state.account.stats || { totalTrades: 0, wins: 0, losses: 0 },
+    adminSuspended: !!state.account.adminSuspended,
+    startedAt: state.account.startedAt || state.account.createdAt || Date.now(),
+    challengeTypeId: state.account.challengeTypeId ?? null,
+    challengeName: state.account.challengeName ?? null,
     balanceUpdatedAt: Date.now(),
     metrics: { ...metrics, updatedAt: Date.now() },
   });
@@ -317,17 +340,23 @@ export async function listAccounts(uid: string) {
           tradingDays: Object.keys(acc.tradingDays || {}).length,
           openPositions: state.positions.length,
           openLots: state.positions.reduce((s, p) => s + p.lots, 0),
+          periodExpired: periodExpired(acc.rules, acc.startedAt || acc.createdAt, Date.now()),
         })
       : null;
     out.push({
       id: doc.id, label: acc.label, type: acc.type,
+      challengeTypeId: acc.challengeTypeId ?? null,
+      challengeName: acc.challengeName ?? null,
       balance: acc.balance, startingBalance: acc.startingBalance,
       leverage: acc.leverage, createdAt: acc.createdAt,
       status: acc.status || "active",
       rules: acc.rules ?? null,
       failedReason: acc.failedReason ?? null,
+      adminSuspended: !!acc.adminSuspended,
+      startedAt: acc.startedAt ?? acc.createdAt ?? null,
       peakEquity: acc.peakEquity ?? acc.balance,
       tradingDays: Object.keys(acc.tradingDays || {}).length,
+      stats: acc.stats || { totalTrades: 0, wins: 0, losses: 0 },
       dayStart: acc.dayStart ?? {},
       ruleState,
       positions: state.positions, orders: state.orders, metrics,
@@ -352,6 +381,10 @@ export interface CreateAccountOptions {
   leverage?: number | null;
   /** prop-firm rules → account type CHALLENGE; null/absent → DEMO */
   rules?: PropRules | null;
+  /** challenge template this account was assigned from */
+  challengeTypeId?: string | null;
+  /** display name of the challenge template */
+  challengeName?: string | null;
 }
 
 function sanitizeRules(raw: any): PropRules | null {
@@ -369,11 +402,13 @@ function sanitizeRules(raw: any): PropRules | null {
     maxLotsTotal: pct(raw.maxLotsTotal, 0.01, 100),
     maxLotsPerOrder: pct(raw.maxLotsPerOrder, 0.01, 100),
     maxOpenPositions: raw.maxOpenPositions == null ? null : Math.min(30, Math.max(1, Math.floor(Number(raw.maxOpenPositions) || 1))),
+    maxTradingDays: pct(raw.maxTradingDays, 0, 365),
   };
   // at least one constraint must be set for it to count as a challenge
   const hasAny = rules.dailyLossLimitPct != null || rules.maxDrawdownPct != null
     || rules.profitTargetPct != null || rules.minTradingDays > 0
-    || rules.maxLotsTotal != null || rules.maxLotsPerOrder != null || rules.maxOpenPositions != null;
+    || rules.maxLotsTotal != null || rules.maxLotsPerOrder != null || rules.maxOpenPositions != null
+    || rules.maxTradingDays != null;
   return hasAny ? rules : null;
 }
 
@@ -388,13 +423,18 @@ export async function createAccount(uid: string, label?: string, startingBalance
   const doc = {
     label: String(label || (rules ? "CHALLENGE" : "DEMO")).slice(0, 32) || "DEMO",
     type: rules ? ("CHALLENGE" as const) : ("DEMO" as const),
+    challengeTypeId: opts.challengeTypeId ?? null,
+    challengeName: String(opts.challengeName || "").slice(0, 60) || null,
     balance, startingBalance: balance,
     leverage,
     status: "active" as AccountStatus,
     rules,
     failedReason: null,
+    adminSuspended: false,
+    startedAt: Date.now(),
     peakEquity: balance,
     tradingDays: {},
+    stats: { totalTrades: 0, wins: 0, losses: 0 },
     createdAt: Date.now(),
     dayStart: { [today]: balance },
   };
@@ -425,8 +465,11 @@ export async function resetAccount(uid: string, aid: string) {
       // a reset starts a fresh attempt: challenge status back to active
       status: "active" as AccountStatus,
       failedReason: null,
+      adminSuspended: false,
+      startedAt: Date.now(),
       peakEquity: balance,
       tradingDays: {},
+      stats: { totalTrades: 0, wins: 0, losses: 0 },
       dayStart: { [dayKey()]: balance },
       metrics: { ...computeMetrics(balance, [], {}, {}, account.leverage || DEFAULT_LEVERAGE), updatedAt: Date.now() },
       balanceUpdatedAt: Date.now(),
@@ -505,6 +548,10 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
           ? `Challenge failed: ${state.account.failedReason || "rule breached"} — trading is disabled`
           : "Challenge passed — trading is disabled",
       );
+    }
+    // admin freeze — challenge accounts only, DEMO accounts never freeze
+    if (state.account.rules && state.account.adminSuspended) {
+      throw new HttpError(403, "ACCOUNT_SUSPENDED", "Account suspended by an administrator — trading is disabled");
     }
 
     const lots = Number(req.lots);
@@ -595,8 +642,7 @@ export async function closePosition(uid: string, accountId: string, positionId: 
       symbol: pos.symbol, side: pos.side, lots: closeLots, entry: pos.entry, exit,
       pnl, swap: swapShare, reason: "manual", openedAt: pos.openedAt, closedAt: Date.now(), positionId: pos.id,
     };
-    writeTradeDoc(tx, uid, accountId, outcome);
-    bumpTradingDay(state.account, outcome.closedAt);
+    recordClose(state, tx, uid, accountId, outcome);
     if (closeLots === pos.lots) {
       tx.delete(posCol(uid, accountId).doc(pos.id));
       state.positions = state.positions.filter((p) => p.id !== pos.id);
@@ -693,8 +739,7 @@ export async function closeAll(uid: string, accountId: string) {
         pnl, swap, reason: "manual", openedAt: pos.openedAt, closedAt: now, positionId: pos.id,
       };
       closed.push(outcome);
-      writeTradeDoc(tx, uid, accountId, outcome);
-      bumpTradingDay(state.account, outcome.closedAt);
+      recordClose(state, tx, uid, accountId, outcome);
       tx.delete(posCol(uid, accountId).doc(pos.id));
     }
     state.positions = [];

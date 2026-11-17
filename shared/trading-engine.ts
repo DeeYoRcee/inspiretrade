@@ -382,6 +382,8 @@ export interface PropRules {
   maxLotsPerOrder: number | null;
   /** Max open positions + pending orders combined. null = off. */
   maxOpenPositions: number | null;
+  /** Challenge period, calendar days from start. null = no deadline. */
+  maxTradingDays: number | null;
 }
 
 export const DEFAULT_PROP_RULES: PropRules = {
@@ -392,6 +394,7 @@ export const DEFAULT_PROP_RULES: PropRules = {
   maxLotsTotal: 10,
   maxLotsPerOrder: 5,
   maxOpenPositions: 10,
+  maxTradingDays: 30,
 };
 
 export interface RuleEvaluation {
@@ -434,6 +437,8 @@ export function evaluatePropRules(args: {
   tradingDays: number;
   openPositions: number;
   openLots: number;
+  /** precomputed: the challenge period (maxTradingDays) has elapsed */
+  periodExpired?: boolean;
 }): RuleEvaluation {
   const { rules, startingBalance, equity, dayStartBalance, tradingDays, openPositions } = args;
   const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -498,6 +503,15 @@ export function evaluatePropRules(args: {
       && openPositions === 0;
   }
 
+  // period deadline: the challenge failed to reach the target in time
+  if (args.periodExpired && !out.hardBreach) {
+    out.failedReason = `Trading period expired (${rules.maxTradingDays} days) without reaching the profit target`;
+    out.status = "failed";
+    out.hardBreach = true; // terminate like a breach — the server closes the book
+    out.canPass = false;
+    return out;
+  }
+
   out.hardBreach = out.dailyBreach || out.overallBreach;
   if (out.hardBreach) {
     out.status = "failed";
@@ -515,6 +529,29 @@ export function tradingDayCount(trades: { closedAt: number }[]): number {
   const days = new Set<string>();
   for (const t of trades) days.add(dayKey(t.closedAt));
   return days.size;
+}
+
+/** True when the challenge period (rules.maxTradingDays) has elapsed. */
+export function periodExpired(rules: PropRules | null, startedAt: number, now: number = Date.now()): boolean {
+  if (!rules || rules.maxTradingDays == null || rules.maxTradingDays <= 0) return false;
+  const start = Number(startedAt) || 0;
+  if (!start) return false;
+  return now >= start + rules.maxTradingDays * 86_400_000;
+}
+
+/** Running win/loss stats kept on the account document (server-side only). */
+export interface TradeStats {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+}
+
+export function bumpTradeStats(stats: TradeStats | undefined | null, pnl: number): TradeStats {
+  const s = stats && typeof stats === "object" ? { ...stats } : { totalTrades: 0, wins: 0, losses: 0 };
+  s.totalTrades = (s.totalTrades || 0) + 1;
+  if (pnl > 0) s.wins = (s.wins || 0) + 1;
+  else if (pnl < 0) s.losses = (s.losses || 0) + 1;
+  return s;
 }
 
 // ---------------------------------------------------------------------------

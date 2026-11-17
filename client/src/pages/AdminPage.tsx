@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen, Box, Trash2,
+  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen, Box, Trash2, Briefcase,
 } from "lucide-react";
+import { PropFirmAdmin } from "@/components/admin/PropFirmAdmin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -258,6 +259,7 @@ export default function AdminPage() {
           <TabsTrigger value="withdrawals" className="gap-1.5 rounded-full"><Clock className="h-4 w-4" />{t("withdrawalsTab")}</TabsTrigger>
           <TabsTrigger value="owner" className="gap-1.5 rounded-full"><Crown className="h-4 w-4" />{t("ownerTab")}</TabsTrigger>
           <TabsTrigger value="cases" className="gap-1.5 rounded-full"><Box className="h-4 w-4" />{t("adminCasesTab")}</TabsTrigger>
+          <TabsTrigger value="prop" className="gap-1.5 rounded-full"><Briefcase className="h-4 w-4" />{t("adminPropTab")}</TabsTrigger>
         </TabsList>
 
         {/* Owner — CEO powers */}
@@ -478,6 +480,11 @@ export default function AdminPage() {
               </Card>
             </div>
           </div>
+        </TabsContent>
+
+        {/* Prop firm — challenge types, assignment, monitoring, audit */}
+        <TabsContent value="prop">
+          <PropFirmAdmin />
         </TabsContent>
 
         {/* Gift */}

@@ -18,6 +18,7 @@ import NewsPage from "@/pages/NewsPage";
 import PublicProfilePage from "@/pages/PublicProfilePage";
 import PublicProfileSettingsPage from "@/pages/PublicProfileSettings";
 import PropFirmPage from "@/pages/PropFirmPage";
+import LeaderboardPage from "@/pages/LeaderboardPage";
 import RewardsPage from "@/pages/RewardsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import MarketPage from "@/pages/MarketPage";
@@ -208,6 +209,13 @@ function PropFirmRoute({ params }: { params: { challengeId?: string } }) {
   return <AppLayout><PropFirmPage params={params} /></AppLayout>;
 }
 
+function LeaderboardRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><LeaderboardPage /></AppLayout>;
+}
+
 function RewardsRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
@@ -296,6 +304,7 @@ function Router() {
         <Route path="/public-profile" component={PublicProfileSettingsRoute} />
         <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
         <Route path="/prop-firm" component={PropFirmRoute} />
+        <Route path="/leaderboard" component={LeaderboardRoute} />
         <Route path="/rewards" component={RewardsRoute} />
         <Route path="/profile" component={ProfileRoute} />
         <Route path="/market" component={MarketRoute} />

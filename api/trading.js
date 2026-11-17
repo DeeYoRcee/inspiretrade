@@ -1,17 +1,32 @@
 import { createRequire as __cR } from 'module';
 const require = __cR(import.meta.url);
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 
 // api/_src/lib/firebase.ts
+var firebase_exports = {};
+__export(firebase_exports, {
+  HttpError: () => HttpError,
+  assertPost: () => assertPost,
+  decrementCounter: () => decrementCounter,
+  firestore: () => firestore,
+  handle: () => handle,
+  json: () => json,
+  localDate: () => localDate,
+  logLedger: () => logLedger,
+  previousDate: () => previousDate,
+  requireAdmin: () => requireAdmin,
+  requireUser: () => requireUser,
+  rtdb: () => rtdb
+});
 import * as adminNamespace from "firebase-admin";
-var admin = adminNamespace.default ?? adminNamespace;
-var HttpError = class extends Error {
-  constructor(status, code, message) {
-    super(message || code);
-    this.status = status;
-    this.code = code;
-  }
-};
-var app = null;
 function getServiceAccount() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (raw) {
@@ -74,6 +89,23 @@ async function requireUser(req) {
   if (!decoded?.uid) throw new HttpError(401, "INVALID_TOKEN", "Invalid token payload");
   return { uid: decoded.uid, email: decoded.email, name: decoded.name };
 }
+async function requireAdmin(req) {
+  const user = await requireUser(req);
+  const emails = String(process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+  let flagged = false;
+  try {
+    flagged = (await rtdb().ref(`admins/${user.uid}`).once("value")).val() === true;
+  } catch {
+  }
+  if (!emails.includes(String(user.email || "").toLowerCase()) && !flagged) {
+    throw new HttpError(403, "FORBIDDEN", "Owner access required");
+  }
+  return user;
+}
+function rtdb() {
+  ensureApp();
+  return admin.database();
+}
 function json(res, status, data) {
   res.status(status).json(data);
 }
@@ -94,10 +126,57 @@ function handle(fn) {
 function assertPost(req) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
+async function decrementCounter(ref, insufficientError) {
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c) => {
+    const v = c || 0;
+    return v >= 1 ? v - 1 : v;
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
+function localDate(offsetHours = 5, d = /* @__PURE__ */ new Date()) {
+  return new Date(d.getTime() + offsetHours * 3600 * 1e3).toISOString().slice(0, 10);
+}
+function previousDate(dateStr) {
+  const d = /* @__PURE__ */ new Date(dateStr + "T00:00:00Z");
+  return new Date(d.getTime() - 864e5).toISOString().slice(0, 10);
+}
+async function logLedger(entry) {
+  try {
+    await rtdb().ref("ledger").push({ ...entry, at: Date.now() });
+  } catch (e) {
+    console.error("[api] ledger write failed", e);
+  }
+}
 function firestore() {
   ensureApp();
   return admin.firestore();
 }
+var admin, HttpError, app;
+var init_firebase = __esm({
+  "api/_src/lib/firebase.ts"() {
+    "use strict";
+    admin = adminNamespace.default ?? adminNamespace;
+    HttpError = class extends Error {
+      constructor(status, code, message) {
+        super(message || code);
+        this.status = status;
+        this.code = code;
+      }
+    };
+    app = null;
+  }
+});
+
+// api/_src/trading/index.ts
+init_firebase();
+
+// api/_src/trading/store.ts
+init_firebase();
 
 // shared/terminal.ts
 var INSTRUMENTS = [
@@ -380,6 +459,13 @@ function evaluatePropRules(args) {
     out.targetProgress = target > 0 ? Math.max(0, (equity - startingBalance) / target) : 0;
     out.canPass = out.targetReached && tradingDays >= Math.max(0, rules.minTradingDays) && openPositions === 0;
   }
+  if (args.periodExpired && !out.hardBreach) {
+    out.failedReason = `Trading period expired (${rules.maxTradingDays} days) without reaching the profit target`;
+    out.status = "failed";
+    out.hardBreach = true;
+    out.canPass = false;
+    return out;
+  }
   out.hardBreach = out.dailyBreach || out.overallBreach;
   if (out.hardBreach) {
     out.status = "failed";
@@ -390,6 +476,19 @@ function evaluatePropRules(args) {
     out.status = "active";
   }
   return out;
+}
+function periodExpired(rules, startedAt, now = Date.now()) {
+  if (!rules || rules.maxTradingDays == null || rules.maxTradingDays <= 0) return false;
+  const start = Number(startedAt) || 0;
+  if (!start) return false;
+  return now >= start + rules.maxTradingDays * 864e5;
+}
+function bumpTradeStats(stats, pnl) {
+  const s = stats && typeof stats === "object" ? { ...stats } : { totalTrades: 0, wins: 0, losses: 0 };
+  s.totalTrades = (s.totalTrades || 0) + 1;
+  if (pnl > 0) s.wins = (s.wins || 0) + 1;
+  else if (pnl < 0) s.losses = (s.losses || 0) + 1;
+  return s;
 }
 function validatePositionModify(args) {
   const { pos, quote } = args;
@@ -596,6 +695,11 @@ function requireQuote(quotes, symbol) {
 function writeTradeDoc(tx, uid, aid, o) {
   tx.set(tradeCol(uid, aid).doc(), { ...o });
 }
+function recordClose(state, tx, uid, aid, o) {
+  writeTradeDoc(tx, uid, aid, o);
+  bumpTradingDay(state.account, o.closedAt);
+  state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
+}
 function settleSwap(state, pos, now) {
   const spec = getInstrument(pos.symbol);
   if (!spec) return pos.swapAccrued ?? 0;
@@ -654,8 +758,7 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
     state.positions = state.positions.filter((p) => p.id !== pos.id);
   }
   for (const o of closed) {
-    writeTradeDoc(tx, uid, aid, o);
-    bumpTradingDay(state.account, o.closedAt);
+    recordClose(state, tx, uid, aid, o);
   }
   for (const f of result.fills) {
     const order = state.orders.find((o) => o.id === f.orderId);
@@ -705,7 +808,8 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
       peakEquity: state.account.peakEquity ?? state.account.balance,
       tradingDays: Object.keys(state.account.tradingDays || {}).length,
       openPositions: state.positions.length,
-      openLots: state.positions.reduce((s, p) => s + p.lots, 0)
+      openLots: state.positions.reduce((s, p) => s + p.lots, 0),
+      periodExpired: periodExpired(rules, state.account.startedAt || state.account.createdAt, now)
     });
     state.account.peakEquity = ruleState.peakEquity;
     state.account.status = ruleState.status;
@@ -732,8 +836,7 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
           positionId: p.id
         };
         closed.push(outcome);
-        writeTradeDoc(tx, uid, aid, outcome);
-        bumpTradingDay(state.account, outcome.closedAt);
+        recordClose(state, tx, uid, aid, outcome);
         tx.delete(posCol(uid, aid).doc(p.id));
       }
       state.positions = [];
@@ -761,6 +864,11 @@ function persistAccountTx(tx, uid, aid, state, quotes, prices) {
     failedReason: state.account.failedReason ?? null,
     peakEquity: state.account.peakEquity ?? state.account.balance,
     tradingDays: state.account.tradingDays || {},
+    stats: state.account.stats || { totalTrades: 0, wins: 0, losses: 0 },
+    adminSuspended: !!state.account.adminSuspended,
+    startedAt: state.account.startedAt || state.account.createdAt || Date.now(),
+    challengeTypeId: state.account.challengeTypeId ?? null,
+    challengeName: state.account.challengeName ?? null,
     balanceUpdatedAt: Date.now(),
     metrics: { ...metrics, updatedAt: Date.now() }
   });
@@ -797,12 +905,15 @@ async function listAccounts(uid) {
       peakEquity: acc.peakEquity ?? acc.balance,
       tradingDays: Object.keys(acc.tradingDays || {}).length,
       openPositions: state.positions.length,
-      openLots: state.positions.reduce((s, p) => s + p.lots, 0)
+      openLots: state.positions.reduce((s, p) => s + p.lots, 0),
+      periodExpired: periodExpired(acc.rules, acc.startedAt || acc.createdAt, Date.now())
     }) : null;
     out.push({
       id: doc.id,
       label: acc.label,
       type: acc.type,
+      challengeTypeId: acc.challengeTypeId ?? null,
+      challengeName: acc.challengeName ?? null,
       balance: acc.balance,
       startingBalance: acc.startingBalance,
       leverage: acc.leverage,
@@ -810,8 +921,11 @@ async function listAccounts(uid) {
       status: acc.status || "active",
       rules: acc.rules ?? null,
       failedReason: acc.failedReason ?? null,
+      adminSuspended: !!acc.adminSuspended,
+      startedAt: acc.startedAt ?? acc.createdAt ?? null,
       peakEquity: acc.peakEquity ?? acc.balance,
       tradingDays: Object.keys(acc.tradingDays || {}).length,
+      stats: acc.stats || { totalTrades: 0, wins: 0, losses: 0 },
       dayStart: acc.dayStart ?? {},
       ruleState,
       positions: state.positions,
@@ -840,9 +954,10 @@ function sanitizeRules(raw) {
     minTradingDays: Math.min(60, Math.max(0, Math.floor(Number(raw.minTradingDays) || 0))),
     maxLotsTotal: pct(raw.maxLotsTotal, 0.01, 100),
     maxLotsPerOrder: pct(raw.maxLotsPerOrder, 0.01, 100),
-    maxOpenPositions: raw.maxOpenPositions == null ? null : Math.min(30, Math.max(1, Math.floor(Number(raw.maxOpenPositions) || 1)))
+    maxOpenPositions: raw.maxOpenPositions == null ? null : Math.min(30, Math.max(1, Math.floor(Number(raw.maxOpenPositions) || 1))),
+    maxTradingDays: pct(raw.maxTradingDays, 0, 365)
   };
-  const hasAny = rules.dailyLossLimitPct != null || rules.maxDrawdownPct != null || rules.profitTargetPct != null || rules.minTradingDays > 0 || rules.maxLotsTotal != null || rules.maxLotsPerOrder != null || rules.maxOpenPositions != null;
+  const hasAny = rules.dailyLossLimitPct != null || rules.maxDrawdownPct != null || rules.profitTargetPct != null || rules.minTradingDays > 0 || rules.maxLotsTotal != null || rules.maxLotsPerOrder != null || rules.maxOpenPositions != null || rules.maxTradingDays != null;
   return hasAny ? rules : null;
 }
 async function createAccount(uid, label, startingBalance, opts = {}) {
@@ -856,14 +971,19 @@ async function createAccount(uid, label, startingBalance, opts = {}) {
   const doc = {
     label: String(label || (rules ? "CHALLENGE" : "DEMO")).slice(0, 32) || "DEMO",
     type: rules ? "CHALLENGE" : "DEMO",
+    challengeTypeId: opts.challengeTypeId ?? null,
+    challengeName: String(opts.challengeName || "").slice(0, 60) || null,
     balance,
     startingBalance: balance,
     leverage,
     status: "active",
     rules,
     failedReason: null,
+    adminSuspended: false,
+    startedAt: Date.now(),
     peakEquity: balance,
     tradingDays: {},
+    stats: { totalTrades: 0, wins: 0, losses: 0 },
     createdAt: Date.now(),
     dayStart: { [today]: balance }
   };
@@ -893,8 +1013,11 @@ async function resetAccount(uid, aid) {
       // a reset starts a fresh attempt: challenge status back to active
       status: "active",
       failedReason: null,
+      adminSuspended: false,
+      startedAt: Date.now(),
       peakEquity: balance,
       tradingDays: {},
+      stats: { totalTrades: 0, wins: 0, losses: 0 },
       dayStart: { [dayKey()]: balance },
       metrics: { ...computeMetrics(balance, [], {}, {}, account.leverage || DEFAULT_LEVERAGE), updatedAt: Date.now() },
       balanceUpdatedAt: Date.now()
@@ -950,6 +1073,9 @@ async function placeOrder(uid, req) {
         "ACCOUNT_NOT_ACTIVE",
         state.account.status === "failed" ? `Challenge failed: ${state.account.failedReason || "rule breached"} \u2014 trading is disabled` : "Challenge passed \u2014 trading is disabled"
       );
+    }
+    if (state.account.rules && state.account.adminSuspended) {
+      throw new HttpError(403, "ACCOUNT_SUSPENDED", "Account suspended by an administrator \u2014 trading is disabled");
     }
     const lots = Number(req.lots);
     const quote = requireQuote(quotes, spec.symbol);
@@ -1059,8 +1185,7 @@ async function closePosition(uid, accountId, positionId, lots) {
       closedAt: Date.now(),
       positionId: pos.id
     };
-    writeTradeDoc(tx, uid, accountId, outcome);
-    bumpTradingDay(state.account, outcome.closedAt);
+    recordClose(state, tx, uid, accountId, outcome);
     if (closeLots === pos.lots) {
       tx.delete(posCol(uid, accountId).doc(pos.id));
       state.positions = state.positions.filter((p) => p.id !== pos.id);
@@ -1156,8 +1281,7 @@ async function closeAll(uid, accountId) {
         positionId: pos.id
       };
       closed.push(outcome);
-      writeTradeDoc(tx, uid, accountId, outcome);
-      bumpTradingDay(state.account, outcome.closedAt);
+      recordClose(state, tx, uid, accountId, outcome);
       tx.delete(posCol(uid, accountId).doc(pos.id));
     }
     state.positions = [];
@@ -1171,6 +1295,367 @@ async function cancelOrder(uid, accountId, orderId) {
   if (!snap.exists) throw new HttpError(404, "NO_ORDER", "Order not found");
   await ref.delete();
   return { ok: true };
+}
+
+// api/_src/trading/admin.ts
+init_firebase();
+var challengeTypesCol = () => firestore().collection("challengeTypes");
+var auditCol = () => firestore().collection("propAudit");
+var settingsDoc = () => firestore().collection("settings").doc("leaderboard");
+var ALLOWED_LEVERAGES2 = [10, 20, 30, 50, 100, 200, 500];
+var clampPct = (v, lo, hi) => {
+  const n = Number(v);
+  if (v == null || v === "" || !Number.isFinite(n)) return null;
+  return Math.min(hi, Math.max(lo, n));
+};
+function sanitizeChallengeType(raw) {
+  const size = Math.round(Number(raw.size));
+  if (!Number.isFinite(size) || ![5e3, 1e4, 25e3, 5e4, 1e5].includes(size)) {
+    throw new HttpError(400, "BAD_SIZE", "Account size must be one of $5,000 / $10,000 / $25,000 / $50,000 / $100,000");
+  }
+  const name = String(raw.name || "").trim().slice(0, 60);
+  if (name.length < 2) throw new HttpError(400, "BAD_NAME", "Challenge name must be at least 2 characters");
+  const leverageRaw = Number(raw.leverage);
+  const type = {
+    name,
+    size,
+    profitTargetPct: clampPct(raw.profitTargetPct, 0.5, 100),
+    dailyLossLimitPct: clampPct(raw.dailyLossLimitPct, 0.5, 50),
+    maxDrawdownPct: clampPct(raw.maxDrawdownPct, 0.5, 50),
+    minTradingDays: Math.min(60, Math.max(0, Math.floor(Number(raw.minTradingDays) || 0))),
+    maxTradingDays: clampPct(raw.maxTradingDays, 0, 365),
+    maxLotsPerOrder: clampPct(raw.maxLotsPerOrder, 0.01, 100),
+    maxLotsTotal: clampPct(raw.maxLotsTotal, 0.01, 100),
+    maxOpenPositions: raw.maxOpenPositions == null || raw.maxOpenPositions === "" ? null : Math.min(30, Math.max(1, Math.floor(Number(raw.maxOpenPositions) || 1))),
+    leverage: ALLOWED_LEVERAGES2.includes(leverageRaw) ? leverageRaw : 100,
+    active: raw.active === void 0 ? true : !!raw.active,
+    description: String(raw.description || "").slice(0, 400)
+  };
+  if (type.profitTargetPct == null && type.dailyLossLimitPct == null && type.maxDrawdownPct == null) {
+    throw new HttpError(400, "BAD_RULES", "A challenge needs at least a profit target or a drawdown limit");
+  }
+  return type;
+}
+async function listChallengeTypes(activeOnly = false) {
+  const snap = await challengeTypesCol().get();
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  rows.sort((a, b) => a.size - b.size || a.name.localeCompare(b.name));
+  return activeOnly ? rows.filter((r) => r.active !== false) : rows;
+}
+async function saveChallengeType(body, admin2) {
+  const type = sanitizeChallengeType(body);
+  const now = Date.now();
+  let id = String(body.id || "").trim();
+  if (id) {
+    const ref = challengeTypesCol().doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) throw new HttpError(404, "NO_CHALLENGE_TYPE", "Challenge type not found");
+    await ref.update({ ...type, updatedAt: now });
+  } else {
+    const ref = await challengeTypesCol().add({ ...type, createdAt: now, updatedAt: now });
+    id = ref.id;
+  }
+  await writeAudit(admin2, "challenge_type_save", { challengeTypeId: id, name: type.name, size: type.size });
+  return { id, ...type };
+}
+async function deleteChallengeType(id, admin2) {
+  const ref = challengeTypesCol().doc(String(id || "").trim());
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, "NO_CHALLENGE_TYPE", "Challenge type not found");
+  await ref.delete();
+  await writeAudit(admin2, "challenge_type_delete", { challengeTypeId: id, name: snap.data()?.name });
+  return { ok: true };
+}
+async function resolveTargetUid(body) {
+  const uid = String(body.uid || "").trim();
+  if (uid) return uid;
+  const username = String(body.username || body.target || "").trim().toLowerCase().replace(/^@/, "");
+  if (!username) throw new HttpError(400, "MISSING_TARGET", "Provide a uid or username");
+  const resolved = (await rtdb().ref(`usernames/${username}`).once("value")).val();
+  if (typeof resolved !== "string" || !resolved) {
+    throw new HttpError(404, "USER_NOT_FOUND", `No user with username "${username}"`);
+  }
+  return resolved;
+}
+function rulesFromTemplate(t) {
+  return {
+    dailyLossLimitPct: t.dailyLossLimitPct ?? null,
+    maxDrawdownPct: t.maxDrawdownPct ?? null,
+    profitTargetPct: t.profitTargetPct ?? null,
+    minTradingDays: t.minTradingDays || 0,
+    maxLotsTotal: t.maxLotsTotal ?? null,
+    maxLotsPerOrder: t.maxLotsPerOrder ?? null,
+    maxOpenPositions: t.maxOpenPositions ?? null,
+    maxTradingDays: t.maxTradingDays ?? null
+  };
+}
+async function assignChallengeAccount(admin2, body) {
+  const uid = await resolveTargetUid(body);
+  const typeId = String(body.typeId || "").trim();
+  const snap = await challengeTypesCol().doc(typeId).get();
+  if (!snap.exists) throw new HttpError(404, "NO_CHALLENGE_TYPE", "Challenge type not found");
+  const t = { id: snap.id, ...snap.data() };
+  if (t.active === false) throw new HttpError(409, "CHALLENGE_INACTIVE", "This challenge type is deactivated");
+  const account = await createAccount(uid, t.name.slice(0, 32), t.size, {
+    leverage: t.leverage,
+    rules: rulesFromTemplate(t),
+    challengeTypeId: t.id,
+    challengeName: t.name
+  });
+  await writeAudit(admin2, "account_assign", { uid, aid: account.id, challengeTypeId: t.id, name: t.name, size: t.size });
+  return { uid, account };
+}
+async function traderNames() {
+  try {
+    const snap = await rtdb().ref("usernames").once("value");
+    const map = snap.val() || {};
+    const out = {};
+    for (const [name, uid] of Object.entries(map)) if (typeof uid === "string") out[uid] = name;
+    return out;
+  } catch {
+    return {};
+  }
+}
+async function listAllChallengeAccounts(status) {
+  const snap = await firestore().collectionGroup("accounts").where("type", "==", "CHALLENGE").limit(300).get();
+  const names = await traderNames();
+  const rows = [];
+  for (const doc of snap.docs) {
+    const uid = doc.ref.parent.parent?.id;
+    if (!uid) continue;
+    const a = doc.data() || {};
+    const startingBalance = Number(a.startingBalance) || 0;
+    const balance = Number(a.balance) || 0;
+    const row = {
+      uid,
+      aid: doc.id,
+      label: a.label || "CHALLENGE",
+      challengeName: a.challengeName ?? null,
+      challengeTypeId: a.challengeTypeId ?? null,
+      balance,
+      startingBalance,
+      profitPct: startingBalance > 0 ? Math.round((balance - startingBalance) / startingBalance * 1e4) / 100 : 0,
+      status: a.status || "active",
+      adminSuspended: !!a.adminSuspended,
+      failedReason: a.failedReason ?? null,
+      stats: a.stats || { totalTrades: 0, wins: 0, losses: 0 },
+      tradingDays: Object.keys(a.tradingDays || {}).length,
+      startedAt: a.startedAt ?? a.createdAt ?? null,
+      createdAt: a.createdAt || 0,
+      traderName: names[uid] ? `@${names[uid]}` : `trader ${uid.slice(0, 6)}`
+    };
+    if (status && status !== "all") {
+      const wanted = status === "suspended" ? row.adminSuspended : row.status === status && !row.adminSuspended;
+      if (!wanted) continue;
+    }
+    rows.push(row);
+  }
+  rows.sort((a, b) => b.createdAt - a.createdAt);
+  return rows;
+}
+async function accountDetail(uid, aid) {
+  const db2 = firestore();
+  const accRef = db2.collection("users").doc(uid).collection("accounts").doc(aid);
+  const [accSnap, posSnap, ordSnap, tradeSnap] = await Promise.all([
+    accRef.get(),
+    accRef.collection("positions").get(),
+    accRef.collection("orders").get(),
+    accRef.collection("trades").orderBy("closedAt", "desc").limit(50).get()
+  ]);
+  if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
+  const account = accSnap.data() || {};
+  const positions = posSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const orders = ordSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const trades = tradeSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const symbols = [.../* @__PURE__ */ new Set([...positions.map((p) => p.symbol), ...orders.map((o) => o.symbol)])];
+  const quotes = symbols.length ? await getQuotes(symbols) : {};
+  const prices = {};
+  for (const [sym, q] of Object.entries(quotes)) prices[sym] = q.mid;
+  const metrics = computeMetrics(
+    Number(account.balance) || 0,
+    positions,
+    quotes,
+    prices,
+    Number(account.leverage) || 100
+  );
+  const names = await traderNames();
+  return {
+    uid,
+    aid,
+    traderName: names[uid] ? `@${names[uid]}` : `trader ${uid.slice(0, 6)}`,
+    account: {
+      label: account.label,
+      type: account.type,
+      challengeName: account.challengeName ?? null,
+      challengeTypeId: account.challengeTypeId ?? null,
+      balance: account.balance,
+      startingBalance: account.startingBalance,
+      leverage: account.leverage,
+      status: account.status || "active",
+      adminSuspended: !!account.adminSuspended,
+      rules: account.rules ?? null,
+      failedReason: account.failedReason ?? null,
+      startedAt: account.startedAt ?? account.createdAt ?? null,
+      createdAt: account.createdAt,
+      peakEquity: account.peakEquity ?? account.balance,
+      tradingDays: Object.keys(account.tradingDays || {}).length,
+      stats: account.stats || { totalTrades: 0, wins: 0, losses: 0 },
+      dayStart: account.dayStart || {}
+    },
+    positions,
+    orders,
+    trades,
+    metrics
+  };
+}
+async function setAccountState(admin2, body) {
+  const uid = String(body.uid || "").trim();
+  const aid = String(body.aid || "").trim();
+  const action = String(body.action || "");
+  if (!uid || !aid) throw new HttpError(400, "BAD_TARGET", "uid and aid are required");
+  const accRef = firestore().collection("users").doc(uid).collection("accounts").doc(aid);
+  const snap = await accRef.get();
+  if (!snap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
+  const acc = snap.data() || {};
+  if (action === "suspend") {
+    await accRef.update({ adminSuspended: true, suspendedAt: Date.now() });
+    await writeAudit(admin2, "account_suspend", { uid, aid, challengeName: acc.challengeName ?? null });
+    return { ok: true, adminSuspended: true };
+  }
+  if (action === "reactivate") {
+    if (acc.status === "failed") {
+      throw new HttpError(409, "ACCOUNT_FAILED", "A failed challenge can only be restored via Reset");
+    }
+    await accRef.update({ adminSuspended: false, suspendedAt: null });
+    await writeAudit(admin2, "account_reactivate", { uid, aid });
+    return { ok: true, adminSuspended: false };
+  }
+  if (action === "reset") {
+    const closeResult = await closeAll(uid, aid).catch((e) => {
+      if (String(e?.message || "").includes("No executable price")) throw e;
+      return null;
+    });
+    await resetAccount(uid, aid);
+    await writeAudit(admin2, "account_reset", { uid, aid, closed: Array.isArray(closeResult?.closed) ? closeResult.closed.length : 0 });
+    return { ok: true, reset: true };
+  }
+  throw new HttpError(400, "BAD_ACTION", "action must be suspend | reactivate | reset");
+}
+async function writeAudit(admin2, action, details = {}) {
+  try {
+    await auditCol().add({
+      at: Date.now(),
+      by: admin2.email || admin2.uid,
+      byUid: admin2.uid,
+      action,
+      ...details
+    });
+  } catch (e) {
+    console.error("[admin] audit write failed", e);
+  }
+}
+async function listAudit(filter = {}, limit = 100) {
+  let q = auditCol();
+  if (filter.uid) q = q.where("uid", "==", filter.uid);
+  if (filter.aid) q = q.where("aid", "==", filter.aid);
+  const snap = await q.limit(Math.min(300, Math.max(1, limit))).get();
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  rows.sort((a, b) => (b.at || 0) - (a.at || 0));
+  return rows.slice(0, limit);
+}
+async function setLeaderboardEnabled(enabled, admin2) {
+  await settingsDoc().set({ enabled: !!enabled, updatedAt: Date.now(), updatedBy: admin2.email || admin2.uid });
+  await writeAudit(admin2, "leaderboard_toggle", { enabled: !!enabled });
+  return { enabled: !!enabled };
+}
+async function getLeaderboardEnabled() {
+  try {
+    const snap = await settingsDoc().get();
+    return snap.exists ? snap.data()?.enabled !== false : true;
+  } catch {
+    return true;
+  }
+}
+
+// api/_src/trading/leaderboard.ts
+init_firebase();
+var PERIOD_MS = {
+  daily: 864e5,
+  weekly: 7 * 864e5,
+  monthly: 30 * 864e5,
+  all: 0
+};
+function periodStart(period) {
+  if (period === "daily") {
+    const d = /* @__PURE__ */ new Date();
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+  if (period === "weekly") return Date.now() - PERIOD_MS.weekly;
+  if (period === "monthly") return Date.now() - PERIOD_MS.monthly;
+  return 0;
+}
+function isPeriod(v) {
+  return v === "daily" || v === "weekly" || v === "monthly" || v === "all";
+}
+async function traderNames2() {
+  try {
+    const snap = await rtdb().ref("usernames").once("value");
+    const map = snap.val() || {};
+    const out = {};
+    for (const [name, uid] of Object.entries(map)) if (typeof uid === "string") out[uid] = name;
+    return out;
+  } catch {
+    return {};
+  }
+}
+async function getLeaderboard(period) {
+  const enabled = await getLeaderboardEnabled();
+  if (!enabled) return { enabled: false, period, rows: [] };
+  const start = periodStart(period);
+  const snap = await firestore().collectionGroup("trades").where("closedAt", ">=", start).limit(2e3).get();
+  const byAccount = /* @__PURE__ */ new Map();
+  for (const doc of snap.docs) {
+    const parent = doc.ref.parent.parent;
+    if (!parent) continue;
+    const t = doc.data() || {};
+    const key = parent.path;
+    const cur = byAccount.get(key) || { net: 0, trades: 0, wins: 0, ref: parent };
+    const net = (Number(t.pnl) || 0) + (Number(t.swap) || 0);
+    cur.net += net;
+    cur.trades += 1;
+    if (net > 0) cur.wins += 1;
+    byAccount.set(key, cur);
+  }
+  const accounts = [];
+  const parents = [...byAccount.values()];
+  const accSnaps = await Promise.all(parents.map((p) => p.ref.get()));
+  for (let i = 0; i < parents.length; i++) {
+    const data = accSnaps[i].data() || {};
+    if (data.type !== "CHALLENGE") continue;
+    const p = parents[i];
+    accounts.push({
+      uid: p.ref.parent.parent?.id || "",
+      startingBalance: Number(data.startingBalance) || 0,
+      status: data.status || "active",
+      challengeName: data.challengeName ?? null,
+      net: Math.round(p.net * 100) / 100,
+      trades: p.trades,
+      wins: p.wins
+    });
+  }
+  const names = await traderNames2();
+  const ranked = accounts.filter((a) => a.startingBalance > 0).map((a) => ({
+    name: names[a.uid] ? `@${names[a.uid]}` : "Trader",
+    profitPct: Math.round(a.net / a.startingBalance * 1e4) / 100,
+    profitUsd: a.net,
+    winRate: a.trades > 0 ? Math.round(a.wins / a.trades * 1e3) / 10 : null,
+    trades: a.trades,
+    status: a.status,
+    size: a.startingBalance,
+    challengeName: a.challengeName
+  })).sort((x, y) => y.profitPct - x.profitPct || y.profitUsd - x.profitUsd).slice(0, 50);
+  const rows = ranked.map((r, i) => ({ rank: i + 1, ...r }));
+  return { enabled: true, period, rows };
 }
 
 // api/_src/trading/index.ts
@@ -1289,16 +1774,82 @@ var routes = {
   async reset(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     json(res, 200, await resetAccount(user.uid, String(body.accountId)));
+  },
+  // ---- user-facing prop-firm surface ---------------------------------------
+  async "challenge-types"(_req, res) {
+    json(res, 200, { types: await listChallengeTypes(true) });
+  },
+  async leaderboard(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    const periodRaw = String(url.searchParams.get("period") || "all");
+    const period = isPeriod(periodRaw) ? periodRaw : "all";
+    json(res, 200, await getLeaderboard(period));
+  }
+};
+var ADMIN_GET_ACTIONS = /* @__PURE__ */ new Set(["admin-challenge-types", "admin-accounts", "admin-account-detail", "admin-audit", "admin-trades"]);
+var adminRoutes = {
+  async "admin-challenge-types"(_req, res) {
+    json(res, 200, { types: await listChallengeTypes(false) });
+  },
+  async "admin-challenge-type-save"(_req, res, admin2, body) {
+    json(res, 200, await saveChallengeType(body, admin2));
+  },
+  async "admin-challenge-type-delete"(_req, res, admin2, body) {
+    json(res, 200, await deleteChallengeType(String(body?.id || ""), admin2));
+  },
+  async "admin-accounts"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    json(res, 200, { accounts: await listAllChallengeAccounts(url.searchParams.get("status") || "all") });
+  },
+  async "admin-account-detail"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    const uid = String(url.searchParams.get("uid") || "");
+    const aid = String(url.searchParams.get("aid") || "");
+    if (!uid || !aid) throw Object.assign(new Error("uid and aid are required"), { status: 400 });
+    json(res, 200, await accountDetail(uid, aid));
+  },
+  async "admin-assign"(_req, res, admin2, body) {
+    json(res, 200, await assignChallengeAccount(admin2, body));
+  },
+  async "admin-account-action"(_req, res, admin2, body) {
+    json(res, 200, await setAccountState(admin2, body));
+  },
+  async "admin-leaderboard-toggle"(_req, res, admin2, body) {
+    json(res, 200, await setLeaderboardEnabled(!!body?.enabled, admin2));
+  },
+  async "admin-audit"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    json(res, 200, { entries: await listAudit({
+      uid: url.searchParams.get("uid") || void 0,
+      aid: url.searchParams.get("aid") || void 0
+    }, Number(url.searchParams.get("limit") || 100)) });
+  },
+  async "admin-trades"(req, res) {
+    const url = new URL(req.url || "/", "http://localhost");
+    const uid = String(url.searchParams.get("uid") || "");
+    const aid = String(url.searchParams.get("aid") || "");
+    if (!uid || !aid) throw Object.assign(new Error("uid and aid are required"), { status: 400 });
+    const limit = Number(url.searchParams.get("limit") || 200);
+    const db2 = (await Promise.resolve().then(() => (init_firebase(), firebase_exports))).firestore();
+    const snap = await db2.collection("users").doc(uid).collection("accounts").doc(aid).collection("trades").orderBy("closedAt", "desc").limit(Math.min(500, Math.max(1, limit))).get();
+    json(res, 200, { trades: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
   }
 };
 var index_default = handle(async (req, res) => {
   const action = getAction(req);
   if (!action) return health(res);
+  if (action.startsWith("admin-")) {
+    const route2 = adminRoutes[action];
+    if (!route2) return json(res, 400, { error: "BAD_ACTION", message: "Unknown admin action" });
+    if (!ADMIN_GET_ACTIONS.has(action)) assertPost(req);
+    const admin2 = await requireAdmin(req);
+    return route2(req, res, admin2, bodyOf(req));
+  }
   const route = routes[action];
   if (!route) {
     return json(res, 400, { error: "BAD_ACTION", message: "Unknown trading action" });
   }
-  if (action === "history") {
+  if (action === "history" || action === "challenge-types" || action === "leaderboard") {
     const user2 = await requireUser(req);
     return route(req, res, user2, {});
   }
