@@ -669,6 +669,10 @@ export function PriceChart({
     setLoaded({ status: "connecting" });
     tfSecRef.current = TF_SECONDS[timeframe];
     barsRef.current = [];
+    // instrument switch: the previous symbol's mid must NEVER leak into the
+    // new instrument's bid/ask lines or the price bus (§3 identity guard)
+    lastMidRef.current = null;
+    updateBidAsk(null);
     // remove leftover overlay series from the previous symbol/timeframe
     for (const [, s] of overlayRef.current) {
       try { chartRef.current?.removeSeries(s); } catch { /* already gone */ }
