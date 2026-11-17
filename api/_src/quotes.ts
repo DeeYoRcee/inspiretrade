@@ -241,6 +241,17 @@ export default handle(async (req, res) => {
   const symbols = (url.searchParams.get("symbol") || "").trim();
   const range = (url.searchParams.get("range") || "5d").trim();
   const interval = (url.searchParams.get("interval") || "1m").trim();
+  // Optional arbitrary epoch window (replay/backtest history loader). Accepts
+  // seconds or milliseconds; Yahoo's chart API takes seconds.
+  const toSec = (v: string | null) => {
+    if (!v) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.floor(n > 1e11 ? n / 1000 : n);
+  };
+  const period1 = toSec(url.searchParams.get("period1"));
+  const period2 = toSec(url.searchParams.get("period2"));
+  const periodMode = period1 != null && period2 != null && period2 > period1;
 
   // ---- Batch quote mode: GET /api/quotes?symbols=EURUSD=X,GC=F ----------
   // Light last-price snapshot for the Market Watch panel.
@@ -314,7 +325,9 @@ export default handle(async (req, res) => {
     return res.status(400).json({ ok: false, error: "BAD_SYMBOL" });
   }
 
-  const yurl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
+  const yurl = periodMode
+    ? `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?period1=${period1}&period2=${period2}&interval=${encodeURIComponent(interval)}&includePrePost=false`
+    : `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
 
   const fromYahoo = async () => {
     const controller = new AbortController();
@@ -339,10 +352,11 @@ export default handle(async (req, res) => {
     }
     const meta = result.meta || {};
     // live spot overlay: Yahoo's candles trail 5-15 min behind — paint the
-    // fresh gold-api spot onto the current bar (fail-open, see fetchSpot)
+    // fresh gold-api spot onto the current bar (fail-open, see fetchSpot).
+    // Skipped in period mode: replay/backtest history must stay pure.
     const spotCode = SPOT_API_MAP[symbols];
     let live = false;
-    if (spotCode) {
+    if (spotCode && !periodMode) {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
     }
@@ -375,10 +389,14 @@ export default handle(async (req, res) => {
     if (!sres.ok) throw new Error(`stooq ${sres.status}`);
     const bars = stooqCsvToBars(await sres.text());
     if (bars.length === 0) throw new Error("STOOQ_EMPTY");
-    // Respect the requested range: keep roughly the last `range` worth of bars.
+    // Respect the requested window: period mode filters by epoch, otherwise
+    // keep roughly the last `range` worth of bars.
     const perDay = si === "d" ? 1 : Math.round(1440 / Number(si));
     const days = range.endsWith("d") ? Number(range.slice(0, -1)) || 5 : range.endsWith("mo") ? Number(range.slice(0, -2)) * 30 || 150 : 5;
-    const capped = bars.slice(Math.max(0, bars.length - days * perDay));
+    let capped = periodMode
+      ? bars.filter((b: any) => b.time >= (period1 as number) && b.time <= (period2 as number))
+      : bars.slice(Math.max(0, bars.length - days * perDay));
+    capped = capped as any[];
     const last = capped[capped.length - 1];
     return {
       source: "stooq",
@@ -392,7 +410,10 @@ export default handle(async (req, res) => {
   };
 
   try {
-    const payload = await cachedPayload(barsCache, `${symbols}|${range}|${interval}`, BARS_FRESH_MS, BARS_STALE_MS, async () => {
+    const cacheKey = periodMode
+      ? `${symbols}|p:${Math.floor((period1 as number) / 600)}-${Math.floor((period2 as number) / 600)}|${interval}`
+      : `${symbols}|${range}|${interval}`;
+    const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
       try {
         return { ok: true, ...(await fromYahoo()) };
       } catch (e: any) {

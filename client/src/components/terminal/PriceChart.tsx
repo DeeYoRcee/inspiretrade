@@ -91,6 +91,10 @@ export function PriceChart({
   onTimeframeChange,
   className,
   height,
+  replayBars = null,
+  replayCursor = null,
+  replayForming = null,
+  replayStatus = null,
 }: {
   symbol: string;
   timeframe: Timeframe;
@@ -104,6 +108,14 @@ export function PriceChart({
   className?: string;
   /** Fixed pixel height; omit to fill the parent box. */
   height?: number;
+  /** REPLAY MODE: external historical bars — the chart never loads a feed and
+   *  renders only bars[0..cursor] (+ the forming bar), hiding the future. */
+  replayBars?: Bar[] | null;
+  replayCursor?: number | null;
+  /** the currently forming candle (real OHLC sub-point path, parent-computed) */
+  replayForming?: Bar | null;
+  /** replay status line, e.g. "REPLAY · 5m · paused" */
+  replayStatus?: string | null;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const mainHostRef = useRef<HTMLDivElement | null>(null);
@@ -165,6 +177,28 @@ export function PriceChart({
   positionsRef.current = safePositions;
   const onModifyRef = useRef(onModifyPosition);
   onModifyRef.current = onModifyPosition;
+
+  // ---- replay mode: external bars, no feed subscription ----------------------
+  const replayBarsRef = useRef<Bar[] | null>(replayBars);
+  replayBarsRef.current = replayBars;
+  const replayFormingRef = useRef<Bar | null>(replayForming);
+  replayFormingRef.current = replayForming;
+  const replayCursorRef = useRef<number | null>(replayCursor);
+  replayCursorRef.current = replayCursor;
+  const replayStatusRef = useRef<string | null>(replayStatus);
+  replayStatusRef.current = replayStatus;
+  const replayModeRef = useRef(false);
+  replayModeRef.current = replayBars != null;
+
+  /** the visible replay series: bars[0..cursor] (+ forming bar) — the future stays hidden */
+  const replayVisible = useCallback((cursor: number): Bar[] => {
+    const bars = replayBarsRef.current;
+    if (!bars) return [];
+    const closed = bars.slice(0, Math.max(0, Math.min(cursor, bars.length)));
+    const forming = replayFormingRef.current;
+    if (forming && forming.time === (bars[cursor]?.time ?? -1)) return [...closed, forming];
+    return closed;
+  }, []);
 
   // ---- settings + indicator appearance → chart options ----------------------
   useEffect(() => {
@@ -430,6 +464,17 @@ export function PriceChart({
     overlayRef.current.clear();
     timeIdxRef.current = new Map();
 
+    // REPLAY MODE — the session supplies the bars; never touch the live feed
+    if (replayModeRef.current) {
+      barsRef.current = replayVisible(replayCursorRef.current ?? 0);
+      applyBarsToSeries("set");
+      applyMarkers();
+      updateLegend(null);
+      canvasRef.current?.redraw();
+      setLoaded({ status: "polling", message: replayStatusRef.current ?? "Replay · historical data" });
+      return;
+    }
+
     (async () => {
       try {
         const { bars, status, message } = await loadFeed(symbol, timeframe);
@@ -461,6 +506,40 @@ export function PriceChart({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, timeframe, reloadKey]);
+
+  // ---- replay cursor/forming-candle updates -----------------------------------
+  useEffect(() => {
+    if (!replayModeRef.current) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const next = replayVisible(replayCursor ?? 0);
+    const prev = barsRef.current;
+    // append/update path: same-or-growing series → cheap series.update on the
+    // tail; shrinking (jump backwards, new session) → full setData
+    const grows = next.length >= prev.length &&
+      (prev.length === 0 || next[next.length - 1].time >= prev[prev.length - 1].time);
+    if (grows && prev.length > 0 && next.length > 0 &&
+        next[next.length - 1].time === prev[prev.length - 1].time && next.length === prev.length) {
+      barsRef.current = next;
+      applyBarsToSeries("update");
+    } else if (grows && next.length === prev.length + 1 &&
+               next[next.length - 2]?.time === prev[prev.length - 1]?.time) {
+      barsRef.current = next;
+      candleRef.current?.update(toCandle(next[next.length - 1]));
+      volumeRef.current?.update(toVolume(next[next.length - 1]));
+      const idx = timeIdxRef.current;
+      if (idx.size) idx.set(next[next.length - 1].time, next.length - 1);
+    } else {
+      barsRef.current = next;
+      applyBarsToSeries("set");
+      applyMarkers();
+    }
+    updateLegend(null);
+    canvasRef.current?.redraw();
+    const last = next[next.length - 1];
+    if (last) priceBusUpdate(symbol, last.close); // ticket/blotter read live prices
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replayCursor, replayForming]);
 
   // ---- indicator list change → full recompute + pane lifecycle ----------------
   const subKey = indicators

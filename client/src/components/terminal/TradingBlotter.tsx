@@ -7,7 +7,7 @@
  * store. Closing a position (single, half or all) always asks for
  * confirmation. SL/TP edit inline; pending orders open a modify dialog.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
@@ -67,13 +67,41 @@ export function TradingBlotter({ symbol, className }: { symbol: string; classNam
     queryFn: () => tradingApi.getHistory(account!.id, 200),
   });
 
+  // ---- auto-journal: every closed server trade lands in the user's journal ----
+  // Deduped by a per-uid localStorage marker so refreshes and refetches never
+  // create duplicate entries (the user can still journal manually too).
+  const autoSavedRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    const trades: ServerTrade[] | undefined = historyQ.data;
+    if (!uid || !trades?.length) return;
+    if (!autoSavedRef.current) {
+      try { autoSavedRef.current = new Set(JSON.parse(localStorage.getItem(`it_journal_auto_${uid}`) || "[]")); }
+      catch { autoSavedRef.current = new Set(); }
+    }
+    const saved = autoSavedRef.current!;
+    let dirty = false;
+    for (const tr of trades) {
+      const key = `${tr.symbol}-${tr.entry}-${tr.closedAt}-${tr.side}`;
+      if (saved.has(key)) continue;
+      saved.add(key);
+      dirty = true;
+      void saveToJournal(tr, true);
+    }
+    if (dirty) {
+      try { localStorage.setItem(`it_journal_auto_${uid}`, JSON.stringify([...saved].slice(-500))); }
+      catch { /* quota — best effort */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyQ.data]);
+
   useEffect(() => {
     if (account && (tab === "history" || tab === "stats")) {
       void qc.invalidateQueries({ queryKey: ["tradingHistory", account.id] });
     }
   }, [tab, account?.id, qc]);
 
-  const saveToJournal = async (tr: ServerTrade) => {
+  const saveToJournal = async (tr: ServerTrade, silent = false) => {
     if (!auth.currentUser) return;
     try {
       await push(ref(db, `trades/${auth.currentUser.uid}`), {
@@ -85,14 +113,15 @@ export function TradingBlotter({ symbol, className }: { symbol: string; classNam
         type: tr.side === "buy" ? "BUY" : "SELL",
         category: getInstrument(tr.symbol)?.assetClass === "crypto" ? "CRYPTO" : "FOREX",
         timestamp: tr.closedAt,
+        exitTime: tr.closedAt,
         instrumentSymbol: tr.symbol,
         instrumentName: getInstrument(tr.symbol)?.name ?? tr.symbol,
         emotion: "neutral",
         comment: `Terminal ${account?.label ?? "DEMO"} (${tr.reason})`,
       });
-      toast({ title: t("journalSaved") });
+      if (!silent) toast({ title: t("journalSaved") });
     } catch (e: any) {
-      toast({ title: t("serverError"), description: String(e?.message || e), variant: "destructive" });
+      if (!silent) toast({ title: t("serverError"), description: String(e?.message || e), variant: "destructive" });
     }
   };
 

@@ -268,6 +268,15 @@ var quotes_default = handle(async (req, res) => {
   const symbols = (url.searchParams.get("symbol") || "").trim();
   const range = (url.searchParams.get("range") || "5d").trim();
   const interval = (url.searchParams.get("interval") || "1m").trim();
+  const toSec = (v) => {
+    if (!v) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.floor(n > 1e11 ? n / 1e3 : n);
+  };
+  const period1 = toSec(url.searchParams.get("period1"));
+  const period2 = toSec(url.searchParams.get("period2"));
+  const periodMode = period1 != null && period2 != null && period2 > period1;
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
     if (!list.length) return res.status(200).json({ ok: true, quotes: [] });
@@ -332,7 +341,7 @@ var quotes_default = handle(async (req, res) => {
   if (!/^[A-Z0-9^.=\-]{1,20}$/i.test(symbols)) {
     return res.status(400).json({ ok: false, error: "BAD_SYMBOL" });
   }
-  const yurl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
+  const yurl = periodMode ? `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?period1=${period1}&period2=${period2}&interval=${encodeURIComponent(interval)}&includePrePost=false` : `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
   const fromYahoo = async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
@@ -356,7 +365,7 @@ var quotes_default = handle(async (req, res) => {
     const meta = result.meta || {};
     const spotCode = SPOT_API_MAP[symbols];
     let live = false;
-    if (spotCode) {
+    if (spotCode && !periodMode) {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
     }
@@ -388,7 +397,8 @@ var quotes_default = handle(async (req, res) => {
     if (bars.length === 0) throw new Error("STOOQ_EMPTY");
     const perDay = si === "d" ? 1 : Math.round(1440 / Number(si));
     const days = range.endsWith("d") ? Number(range.slice(0, -1)) || 5 : range.endsWith("mo") ? Number(range.slice(0, -2)) * 30 || 150 : 5;
-    const capped = bars.slice(Math.max(0, bars.length - days * perDay));
+    let capped = periodMode ? bars.filter((b) => b.time >= period1 && b.time <= period2) : bars.slice(Math.max(0, bars.length - days * perDay));
+    capped = capped;
     const last = capped[capped.length - 1];
     return {
       source: "stooq",
@@ -401,7 +411,8 @@ var quotes_default = handle(async (req, res) => {
     };
   };
   try {
-    const payload = await cachedPayload(barsCache, `${symbols}|${range}|${interval}`, BARS_FRESH_MS, BARS_STALE_MS, async () => {
+    const cacheKey = periodMode ? `${symbols}|p:${Math.floor(period1 / 600)}-${Math.floor(period2 / 600)}|${interval}` : `${symbols}|${range}|${interval}`;
+    const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
       try {
         return { ok: true, ...await fromYahoo() };
       } catch (e) {
