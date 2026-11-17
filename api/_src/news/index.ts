@@ -500,22 +500,42 @@ export async function collectNewsCron(): Promise<{ items: NewsItem[]; calendar: 
 // Phase 5 fundamental suite: ALL impact levels (Low/Medium/High/Holiday) with
 // forecast/previous/actual for the whole week/month — the legacy `calendar`
 // field above stays HIGH-impact-only for the alert engine. Server-side fetch
-// avoids CORS, caches 10 min per range and falls back to the last good
-// payload when the mirror rate-limits (stale:true tells the UI to say so).
+// avoids CORS, caches 10 min and falls back to stale copies when the mirror
+// rate-limits (stale:true tells the UI to say so).
+//
+// Upstream reality (verified 2026-11): the mirror hosts ONLY
+// ff_calendar_thisweek.json — the nextweek/thismonth/nextmonth files are 404.
+// So every range is served from that single weekly export, filtered into the
+// requested window, and the response flags `limited` so the UI can state the
+// honest scope instead of implying missing data.
 
 import { normalizeFfCalendar, type CalEventFull } from "../../../shared/econ";
 
-const FF_RANGE_URL: Record<string, string> = {
-  thisweek: "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-  nextweek: "https://nfs.faireconomy.media/ff_calendar_nextweek.json",
-  thismonth: "https://nfs.faireconomy.media/ff_calendar_thismonth.json",
-};
+const FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
 
 const ECON_TTL = 10 * 60 * 1000;
-const econCache = new Map<string, { at: number; events: CalEventFull[]; ok: boolean }>();
+let econRaw: { at: number; events: CalEventFull[]; ok: boolean } | null = null;
 
-async function fetchEconRange(range: string): Promise<{ events: CalEventFull[]; ok: boolean; stale: boolean }> {
-  const hit = econCache.get(range);
+/** Filter the weekly export into the requested calendar window (UTC). */
+function filterRange(events: CalEventFull[], range: string): CalEventFull[] {
+  const now = new Date();
+  if (range === "nextweek") {
+    // next Monday 00:00 UTC … +7d
+    const day = now.getUTCDay(); // 0 Sun … 6 Sat
+    const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - day + 1 + (day === 0 ? -7 : 0));
+    const end = monday + 7 * 86400000;
+    return events.filter((e) => e.date >= monday && e.date < end);
+  }
+  if (range === "thismonth") {
+    const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+    return events.filter((e) => e.date >= start && e.date < end);
+  }
+  return events;
+}
+
+async function fetchEconWeek(): Promise<{ events: CalEventFull[]; ok: boolean; stale: boolean }> {
+  const hit = econRaw;
   if (hit && Date.now() - hit.at < ECON_TTL) return { events: hit.events, ok: hit.ok, stale: false };
   // one retry with a short backoff — the mirror sometimes answers an HTML
   // rate-limit page on the first hit, then succeeds
@@ -524,7 +544,7 @@ async function fetchEconRange(range: string): Promise<{ events: CalEventFull[]; 
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(FF_RANGE_URL[range], {
+      const res = await fetch(FF_URL, {
         headers: {
           "User-Agent": UA,
           Accept: "application/json, text/plain, */*",
@@ -538,11 +558,11 @@ async function fetchEconRange(range: string): Promise<{ events: CalEventFull[]; 
       if (!body.trim().startsWith("[")) throw new Error("rate-limit page");
       const { events, ok } = normalizeFfCalendar(JSON.parse(body));
       if (!ok) throw new Error("unusable payload");
-      econCache.set(range, { at: Date.now(), events, ok });
+      econRaw = { at: Date.now(), events, ok };
       // persist for every future cold instance — the admin SDK bypasses RTDB
       // rules, and clients never read this node directly
       try {
-        rtdb().ref(`econCache/${range}`).set({ at: Date.now(), events: events.slice(0, 400) });
+        rtdb().ref("econCache/thisweek").set({ at: Date.now(), events: events.slice(0, 400) });
       } catch { /* mirror cache is best-effort */ }
       return { events, ok, stale: false };
     } catch {
@@ -552,12 +572,12 @@ async function fetchEconRange(range: string): Promise<{ events: CalEventFull[]; 
   // Rate-limited / unreachable — in-memory stale first, then the RTDB mirror
   if (hit) return { events: hit.events, ok: hit.ok, stale: true };
   try {
-    const snap = await rtdb().ref(`econCache/${range}`).get();
+    const snap = await rtdb().ref("econCache/thisweek").get();
     if (snap.exists()) {
       const data = snap.val() as { at: number; events: CalEventFull[] };
       const events = Array.isArray(data?.events) ? data.events : [];
       if (events.length > 0) {
-        econCache.set(range, { at: data.at ?? Date.now(), events, ok: true });
+        econRaw = { at: data.at ?? Date.now(), events, ok: true };
         return { events, ok: true, stale: true };
       }
     }
@@ -622,11 +642,11 @@ export default async function handler(req: any, res: any) {
   const econParam = url.searchParams.get("econ");
   if (econParam === "calendar") {
     const range = url.searchParams.get("range") || "thisweek";
-    if (!FF_RANGE_URL[range]) {
+    if (!["thisweek", "nextweek", "thismonth"].includes(range)) {
       return res.status(400).json({ error: "BAD_RANGE", message: "range must be thisweek | nextweek | thismonth" });
     }
-    const data = await fetchEconRange(range);
-    let events = data.events;
+    const data = await fetchEconWeek();
+    let events = filterRange(data.events, range);
     if (TRANSLATE_LANGS.has(lang) && events.length > 0) {
       const titles = await translateTexts(events.map((e) => e.title), lang);
       events = events.map((e, i) => ({ ...e, title: titles[i], titleEn: e.title }));
@@ -636,6 +656,15 @@ export default async function handler(req: any, res: any) {
       ok: data.ok,
       stale: data.stale,
       range,
+      // the upstream publishes only the current-week export — non-week ranges
+      // are windowed views of the same real data, never fabricated
+      limited: range !== "thisweek",
+      note:
+        range === "nextweek"
+          ? "The free upstream publishes only the current week — next week's schedule appears once ForexFactory rolls the calendar (Sunday)."
+          : range === "thismonth"
+            ? "Monthly view covers the current-week export of the free upstream — past and upcoming events of this calendar week."
+            : undefined,
       updatedAt: Date.now(),
       count: events.length,
       events,

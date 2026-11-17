@@ -339,6 +339,13 @@ function CalendarTabPane({ symbol }: { symbol?: string }) {
         </div>
       )}
 
+      {query.data?.limited && query.data?.note && (
+        <div className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-400">
+          <Info className="mr-1 inline h-3 w-3 text-slate-500" />
+          {query.data.note}
+        </div>
+      )}
+
       <FilterBar
         search={search} onSearch={setSearch}
         currencies={currenciesList} activeCurrencies={currencies} onToggleCurrency={toggleCurrency}
@@ -352,7 +359,14 @@ function CalendarTabPane({ symbol }: { symbol?: string }) {
           The calendar source is unavailable right now (rate limit or network). Nothing is shown rather than guessing — try Refresh in a few minutes.
         </div>
       ) : (
-        <EventTable rows={rows} now={now} onOpen={setDetail} onBell={bell} emptyText="No events match the current filters." />
+        <EventTable
+          rows={rows} now={now} onOpen={setDetail} onBell={bell}
+          emptyText={
+            query.data?.limited && range === "nextweek"
+              ? "Next week's schedule isn't published by the free upstream yet — it appears when ForexFactory rolls the calendar on Sunday."
+              : "No events match the current filters."
+          }
+        />
       )}
 
       <EventDetailDialog ev={detail} onClose={() => setDetail(null)} />

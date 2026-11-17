@@ -21,6 +21,9 @@ interface EconCalResponse {
   ok: boolean;
   stale: boolean;
   range: EconRange;
+  /** true when the range is a windowed view of the only upstream export */
+  limited?: boolean;
+  note?: string;
   updatedAt: number;
   count: number;
   events: CalEventFull[];

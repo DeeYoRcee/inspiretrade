@@ -703,22 +703,33 @@ async function collectNewsCron() {
   const items = merged.filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0).sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 300);
   return { items, calendar: calendar.events || [], ok: !!calendar.ok };
 }
-var FF_RANGE_URL = {
-  thisweek: "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-  nextweek: "https://nfs.faireconomy.media/ff_calendar_nextweek.json",
-  thismonth: "https://nfs.faireconomy.media/ff_calendar_thismonth.json"
-};
+var FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
 var ECON_TTL = 10 * 60 * 1e3;
-var econCache = /* @__PURE__ */ new Map();
-async function fetchEconRange(range) {
-  const hit = econCache.get(range);
+var econRaw = null;
+function filterRange(events, range) {
+  const now = /* @__PURE__ */ new Date();
+  if (range === "nextweek") {
+    const day = now.getUTCDay();
+    const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - day + 1 + (day === 0 ? -7 : 0));
+    const end = monday + 7 * 864e5;
+    return events.filter((e) => e.date >= monday && e.date < end);
+  }
+  if (range === "thismonth") {
+    const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+    return events.filter((e) => e.date >= start && e.date < end);
+  }
+  return events;
+}
+async function fetchEconWeek() {
+  const hit = econRaw;
   if (hit && Date.now() - hit.at < ECON_TTL) return { events: hit.events, ok: hit.ok, stale: false };
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 8e3);
-      const res = await fetch(FF_RANGE_URL[range], {
+      const res = await fetch(FF_URL, {
         headers: {
           "User-Agent": UA2,
           Accept: "application/json, text/plain, */*",
@@ -732,9 +743,9 @@ async function fetchEconRange(range) {
       if (!body.trim().startsWith("[")) throw new Error("rate-limit page");
       const { events, ok } = normalizeFfCalendar(JSON.parse(body));
       if (!ok) throw new Error("unusable payload");
-      econCache.set(range, { at: Date.now(), events, ok });
+      econRaw = { at: Date.now(), events, ok };
       try {
-        rtdb().ref(`econCache/${range}`).set({ at: Date.now(), events: events.slice(0, 400) });
+        rtdb().ref("econCache/thisweek").set({ at: Date.now(), events: events.slice(0, 400) });
       } catch {
       }
       return { events, ok, stale: false };
@@ -743,12 +754,12 @@ async function fetchEconRange(range) {
   }
   if (hit) return { events: hit.events, ok: hit.ok, stale: true };
   try {
-    const snap = await rtdb().ref(`econCache/${range}`).get();
+    const snap = await rtdb().ref("econCache/thisweek").get();
     if (snap.exists()) {
       const data = snap.val();
       const events = Array.isArray(data?.events) ? data.events : [];
       if (events.length > 0) {
-        econCache.set(range, { at: data.at ?? Date.now(), events, ok: true });
+        econRaw = { at: data.at ?? Date.now(), events, ok: true };
         return { events, ok: true, stale: true };
       }
     }
@@ -800,11 +811,11 @@ async function handler(req, res) {
   const econParam = url.searchParams.get("econ");
   if (econParam === "calendar") {
     const range = url.searchParams.get("range") || "thisweek";
-    if (!FF_RANGE_URL[range]) {
+    if (!["thisweek", "nextweek", "thismonth"].includes(range)) {
       return res.status(400).json({ error: "BAD_RANGE", message: "range must be thisweek | nextweek | thismonth" });
     }
-    const data = await fetchEconRange(range);
-    let events = data.events;
+    const data = await fetchEconWeek();
+    let events = filterRange(data.events, range);
     if (TRANSLATE_LANGS.has(lang) && events.length > 0) {
       const titles = await translateTexts(events.map((e) => e.title), lang);
       events = events.map((e, i) => ({ ...e, title: titles[i], titleEn: e.title }));
@@ -814,6 +825,10 @@ async function handler(req, res) {
       ok: data.ok,
       stale: data.stale,
       range,
+      // the upstream publishes only the current-week export — non-week ranges
+      // are windowed views of the same real data, never fabricated
+      limited: range !== "thisweek",
+      note: range === "nextweek" ? "The free upstream publishes only the current week \u2014 next week's schedule appears once ForexFactory rolls the calendar (Sunday)." : range === "thismonth" ? "Monthly view covers the current-week export of the free upstream \u2014 past and upcoming events of this calendar week." : void 0,
       updatedAt: Date.now(),
       count: events.length,
       events,
