@@ -495,6 +495,51 @@ export async function collectNewsCron(): Promise<{ items: NewsItem[]; calendar: 
   return { items, calendar: calendar.events || [], ok: !!calendar.ok };
 }
 
+// ---- full economic calendar (?econ=calendar&range=thisweek|nextweek|thismonth)
+// Phase 5 fundamental suite: ALL impact levels (Low/Medium/High/Holiday) with
+// forecast/previous/actual for the whole week/month — the legacy `calendar`
+// field above stays HIGH-impact-only for the alert engine. Server-side fetch
+// avoids CORS, caches 10 min per range and falls back to the last good
+// payload when the mirror rate-limits (stale:true tells the UI to say so).
+
+import { normalizeFfCalendar, type CalEventFull } from "../../../shared/econ";
+
+const FF_RANGE_URL: Record<string, string> = {
+  thisweek: "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+  nextweek: "https://nfs.faireconomy.media/ff_calendar_nextweek.json",
+  thismonth: "https://nfs.faireconomy.media/ff_calendar_thismonth.json",
+};
+
+const ECON_TTL = 10 * 60 * 1000;
+const econCache = new Map<string, { at: number; events: CalEventFull[]; ok: boolean }>();
+
+async function fetchEconRange(range: string): Promise<{ events: CalEventFull[]; ok: boolean; stale: boolean }> {
+  const hit = econCache.get(range);
+  if (hit && Date.now() - hit.at < ECON_TTL) return { events: hit.events, ok: hit.ok, stale: false };
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(FF_RANGE_URL[range], {
+      headers: {
+        "User-Agent": UA,
+        Accept: "application/json, text/plain, */*",
+        Referer: "https://www.forexfactory.com/calendar",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { events, ok } = normalizeFfCalendar(await res.json());
+    if (!ok) throw new Error("unusable payload");
+    econCache.set(range, { at: Date.now(), events, ok });
+    return { events, ok, stale: false };
+  } catch {
+    // Rate-limited / unreachable — serve the last good payload if we have one
+    if (hit) return { events: hit.events, ok: hit.ok, stale: true };
+    return { events: [], ok: false, stale: false };
+  }
+}
+
 // ---- handler ----------------------------------------------------------------
 
 export default async function handler(req: any, res: any) {
@@ -545,6 +590,32 @@ export default async function handler(req: any, res: any) {
     }
     res.setHeader("Cache-Control", "public, max-age=600, s-maxage=600");
     return res.status(200).json(out);
+  }
+
+  // full economic calendar mode — ?econ=calendar&range=thisweek|nextweek|thismonth
+  // (all impact levels + actual values; ?lang=ru|uz|ar translates titles)
+  const econParam = url.searchParams.get("econ");
+  if (econParam === "calendar") {
+    const range = url.searchParams.get("range") || "thisweek";
+    if (!FF_RANGE_URL[range]) {
+      return res.status(400).json({ error: "BAD_RANGE", message: "range must be thisweek | nextweek | thismonth" });
+    }
+    const data = await fetchEconRange(range);
+    let events = data.events;
+    if (TRANSLATE_LANGS.has(lang) && events.length > 0) {
+      const titles = await translateTexts(events.map((e) => e.title), lang);
+      events = events.map((e, i) => ({ ...e, title: titles[i], titleEn: e.title }));
+    }
+    res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
+    return res.status(200).json({
+      ok: data.ok,
+      stale: data.stale,
+      range,
+      updatedAt: Date.now(),
+      count: events.length,
+      events,
+      source: "ForexFactory weekly calendar (nfs.faireconomy.media)",
+    });
   }
 
   const [settled, calendar] = await Promise.all([

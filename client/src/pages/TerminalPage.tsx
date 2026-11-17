@@ -1,16 +1,20 @@
 /**
  * InspireTrade Terminal — the main trading workspace page.
  *
- * One terminal, four modes (segmented switcher in the toolbar):
+ * One terminal, six modes (segmented switcher in the toolbar):
  *   - LIVE      : server-authoritative virtual trading (unchanged Phase 1-3 UI)
  *   - REPLAY    : historical bar-by-bar replay on real candles with an
  *                 isolated replay wallet (shared bar-step broker)
  *   - BACKTEST  : deterministic strategy testing over real history
  *   - ANALYTICS : statistics computed from the journaled trades
+ *   - CALENDAR  : economic calendar + history + sessions + alerts (Phase 5)
+ *   - NEWS      : live market news feed with categories/search (Phase 5)
  *
  *   - live mode: order ticket (TradingPanel) on the right, TradingBlotter below
  *   - replay mode: replay ticket + replay book + playback controls; the chart
  *     only ever receives bars up to the replay cursor (the future is hidden)
+ *   - live & replay: the EventStrip shows upcoming high-impact releases for
+ *     the instrument's currencies with a countdown and optional warnings
  * Every live mutation hits the server; the client never touches live balances.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -26,6 +30,10 @@ import {
 } from "@/components/terminal/ReplayWorkspace";
 import BacktestWorkspace from "@/components/terminal/BacktestWorkspace";
 import AnalyticsWorkspace from "@/components/terminal/AnalyticsWorkspace";
+import CalendarWorkspace from "@/components/terminal/CalendarWorkspace";
+import NewsWorkspace from "@/components/terminal/NewsWorkspace";
+import EventStrip from "@/components/terminal/EventStrip";
+import { useEventWarning, useEconWarnSettings } from "@/hooks/use-terminal-econ";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -41,12 +49,14 @@ const SYMBOL_KEY = "it_terminal_symbol";
 const TF_KEY = "it_terminal_tf";
 const MODE_KEY = "it_terminal_mode";
 
-type TerminalMode = "live" | "replay" | "backtest" | "analytics";
+type TerminalMode = "live" | "replay" | "backtest" | "analytics" | "calendar" | "news";
 const MODES: { id: TerminalMode; label: string }[] = [
   { id: "live", label: "Live" },
   { id: "replay", label: "Replay" },
   { id: "backtest", label: "Backtest" },
   { id: "analytics", label: "Analytics" },
+  { id: "calendar", label: "Calendar" },
+  { id: "news", label: "News" },
 ];
 
 const ASSET_CLASSES = [
@@ -81,6 +91,14 @@ export default function TerminalPage() {
   const chartBoxRef = useRef<HTMLDivElement | null>(null);
   useReplayJournalAutoSave(r, chartBoxRef);
 
+  // Phase 5: high-impact event data for the strip + the OPT-IN confirmation
+  // guard near major releases (only when the user enables it in the strip)
+  const warnSettings = useEconWarnSettings();
+  const eventWarn = useEventWarning(symbol);
+  const eventGuard = mode === "live" && warnSettings.settings.confirmTrades && eventWarn
+    ? { eventName: eventWarn.title, currency: eventWarn.currency, minutesUntil: eventWarn.minutesUntil }
+    : null;
+
   // Chart price lines: pending-order levels of the selected symbol only.
   // Open positions render as draggable entry/SL/TP trade lines inside the chart.
   const marks = useMemo<PriceMark[]>(() => {
@@ -106,8 +124,8 @@ export default function TerminalPage() {
     ? (replayActive ? r.wallet.positions.filter((p) => p.symbol === r.session?.symbol) as any[] : [])
     : positions.filter((p) => p.symbol === symbol);
 
-  // ---- backtest / analytics: full-area workspaces ---------------------------
-  if (mode === "backtest" || mode === "analytics") {
+  // ---- backtest / analytics / calendar / news: full-area workspaces ---------
+  if (mode === "backtest" || mode === "analytics" || mode === "calendar" || mode === "news") {
     return (
       <div className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
         <Toolbar
@@ -120,7 +138,10 @@ export default function TerminalPage() {
           onNewAccount={() => setNewAccountOpen(true)}
         />
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/30">
-          {mode === "backtest" ? <BacktestWorkspace /> : <AnalyticsWorkspace />}
+          {mode === "backtest" && <BacktestWorkspace />}
+          {mode === "analytics" && <AnalyticsWorkspace />}
+          {mode === "calendar" && <CalendarWorkspace symbol={symbol} />}
+          {mode === "news" && <NewsWorkspace />}
         </div>
         <NewAccountDialog open={newAccountOpen} onClose={() => setNewAccountOpen(false)} />
       </div>
@@ -147,6 +168,8 @@ export default function TerminalPage() {
         account={mode === "live" ? account : null} onReset={resetAccount}
         onNewAccount={() => setNewAccountOpen(true)}
       />
+      {/* Phase 5 event strip: upcoming high-impact releases + relevant news */}
+      <EventStrip symbol={chartSymbol} onOpenCalendar={() => setMode("calendar")} />
       {/* chart + order ticket */}
       <div className="flex min-h-0 flex-[3] gap-2">
         <div ref={chartBoxRef} className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
@@ -170,7 +193,11 @@ export default function TerminalPage() {
           )}
         </div>
         {mode === "live" ? (
-          <TradingPanel symbol={symbol} className="w-[340px] shrink-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60" />
+          <TradingPanel
+            symbol={symbol}
+            eventGuard={eventGuard}
+            className="w-[340px] shrink-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60"
+          />
         ) : (
           <ReplayTicket r={r} />
         )}

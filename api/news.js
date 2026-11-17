@@ -230,6 +230,69 @@ async function musicStream(id, hint) {
   return firstOk(tube);
 }
 
+// shared/econ.ts
+var COUNTRY_META = {
+  US: { currency: "USD", name: "United States", flag: "\u{1F1FA}\u{1F1F8}" },
+  EU: { currency: "EUR", name: "Euro Area", flag: "\u{1F1EA}\u{1F1FA}" },
+  GB: { currency: "GBP", name: "United Kingdom", flag: "\u{1F1EC}\u{1F1E7}" },
+  UK: { currency: "GBP", name: "United Kingdom", flag: "\u{1F1EC}\u{1F1E7}" },
+  JP: { currency: "JPY", name: "Japan", flag: "\u{1F1EF}\u{1F1F5}" },
+  AU: { currency: "AUD", name: "Australia", flag: "\u{1F1E6}\u{1F1FA}" },
+  NZ: { currency: "NZD", name: "New Zealand", flag: "\u{1F1F3}\u{1F1FF}" },
+  CA: { currency: "CAD", name: "Canada", flag: "\u{1F1E8}\u{1F1E6}" },
+  CH: { currency: "CHF", name: "Switzerland", flag: "\u{1F1E8}\u{1F1ED}" },
+  CN: { currency: "CNY", name: "China", flag: "\u{1F1E8}\u{1F1F3}" },
+  DE: { currency: "EUR", name: "Germany", flag: "\u{1F1E9}\u{1F1EA}" },
+  FR: { currency: "EUR", name: "France", flag: "\u{1F1EB}\u{1F1F7}" },
+  IT: { currency: "EUR", name: "Italy", flag: "\u{1F1EE}\u{1F1F9}" },
+  ES: { currency: "EUR", name: "Spain", flag: "\u{1F1EA}\u{1F1F8}" },
+  ALL: { currency: "ALL", name: "Global", flag: "\u{1F30D}" }
+};
+function countryMeta(code) {
+  const key = String(code || "").toUpperCase().slice(0, 3);
+  return COUNTRY_META[key] ?? { currency: key || "\u2014", name: key, flag: "\u{1F3F3}\uFE0F" };
+}
+function normImpact(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s.startsWith("high")) return "High";
+  if (s.startsWith("medium") || s.startsWith("moderate")) return "Medium";
+  if (s.startsWith("non-economic") || s.startsWith("holiday")) return "Holiday";
+  return "Low";
+}
+function normalizeFfEvent(e) {
+  const title = String(e?.title ?? e?.Title ?? "").replace(/\s+/g, " ").trim();
+  const date = new Date(e?.date ?? "").getTime() || 0;
+  const currencyRaw = String(e?.country ?? e?.currency ?? "").toUpperCase().slice(0, 3);
+  if (!title || !date || !currencyRaw) return null;
+  const meta = countryMeta(currencyRaw);
+  const impact = normImpact(String(e?.impact ?? e?.Importance ?? ""));
+  return {
+    id: `${meta.currency}-${date}-${title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 30)}`,
+    title,
+    currency: meta.currency,
+    country: meta.name,
+    flag: meta.flag,
+    date,
+    impact,
+    forecast: String(e?.forecast ?? "").slice(0, 24),
+    previous: String(e?.previous ?? "").slice(0, 24),
+    actual: String(e?.actual ?? "").slice(0, 24)
+  };
+}
+function normalizeFfCalendar(raw) {
+  if (!Array.isArray(raw)) return { events: [], ok: false };
+  const seen = /* @__PURE__ */ new Set();
+  const events = [];
+  for (const row of raw) {
+    const ev = normalizeFfEvent(row);
+    if (!ev || seen.has(ev.id)) continue;
+    seen.add(ev.id);
+    events.push(ev);
+  }
+  events.sort((a, b) => a.date - b.date);
+  return { events, ok: events.length > 0 || Array.isArray(raw) };
+}
+
 // api/_src/news/index.ts
 var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var GOOGLE_NEWS = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:7d")}&hl=en-US&gl=US&ceid=US:en`;
@@ -576,6 +639,38 @@ async function collectNewsCron() {
   const items = merged.filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0).sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 300);
   return { items, calendar: calendar.events || [], ok: !!calendar.ok };
 }
+var FF_RANGE_URL = {
+  thisweek: "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+  nextweek: "https://nfs.faireconomy.media/ff_calendar_nextweek.json",
+  thismonth: "https://nfs.faireconomy.media/ff_calendar_thismonth.json"
+};
+var ECON_TTL = 10 * 60 * 1e3;
+var econCache = /* @__PURE__ */ new Map();
+async function fetchEconRange(range) {
+  const hit = econCache.get(range);
+  if (hit && Date.now() - hit.at < ECON_TTL) return { events: hit.events, ok: hit.ok, stale: false };
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8e3);
+    const res = await fetch(FF_RANGE_URL[range], {
+      headers: {
+        "User-Agent": UA2,
+        Accept: "application/json, text/plain, */*",
+        Referer: "https://www.forexfactory.com/calendar"
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { events, ok } = normalizeFfCalendar(await res.json());
+    if (!ok) throw new Error("unusable payload");
+    econCache.set(range, { at: Date.now(), events, ok });
+    return { events, ok, stale: false };
+  } catch {
+    if (hit) return { events: hit.events, ok: hit.ok, stale: true };
+    return { events: [], ok: false, stale: false };
+  }
+}
 async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") {
     return res.status(405).json({ error: "METHOD_NOT_ALLOWED", message: "GET only" });
@@ -616,6 +711,29 @@ async function handler(req, res) {
     }
     res.setHeader("Cache-Control", "public, max-age=600, s-maxage=600");
     return res.status(200).json(out);
+  }
+  const econParam = url.searchParams.get("econ");
+  if (econParam === "calendar") {
+    const range = url.searchParams.get("range") || "thisweek";
+    if (!FF_RANGE_URL[range]) {
+      return res.status(400).json({ error: "BAD_RANGE", message: "range must be thisweek | nextweek | thismonth" });
+    }
+    const data = await fetchEconRange(range);
+    let events = data.events;
+    if (TRANSLATE_LANGS.has(lang) && events.length > 0) {
+      const titles = await translateTexts(events.map((e) => e.title), lang);
+      events = events.map((e, i) => ({ ...e, title: titles[i], titleEn: e.title }));
+    }
+    res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
+    return res.status(200).json({
+      ok: data.ok,
+      stale: data.stale,
+      range,
+      updatedAt: Date.now(),
+      count: events.length,
+      events,
+      source: "ForexFactory weekly calendar (nfs.faireconomy.media)"
+    });
   }
   const [settled, calendar] = await Promise.all([
     Promise.allSettled(FEEDS.map((f) => fetchFeed(f.url, f))),

@@ -7,6 +7,8 @@ import {
   ALERTS_SETTINGS_EVENT,
   appendAlertLog,
   browserNotify,
+  dueCustomEventAlerts,
+  markCustomEventFired,
   enableBackgroundAlerts,
   enableWebPush,
   isPushSubscribed,
@@ -100,8 +102,9 @@ export function AlertsEngine() {
     const calEvents = data.calendarOk ? data.calendar ?? [] : [];
     const calSeen = getCalSeen();
     if (settings.enabled && settings.calEnabled && settings.calCurrencies.length > 0) {
+      const windowMs = Math.max(1, settings.calMinutesBefore) * 60 * 1000;
       const soon = calEvents.filter(
-        (e) => e.impact === "High" && settings.calCurrencies.includes(e.currency) && !calSeen.has(e.id) && e.date > Date.now() && e.date - Date.now() <= 30 * 60 * 1000,
+        (e) => e.impact === "High" && settings.calCurrencies.includes(e.currency) && !calSeen.has(e.id) && e.date > Date.now() && e.date - Date.now() <= windowMs,
       );
       for (const ev of soon.slice(0, 2)) {
         const mins = Math.max(1, Math.round((ev.date - Date.now()) / 60000));
@@ -113,6 +116,20 @@ export function AlertsEngine() {
     }
     // Mark every already-released/seen event so stale ones never fire later.
     markCalSeen([...calSeen, ...calEvents.map((e) => e.id)]);
+
+    // ---- custom per-event alerts (bell button in the terminal calendar) ----
+    if (settings.enabled) {
+      for (const { alert, key } of dueCustomEventAlerts().slice(0, 3)) {
+        const mins = Math.max(1, Math.round((alert.date - Date.now()) / 60000));
+        toast({
+          title: `${alert.currency} — custom alert, ${mins} min`,
+          description: alert.title,
+        });
+        if (settings.browser) browserNotify(`${alert.currency} — custom alert, ${mins} min`, alert.title);
+        appendAlertLog({ id: key, kind: "calendar", symbol: alert.currency, title: alert.title });
+        markCustomEventFired(key);
+      }
+    }
   }, [data, toast]);
 
   return null;

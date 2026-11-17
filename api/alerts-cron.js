@@ -7640,6 +7640,7 @@ async function collectNewsCron() {
   const items = merged.filter((i) => i.publishedAt >= weekAgo && i.symbols.length > 0).sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 300);
   return { items, calendar: calendar.events || [], ok: !!calendar.ok };
 }
+var ECON_TTL = 10 * 60 * 1e3;
 
 // api/_src/alerts-cron.ts
 var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36";

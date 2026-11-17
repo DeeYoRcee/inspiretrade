@@ -24,6 +24,8 @@ export interface AlertSettings {
   symbols: string[];
   calEnabled: boolean;
   calCurrencies: string[];
+  /** minutes before a matching high-impact event the alert fires (Phase 5: configurable) */
+  calMinutesBefore: number;
   /** Telegram-style browser notifications (Notification API) */
   browser: boolean;
 }
@@ -42,6 +44,7 @@ export const DEFAULT_SETTINGS: AlertSettings = {
   symbols: ["XAUUSD"],
   calEnabled: true,
   calCurrencies: ["USD"],
+  calMinutesBefore: 30,
   browser: false,
 };
 
@@ -71,6 +74,7 @@ export function loadAlertSettings(): AlertSettings {
     symbols: Array.isArray(raw.symbols) ? raw.symbols.filter((s) => (SYMBOLS as readonly string[]).includes(s)) : DEFAULT_SETTINGS.symbols,
     calEnabled: raw.calEnabled ?? DEFAULT_SETTINGS.calEnabled,
     calCurrencies: Array.isArray(raw.calCurrencies) ? raw.calCurrencies : DEFAULT_SETTINGS.calCurrencies,
+    calMinutesBefore: [5, 15, 30, 60].includes(Number(raw.calMinutesBefore)) ? Number(raw.calMinutesBefore) : DEFAULT_SETTINGS.calMinutesBefore,
     browser: raw.browser ?? DEFAULT_SETTINGS.browser,
   };
 }
@@ -271,6 +275,75 @@ export function markCalSeen(ids: string[]): void {
   for (const id of ids) seen.add(id);
   saveSeen(CAL_SEEN_KEY, seen, 200);
   void syncAlertStateToSW();
+}
+
+// ---- custom per-event alerts (Phase 5: "bell" any calendar row) ---------------
+
+export interface EventAlert {
+  id: string; // `${eventId}#${minutesBefore}`
+  eventId: string;
+  title: string;
+  currency: string;
+  date: number; // epoch ms of the release
+  minutesBefore: number;
+}
+
+const EVENT_ALERTS_KEY = "inspire_event_alerts";
+const EVENT_ALERTS_FIRED_KEY = "inspire_event_alerts_fired";
+
+export function loadEventAlerts(): EventAlert[] {
+  const raw = readJson<EventAlert[]>(EVENT_ALERTS_KEY, []);
+  return Array.isArray(raw) ? raw.filter((a) => a && a.id && a.date > 0) : [];
+}
+
+export function saveEventAlerts(alerts: EventAlert[]): void {
+  writeJson(EVENT_ALERTS_KEY, alerts.slice(0, 40));
+  window.dispatchEvent(new CustomEvent(ALERTS_SETTINGS_EVENT));
+}
+
+export function addEventAlert(alert: Omit<EventAlert, "id">): void {
+  const alerts = loadEventAlerts().filter((a) => a.id !== `${alert.eventId}#${alert.minutesBefore}`);
+  alerts.push({ ...alert, id: `${alert.eventId}#${alert.minutesBefore}` });
+  saveEventAlerts(alerts);
+}
+
+export function removeEventAlert(id: string): void {
+  saveEventAlerts(loadEventAlerts().filter((a) => a.id !== id));
+}
+
+function loadFiredEventKeys(): Set<string> {
+  const raw = readJson<string[]>(EVENT_ALERTS_FIRED_KEY, []);
+  return new Set(Array.isArray(raw) ? raw : []);
+}
+
+function markFiredEventKeys(keys: Set<string>): void {
+  writeJson(EVENT_ALERTS_FIRED_KEY, [...keys].slice(-200));
+}
+
+/** Due custom alerts = not yet fired, inside their window, event still ahead. */
+export function dueCustomEventAlerts(now = Date.now()): { alert: EventAlert; key: string }[] {
+  const alerts = loadEventAlerts();
+  const fired = loadFiredEventKeys();
+  const out: { alert: EventAlert; key: string }[] = [];
+  for (const alert of alerts) {
+    const key = alert.id;
+    if (fired.has(key)) continue;
+    const windowStart = alert.date - alert.minutesBefore * 60000;
+    if (now >= windowStart && now < alert.date + 60000) out.push({ alert, key });
+  }
+  // prune stale entries (event > 24h past and fired) to keep storage tidy
+  if (alerts.some((a) => a.date < now - 86400000)) {
+    saveEventAlerts(alerts.filter((a) => a.date >= now - 86400000 || !fired.has(a.id)));
+    const keep = new Set([...fired].filter((k) => alerts.find((a) => a.id === k && a.date >= now - 86400000)));
+    markFiredEventKeys(keep);
+  }
+  return out;
+}
+
+export function markCustomEventFired(key: string): void {
+  const fired = loadFiredEventKeys();
+  fired.add(key);
+  markFiredEventKeys(fired);
 }
 
 // ---- notification log -----------------------------------------------------------

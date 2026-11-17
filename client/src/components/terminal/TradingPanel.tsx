@@ -14,15 +14,27 @@ import { getInstrument } from "@shared/terminal";
 import type { OrderKind } from "@shared/trading-engine";
 import { useTrading } from "@/hooks/use-trading";
 import { usePrice } from "@/lib/price-store";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
+export interface EventGuardInfo {
+  eventName: string;
+  currency: string;
+  minutesUntil: number;
+}
+
 export function TradingPanel({
-  symbol, className,
+  symbol, className, eventGuard,
 }: {
   symbol: string;
   /** legacy prop (unused — the panel subscribes to the price store itself) */
   price?: number | null;
   className?: string;
+  /** OPT-IN warning: set only when the user enables "confirm trades near events" */
+  eventGuard?: EventGuardInfo | null;
 }) {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -72,7 +84,9 @@ export function TradingPanel({
   const estReward = displayEntry && tpPrice ? Math.abs(Number(tpPrice) - displayEntry) * lotsNum * contract : null;
   const rr = estRisk && estReward ? estReward / estRisk : null;
 
-  const submit = async () => {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const doSubmit = async () => {
     if (busy || locked) return;
     const kind: OrderKind = orderKind;
     const res = await placeOrder({
@@ -84,6 +98,17 @@ export function TradingPanel({
       if (res.position) toast({ title: `${side === "buy" ? "BUY" : "SELL"} ${symbol} — filled`, description: `${lotsNum} lots @ ${res.position.entry.toFixed(d)} (server ${res.quote?.source ?? ""})` });
       else if (res.order) toast({ title: `${side === "buy" ? "Buy" : "Sell"} ${orderKind} placed`, description: `${symbol} trigger ${res.order.price}` });
     }
+  };
+
+  // opt-in guard: with "confirm trades near major events" enabled, an order
+  // inside the warning window asks for an explicit confirmation first. Without
+  // that setting this is a no-op — trades are never blocked automatically.
+  const submit = async () => {
+    if (eventGuard) {
+      setConfirmOpen(true);
+      return;
+    }
+    await doSubmit();
   };
 
   const marginRequired = displayEntry != null && inst
@@ -160,6 +185,22 @@ export function TradingPanel({
           </button>
         </div>
       </div>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent className="border-slate-700 bg-slate-900 text-slate-100">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Major event imminent — place this order?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {eventGuard?.currency} "{eventGuard?.eventName}" starts in about {eventGuard?.minutesUntil} min.
+              Spreads can widen and prices can gap around the release. You enabled order confirmations
+              for this window — confirm to send the {side.toUpperCase()} {symbol} order anyway.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setConfirmOpen(false); void doSubmit(); }}>Place order</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
