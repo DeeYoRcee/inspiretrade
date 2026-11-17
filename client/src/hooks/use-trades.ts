@@ -1,19 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ref, get, set, remove, push, update, runTransaction } from "firebase/database";
+import { ref, get, set, remove, push, runTransaction } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "./use-auth";
 import { z } from "zod";
 import { startOfDay, startOfWeek, startOfMonth, startOfYear } from "date-fns";
-
-export const EMOTIONS = [
-  "calm", "confident", "focused", "anxious", "greedy",
-  "fearful", "fomo", "revenge", "bored", "overconfident",
-] as const;
-
-export const MISTAKE_PRESETS = [
-  "No setup", "FOMO entry", "Moved stop loss", "Revenge trade", "Oversized",
-  "Early exit", "Late entry", "No plan", "Overtrading", "Ignored news", "Chased price",
-] as const;
 
 export const tradeSchema = z.object({
   id: z.string(),
@@ -126,30 +116,6 @@ export function useAddTrade() {
       queryClient.invalidateQueries({ queryKey: ["siteStats"] });
     },
   });
-}
-
-export function useUpdateTrade() {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Trade> }) => {
-      if (!user) throw new Error("Not authenticated");
-      const tradeRef = ref(db, `trades/${user.uid}/${id}`);
-      await update(tradeRef, stripUndefined(patch));
-      return { id, ...patch };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["trades", user?.uid] });
-    },
-  });
-}
-
-/** RTDB rejects undefined values — drop them before update(). */
-function stripUndefined(patch: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(patch)) if (v !== undefined) out[k] = v;
-  return out;
 }
 
 export function useDeleteTrade() {

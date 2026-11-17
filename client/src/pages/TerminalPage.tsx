@@ -1,19 +1,31 @@
 /**
  * InspireTrade Terminal — the main trading workspace page.
  *
- *   - live REAL-data chart (PriceChart: candles + volume, position lines)
- *   - order ticket (TradingPanel) on the right
- *   - TradingBlotter below the chart: Positions / Orders / History / Statistics
- *   - account strip driven by the SERVER-authoritative engine (/api/trading)
- * Every mutation hits the server; the client never touches balances.
+ * One terminal, four modes (segmented switcher in the toolbar):
+ *   - LIVE      : server-authoritative virtual trading (unchanged Phase 1-3 UI)
+ *   - REPLAY    : historical bar-by-bar replay on real candles with an
+ *                 isolated replay wallet (shared bar-step broker)
+ *   - BACKTEST  : deterministic strategy testing over real history
+ *   - ANALYTICS : statistics computed from the journaled trades
+ *
+ *   - live mode: order ticket (TradingPanel) on the right, TradingBlotter below
+ *   - replay mode: replay ticket + replay book + playback controls; the chart
+ *     only ever receives bars up to the replay cursor (the future is hidden)
+ * Every live mutation hits the server; the client never touches live balances.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { INSTRUMENTS, TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import { useTrading } from "@/hooks/use-trading";
+import { useReplay } from "@/hooks/use-replay";
 import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
 import { TradingBlotter } from "@/components/terminal/TradingBlotter";
 import { NewAccountDialog } from "@/components/terminal/NewAccountDialog";
+import {
+  ReplayOverlay, ReplayBadge, ReplayControls, ReplayTicket, ReplayBook, useReplayJournalAutoSave,
+} from "@/components/terminal/ReplayWorkspace";
+import BacktestWorkspace from "@/components/terminal/BacktestWorkspace";
+import AnalyticsWorkspace from "@/components/terminal/AnalyticsWorkspace";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -27,6 +39,15 @@ import { cn } from "@/lib/utils";
 
 const SYMBOL_KEY = "it_terminal_symbol";
 const TF_KEY = "it_terminal_tf";
+const MODE_KEY = "it_terminal_mode";
+
+type TerminalMode = "live" | "replay" | "backtest" | "analytics";
+const MODES: { id: TerminalMode; label: string }[] = [
+  { id: "live", label: "Live" },
+  { id: "replay", label: "Replay" },
+  { id: "backtest", label: "Backtest" },
+  { id: "analytics", label: "Analytics" },
+];
 
 const ASSET_CLASSES = [
   { id: "crypto", label: "Crypto" },
@@ -42,6 +63,9 @@ export default function TerminalPage() {
     modifyPosition,
   } = useTrading();
   const [newAccountOpen, setNewAccountOpen] = useState(false);
+  const [mode, setMode] = useState<TerminalMode>(
+    () => (localStorage.getItem(MODE_KEY) as TerminalMode) || "live",
+  );
 
   const [symbol, setSymbol] = useState(() => localStorage.getItem(SYMBOL_KEY) || "BTCUSD");
   const [timeframe, setTimeframe] = useState<Timeframe>(
@@ -50,19 +74,61 @@ export default function TerminalPage() {
 
   useEffect(() => { localStorage.setItem(SYMBOL_KEY, symbol); }, [symbol]);
   useEffect(() => { localStorage.setItem(TF_KEY, timeframe); }, [timeframe]);
+  useEffect(() => { localStorage.setItem(MODE_KEY, mode); }, [mode]);
+
+  // replay state lives at the page level so the chart, ticket and book share it
+  const r = useReplay();
+  const chartBoxRef = useRef<HTMLDivElement | null>(null);
+  useReplayJournalAutoSave(r, chartBoxRef);
 
   // Chart price lines: pending-order levels of the selected symbol only.
   // Open positions render as draggable entry/SL/TP trade lines inside the chart.
   const marks = useMemo<PriceMark[]>(() => {
+    if (mode === "replay") {
+      const out: PriceMark[] = [];
+      for (const o of r.wallet.orders) {
+        out.push({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true });
+      }
+      return out;
+    }
     const out: PriceMark[] = [];
     for (const o of orders) {
       if (o.symbol !== symbol) continue;
       out.push({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true });
     }
     return out;
-  }, [orders, symbol]);
+  }, [mode, orders, symbol, r.wallet.orders]);
 
-  if (loading && !account) {
+  const replayActive = r.phase === "ready";
+  const chartSymbol = mode === "replay" && r.session ? r.session.symbol : symbol;
+  const chartTf = (mode === "replay" && r.session ? r.session.timeframe : timeframe) as Timeframe;
+  const chartPositions = mode === "replay"
+    ? (replayActive ? r.wallet.positions.filter((p) => p.symbol === r.session?.symbol) as any[] : [])
+    : positions.filter((p) => p.symbol === symbol);
+
+  // ---- backtest / analytics: full-area workspaces ---------------------------
+  if (mode === "backtest" || mode === "analytics") {
+    return (
+      <div className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
+        <Toolbar
+          mode={mode} onModeChange={setMode}
+          symbol={symbol} onSymbolChange={setSymbol}
+          timeframe={timeframe} onTimeframeChange={setTimeframe}
+          accounts={[]} activeId={null} onAccountChange={setActiveId}
+          metrics={null} busy={false} onRefresh={refreshNow}
+          account={null} onReset={resetAccount}
+          onNewAccount={() => setNewAccountOpen(true)}
+        />
+        <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/30">
+          {mode === "backtest" ? <BacktestWorkspace /> : <AnalyticsWorkspace />}
+        </div>
+        <NewAccountDialog open={newAccountOpen} onClose={() => setNewAccountOpen(false)} />
+      </div>
+    );
+  }
+
+  // ---- loading gate (live account) ------------------------------------------
+  if (loading && !account && mode === "live") {
     return (
       <div className="flex h-[60vh] items-center justify-center text-sm text-slate-400">
         Loading trading account…
@@ -73,45 +139,67 @@ export default function TerminalPage() {
   return (
     <div className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
       <Toolbar
+        mode={mode} onModeChange={setMode}
         symbol={symbol} onSymbolChange={setSymbol}
         timeframe={timeframe} onTimeframeChange={setTimeframe}
-        accounts={accounts} activeId={account?.id ?? null} onAccountChange={setActiveId}
-        metrics={metrics} busy={busy} onRefresh={refreshNow}
-        account={account} onReset={resetAccount}
+        accounts={mode === "live" ? accounts : []} activeId={account?.id ?? null} onAccountChange={setActiveId}
+        metrics={mode === "live" ? metrics : null} busy={busy} onRefresh={refreshNow}
+        account={mode === "live" ? account : null} onReset={resetAccount}
         onNewAccount={() => setNewAccountOpen(true)}
       />
       {/* chart + order ticket */}
       <div className="flex min-h-0 flex-[3] gap-2">
-        <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
+        <div ref={chartBoxRef} className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
           <PriceChart
-            symbol={symbol}
-            timeframe={timeframe}
+            symbol={chartSymbol}
+            timeframe={chartTf}
             marks={marks}
-            accountId={account?.id ?? null}
-            positions={positions.filter((p) => p.symbol === symbol)}
-            onModifyPosition={modifyPosition}
-            onSymbolChange={setSymbol}
-            onTimeframeChange={setTimeframe}
+            accountId={mode === "live" ? account?.id ?? null : null}
+            positions={chartPositions}
+            onModifyPosition={mode === "live" ? modifyPosition : async (positionId, patch) => { r.modifyPosition(positionId, patch); }}
+            onSymbolChange={mode === "live" ? setSymbol : () => { /* session-bound in replay */ }}
+            onTimeframeChange={mode === "live" ? setTimeframe : () => { /* session-bound in replay */ }}
+            replayBars={mode === "replay" && replayActive ? r.bars : null}
+            replayCursor={mode === "replay" && replayActive ? r.cursor : null}
+            replayForming={mode === "replay" && replayActive ? r.forming?.bar ?? null : null}
+            replayStatus={mode === "replay" && replayActive ? `REPLAY · ${r.session!.timeframe.toUpperCase()} · ${r.playing ? "playing" : "paused"}` : null}
           />
+          {mode === "replay" && replayActive && <ReplayBadge />}
+          {mode === "replay" && !replayActive && (
+            <ReplayOverlay r={r} symbol={symbol} timeframe={timeframe} />
+          )}
         </div>
-        <TradingPanel symbol={symbol} className="w-[340px] shrink-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60" />
+        {mode === "live" ? (
+          <TradingPanel symbol={symbol} className="w-[340px] shrink-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60" />
+        ) : (
+          <ReplayTicket r={r} />
+        )}
       </div>
-      {/* professional blotter below the chart */}
-      <TradingBlotter symbol={symbol} className="h-[260px] shrink-0" />
+      {/* blotter / replay book below the chart */}
+      {mode === "live" ? (
+        <TradingBlotter symbol={symbol} className="h-[260px] shrink-0" />
+      ) : (
+        <>
+          <ReplayControls r={r} />
+          <ReplayBook r={r} />
+        </>
+      )}
       <NewAccountDialog open={newAccountOpen} onClose={() => setNewAccountOpen(false)} />
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Toolbar: instrument picker, timeframes, account strip
+// Toolbar: mode switcher, instrument picker, timeframes, account strip
 // ---------------------------------------------------------------------------
 
 function Toolbar({
+  mode, onModeChange,
   symbol, onSymbolChange, timeframe, onTimeframeChange,
   accounts, activeId, onAccountChange,
   metrics, busy, onRefresh, account, onReset, onNewAccount,
 }: {
+  mode: TerminalMode; onModeChange: (m: TerminalMode) => void;
   symbol: string; onSymbolChange: (s: string) => void;
   timeframe: Timeframe; onTimeframeChange: (tf: Timeframe) => void;
   accounts: { id: string; label: string; type: string }[];
@@ -123,46 +211,70 @@ function Toolbar({
 }) {
   const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const pnl = metrics?.floatingPnl ?? 0;
+  const liveOnly = mode === "live";
+  const showMarkets = mode === "live" || mode === "replay";
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2 py-1.5">
-      <Select value={symbol} onValueChange={onSymbolChange}>
-        <SelectTrigger className="w-[170px] font-semibold">
-          <SelectValue placeholder="Symbol" />
-        </SelectTrigger>
-        <SelectContent>
-          {ASSET_CLASSES.map((c) => (
-            <SelectGroup key={c.id}>
-              <SelectLabel>{c.label}</SelectLabel>
-              {INSTRUMENTS.filter((i) => i.assetClass === c.id).map((i) => (
-                <SelectItem key={i.symbol} value={i.symbol}>
-                  {i.symbol} <span className="ml-1 text-xs text-slate-400">{i.name}</span>
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <div className="flex items-center gap-0.5 rounded-md border border-slate-700/70 p-0.5">
-        {TIMEFRAMES.map((tf) => (
+      {/* terminal mode switcher */}
+      <div className="flex items-center gap-0.5 rounded-md border border-sky-700/60 bg-sky-950/40 p-0.5">
+        {MODES.map((m) => (
           <button
-            key={tf}
-            onClick={() => onTimeframeChange(tf)}
+            key={m.id}
+            onClick={() => onModeChange(m.id)}
             className={cn(
-              "rounded px-2 py-1 text-xs font-medium transition-colors",
-              tf === timeframe ? "bg-sky-600 text-white" : "text-slate-400 hover:text-slate-200",
+              "rounded px-2.5 py-1 text-xs font-semibold transition-colors",
+              mode === m.id ? "bg-sky-600 text-white" : "text-slate-400 hover:text-slate-200",
             )}
           >
-            {tf.toUpperCase()}
+            {m.label}
           </button>
         ))}
       </div>
 
-      <div className="mx-1 hidden h-6 w-px bg-slate-700 sm:block" />
+      {showMarkets && (
+        <>
+          <div className={cn(mode === "replay" && "pointer-events-none opacity-60")} title={mode === "replay" ? "The replay session is bound to the instrument chosen at start" : undefined}>
+            <Select value={symbol} onValueChange={onSymbolChange}>
+              <SelectTrigger className="w-[170px] font-semibold">
+                <SelectValue placeholder="Symbol" />
+              </SelectTrigger>
+              <SelectContent>
+                {ASSET_CLASSES.map((c) => (
+                  <SelectGroup key={c.id}>
+                    <SelectLabel>{c.label}</SelectLabel>
+                    {INSTRUMENTS.filter((i) => i.assetClass === c.id).map((i) => (
+                      <SelectItem key={i.symbol} value={i.symbol}>
+                        {i.symbol} <span className="ml-1 text-xs text-slate-400">{i.name}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-      {/* Account strip — server metrics, refreshed by the 10s heartbeat */}
-      {account && (
+          <div className={cn("flex items-center gap-0.5 rounded-md border border-slate-700/70 p-0.5", mode === "replay" && "pointer-events-none opacity-60")}>
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf}
+                onClick={() => onTimeframeChange(tf)}
+                className={cn(
+                  "rounded px-2 py-1 text-xs font-medium transition-colors",
+                  tf === timeframe ? "bg-sky-600 text-white" : "text-slate-400 hover:text-slate-200",
+                )}
+              >
+                {tf.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {(liveOnly || mode === "replay") && <div className="mx-1 hidden h-6 w-px bg-slate-700 sm:block" />}
+
+      {/* Account strip — server metrics, refreshed by the 10s heartbeat (live only) */}
+      {liveOnly && account && (
         <Select value={activeId ?? undefined} onValueChange={onAccountChange}>
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="Account" />
@@ -175,49 +287,61 @@ function Toolbar({
         </Select>
       )}
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        <Stat label="Balance" value={metrics ? `$${money(metrics.balance)}` : "—"} />
-        <Stat label="Equity" value={metrics ? `$${money(metrics.equity)}` : "—"} />
-        <Stat
-          label="Floating P/L"
-          value={metrics ? `${pnl >= 0 ? "+" : "−"}$${money(Math.abs(pnl))}` : "—"}
-          className={pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-red-400" : undefined}
-        />
-        <Stat label="Used margin" value={metrics ? `$${money(metrics.usedMargin)}` : "—"} />
-        <Stat label="Free margin" value={metrics ? `$${money(metrics.freeMargin)}` : "—"} />
-        {metrics?.marginLevel != null && (
-          <Stat label="Margin level" value={`${metrics.marginLevel.toFixed(0)}%`} />
-        )}
-      </div>
+      {liveOnly && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <Stat label="Balance" value={metrics ? `$${money(metrics.balance)}` : "—"} />
+          <Stat label="Equity" value={metrics ? `$${money(metrics.equity)}` : "—"} />
+          <Stat
+            label="Floating P/L"
+            value={metrics ? `${pnl >= 0 ? "+" : "−"}$${money(Math.abs(pnl))}` : "—"}
+            className={pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-red-400" : undefined}
+          />
+          <Stat label="Used margin" value={metrics ? `$${money(metrics.usedMargin)}` : "—"} />
+          <Stat label="Free margin" value={metrics ? `$${money(metrics.freeMargin)}` : "—"} />
+          {metrics?.marginLevel != null && (
+            <Stat label="Margin level" value={`${metrics.marginLevel.toFixed(0)}%`} />
+          )}
+        </div>
+      )}
+
+      {mode === "replay" && (
+        <div className="text-[10px] text-slate-500">
+          Replay wallet is configured in the chart overlay — the future is always hidden.
+        </div>
+      )}
 
       <div className="ml-auto flex items-center gap-1.5">
-        <Button variant="outline" size="icon" onClick={onNewAccount} title="New DEMO / challenge account">
-          <Plus className="h-4 w-4" />
-        </Button>
-        <Button variant="outline" size="icon" onClick={onRefresh} disabled={busy} title="Refresh account">
-          <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
-        </Button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="outline" size="icon" disabled={busy || !account} title="Reset account to starting balance">
-              <RotateCcw className="h-4 w-4" />
+        {liveOnly && (
+          <>
+            <Button variant="outline" size="icon" onClick={onNewAccount} title="New DEMO / challenge account">
+              <Plus className="h-4 w-4" />
             </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Reset account?</AlertDialogTitle>
-              <AlertDialogDescription>
-                All open positions, orders and history of “{account?.label}” are wiped and the balance
-                goes back to its starting amount. A failed challenge returns to Active status.
-                This cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={onReset}>Reset</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+            <Button variant="outline" size="icon" onClick={onRefresh} disabled={busy} title="Refresh account">
+              <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
+            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="icon" disabled={busy || !account} title="Reset account to starting balance">
+                  <RotateCcw className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Reset account?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    All open positions, orders and history of “{account?.label}” are wiped and the balance
+                    goes back to its starting amount. A failed challenge returns to Active status.
+                    This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={onReset}>Reset</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
+        )}
       </div>
     </div>
   );

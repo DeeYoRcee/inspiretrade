@@ -1,26 +1,33 @@
 /**
- * ReplayPage — interactive historical market replay.
+ * ReplayWorkspace — interactive historical market replay, embedded in the
+ * TERMINAL (mode "replay"). TerminalPage owns the useReplay() state and the
+ * PriceChart; this file provides the pieces that fill the terminal slots:
+ *
+ *   useReplayJournalAutoSave  — hook: auto-journal closed replay trades
+ *   ReplayOverlay             — launcher (start config + saved sessions),
+ *                               rendered over the chart until a session runs
+ *   ReplayControls            — playback bar + isolated-wallet stats
+ *   ReplayTicket              — right-hand order ticket (replay wallet)
+ *   ReplayBook                — bottom blotter (positions/orders/closed)
  *
  * Real candles only (Binance klines / the quotes proxy in period mode), the
  * future is always hidden, and trades run through the same bar-step broker as
  * backtesting (shared/replay-engine) on an ISOLATED replay wallet — the live
- * virtual accounts are never touched. Closed replay trades are auto-journaled
- * with a chart snapshot.
+ * virtual accounts are never touched.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 import { push, ref as dbRef } from "firebase/database";
 import { Play, Pause, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, History as HistoryIcon, Trash2, BookMarked } from "lucide-react";
-import { INSTRUMENTS, getInstrument, type Timeframe } from "@shared/terminal";
+import { getInstrument, type Timeframe } from "@shared/terminal";
 import { positionPnlUsd } from "@shared/trading-engine";
 import { useReplay, REPLAY_SPEEDS, type ReplaySpeed, type ReplaySessionMeta } from "@/hooks/use-replay";
 import { historyAvailability } from "@/lib/history-loader";
-import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { db, auth } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 
-const REPLAY_TFS = ["1m", "5m", "15m", "30m", "1h", "4h"] as const;
+export type ReplayApi = ReturnType<typeof useReplay>;
 
 const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const clockOf = (ms: number | null) => {
@@ -29,118 +36,48 @@ const clockOf = (ms: number | null) => {
   return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 };
 
-export default function ReplayPage() {
-  const r = useReplay();
-  const [chartBox, setChartBox] = useState<HTMLDivElement | null>(null);
-  const savingRef = useRef(new Set<string>());
-
-  // auto-journal closed replay trades (with a chart snapshot + RTDB dedupe marker)
+/** Auto-journal every closed replay trade with a chart snapshot. */
+export function useReplayJournalAutoSave(r: ReplayApi, chartBoxRef: MutableRefObject<HTMLElement | null>) {
+  const savingRef = useState(new Set<string>())[0];
   useEffect(() => {
     if (!r.closedEvents.length) return;
-    for (const ev of r.closedEvents) void saveClosedTrade(ev, chartBox, savingRef.current);
+    for (const ev of r.closedEvents) void saveClosedTrade(ev, chartBoxRef.current, savingRef);
     r.markEventsSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [r.closedEvents]);
-
-  const marks = useMemo<PriceMark[]>(() => {
-    const out: PriceMark[] = [];
-    for (const o of r.wallet.orders) {
-      out.push({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true });
-    }
-    return out;
-  }, [r.wallet.orders]);
-
-  const positions = useMemo(
-    () => r.wallet.positions.filter((p) => p.symbol === r.session?.symbol) as any[],
-    [r.wallet.positions, r.session?.symbol],
-  );
-
-  const progress = r.bars.length > 1 ? (r.cursor / (r.bars.length - 1)) * 100 : 0;
-
-  if (r.phase === "idle" || r.phase === "loading" || r.phase === "error") {
-    return (
-      <div className="mx-auto max-w-5xl space-y-4 p-4">
-        <Header r={r} />
-        <SessionLauncher r={r} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex h-[calc(100dvh-4.25rem)] min-h-[680px] flex-col gap-2 p-2">
-      <Header r={r} compact />
-      <div className="flex min-h-0 flex-[3] gap-2">
-        <div ref={setChartBox} className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
-          <PriceChart
-            symbol={r.session!.symbol}
-            timeframe={r.session!.timeframe}
-            marks={marks}
-            accountId={null}
-            positions={positions}
-            onModifyPosition={async (positionId, patch) => { r.modifyPosition(positionId, patch); }}
-            onSymbolChange={() => { /* locked in replay — session-bound */ }}
-            onTimeframeChange={() => { /* locked in replay */ }}
-            replayBars={r.bars}
-            replayCursor={r.cursor}
-            replayForming={r.forming?.bar ?? null}
-            replayStatus={`REPLAY · ${r.session!.timeframe.toUpperCase()} · ${r.playing ? "playing" : "paused"}`}
-          />
-          <div className="pointer-events-none absolute right-3 top-2 z-10 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-            Replay wallet · future hidden
-          </div>
-        </div>
-        <ReplayTicket r={r} />
-      </div>
-      <ReplayControls r={r} progress={progress} />
-      <ReplayBook r={r} />
-    </div>
-  );
 }
 
-// ---------------------------------------------------------------------------
-// Header + launcher
-// ---------------------------------------------------------------------------
-
-function Header({ r, compact }: { r: ReturnType<typeof useReplay>; compact?: boolean }) {
+/** Chart-area overlay shown until a replay session is running. */
+export function ReplayOverlay({ r, symbol, timeframe }: { r: ReplayApi; symbol: string; timeframe: Timeframe }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
-      <div className="flex items-center gap-2">
-        <HistoryIcon className="h-4 w-4 text-sky-400" />
-        <span className="text-sm font-semibold text-slate-100">Trade Replay</span>
-        {r.session && (
-          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-300">
-            {r.session.symbol} · {r.session.timeframe.toUpperCase()}
-          </span>
+    <div className="absolute inset-0 z-20 flex items-center justify-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-4xl">
+        {r.phase === "loading" ? (
+          <div className="rounded-lg border border-slate-800 bg-slate-900/90 p-6 text-center text-sm text-sky-300">
+            {r.progressText ?? "Loading real history…"}
+          </div>
+        ) : (
+          <ReplayLauncher r={r} symbol={symbol} timeframe={timeframe} />
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        <Stat label="Replay balance" value={`$${money(r.wallet.balance)}`} />
-        <Stat label="Equity" value={`$${money(r.equity)}`} className={r.equity >= r.wallet.balance ? "text-emerald-400" : "text-red-400"} />
-        <Stat label="Floating P/L" value={`$${money(r.equity - r.wallet.balance)}`} />
-        <Stat label="Closed trades" value={String(r.wallet.closed.length)} />
-        <Stat label="Sim clock" value={clockOf(r.simTime)} />
-      </div>
-      {!compact && (
-        <div className="ml-auto text-[10px] leading-tight text-slate-500">
-          Isolated virtual wallet — live trading accounts are never touched.
-        </div>
-      )}
     </div>
   );
 }
 
-function Stat({ label, value, className }: { label: string; value: string; className?: string }) {
+/** "Replay wallet · future hidden" badge pinned to the chart corner. */
+export function ReplayBadge() {
   return (
-    <div className="flex flex-col leading-tight">
-      <span className="text-[10px] uppercase tracking-wide text-slate-500">{label}</span>
-      <span className={cn("font-semibold text-slate-100 tabular-nums", className)}>{value}</span>
+    <div className="pointer-events-none absolute right-3 top-2 z-10 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+      Replay wallet · future hidden
     </div>
   );
 }
 
-function SessionLauncher({ r }: { r: ReturnType<typeof useReplay> }) {
-  const [symbol, setSymbol] = useState("BTCUSD");
-  const [tf, setTf] = useState<Timeframe>("5m");
+// ---------------------------------------------------------------------------
+// Launcher (start config + saved sessions)
+// ---------------------------------------------------------------------------
+
+function ReplayLauncher({ r, symbol, timeframe }: { r: ReplayApi; symbol: string; timeframe: Timeframe }) {
   const [startISO, setStartISO] = useState(() => {
     const d = new Date(Date.now() - 14 * 86400000);
     d.setUTCHours(0, 0, 0, 0);
@@ -149,7 +86,7 @@ function SessionLauncher({ r }: { r: ReturnType<typeof useReplay> }) {
   const [balance, setBalance] = useState(100000);
   const [commission, setCommission] = useState(0);
   const [saved, setSaved] = useState<ReplaySessionMeta[]>([]);
-  const availability = historyAvailability(symbol, tf);
+  const availability = historyAvailability(symbol, timeframe);
   const minISO = availability.maxDaysBack != null
     ? new Date(Date.now() - availability.maxDaysBack * 86400000).toISOString().slice(0, 16)
     : new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 16);
@@ -161,44 +98,23 @@ function SessionLauncher({ r }: { r: ReturnType<typeof useReplay> }) {
       toast({ title: "Start date too far back", description: availability.note, variant: "destructive" });
       return;
     }
-    void r.loadSession(symbol, tf, startISO, balance);
+    void r.loadSession(symbol, timeframe, startISO, balance);
   };
 
   return (
-    <div className="grid gap-4 md:grid-cols-[1fr_260px]">
-      <div className="space-y-4 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+    <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-900/95 p-4 md:grid-cols-[1fr_240px]">
+      <div className="space-y-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-100">Start a replay session</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+            <HistoryIcon className="h-4 w-4 text-sky-400" /> Trade replay — {symbol} · {timeframe.toUpperCase()}
+          </h2>
           <p className="mt-1 text-xs leading-relaxed text-slate-400">
-            Pick an instrument and a past moment — the chart loads real historical candles and reveals
-            them one by one. The future stays hidden. Trades execute on an isolated replay wallet with
-            the same spread / commission engine as live virtual trading.
+            The chart loads real historical candles for {symbol} and reveals them one by one — the
+            future stays hidden. Trades execute on an isolated replay wallet with the same
+            spread / commission engine as live virtual trading.
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Instrument">
-            <select
-              value={symbol} onChange={(e) => setSymbol(e.target.value)}
-              className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            >
-              {INSTRUMENTS.map((i) => (
-                <option key={i.symbol} value={i.symbol}>{i.symbol} — {i.name}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Timeframe">
-            <div className="flex gap-1">
-              {REPLAY_TFS.map((t) => (
-                <button
-                  key={t} onClick={() => setTf(t)}
-                  className={cn(
-                    "flex-1 rounded px-2 py-1.5 text-xs font-medium",
-                    tf === t ? "bg-sky-600 text-white" : "border border-slate-700 text-slate-300 hover:bg-slate-800",
-                  )}
-                >{t.toUpperCase()}</button>
-              ))}
-            </div>
-          </Field>
+        <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Start date & time (UTC)">
             <input
               type="datetime-local" value={startISO} min={minISO}
@@ -206,7 +122,6 @@ function SessionLauncher({ r }: { r: ReturnType<typeof useReplay> }) {
               onChange={(e) => setStartISO(e.target.value)}
               className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
             />
-            <p className="mt-1 text-[10px] text-slate-500">{availability.note}</p>
           </Field>
           <Field label="Starting balance ($)">
             <input
@@ -223,20 +138,16 @@ function SessionLauncher({ r }: { r: ReturnType<typeof useReplay> }) {
             />
           </Field>
         </div>
-        {r.phase === "loading" && (
-          <div className="text-xs text-sky-300">{r.progressText ?? "Loading…"}</div>
-        )}
-        {r.phase === "error" && (
-          <div className="text-xs text-red-400">{r.error}</div>
-        )}
+        <p className="text-[10px] text-slate-500">{availability.note}</p>
+        {r.phase === "error" && <div className="text-xs text-red-400">{r.error}</div>}
         <Button onClick={start} disabled={r.phase === "loading"} className="bg-sky-600 hover:bg-sky-500">
           <Play className="mr-1 h-3.5 w-3.5" /> Start replay
         </Button>
       </div>
-      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
         <h3 className="text-sm font-semibold text-slate-100">Saved sessions</h3>
-        <p className="mt-1 text-[10px] text-slate-500">Stored in Firebase — only you can see them.</p>
-        <div className="mt-3 space-y-2">
+        <p className="mt-1 text-[10px] text-slate-500">Only you can see them.</p>
+        <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
           {saved.length === 0 && <div className="text-xs text-slate-500">No sessions yet.</div>}
           {saved.map((s) => (
             <div key={s.id} className="flex items-center gap-2 rounded-md border border-slate-800 px-2 py-1.5">
@@ -244,7 +155,7 @@ function SessionLauncher({ r }: { r: ReturnType<typeof useReplay> }) {
                 <div className="truncate text-xs font-medium text-slate-200">{s.symbol} · {s.timeframe.toUpperCase()}</div>
                 <div className="text-[10px] text-slate-500">{s.startISO.replace("T", " ").slice(0, 16)} UTC</div>
               </div>
-              <Button size="sm" variant="outline" onClick={() => void r.resumeSession(s).then(() => undefined)}>Resume</Button>
+              <Button size="sm" variant="outline" onClick={() => void r.resumeSession(s)}>Resume</Button>
               <Button size="icon" variant="ghost" title="Delete session" onClick={() => { void r.deleteSession(s.id); setSaved((p) => p.filter((x) => x.id !== s.id)); }}>
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
@@ -269,8 +180,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // Controls bar
 // ---------------------------------------------------------------------------
 
-function ReplayControls({ r, progress }: { r: ReturnType<typeof useReplay>; progress: number }) {
+export function ReplayControls({ r }: { r: ReplayApi }) {
   const [jumpISO, setJumpISO] = useState("");
+  const progress = r.bars.length > 1 ? (r.cursor / (r.bars.length - 1)) * 100 : 0;
   const jumpMin = r.session
     ? new Date(r.bars[0]?.time ? r.bars[0].time * 1000 : Date.now()).toISOString().slice(0, 16)
     : "";
@@ -280,6 +192,29 @@ function ReplayControls({ r, progress }: { r: ReturnType<typeof useReplay>; prog
 
   return (
     <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-100">
+          <HistoryIcon className="h-4 w-4 text-sky-400" /> Replay
+          {r.session && (
+            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-300">
+              {r.session.symbol} · {r.session.timeframe.toUpperCase()}
+            </span>
+          )}
+        </span>
+        <span className="flex flex-col leading-tight">
+          <span className="text-[10px] uppercase tracking-wide text-slate-500">Balance</span>
+          <span className="font-semibold tabular-nums text-slate-100">${money(r.wallet.balance)}</span>
+        </span>
+        <span className="flex flex-col leading-tight">
+          <span className="text-[10px] uppercase tracking-wide text-slate-500">Equity</span>
+          <span className={cn("font-semibold tabular-nums", r.equity >= r.wallet.balance ? "text-emerald-400" : "text-red-400")}>${money(r.equity)}</span>
+        </span>
+        <span className="flex flex-col leading-tight">
+          <span className="text-[10px] uppercase tracking-wide text-slate-500">Closed</span>
+          <span className="font-semibold tabular-nums text-slate-100">{r.wallet.closed.length}</span>
+        </span>
+        <span className="ml-auto text-[10px] text-slate-500">Isolated wallet — live accounts untouched</span>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="icon" variant="outline" title="Jump to start" onClick={() => r.jumpTo(new Date(r.bars[0].time * 1000).toISOString())}>
           <ChevronsLeft className="h-4 w-4" />
@@ -344,7 +279,7 @@ function ReplayControls({ r, progress }: { r: ReturnType<typeof useReplay>; prog
 // Order ticket
 // ---------------------------------------------------------------------------
 
-function ReplayTicket({ r }: { r: ReturnType<typeof useReplay> }) {
+export function ReplayTicket({ r }: { r: ReplayApi }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [kind, setKind] = useState<"market" | "limit" | "stop">("market");
   const [price, setPrice] = useState("");
@@ -461,7 +396,7 @@ function ReplayTicket({ r }: { r: ReturnType<typeof useReplay> }) {
 // Replay book — positions / orders / closed
 // ---------------------------------------------------------------------------
 
-function ReplayBook({ r }: { r: ReturnType<typeof useReplay> }) {
+export function ReplayBook({ r }: { r: ReplayApi }) {
   const [tab, setTab] = useState<"positions" | "orders" | "closed">("positions");
   const tabs = [
     { id: "positions" as const, label: `Positions (${r.wallet.positions.length})` },

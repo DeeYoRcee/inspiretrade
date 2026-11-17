@@ -23,10 +23,6 @@ import ProfilePage from "@/pages/ProfilePage";
 import MarketPage from "@/pages/MarketPage";
 import InventoryPage from "@/pages/InventoryPage";
 import TerminalPage from "@/pages/TerminalPage";
-import ReplayPage from "@/pages/ReplayPage";
-import BacktestPage from "@/pages/BacktestPage";
-import JournalPage from "@/pages/JournalPage";
-import AnalyticsPage from "@/pages/AnalyticsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import WalletPage from "@/pages/WalletPage";
 import AdminPage from "@/pages/AdminPage";
@@ -247,34 +243,6 @@ function TerminalRoute() {
   return <AppLayout><TerminalPage /></AppLayout>;
 }
 
-function ReplayRoute() {
-  const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <AuthPage />;
-  return <AppLayout><ReplayPage /></AppLayout>;
-}
-
-function BacktestRoute() {
-  const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <AuthPage />;
-  return <AppLayout><BacktestPage /></AppLayout>;
-}
-
-function JournalRoute() {
-  const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <AuthPage />;
-  return <AppLayout><JournalPage /></AppLayout>;
-}
-
-function AnalyticsRoute() {
-  const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <AuthPage />;
-  return <AppLayout><AnalyticsPage /></AppLayout>;
-}
-
 function SettingsRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
@@ -333,10 +301,6 @@ function Router() {
         <Route path="/market" component={MarketRoute} />
         <Route path="/inventory" component={InventoryRoute} />
         <Route path="/terminal" component={TerminalRoute} />
-        <Route path="/replay" component={ReplayRoute} />
-        <Route path="/backtest" component={BacktestRoute} />
-        <Route path="/journal" component={JournalRoute} />
-        <Route path="/analytics" component={AnalyticsRoute} />
         <Route path="/settings" component={SettingsRoute} />
         <Route path="/wallet" component={WalletRoute} />
         <Route path="/admin" component={AdminRoute} />

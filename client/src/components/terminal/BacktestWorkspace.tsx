@@ -26,7 +26,7 @@ const REPLAY_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
 const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
-export default function BacktestPage() {
+export default function BacktestWorkspace() {
   const [symbol, setSymbol] = useState("BTCUSD");
   const [tf, setTf] = useState<Timeframe>("1h");
   const [fromDate, setFromDate] = useState(() => dayOf(Date.now() - 90 * 86400000));
@@ -136,7 +136,7 @@ export default function BacktestPage() {
   }, [curveData, result]);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4 p-4">
+    <div className="h-full space-y-3 overflow-y-auto p-3">
       <div className="flex items-center gap-2">
         <FlaskConical className="h-5 w-5 text-sky-400" />
         <div>

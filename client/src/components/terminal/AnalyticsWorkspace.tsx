@@ -31,7 +31,7 @@ const SESSIONS: { id: string; label: string; hours: number[] }[] = [
   { id: "late", label: "Late (21–24 UTC)", hours: [21, 22, 23] },
 ];
 
-export default function AnalyticsPage() {
+export default function AnalyticsWorkspace() {
   const { data: trades = [], isLoading } = useTrades();
   const [period, setPeriod] = useState<"all" | "90d" | "30d">("all");
 
@@ -106,7 +106,7 @@ export default function AnalyticsPage() {
   const hasData = closed.length > 0;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4 p-4">
+    <div className="h-full space-y-3 overflow-y-auto p-3">
       <div className="flex items-center gap-2">
         <BarChart3 className="h-5 w-5 text-sky-400" />
         <div>
