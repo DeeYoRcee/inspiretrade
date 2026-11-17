@@ -81,6 +81,48 @@ export function saveDrawings(uid: string, symbol: string, drawings: Drawing[]): 
   void set(rtdb(`chart/${uid}/drawings/${symbol}`), map).catch(() => { /* LS covers it */ });
 }
 
+// ---------------------------------------------------------------------------
+// Drawing templates — named snapshots of a drawing set, reusable on any symbol
+// ---------------------------------------------------------------------------
+
+export interface DrawingTemplate { name: string; drawings: Drawing[]; savedAt: number }
+
+export function saveDrawingTemplate(uid: string, name: string, drawings: Drawing[]): void {
+  const tpl: DrawingTemplate = { name, drawings, savedAt: Date.now() };
+  try {
+    const raw = localStorage.getItem(`it_chart_templates_${uid}`);
+    const map = raw ? (JSON.parse(raw) as Record<string, DrawingTemplate>) : {};
+    map[name] = tpl;
+    localStorage.setItem(`it_chart_templates_${uid}`, JSON.stringify(map));
+  } catch { /* quota — RTDB still gets it */ }
+  void set(rtdb(`chart/${uid}/templates/${name}`), tpl).catch(() => { /* LS covers it */ });
+}
+
+export async function loadDrawingTemplates(uid: string): Promise<DrawingTemplate[]> {
+  try {
+    const snap = await get(rtdb(`chart/${uid}/templates`));
+    const map = (snap.val() || {}) as Record<string, DrawingTemplate>;
+    const remote = Object.values(map);
+    if (remote.length) return remote;
+  } catch { /* offline / rules — fall through to LS */ }
+  try {
+    const raw = localStorage.getItem(`it_chart_templates_${uid}`);
+    return raw ? Object.values(JSON.parse(raw) as Record<string, DrawingTemplate>) : [];
+  } catch { return []; }
+}
+
+export function deleteDrawingTemplate(uid: string, name: string): void {
+  try {
+    const raw = localStorage.getItem(`it_chart_templates_${uid}`);
+    if (raw) {
+      const map = JSON.parse(raw) as Record<string, DrawingTemplate>;
+      delete map[name];
+      localStorage.setItem(`it_chart_templates_${uid}`, JSON.stringify(map));
+    }
+  } catch { /* ignore */ }
+  void remove(rtdb(`chart/${uid}/templates/${name}`)).catch(() => { /* ignore */ });
+}
+
 export function clearDrawings(uid: string, symbol: string): void {
   localDel(uid, "drawings", symbol);
   void remove(rtdb(`chart/${uid}/drawings/${symbol}`)).catch(() => { /* ignore */ });

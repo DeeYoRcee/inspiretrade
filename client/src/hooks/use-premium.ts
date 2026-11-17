@@ -19,6 +19,8 @@ export interface UserProfile {
   usernames?: Record<string, { username: string; at: number }>;
   /** profile video (CEO-only for now) — catalog id or a direct video URL */
   profileVideo?: string | null;
+  /** uploaded avatar video (Telegram-style looping profile video) — data URL */
+  avatarVideo?: string | null;
   /** social handles shown on the profile + public profile */
   social?: { instagram?: string; telegram?: string; x?: string };
 }

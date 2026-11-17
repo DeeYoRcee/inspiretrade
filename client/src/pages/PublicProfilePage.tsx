@@ -20,12 +20,17 @@ export default function PublicProfilePage({ username }: { username: string }) {
 
       <header className="relative z-10 border-b border-border/50 bg-background/75 backdrop-blur-xl print:hidden">
         <div className="container mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
-          <Link href="/" className="flex items-center gap-2.5 text-sm font-semibold">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <Globe2 className="h-4 w-4" />
-            </span>
-            <span>InspireTrade</span>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" asChild className="rounded-xl" aria-label={t("backToDashboard")}>
+              <Link href="/dashboard"><ArrowLeft className="h-4 w-4" /></Link>
+            </Button>
+            <Link href="/" className="flex items-center gap-2.5 text-sm font-semibold">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Globe2 className="h-4 w-4" />
+              </span>
+              <span>InspireTrade</span>
+            </Link>
+          </div>
           <Button variant="outline" size="sm" className="gap-2 rounded-xl" onClick={saveAsPdf}>
             <Download className="h-4 w-4" />
             <span className="hidden sm:inline">{t("publicProfilePrint")}</span>

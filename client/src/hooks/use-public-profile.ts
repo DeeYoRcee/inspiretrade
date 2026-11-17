@@ -95,7 +95,7 @@ export function useSavePublicProfile() {
         // (users/{uid}/profile/avatar) with the auth photoURL as fallback,
         // plus held usernames / profile video / social handles
         let avatar: string | null = null;
-        let profileFields: { usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null } = {};
+        let profileFields: { usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } = {};
         try {
           const { get: rtdbGet } = await import("firebase/database");
           const profileSnap = await rtdbGet(ref(db, `users/${user.uid}/profile`));
@@ -104,6 +104,7 @@ export function useSavePublicProfile() {
           if (p.usernames && typeof p.usernames === "object") profileFields.usernames = p.usernames;
           if (p.social && typeof p.social === "object") profileFields.social = p.social;
           if (typeof p.profileVideo === "string") profileFields.profileVideo = p.profileVideo;
+          if (typeof p.avatarVideo === "string" && p.avatarVideo) profileFields.avatarVideo = p.avatarVideo;
         } catch { /* profile read is best-effort */ }
         if (!avatar) avatar = user.photoURL || null;
 

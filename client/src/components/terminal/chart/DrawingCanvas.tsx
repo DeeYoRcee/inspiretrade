@@ -13,8 +13,9 @@
  */
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import {
-  hitTest, makeDrawing, renderDrawing, setupCanvas,
-  TOOL_POINT_COUNT, drawHandle, type Drawing, type DrawingPoint, type DrawingType, type XY,
+  hitTest, makeDrawing, renderDrawing, setupCanvas, regressionLine,
+  TEXT_TOOLS, CLICK_COLLECT_TOOLS, TOOL_POINT_COUNT, TOOL_LABELS, drawHandle,
+  type Drawing, type DrawingPoint, type DrawingType, type XY,
 } from "@/lib/drawings";
 
 export interface TradeLine {
@@ -74,6 +75,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   tfSeconds?: number;
   /** instrument digits — measure tool formats the price delta */
   digits?: number;
+  /** live bar series — regression tool computes the least-squares line from it */
+  getBars?: () => { time: number; close: number }[];
+  /** CSS cursor for the idle state (respects the Cross/Dot/Arrow pointer mode) */
+  cursorFallback?: string;
   /** LOCK mode: drawings can be created but never selected/moved/deleted */
   locked?: boolean;
   /** global visibility toggle — hides every drawing (render + hit-test) */
@@ -81,7 +86,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
   onSelect, onDelete, onEdit, onContextMenu, tradeLines, onTradeLineMove,
-  tfSeconds = 0, digits = 2, locked = false, hiddenAll = false,
+  tfSeconds = 0, digits = 2, locked = false, hiddenAll = false, getBars, cursorFallback = "default",
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -108,6 +113,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   lockedRef.current = locked;
   const hiddenAllRef = useRef(hiddenAll);
   hiddenAllRef.current = hiddenAll;
+  const cursorFallbackRef = useRef(cursorFallback);
+  cursorFallbackRef.current = cursorFallback;
 
   /** measure tool summary: Δprice (Δ%) over N bars — computed in MARKET space */
   const measureLabel = (a: DrawingPoint, b: DrawingPoint): string => {
@@ -148,6 +155,46 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       for (const d of drawingsRef.current) {
         const pts = toCanvas(d);
         if (pts.length) renderDrawing(ctx, d, pts, W, H, d.id === selectedRef.current);
+        // regression: least-squares line over the closes inside the selected span
+        if (d.type === "regression" && getBars && d.points.length === 2) {
+          const bars = getBars();
+          const t1 = Math.min(d.points[0].time, d.points[1].time);
+          const t2 = Math.max(d.points[0].time, d.points[1].time);
+          const sample: XY[] = [];
+          for (const b of bars) {
+            if (b.time < t1 || b.time > t2) continue;
+            const x = conv.x(b.time);
+            const y = conv.y(b.close);
+            if (x != null && y != null) sample.push({ x, y });
+          }
+          const fit = regressionLine(sample);
+          if (fit && sample.length >= 2) {
+            const x0 = sample[0].x;
+            const x1 = sample[sample.length - 1].x;
+            const y0 = fit.m * x0 + fit.b;
+            const y1 = fit.m * x1 + fit.b;
+            ctx.save();
+            ctx.strokeStyle = d.style.color;
+            ctx.lineWidth = d.style.width;
+            ctx.setLineDash(d.style.dash === "dashed" ? [6, 4] : d.style.dash === "dotted" ? [2, 3] : []);
+            ctx.beginPath();
+            ctx.moveTo(x0, y0);
+            ctx.lineTo(x1, y1);
+            ctx.stroke();
+            // Pearson R label
+            const n = sample.length;
+            const mx = sample.reduce((s, q) => s + q.x, 0) / n;
+            const my = sample.reduce((s, q) => s + q.y, 0) / n;
+            let sxy = 0, sxx = 0, syy = 0;
+            for (const q of sample) { sxy += (q.x - mx) * (q.y - my); sxx += (q.x - mx) ** 2; syy += (q.y - my) ** 2; }
+            const r = sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
+            ctx.setLineDash([]);
+            ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+            ctx.fillStyle = d.style.color;
+            ctx.fillText(`R² ${(r * r).toFixed(3)} · n ${n}`, x1 + 6, y1 - 6);
+            ctx.restore();
+          }
+        }
       }
     }
 
@@ -277,10 +324,17 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         ? drag.drawing
         : makeDrawing(tool, []);
       drawing.points = [...drawing.points, { time, price }];
-      if (drawing.points.length >= TOOL_POINT_COUNT[tool]) {
-        // text asks for its content immediately after the single click
-        if (tool === "text") {
-          const text = window.prompt("Annotation text", drawing.text || "") ?? "";
+      const wanted = TOOL_POINT_COUNT[tool];
+      // click-collected tools (path/polyline) wait for double-click / Enter
+      if (CLICK_COLLECT_TOOLS.has(tool)) {
+        dragRef.current = { mode: "draw", drawing };
+        redraw();
+        return;
+      }
+      if (wanted >= 0 && drawing.points.length >= wanted) {
+        // annotation tools ask for their content immediately after the last click
+        if (TEXT_TOOLS.has(tool)) {
+          const text = window.prompt("Text", drawing.text || "") ?? "";
           if (!text.trim()) { dragRef.current = null; redraw(); return; }
           drawing.text = text.trim().slice(0, 200);
         }
@@ -332,7 +386,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const drag = dragRef.current;
     const target = attachEl();
     if (!drag) {
-      const c = cursorFor(p);
+      const c = cursorFor(p) === "default" ? cursorFallbackRef.current : cursorFor(p);
       if (target && target.style.cursor !== c) target.style.cursor = c;
       // hover re-render is throttled by rAF below
       scheduleHover();
@@ -340,8 +394,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
     e.stopPropagation();
     if (drag.mode === "draw") {
-      // brush is freehand: append a point every ≥4px of travel (capped at 800)
-      if (drag.drawing?.type === "brush" && toolRef.current === "brush") {
+      // brush/highlighter are freehand: append a point every ≥4px of travel (capped at 800)
+      if (drag.drawing && toolRef.current && TOOL_POINT_COUNT[toolRef.current] === -1 && toolRef.current === drag.drawing.type) {
         const time = conv.time(p.x);
         const price = conv.price(p.y);
         const pts = drag.drawing.points;
@@ -419,7 +473,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
   const onPointerUpCapture = (e: PointerEvent) => {
     const drag = dragRef.current;
-    if (drag?.mode === "draw" && drag.drawing?.type === "brush") {
+    if (drag?.mode === "draw" && drag.drawing && toolRef.current && TOOL_POINT_COUNT[toolRef.current] === -1) {
       // freehand stroke ends → commit (or discard a stray dot)
       e.stopPropagation();
       const d = drag.drawing;
@@ -439,6 +493,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   };
 
   const onDoubleClickCapture = (e: MouseEvent) => {
+    // finishing a click-collected multi-point drawing wins over everything
+    const drag = dragRef.current;
+    if (drag?.mode === "draw" && drag.drawing && toolRef.current && CLICK_COLLECT_TOOLS.has(toolRef.current)) {
+      const d = drag.drawing;
+      dragRef.current = null;
+      e.stopPropagation();
+      e.preventDefault();
+      if (d.points.length >= 2) {
+        onChange([...drawingsRef.current, d]);
+        onSelect(d.id);
+      }
+      onToolCommitted();
+      redraw();
+      return;
+    }
     const conv = converterRef.current;
     if (!conv) return;
     if (lockedRef.current || hiddenAllRef.current) return;
@@ -488,6 +557,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         toolRef.current = null;
         onSelect(null);
         redraw();
+      }
+      // Enter finishes a click-collected multi-point drawing (path/polyline)
+      if (e.key === "Enter") {
+        const drag = dragRef.current;
+        if (drag?.mode === "draw" && drag.drawing && toolRef.current && CLICK_COLLECT_TOOLS.has(toolRef.current)) {
+          e.preventDefault();
+          const d = drag.drawing;
+          dragRef.current = null;
+          if (d.points.length >= 2) {
+            onChange([...drawingsRef.current, d]);
+            onSelect(d.id);
+          }
+          onToolCommitted();
+          redraw();
+        }
       }
     };
     window.addEventListener("keydown", onKey);

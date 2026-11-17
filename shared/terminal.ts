@@ -30,14 +30,22 @@ export interface InstrumentSpec {
   binance?: string;
   /** Yahoo Finance symbol when feed = "quotes" */
   yahoo?: string;
+  /** human-readable provider label shown in the chart badge (defaults by feed) */
+  feedLabel?: string;
 }
 
 export const INSTRUMENTS: InstrumentSpec[] = [
   // ---- Metals -------------------------------------------------------------
-  { symbol: "XAUUSD", name: "Gold / USD", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F" },
+  // Gold now streams REAL-TIME from Binance: PAXG/USDT (each token = 1 troy oz
+  // of London-vault gold; trades 24/7 within ~0.3% of XAU spot). Yahoo's GC=F
+  // futures are kept only as provenance — every consumer routes by `feed`,
+  // so chart, watchlist and the server engine all share this one live source.
+  { symbol: "XAUUSD", name: "Gold / USD", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "binance", binance: "PAXGUSDT", yahoo: "GC=F", feedLabel: "Binance · PAXG/USDT (tokenized gold)" },
   { symbol: "XAGUSD", name: "Silver / USD", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5000, quote: "USD", feed: "quotes", yahoo: "SI=F" },
   // ---- Forex majors -------------------------------------------------------
-  { symbol: "EURUSD", name: "Euro / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "EURUSD=X" },
+  // Euro streams REAL-TIME from Binance: EUR/USDT tracks the EURUSD spot rate
+  // (USDT ≈ USD; basis typically <0.1%). Replaces Yahoo's delayed FX candles.
+  { symbol: "EURUSD", name: "Euro / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "binance", binance: "EURUSDT", yahoo: "EURUSD=X", feedLabel: "Binance · EUR/USDT" },
   { symbol: "GBPUSD", name: "British Pound / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X" },
   { symbol: "USDJPY", name: "US Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 100000, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X" },
   { symbol: "AUDUSD", name: "Australian Dollar / USD", assetClass: "forex", digits: 5, pipSize: 0.0001, contractSize: 100000, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X" },

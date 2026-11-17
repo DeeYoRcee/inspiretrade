@@ -340,10 +340,16 @@ init_firebase();
 // shared/terminal.ts
 var INSTRUMENTS = [
   // ---- Metals -------------------------------------------------------------
-  { symbol: "XAUUSD", name: "Gold / USD", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F" },
+  // Gold now streams REAL-TIME from Binance: PAXG/USDT (each token = 1 troy oz
+  // of London-vault gold; trades 24/7 within ~0.3% of XAU spot). Yahoo's GC=F
+  // futures are kept only as provenance — every consumer routes by `feed`,
+  // so chart, watchlist and the server engine all share this one live source.
+  { symbol: "XAUUSD", name: "Gold / USD", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "binance", binance: "PAXGUSDT", yahoo: "GC=F", feedLabel: "Binance \xB7 PAXG/USDT (tokenized gold)" },
   { symbol: "XAGUSD", name: "Silver / USD", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5e3, quote: "USD", feed: "quotes", yahoo: "SI=F" },
   // ---- Forex majors -------------------------------------------------------
-  { symbol: "EURUSD", name: "Euro / USD", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "EURUSD=X" },
+  // Euro streams REAL-TIME from Binance: EUR/USDT tracks the EURUSD spot rate
+  // (USDT ≈ USD; basis typically <0.1%). Replaces Yahoo's delayed FX candles.
+  { symbol: "EURUSD", name: "Euro / USD", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "binance", binance: "EURUSDT", yahoo: "EURUSD=X", feedLabel: "Binance \xB7 EUR/USDT" },
   { symbol: "GBPUSD", name: "British Pound / USD", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X" },
   { symbol: "USDJPY", name: "US Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 1e5, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X" },
   { symbol: "AUDUSD", name: "Australian Dollar / USD", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X" },
@@ -729,7 +735,7 @@ async function fetchCryptoMids(binanceSyms) {
   }
   throw lastErr ?? new Error("binance unreachable");
 }
-var GOLD_CODES = { XAUUSD: "XAU", XAGUSD: "XAG" };
+var GOLD_CODES = { XAGUSD: "XAG" };
 async function fetchSpot(code) {
   const res = await fetchJson(`https://api.gold-api.com/price/${code}`);
   const price = Number(res?.price);

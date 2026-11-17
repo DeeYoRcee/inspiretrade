@@ -9,8 +9,23 @@
  */
 
 export type DrawingType =
-  | "trend" | "hline" | "vline" | "rect" | "ray" | "extended"
-  | "fib-retracement" | "fib-extension" | "channel" | "text" | "measure" | "brush";
+  // trend lines
+  | "trend" | "hline" | "vline" | "ray" | "extended" | "info-line" | "trend-angle"
+  | "hray" | "hchannel" | "channel" | "regression" | "dchannel"
+  // fibonaccis
+  | "fib-retracement" | "fib-extension" | "fib-trend-ext" | "fib-channel"
+  | "fib-timezone" | "fib-fan" | "fib-arc" | "fib-circle" | "fib-spiral" | "fib-wedge"
+  // shapes & freehand
+  | "rect" | "rrect" | "triangle" | "circle" | "ellipse" | "path" | "polyline"
+  | "curve" | "double-curve" | "arc" | "brush" | "highlighter" | "arrow"
+  | "arrow-marker" | "callout" | "price-label"
+  // annotations
+  | "text" | "anchored-text" | "note" | "price-note" | "signpost" | "comment"
+  | "flag" | "price-range" | "date-range" | "datetime-range"
+  // measurement & positions
+  | "measure" | "long-position" | "short-position" | "forecast"
+  // patterns
+  | "elliott-impulse" | "elliott-correction" | "head-shoulders" | "xabcd" | "abcd" | "three-drives";
 
 export interface DrawingPoint { time: number; price: number }
 
@@ -19,7 +34,12 @@ export interface DrawingStyle {
   width: number;
   dash: "solid" | "dashed" | "dotted";
   fontSize: number;
+  /** shape fill — undefined = no fill (outline only) */
+  fill?: { color: string; opacity: number };
 }
+
+/** one configurable Fibonacci level (ratio is the multiple of the measured span) */
+export interface FibLevel { ratio: number; show: boolean; color?: string }
 
 export interface Drawing {
   id: string;
@@ -32,6 +52,8 @@ export interface Drawing {
   locked?: boolean;
   /** true → not rendered and not hit-tested (visibility toggle) */
   hidden?: boolean;
+  /** Fibonacci tools: per-level overrides — falls back to the tool defaults */
+  levels?: FibLevel[];
 }
 
 export const FIB_RETRACEMENT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -48,13 +70,79 @@ export function makeDrawing(type: DrawingType, points: DrawingPoint[], text?: st
   return { id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`, type, points, style: { ...DEFAULT_STYLE }, text };
 }
 
-/** Points required by each tool (clicked before the drawing commits). */
+/**
+ * Points required by each tool (clicked before the drawing commits).
+ * -1 = collected while dragging (brush family) — commit on pointer-up.
+ * -2 = click-collected — commit on double-click / Enter, cancel on Escape.
+ */
 export const TOOL_POINT_COUNT: Record<DrawingType, number> = {
-  trend: 2, hline: 1, vline: 1, rect: 2, ray: 2, extended: 2,
-  "fib-retracement": 2, "fib-extension": 3, channel: 3, text: 1, measure: 2,
-  /** freehand: points collected until the pointer is released */
-  brush: -1,
+  trend: 2, hline: 1, vline: 1, ray: 2, extended: 2,
+  "info-line": 2, "trend-angle": 2, hray: 2, hchannel: 3, channel: 3, regression: 2, dchannel: 4,
+  "fib-retracement": 2, "fib-extension": 3, "fib-trend-ext": 3, "fib-channel": 3,
+  "fib-timezone": 2, "fib-fan": 2, "fib-arc": 2, "fib-circle": 2, "fib-spiral": 2, "fib-wedge": 3,
+  rect: 2, rrect: 3, triangle: 3, circle: 2, ellipse: 2,
+  path: -2, polyline: -2, curve: 3, "double-curve": 4, arc: 3,
+  brush: -1, highlighter: -1, arrow: 2, "arrow-marker": 2, callout: 2, "price-label": 1,
+  text: 1, "anchored-text": 1, note: 1, "price-note": 1, signpost: 1, comment: 1, flag: 1,
+  "price-range": 2, "date-range": 2, "datetime-range": 2,
+  measure: 2, "long-position": 3, "short-position": 3, forecast: 3,
+  "elliott-impulse": 6, "elliott-correction": 4, "head-shoulders": 7,
+  xabcd: 5, abcd: 4, "three-drives": 6,
 };
+
+/** Per-point labels for pattern/fib/position tools (rendered at every anchor). */
+export const TOOL_LABELS: Partial<Record<DrawingType, string[]>> = {
+  "elliott-impulse": ["0", "1", "2", "3", "4", "5"],
+  "elliott-correction": ["0", "A", "B", "C"],
+  "head-shoulders": ["LS", "", "H", "", "RS", "", ""],
+  xabcd: ["X", "A", "B", "C", "D"],
+  abcd: ["A", "B", "C", "D"],
+  "three-drives": ["1", "A", "2", "B", "3", "C"],
+  "long-position": ["Entry", "Stop", "Target"],
+  "short-position": ["Entry", "Stop", "Target"],
+};
+
+/** Tools that ask for their text content on commit (single prompt, like TV). */
+export const TEXT_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
+  "text", "anchored-text", "note", "price-note", "signpost", "comment", "flag", "callout",
+]);
+
+/** Click-collected multi-point tools — commit on double-click / Enter. */
+export const CLICK_COLLECT_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>(["path", "polyline"]);
+
+/** Fib tools whose defaults can be customized per level. */
+export const FIB_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
+  "fib-retracement", "fib-extension", "fib-trend-ext", "fib-channel",
+  "fib-timezone", "fib-fan", "fib-arc", "fib-circle", "fib-spiral", "fib-wedge",
+]);
+
+/** Default Fibonacci level sets per tool (multiples of the measured span). */
+export const FIB_DEFAULT_LEVELS: Partial<Record<DrawingType, number[]>> = {
+  "fib-retracement": [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1],
+  "fib-extension": [0, 0.618, 1, 1.618, 2.618],
+  "fib-trend-ext": [0, 0.618, 1, 1.618, 2.618],
+  "fib-channel": [0.382, 0.5, 0.618, 1, 1.618],
+  "fib-timezone": [0, 1, 1.618, 2.618, 4.236],
+  "fib-fan": [0.236, 0.382, 0.5, 0.618, 0.786],
+  "fib-arc": [0.236, 0.382, 0.5, 0.618, 1],
+  "fib-circle": [0.236, 0.382, 0.5, 0.618, 1],
+  "fib-spiral": [0.618, 1, 1.618, 2.618],
+  "fib-wedge": [0.382, 0.5, 0.618],
+};
+
+/** Effective levels for a drawing: per-drawing overrides or the tool defaults. */
+export function levelsFor(d: Drawing): FibLevel[] {
+  if (d.levels?.length) return d.levels;
+  const defaults = FIB_DEFAULT_LEVELS[d.type];
+  return defaults ? defaults.map((ratio) => ({ ratio, show: true })) : [];
+}
+
+/** Risk/reward for the position tools: (target − entry) / (entry − stop). */
+export function riskReward(entry: number, stop: number, target: number): { rr: number; risk: number; reward: number } {
+  const risk = Math.abs(entry - stop);
+  const reward = Math.abs(target - entry);
+  return { rr: risk > 0 ? reward / risk : 0, risk, reward };
+}
 
 // ---------------------------------------------------------------------------
 // Geometry helpers (canvas-space)
@@ -93,6 +181,10 @@ export function extendedToEdge(a: XY, b: XY, w: number, h: number): { a: XY; b: 
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   if (dx === 0 && dy === 0) return { a, b };
+  // axis-aligned lines never intersect one of the clip axes — handle them
+  // directly (the general clip below left tMin at −Infinity → NaN hit-tests)
+  if (dx === 0) return { a: { x: a.x, y: 0 }, b: { x: a.x, y: h } };
+  if (dy === 0) return { a: { x: 0, y: a.y }, b: { x: w, y: a.y } };
   // parametrize P(t) = a + t·d; find the t-interval that stays inside the box
   let tMin = -Infinity;
   let tMax = Infinity;
@@ -122,6 +214,69 @@ export function channelOffset(a: XY, b: XY, c: XY): { from: XY; to: XY } {
   const ox = c.x - proj.x;
   const oy = c.y - proj.y;
   return { from: { x: a.x + ox, y: a.y + oy }, to: { x: b.x + ox, y: b.y + oy } };
+}
+
+/** Arrowhead at the END of segment a→b (returns the two wing points). */
+export function arrowHead(a: XY, b: XY, size = 10): { w1: XY; w2: XY } {
+  const ang = Math.atan2(b.y - a.y, b.x - a.x);
+  const spread = Math.PI / 7;
+  return {
+    w1: { x: b.x - size * Math.cos(ang - spread), y: b.y - size * Math.sin(ang - spread) },
+    w2: { x: b.x - size * Math.cos(ang + spread), y: b.y - size * Math.sin(ang + spread) },
+  };
+}
+
+/** Least-squares regression line (slope/intercept in canvas space) over bars. */
+export function regressionLine(points: XY[]): { m: number; b: number } | null {
+  const n = points.length;
+  if (n < 2) return null;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const q of points) { sx += q.x; sy += q.y; sxx += q.x * q.x; sxy += q.x * q.y; }
+  const den = n * sxx - sx * sx;
+  if (den === 0) return null;
+  const m = (n * sxy - sx * sy) / den;
+  return { m, b: (sy - m * sx) / n };
+}
+
+/** Quadratic bezier point at t (P0, control C, P1). */
+export function bezierPoint(p0: XY, c: XY, p1: XY, t: number): XY {
+  const u = 1 - t;
+  return {
+    x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x,
+    y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y,
+  };
+}
+
+/** Polygon polyline of a quadratic bezier (P0 → control C → P1). */
+export function bezierPolyline(p0: XY, c: XY, p1: XY, steps = 24): XY[] {
+  const out: XY[] = [];
+  for (let i = 0; i <= steps; i++) out.push(bezierPoint(p0, c, p1, i / steps));
+  return out;
+}
+
+/** Circumcenter of three points (for the 3-point arc tool); null if colinear. */
+export function circumcenter(a: XY, b: XY, c: XY): { x: number; y: number; r: number } | null {
+  const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+  if (Math.abs(d) < 1e-9) return null;
+  const ux = ((a.x ** 2 + a.y ** 2) * (b.y - c.y) + (b.x ** 2 + b.y ** 2) * (c.y - a.y) + (c.x ** 2 + c.y ** 2) * (a.y - b.y)) / d;
+  const uy = ((a.x ** 2 + a.y ** 2) * (c.x - b.x) + (b.x ** 2 + b.y ** 2) * (a.x - c.x) + (c.x ** 2 + c.y ** 2) * (b.x - a.x)) / d;
+  return { x: ux, y: uy, r: Math.hypot(a.x - ux, a.y - uy) };
+}
+
+/** Inside test for an axis-aligned ellipse defined by corner points a, b. */
+export function pointInEllipse(p: XY, a: XY, b: XY, pad = 0): boolean {
+  const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+  const rx = Math.abs(b.x - a.x) / 2 + pad, ry = Math.abs(b.y - a.y) / 2 + pad;
+  if (rx <= 0 || ry <= 0) return false;
+  return ((p.x - cx) / rx) ** 2 + ((p.y - cy) / ry) ** 2 <= 1;
+}
+
+/** Barycentric inside test for a triangle. */
+export function pointInTri(p: XY, a: XY, b: XY, c: XY): boolean {
+  const s1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  const s2 = (c.x - b.x) * (p.y - b.y) - (c.y - b.y) * (p.x - b.x);
+  const s3 = (a.x - c.x) * (p.y - c.y) - (a.y - c.y) * (p.x - c.x);
+  return (s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0);
 }
 
 export function pointInRect(p: XY, a: XY, b: XY, pad = 0): boolean {
@@ -235,6 +390,103 @@ export function hitTest(
         if (inX && inY) return { index: i };
         break;
       }
+      case "hchannel": {
+        const y1 = pts[0].y;
+        const y2 = pts[2].y;
+        const inX = p.x >= Math.min(pts[0].x, pts[1].x) - LINE_HIT && p.x <= Math.max(pts[0].x, pts[1].x) + LINE_HIT;
+        if (inX && p.y >= Math.min(y1, y2) - LINE_HIT && p.y <= Math.max(y1, y2) + LINE_HIT) return { index: i };
+        break;
+      }
+      case "hray": {
+        const dir = pts[1].x >= pts[0].x ? 1 : -1;
+        const seg = rayToEdge(pts[0], { x: pts[0].x + dir * canvasW, y: pts[0].y }, canvasW, canvasH);
+        if (distToSegmentSq(p, seg.a, seg.b) <= LINE_HIT * LINE_HIT) return { index: i };
+        break;
+      }
+      case "triangle": {
+        if (pointInTri(p, pts[0], pts[1], pts[2])) return { index: i };
+        break;
+      }
+      case "circle": {
+        const r = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const dist = Math.hypot(p.x - pts[0].x, p.y - pts[0].y);
+        if (dist <= r + LINE_HIT) return { index: i };
+        break;
+      }
+      case "ellipse": {
+        if (pointInEllipse(p, pts[0], pts[1], LINE_HIT)) return { index: i };
+        break;
+      }
+      case "rrect":
+      case "price-range":
+      case "date-range":
+      case "datetime-range":
+      case "long-position":
+      case "short-position":
+      case "forecast":
+      case "fib-trend-ext":
+      case "fib-channel":
+      case "fib-wedge":
+      case "dchannel":
+      case "curve":
+      case "double-curve":
+      case "arc": {
+        const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+        if (p.x >= Math.min(...xs) - LINE_HIT && p.x <= Math.max(...xs) + LINE_HIT &&
+            p.y >= Math.min(...ys) - LINE_HIT && p.y <= Math.max(...ys) + LINE_HIT) return { index: i };
+        break;
+      }
+      case "polyline":
+      case "path": {
+        for (let k = 1; k < pts.length; k++) {
+          if (distToSegmentSq(p, pts[k - 1], pts[k]) <= LINE_HIT * LINE_HIT) return { index: i };
+        }
+        break;
+      }
+      case "arrow":
+      case "info-line":
+      case "trend-angle": {
+        if (distToSegmentSq(p, pts[0], pts[1]) <= LINE_HIT * LINE_HIT) return { index: i };
+        break;
+      }
+      case "regression": {
+        if (pointInRect(p, pts[0], pts[1], LINE_HIT)) return { index: i };
+        break;
+      }
+      case "fib-timezone": {
+        // the timezone lines render across the FULL canvas height
+        const xs = pts.map((q) => q.x);
+        if (p.x >= Math.min(...xs) - LINE_HIT && p.x <= Math.max(...xs) + LINE_HIT) return { index: i };
+        break;
+      }
+      case "fib-fan":
+      case "fib-arc":
+      case "fib-circle":
+      case "fib-spiral": {
+        const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+        if (p.x >= Math.min(...xs) - LINE_HIT && p.x <= Math.max(...xs) + LINE_HIT &&
+            p.y >= Math.min(...ys) - LINE_HIT && p.y <= Math.max(...ys) + LINE_HIT) return { index: i };
+        break;
+      }
+      case "highlighter": {
+        for (let k = 1; k < pts.length; k++) {
+          if (distToSegmentSq(p, pts[k - 1], pts[k]) <= LINE_HIT * 2) return { index: i };
+        }
+        break;
+      }
+      case "arrow-marker":
+      case "price-label":
+      case "anchored-text":
+      case "note":
+      case "price-note":
+      case "signpost":
+      case "comment":
+      case "flag":
+      case "callout": {
+        const bnd = textBounds(d.text || "A", d.style.fontSize, pts[0]);
+        if (p.x >= bnd.x - TEXT_HIT && p.x <= bnd.x + bnd.w + TEXT_HIT && p.y >= bnd.y - TEXT_HIT && p.y <= bnd.y + bnd.h + TEXT_HIT) return { index: i };
+        break;
+      }
       case "text": {
         const bnd = textBounds(d.text || "Text", d.style.fontSize, pts[0]);
         if (p.x >= bnd.x - TEXT_HIT && p.x <= bnd.x + bnd.w + TEXT_HIT && p.y >= bnd.y - TEXT_HIT && p.y <= bnd.y + bnd.h + TEXT_HIT) {
@@ -298,6 +550,51 @@ export function drawHandle(ctx: CanvasRenderingContext2D, p: XY, active: boolean
   ctx.fill();
   ctx.stroke();
   ctx.restore();
+}
+
+/** Optional shape fill from the drawing style. */
+function applyFill(ctx: CanvasRenderingContext2D, d: Drawing): void {
+  if (!d.style.fill || d.style.fill.opacity <= 0) return;
+  ctx.save();
+  ctx.fillStyle = d.style.fill.color || d.style.color;
+  ctx.globalAlpha = d.style.fill.opacity;
+  ctx.setLineDash([]);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawArrowHead(ctx: CanvasRenderingContext2D, a: XY, b: XY, size = 10): void {
+  const { w1, w2 } = arrowHead(a, b, size);
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(b.x, b.y);
+  ctx.lineTo(w1.x, w1.y);
+  ctx.lineTo(w2.x, w2.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Per-point labels for pattern/position tools. */
+function drawPointLabels(ctx: CanvasRenderingContext2D, d: Drawing, pts: XY[]): void {
+  const labels = TOOL_LABELS[d.type];
+  if (!labels) return;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+  ctx.fillStyle = d.style.color;
+  for (let k = 0; k < pts.length && k < labels.length; k++) {
+    if (!labels[k]) continue;
+    ctx.fillText(labels[k], pts[k].x + 5, pts[k].y - 5);
+  }
+  ctx.restore();
+}
+
+/** Fibonacci level list (per-drawing overrides > tool defaults), filtered by show. */
+function visibleLevels(d: Drawing): FibLevel[] {
+  return levelsFor(d).filter((l) => l.show);
 }
 
 /** Draw one committed drawing (interactive tools draw their own preview). */
@@ -435,7 +732,549 @@ export function renderDrawing(
       ctx.restore();
       break;
     }
+
+    // ---------- trend line family ----------
+    case "info-line": {
+      drawSegment(ctx, pts[0], pts[1]);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+      const dprice = pts[1].y - pts[0].y;
+      const angle = (Math.atan2(-(pts[1].y - pts[0].y), Math.abs(pts[1].x - pts[0].x) || 1) * 180) / Math.PI;
+      ctx.fillText(`${dprice <= 0 ? "" : "+"}${(-dprice).toFixed(0)} · ${angle.toFixed(1)}°`, pts[1].x + 6, pts[1].y - 5);
+      ctx.restore();
+      break;
+    }
+    case "trend-angle": {
+      drawSegment(ctx, pts[0], pts[1]);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+      const ang = (Math.atan2(-(pts[1].y - pts[0].y), Math.abs(pts[1].x - pts[0].x) || 1) * 180) / Math.PI;
+      ctx.fillText(`${ang.toFixed(1)}°`, pts[1].x + 6, pts[1].y - 5);
+      ctx.restore();
+      break;
+    }
+    case "hray": {
+      const dir = pts[1].x >= pts[0].x ? 1 : -1;
+      const seg = rayToEdge(pts[0], { x: pts[0].x + dir * canvasW, y: pts[0].y }, canvasW, canvasH);
+      drawSegment(ctx, seg.a, seg.b);
+      break;
+    }
+    case "hchannel": {
+      const y2 = pts[2].y;
+      const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x);
+      drawSegment(ctx, { x: x1, y: pts[0].y }, { x: x2, y: pts[0].y });
+      drawSegment(ctx, { x: x1, y: y2 }, { x: x2, y: y2 });
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.globalAlpha = 0.4;
+      for (const xx of [x1, x2]) drawSegment(ctx, { x: xx, y: pts[0].y }, { x: xx, y: y2 });
+      ctx.restore();
+      break;
+    }
+    case "dchannel": {
+      drawSegment(ctx, pts[0], pts[1]);
+      drawSegment(ctx, pts[2], pts[3]);
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.globalAlpha = 0.4;
+      drawSegment(ctx, pts[1], pts[3]);
+      drawSegment(ctx, pts[0], pts[2]);
+      ctx.restore();
+      break;
+    }
+    case "regression": {
+      // rendered by the canvas layer (needs the bars) — base rendering: the span
+      drawSegment(ctx, { x: Math.min(pts[0].x, pts[1].x), y: pts[0].y }, { x: Math.max(pts[0].x, pts[1].x), y: pts[1].y });
+      break;
+    }
+
+    // ---------- fibonacci family ----------
+    case "fib-trend-ext": {
+      const [p0, p1, p2] = pts;
+      drawSegment(ctx, p0, p1);
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.globalAlpha = 0.5;
+      drawSegment(ctx, p1, p2);
+      ctx.restore();
+      const x2 = Math.max(p0.x, p1.x, p2.x);
+      for (const lvl of visibleLevels(d)) {
+        const y = p2.y + (p1.y - p0.y) * lvl.ratio;
+        const x1 = Math.min(p2.x, x2 - 60);
+        ctx.save();
+        ctx.globalAlpha = 0.75;
+        ctx.strokeStyle = lvl.color || d.style.color;
+        drawSegment(ctx, { x: x1, y }, { x: x2, y });
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.95;
+        ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+        ctx.fillStyle = lvl.color || d.style.color;
+        ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%`, x2 - 58, y - 3);
+        ctx.restore();
+      }
+      break;
+    }
+    case "fib-channel": {
+      const [p0, p1, p2] = pts;
+      drawSegment(ctx, p0, p1);
+      const dx = p1.x - p0.x, dy = p1.y - p0.y;
+      const projLen = dx * (p2.x - p0.x) + dy * (p2.y - p0.y);
+      const lenSq = dx * dx + dy * dy || 1;
+      const t = projLen / lenSq;
+      const bx = p0.x + dx * t, by = p0.y + dy * t;
+      const ox = p2.x - bx, oy = p2.y - by;
+      for (const lvl of visibleLevels(d)) {
+        const k = lvl.ratio;
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = lvl.color || d.style.color;
+        drawSegment(ctx, { x: p0.x + ox * k, y: p0.y + oy * k }, { x: p1.x + ox * k, y: p1.y + oy * k });
+        ctx.restore();
+      }
+      break;
+    }
+    case "fib-timezone": {
+      const [p0, p1] = pts;
+      const dt = p1.x - p0.x;
+      for (const lvl of visibleLevels(d)) {
+        const x = p0.x + dt * lvl.ratio;
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = lvl.color || d.style.color;
+        drawSegment(ctx, { x, y: 0 }, { x, y: canvasH });
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.95;
+        ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+        ctx.fillStyle = lvl.color || d.style.color;
+        ctx.fillText(`${lvl.ratio}`, x + 3, 12);
+        ctx.restore();
+      }
+      break;
+    }
+    case "fib-fan": {
+      const [p0, p1] = pts;
+      const dy = p1.y - p0.y;
+      const dx = p1.x - p0.x;
+      drawSegment(ctx, p0, p1);
+      for (const lvl of visibleLevels(d)) {
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = lvl.color || d.style.color;
+        const seg = rayToEdge(p0, { x: p0.x + dx, y: p0.y + dy * lvl.ratio }, canvasW, canvasH);
+        drawSegment(ctx, seg.a, seg.b);
+        ctx.restore();
+      }
+      break;
+    }
+    case "fib-arc": {
+      const [p0, p1] = pts;
+      const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      drawSegment(ctx, p0, p1);
+      for (const lvl of visibleLevels(d)) {
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.beginPath();
+        ctx.arc(p0.x, p0.y, dist * lvl.ratio, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      break;
+    }
+    case "fib-circle": {
+      const [p0, p1] = pts;
+      const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      for (const lvl of visibleLevels(d)) {
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.beginPath();
+        ctx.arc(p0.x, p0.y, dist * lvl.ratio, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      break;
+    }
+    case "fib-spiral": {
+      const [p0, p1] = pts;
+      const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      const base = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+      // logarithmic (golden) spiral: r(θ) = a·φ^(θ/(π/2)) — quarter-turn per φ step
+      ctx.save();
+      ctx.globalAlpha = 0.8;
+      ctx.strokeStyle = d.style.color;
+      ctx.beginPath();
+      const phi = 1.6180339887;
+      const steps = 220;
+      for (let i = 0; i <= steps; i++) {
+        const theta = (i / steps) * Math.PI * 4; // 2 full turns
+        const r = (dist / phi) * Math.pow(phi, theta / (Math.PI / 2));
+        const x = p0.x + r * Math.cos(base + theta);
+        const y = p0.y + r * Math.sin(base + theta);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+      break;
+    }
+    case "fib-wedge": {
+      const [apex, p1, p2] = pts;
+      for (const lvl of visibleLevels(d)) {
+        const dir1 = { x: p1.x - apex.x, y: (p1.y - apex.y) * lvl.ratio };
+        const dir2 = { x: p2.x - apex.x, y: (p2.y - apex.y) * lvl.ratio };
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = lvl.color || d.style.color;
+        const s1 = rayToEdge(apex, { x: apex.x + dir1.x, y: apex.y + dir1.y }, canvasW, canvasH);
+        const s2 = rayToEdge(apex, { x: apex.x + dir2.x, y: apex.y + dir2.y }, canvasW, canvasH);
+        drawSegment(ctx, s1.a, s1.b);
+        drawSegment(ctx, s2.a, s2.b);
+        ctx.restore();
+      }
+      break;
+    }
+
+    // ---------- shapes ----------
+    case "rrect": {
+      // rotated rectangle: p0→p1 is one edge, p2 sets the depth
+      const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+      const ox = pts[2].x - (pts[0].x + dx / 2), oy = pts[2].y - (pts[0].y + dy / 2);
+      const quad = [pts[0], pts[1], { x: pts[1].x + ox, y: pts[1].y + oy }, { x: pts[0].x + ox, y: pts[0].y + oy }];
+      ctx.beginPath();
+      ctx.moveTo(quad[0].x, quad[0].y);
+      for (let k = 1; k < 4; k++) ctx.lineTo(quad[k].x, quad[k].y);
+      ctx.closePath();
+      applyFill(ctx, d);
+      ctx.stroke();
+      break;
+    }
+    case "triangle": {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[1].x, pts[1].y);
+      ctx.lineTo(pts[2].x, pts[2].y);
+      ctx.closePath();
+      applyFill(ctx, d);
+      ctx.stroke();
+      break;
+    }
+    case "circle": {
+      const r = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, r, 0, Math.PI * 2);
+      applyFill(ctx, d);
+      ctx.stroke();
+      break;
+    }
+    case "ellipse": {
+      const cx = (pts[0].x + pts[1].x) / 2, cy = (pts[0].y + pts[1].y) / 2;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, Math.abs(pts[1].x - pts[0].x) / 2, Math.abs(pts[1].y - pts[0].y) / 2, 0, 0, Math.PI * 2);
+      applyFill(ctx, d);
+      ctx.stroke();
+      break;
+    }
+    case "polyline": {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y);
+      ctx.stroke();
+      break;
+    }
+    case "path": {
+      // smooth curve through the clicked points (Catmull-Rom → bezier)
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length - 1; k++) {
+        const mx = (pts[k].x + pts[k + 1].x) / 2, my = (pts[k].y + pts[k + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[k].x, pts[k].y, mx, my);
+      }
+      const last = pts[pts.length - 1];
+      ctx.lineTo(last.x, last.y);
+      ctx.stroke();
+      break;
+    }
+    case "curve": {
+      const poly = bezierPolyline(pts[0], pts[1], pts[2]);
+      ctx.beginPath();
+      ctx.moveTo(poly[0].x, poly[0].y);
+      for (const q of poly.slice(1)) ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      for (const q of [pts[1]]) drawHandle(ctx, q, false);
+      break;
+    }
+    case "double-curve": {
+      // S-curve through 4 anchors: two quadratic halves sharing the middle
+      const mid = { x: (pts[1].x + pts[2].x) / 2, y: (pts[1].y + pts[2].y) / 2 };
+      const c1 = { x: (pts[0].x + mid.x) / 2 + (pts[1].x - pts[0].x), y: (pts[0].y + mid.y) / 2 + (pts[1].y - pts[0].y) };
+      const c2 = { x: (mid.x + pts[3].x) / 2 + (pts[2].x - pts[3].x), y: (mid.y + pts[3].y) / 2 + (pts[2].y - pts[3].y) };
+      const p1 = bezierPolyline(pts[0], c1, mid);
+      const p2 = bezierPolyline(mid, c2, pts[3]);
+      ctx.beginPath();
+      ctx.moveTo(p1[0].x, p1[0].y);
+      for (const q of p1.slice(1)) ctx.lineTo(q.x, q.y);
+      for (const q of p2) ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      break;
+    }
+    case "arc": {
+      const cc = circumcenter(pts[0], pts[1], pts[2]);
+      if (cc) {
+        const a0 = Math.atan2(pts[0].y - cc.y, pts[0].x - cc.x);
+        const a2 = Math.atan2(pts[2].y - cc.y, pts[2].x - cc.x);
+        ctx.beginPath();
+        ctx.arc(cc.x, cc.y, cc.r, a0, a2, (a2 - a0 + Math.PI * 2) % (Math.PI * 2) > Math.PI);
+        ctx.stroke();
+      } else {
+        drawSegment(ctx, pts[0], pts[2]);
+      }
+      break;
+    }
+    case "highlighter": {
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.lineWidth = Math.max(10, d.style.width * 6);
+      ctx.lineCap = "round";
+      for (let k = 1; k < pts.length; k++) drawSegment(ctx, pts[k - 1], pts[k]);
+      ctx.restore();
+      break;
+    }
+    case "arrow": {
+      drawSegment(ctx, pts[0], pts[1]);
+      drawArrowHead(ctx, pts[0], pts[1], Math.max(8, d.style.width * 4));
+      break;
+    }
+    case "arrow-marker": {
+      drawArrowHead(ctx, { x: pts[0].x - (pts[1].x - pts[0].x) * 0.05, y: pts[0].y - (pts[1].y - pts[0].y) * 0.05 }, pts[0], 14);
+      break;
+    }
+    case "callout": {
+      const txt = d.text || "Callout";
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+      const bnd = textBounds(txt, d.style.fontSize, pts[0]);
+      ctx.fillStyle = "rgba(15,23,42,0.92)";
+      ctx.fillRect(bnd.x - 4, bnd.y - 4, bnd.w + 8, bnd.h + 8);
+      ctx.strokeStyle = d.style.color;
+      ctx.strokeRect(bnd.x - 4, bnd.y - 4, bnd.w + 8, bnd.h + 8);
+      ctx.fillStyle = d.style.color;
+      ctx.fillText(txt, bnd.x, bnd.y + d.style.fontSize);
+      ctx.restore();
+      drawSegment(ctx, { x: bnd.x + bnd.w + 4, y: bnd.y + bnd.h / 2 }, pts[1]);
+      break;
+    }
+    case "price-label": {
+      const txt = d.text || pts[0].y.toFixed(0);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+      const w = ctx.measureText(txt).width + 10;
+      ctx.fillStyle = d.style.color;
+      ctx.globalAlpha = 0.9;
+      ctx.fillRect(0, pts[0].y - d.style.fontSize, Math.max(w, 64), d.style.fontSize + 8);
+      ctx.fillStyle = "#0b1220";
+      ctx.fillText(txt, 4, pts[0].y + 2);
+      ctx.restore();
+      break;
+    }
+
+    // ---------- annotations ----------
+    case "anchored-text": {
+      drawSegment(ctx, pts[0], { x: pts[0].x + 6, y: pts[0].y - 6 });
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([]);
+      ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+      ctx.fillText(d.text || "Text", pts[0].x + 8, pts[0].y - 8);
+      ctx.restore();
+      break;
+    }
+    case "note":
+    case "signpost":
+    case "comment": {
+      const txt = d.text || "";
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+      const bnd = textBounds(txt || "Note", d.style.fontSize, pts[0]);
+      ctx.fillStyle = d.type === "signpost" ? d.style.color : "rgba(15,23,42,0.92)";
+      ctx.globalAlpha = d.type === "signpost" ? 0.85 : 1;
+      ctx.fillRect(bnd.x - 4, bnd.y - 4, bnd.w + 8, bnd.h + 8);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = d.style.color;
+      if (d.type === "comment") ctx.strokeRect(bnd.x - 4, bnd.y - 4, bnd.w + 8, bnd.h + 8);
+      if (d.type === "signpost") {
+        ctx.beginPath();
+        ctx.moveTo(bnd.x - 4, bnd.y + bnd.h / 2);
+        ctx.lineTo(pts[0].x - 10, bnd.y + bnd.h / 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = d.type === "signpost" ? "#0b1220" : d.style.color;
+      ctx.fillText(txt || "Note", bnd.x, bnd.y + d.style.fontSize);
+      ctx.restore();
+      break;
+    }
+    case "price-note": {
+      const txt = d.text ? `${d.text} · ${pts[0].y.toFixed(0)}` : pts[0].y.toFixed(0);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+      const w = ctx.measureText(txt).width + 10;
+      ctx.fillStyle = "rgba(15,23,42,0.92)";
+      ctx.fillRect(pts[0].x + 8, pts[0].y - d.style.fontSize, w, d.style.fontSize + 8);
+      ctx.strokeStyle = d.style.color;
+      ctx.strokeRect(pts[0].x + 8, pts[0].y - d.style.fontSize, w, d.style.fontSize + 8);
+      ctx.fillStyle = d.style.color;
+      ctx.fillText(txt, pts[0].x + 12, pts[0].y + 2);
+      ctx.restore();
+      drawSegment(ctx, pts[0], { x: pts[0].x + 8, y: pts[0].y });
+      break;
+    }
+    case "flag": {
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = d.style.color;
+      ctx.fillStyle = d.style.color;
+      drawSegment(ctx, pts[0], { x: pts[0].x + 26, y: pts[0].y });
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x + 26, pts[0].y);
+      ctx.lineTo(pts[0].x + 26, pts[0].y - 14);
+      ctx.lineTo(pts[0].x + 48, pts[0].y - 8);
+      ctx.lineTo(pts[0].x + 26, pts[0].y - 2);
+      ctx.closePath();
+      ctx.fill();
+      if (d.text) {
+        ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+        ctx.fillText(d.text, pts[0].x + 52, pts[0].y - 4);
+      }
+      ctx.restore();
+      break;
+    }
+    case "price-range": {
+      const x = Math.min(pts[0].x, pts[1].x), w2 = Math.max(40, Math.abs(pts[1].x - pts[0].x));
+      const y1 = Math.min(pts[0].y, pts[1].y), y2 = Math.max(pts[0].y, pts[1].y);
+      ctx.save();
+      ctx.globalAlpha = 0.12;
+      ctx.fillRect(x, y1, w2, y2 - y1);
+      ctx.restore();
+      ctx.strokeRect(x, y1, w2, y2 - y1);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+      ctx.fillStyle = d.style.color;
+      const mid = (y1 + y2) / 2;
+      ctx.fillText(`${(pts[1].y - pts[0].y).toFixed(0)}`, x + w2 + 6, mid + 4);
+      ctx.restore();
+      break;
+    }
+    case "date-range": {
+      const y = Math.min(pts[0].y, pts[1].y), h2 = Math.max(24, Math.abs(pts[1].y - pts[0].y));
+      const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x);
+      ctx.save();
+      ctx.globalAlpha = 0.12;
+      ctx.fillRect(x1, y, x2 - x1, h2);
+      ctx.restore();
+      ctx.strokeRect(x1, y, x2 - x1, h2);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+      ctx.fillStyle = d.style.color;
+      const secs = d.points.length === 2 ? Math.abs(d.points[1].time - d.points[0].time) : 0;
+      const days = Math.round(secs / 86400 * 10) / 10;
+      ctx.fillText(`${days}d`, (x1 + x2) / 2 - 14, y + h2 + d.style.fontSize);
+      ctx.restore();
+      break;
+    }
+    case "datetime-range": {
+      const x = Math.min(pts[0].x, pts[1].x), w2 = Math.abs(pts[1].x - pts[0].x);
+      const y = Math.min(pts[0].y, pts[1].y), h2 = Math.abs(pts[1].y - pts[0].y);
+      ctx.save();
+      ctx.globalAlpha = 0.12;
+      ctx.fillRect(x, y, w2, h2);
+      ctx.restore();
+      ctx.strokeRect(x, y, w2, h2);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+      ctx.fillStyle = d.style.color;
+      const secs = d.points.length === 2 ? Math.abs(d.points[1].time - d.points[0].time) : 0;
+      ctx.fillText(`${(pts[1].y - pts[0].y).toFixed(0)} · ${(secs / 86400).toFixed(1)}d`, x + 6, y + d.style.fontSize + 4);
+      ctx.restore();
+      break;
+    }
+
+    // ---------- measurement & positions ----------
+    case "long-position":
+    case "short-position": {
+      const [entry, stop, target] = pts;
+      const isLong = d.type === "long-position";
+      // risk zone (entry↔stop) red, reward zone (entry↔target) green
+      const x = entry.x - 36;
+      const w2 = Math.max(72, Math.abs(target.x - stop.x));
+      ctx.save();
+      ctx.globalAlpha = 0.14;
+      ctx.fillStyle = "#ef4444";
+      ctx.fillRect(x, Math.min(entry.y, stop.y), w2, Math.abs(stop.y - entry.y));
+      ctx.fillStyle = "#22c55e";
+      ctx.fillRect(x, Math.min(entry.y, target.y), w2, Math.abs(target.y - entry.y));
+      ctx.restore();
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = d.style.color;
+      drawSegment(ctx, { x, y: entry.y }, { x: x + w2, y: entry.y });
+      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+      ctx.fillStyle = "#ef4444";
+      ctx.fillText(`Stop ${stop.y.toFixed(0)}`, x + 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
+      ctx.fillStyle = "#22c55e";
+      ctx.fillText(`Target ${target.y.toFixed(0)}`, x + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
+      ctx.fillStyle = d.style.color;
+      const { rr } = riskReward(entry.y, stop.y, target.y);
+      // canvas Y is inverted: entry.y between them — invert deltas for the ratio
+      const rrCanvas = riskReward(-entry.y, -stop.y, -target.y).rr;
+      ctx.fillText(`${isLong ? "Long" : "Short"} · RR ${rrCanvas.toFixed(2)}`, x + 4, entry.y - 6);
+      ctx.restore();
+      break;
+    }
+    case "forecast": {
+      drawSegment(ctx, pts[0], pts[1]);
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      drawSegment(ctx, pts[1], pts[2]);
+      ctx.restore();
+      drawArrowHead(ctx, pts[1], pts[2], 10);
+      break;
+    }
+
+    // ---------- patterns ----------
+    case "elliott-impulse":
+    case "elliott-correction":
+    case "head-shoulders":
+    case "xabcd":
+    case "abcd":
+    case "three-drives": {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y);
+      ctx.stroke();
+      break;
+    }
   }
+
+  drawPointLabels(ctx, d, pts);
 
   if (selected) {
     for (const p of pts) drawHandle(ctx, p, false);

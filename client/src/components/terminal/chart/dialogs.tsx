@@ -30,7 +30,7 @@ export interface ChartSettings {
 // TradingView-reference palette: light bullish / gray bearish candles on the
 // dark charcoal background (users can restore green/red in chart settings)
 export const DEFAULT_SETTINGS: ChartSettings = {
-  grid: true, countdown: true, legend: true, magnet: false, volume: true, bidAsk: true,
+  grid: true, countdown: true, legend: true, magnet: true, volume: true, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
 };
 

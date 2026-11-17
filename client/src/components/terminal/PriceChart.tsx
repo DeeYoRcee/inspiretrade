@@ -47,6 +47,9 @@ import {
 } from "@/components/terminal/chart/DrawingCanvas";
 import { ChartToolbar } from "@/components/terminal/chart/ChartToolbar";
 import { LeftRail } from "@/components/terminal/chart/LeftRail";
+import { DrawingPropsBar } from "@/components/terminal/chart/DrawingPropsBar";
+import { cursorCss, type CursorMode } from "@/components/terminal/chart/cursor-mode";
+import { loadDrawingTemplates, saveDrawingTemplate, deleteDrawingTemplate, type DrawingTemplate } from "@/lib/chart-persistence";
 import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, SymbolSearchDialog, type ContextMenuState,
@@ -254,6 +257,10 @@ export function PriceChart({
   const futureRef = useRef<Drawing[][]>([]);
   const [histLens, setHistLens] = useState({ u: 0, r: 0 });
   const [activeTool, setActiveTool] = useState<DrawingType | "cursor">("cursor");
+  const [cursorMode, setCursorMode] = useState<CursorMode>(() => {
+    try { return (localStorage.getItem("it_cursor_mode") as CursorMode) || "cross"; } catch { return "cross"; }
+  });
+  const [templates, setTemplates] = useState<DrawingTemplate[]>([]);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const drawingsRef = useRef(drawings);
   drawingsRef.current = drawings;
@@ -339,6 +346,21 @@ export function PriceChart({
     return closed;
   }, []);
 
+  // cursor mode → host element style (arrow / dot bitmap / crosshair)
+  useEffect(() => {
+    try { localStorage.setItem("it_cursor_mode", cursorMode); } catch { /* private mode */ }
+    const el = chartAreaRef.current;
+    if (el) el.style.cursor = cursorCss(cursorMode);
+  }, [cursorMode]);
+
+  // drawing templates (per user, RTDB + LS)
+  useEffect(() => {
+    if (!uid) return;
+    let alive = true;
+    loadDrawingTemplates(uid).then((t) => { if (alive) setTemplates(t); }).catch(() => { /* ignore */ });
+    return () => { alive = false; };
+  }, [uid]);
+
   // ---- settings + indicator appearance → chart options ----------------------
   useEffect(() => {
     localStorage.setItem("it_chart_settings", JSON.stringify(settings));
@@ -349,7 +371,11 @@ export function PriceChart({
       grid: settings.grid
         ? { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } }
         : { vertLines: { visible: false }, horzLines: { visible: false } },
-      crosshair: { mode: settings.magnet ? CrosshairMode.Magnet : CrosshairMode.Normal },
+      crosshair: {
+        mode: settings.magnet ? CrosshairMode.Magnet : CrosshairMode.Normal,
+        vertLine: { visible: true, labelVisible: true, color: "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
+        horzLine: { visible: true, labelVisible: true, color: "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
+      },
     });
     candle.applyOptions({
       upColor: settings.upColor, downColor: settings.downColor,
@@ -398,9 +424,15 @@ export function PriceChart({
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: COLORS.bg }, textColor: COLORS.text, fontSize: 11, attributionLogo: false },
       grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
-      crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.26 } },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, visible: false, rightOffset: 8 },
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, visible: true, rightOffset: 8 },
+      // TradingView-style crosshair: labels on BOTH axes snap to the hovered
+      // candle, axis labels match the dark theme
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
+        horzLine: { color: "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
+      },
     });
     chartRef.current = chart;
     const main = createMainSeries(chart, chartTypeRef.current, { upColor: settingsRef.current.upColor, downColor: settingsRef.current.downColor });
@@ -828,11 +860,13 @@ export function PriceChart({
       const r = mainChart.timeScale().getVisibleLogicalRange();
       if (r) { try { chart.timeScale().setVisibleLogicalRange(r); } catch { /* race */ } }
     }
-    // exactly the bottom-most pane shows the time axis
+    // exactly ONE time axis: the bottom-most pane when sub-panes are open,
+    // otherwise the main chart (TradingView behaviour)
     const lastId = subList[subList.length - 1]?.id;
     for (const [id, pane] of paneRef.current) {
       pane.chart.applyOptions({ timeScale: { visible: id === lastId } });
     }
+    chartRef.current?.applyOptions({ timeScale: { visible: subList.length === 0 } });
     return () => { /* cleanup handled by the unmount teardown + wanted-set diff */ };
   }, [subKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1034,7 +1068,11 @@ export function PriceChart({
     const chg = prev ? ((b.close - prev.close) / prev.close) * 100 : 0;
     const fmt = (v: number) => v.toFixed(priceFormatRef.current.precision);
     const cls = chg >= 0 ? "text-emerald-400" : "text-red-400";
-    let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>`;
+    // TradingView-style: the exact bar under the crosshair, with its own timestamp
+    const ts2 = new Date(b.time * 1000);
+    const hh = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${hh(ts2.getUTCDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getUTCMonth()]} ${hh(ts2.getUTCHours())}:${hh(ts2.getUTCMinutes())}`;
+    let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span> <span class="text-slate-500 font-number">${stamp}</span>`;
     if (b.volume) html += ` <span class="text-slate-500">Vol</span> <span class="font-number text-slate-400">${compactNum(b.volume)}</span>`;
     if (settingsRef.current.bidAsk && lastMidRef.current != null) {
       const instL = getInstrument(symbolRef.current);
@@ -1164,7 +1202,8 @@ export function PriceChart({
     let dot = "bg-emerald-400";
     let label = "LIVE";
     if (isCryptoFeed) {
-      if (c === "connected") { dot = "bg-emerald-400"; label = "LIVE"; }
+      const provider = getInstrument(symbolRef.current)?.feedLabel || "Binance";
+      if (c === "connected") { dot = "bg-emerald-400"; label = `Live · ${provider}`; }
       else if (c === "connecting") { dot = "bg-sky-400 animate-pulse"; label = "Connecting…"; }
       else if (c === "reconnecting") { dot = "bg-amber-400 animate-pulse"; label = "RECONNECTING…"; }
       else { dot = "bg-slate-500"; label = "OFFLINE"; }
@@ -1223,9 +1262,17 @@ export function PriceChart({
           hiddenAll={hiddenAll}
           onHideAllToggle={() => setHiddenAll((v) => { try { localStorage.setItem("it_chart_hideall", v ? "0" : "1"); } catch { /* private mode */ } return !v; })}
           drawingsCount={drawings.length}
-          onDeleteAll={() => { commitDrawings([]); setSelectedDrawingId(null); if (uid) clearDrawingsRemote(uid, symbolRef.current); }}
+          onDeleteAll={() => {
+            if (!drawingsRef.current.length) return;
+            if (!window.confirm(`Delete all ${drawingsRef.current.length} drawings on ${symbolRef.current}?`)) return;
+            commitDrawings([]);
+            setSelectedDrawingId(null);
+            if (uid) clearDrawingsRemote(uid, symbolRef.current);
+          }}
           objectsOpen={objectsOpen}
           onObjectsToggle={() => setObjectsOpen((v) => !v)}
+          cursorMode={cursorMode}
+          onCursorMode={setCursorMode}
         />
         <div ref={chartAreaRef} className="relative min-h-0 min-w-0 flex-1">
         {/* main pane */}
@@ -1270,7 +1317,38 @@ export function PriceChart({
           digits={digits}
           locked={locked}
           hiddenAll={hiddenAll}
+          getBars={() => barsRef.current}
+          cursorFallback={cursorCss(cursorMode)}
         />
+
+        {/* floating properties bar for the selected drawing */}
+        {(() => {
+          const sel = drawings.find((d) => d.id === selectedDrawingId);
+          if (!sel || locked) return null;
+          return (
+            <DrawingPropsBar
+              drawing={sel}
+              onChange={(patch) => commitDrawings(drawingsRef.current.map((d) => (d.id === sel.id ? { ...d, ...patch } : d)))}
+              onDuplicate={() => {
+                const dt = (TF_SECONDS[timeframe] || 3600) * 4;
+                const copy: Drawing = {
+                  ...sel,
+                  id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+                  points: sel.points.map((q) => ({ time: q.time + dt, price: q.price * 1.001 })),
+                  locked: false,
+                };
+                commitDrawings([...drawingsRef.current, copy]);
+                setSelectedDrawingId(copy.id);
+              }}
+              onDelete={() => { commitDrawings(drawingsRef.current.filter((d) => d.id !== sel.id)); setSelectedDrawingId(null); }}
+              onEditText={() => {
+                const text = window.prompt("Text", sel.text || "") ?? "";
+                if (!text.trim()) return;
+                commitDrawings(drawingsRef.current.map((d) => (d.id === sel.id ? { ...d, text: text.trim().slice(0, 200) } : d)));
+              }}
+            />
+          );
+        })()}
 
         {/* OHLC legend */}
         {settings.legend && (
@@ -1307,6 +1385,51 @@ export function PriceChart({
             <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Objects · {drawings.length}</p>
             <div className="max-h-40 overflow-y-auto">
               {drawings.length === 0 && <p className="py-1 text-slate-600">No drawings yet</p>}
+              {/* drawing templates — save the current set, apply on any symbol */}
+              <div className="mb-2 flex flex-wrap items-center gap-1 border-b border-slate-800 pb-2">
+                <button
+                  title="Save the current drawings as a reusable template"
+                  disabled={!drawings.length || !uid}
+                  onClick={async () => {
+                    const name = window.prompt("Template name", `${symbolRef.current} set`)?.trim();
+                    if (!name || !uid) return;
+                    saveDrawingTemplate(uid, name, drawingsRef.current);
+                    setTemplates(await loadDrawingTemplates(uid));
+                  }}
+                  className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                >
+                  Save template
+                </button>
+                <select
+                  title="Apply a saved template"
+                  value=""
+                  disabled={!templates.length}
+                  onChange={async (e) => {
+                    const tpl = templates.find((t) => t.name === e.target.value);
+                    if (!tpl) return;
+                    commitDrawings(tpl.drawings.map((d) => ({ ...d, id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${d.id}` })));
+                    e.currentTarget.value = "";
+                  }}
+                  className="rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-[10px] text-slate-300 disabled:opacity-40"
+                >
+                  <option value="">Apply template…</option>
+                  {templates.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.drawings.length})</option>)}
+                </select>
+                {templates.length > 0 && (
+                  <button
+                    title="Delete the selected template — choose via prompt"
+                    onClick={async () => {
+                      const name = window.prompt("Template to delete", templates[0]?.name || "")?.trim();
+                      if (!name || !uid) return;
+                      deleteDrawingTemplate(uid, name);
+                      setTemplates(await loadDrawingTemplates(uid));
+                    }}
+                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-red-500/15 hover:text-red-300"
+                  >
+                    Del
+                  </button>
+                )}
+              </div>
               {drawings.map((d) => (
                 <div key={d.id} className={cn("flex items-center gap-1 rounded px-1 py-0.5", selectedDrawingId === d.id && "bg-sky-500/15")}>
                   <button
@@ -1536,7 +1659,7 @@ function FeedDiagnostics({ symbol, conn, getBars }: { symbol: string; conn: stri
       const last = bars?.length ? bars[bars.length - 1] : null;
       const lastAge = last ? Math.max(0, Math.floor(Date.now() / 1000) - last.time) : null;
       const rows: [string, string][] = [
-        ["Provider", getInstrument(symbol)?.feed === "binance" ? "Binance WS+REST" : "Quotes proxy (Yahoo/stooq)"],
+        ["Provider", getInstrument(symbol)?.feedLabel || (getInstrument(symbol)?.feed === "binance" ? "Binance WS+REST" : "Quotes proxy (Yahoo/stooq)")],
         ["Connection", conn],
         ["Last tick", `${fmt(s.lastTickAt)} (${s.tps10s} in 10s)`],
         ["Last chart update", fmt(s.lastChartUpdateAt)],

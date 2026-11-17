@@ -137,8 +137,6 @@ export default function ProfilePage() {
   const [igDraft, setIgDraft] = useState("");
   const [tgDraft, setTgDraft] = useState("");
   const [xDraft, setXDraft] = useState("");
-  const [videoDraft, setVideoDraft] = useState("");
-  const [videoUrlDraft, setVideoUrlDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const displayName = user?.displayName || profile?.username || user?.email?.split("@")[0] || "Trader";
@@ -146,6 +144,8 @@ export default function ProfilePage() {
   const gradient = useMemo(() => gradientFor(user?.uid || displayName), [user?.uid, displayName]);
   const initials = useMemo(() => initialsOf(displayName), [displayName]);
   const avatarSrc = profile?.avatar || user?.photoURL || null;
+  // uploaded looping avatar video (Telegram-style) — wins over everything
+  const avatarVideoSrc = profile?.avatarVideo || null;
   // Telegram-collectible style: every handle this account holds
   const heldUsernames = useMemo(
     () => Object.entries(profile?.usernames || {})
@@ -200,18 +200,41 @@ export default function ProfilePage() {
 
   const openEdit = () => {
     setBioDraft(bio);
-    // prefill the social handles + profile video pickers
+    // prefill the social handles
     setIgDraft(profile?.social?.instagram || "");
     setTgDraft(profile?.social?.telegram || "");
     setXDraft(profile?.social?.x || "");
-    const cur = profile?.profileVideo || "";
-    if (/^https?:\/\//i.test(cur)) { setVideoDraft("__url"); setVideoUrlDraft(cur); }
-    else { setVideoDraft(cur || "__none"); setVideoUrlDraft(""); }
     setEditOpen(true);
   };
 
   const onAvatarPicked = async (file?: File | null) => {
     if (!file || !user) return;
+    // Telegram-style avatar: the SAME picker accepts a photo OR a short
+    // looping video — the video plays muted inside the avatar circle.
+    if (file.type.startsWith("video/")) {
+      if (file.size > 4 * 1024 * 1024) {
+        toast({ title: t("fileTooLarge"), description: t("profileVideoTooLarge"), variant: "destructive" });
+        return;
+      }
+      setAvatarBusy(true);
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error("read-failed"));
+          reader.readAsDataURL(file);
+        });
+        // avatar and avatarVideo are mutually exclusive — a video replaces the photo
+        await saveUserProfile(user.uid, { avatarVideo: dataUrl, avatar: null });
+        queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
+        toast({ title: t("profileSaved") });
+      } catch {
+        toast({ title: t("error"), variant: "destructive" });
+      } finally {
+        setAvatarBusy(false);
+      }
+      return;
+    }
     if (!file.type.startsWith("image/")) return;
     if (file.size > 3 * 1024 * 1024) {
       toast({ title: t("fileTooLarge"), description: t("max3mbAllowed"), variant: "destructive" });
@@ -220,7 +243,7 @@ export default function ProfilePage() {
     setAvatarBusy(true);
     try {
       const dataUrl = await fileToAvatarDataUrl(file);
-      await saveUserProfile(user.uid, { avatar: dataUrl });
+      await saveUserProfile(user.uid, { avatar: dataUrl, avatarVideo: null });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
       toast({ title: t("profileSaved") });
     } catch {
@@ -234,7 +257,7 @@ export default function ProfilePage() {
     if (!user || avatarBusy) return;
     setAvatarBusy(true);
     try {
-      await saveUserProfile(user.uid, { avatar: null });
+      await saveUserProfile(user.uid, { avatar: null, avatarVideo: null });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
       toast({ title: t("profileSaved") });
     } catch {
@@ -289,10 +312,7 @@ export default function ProfilePage() {
         telegram: clean(tgDraft) || undefined,
         x: clean(xDraft) || undefined,
       };
-      const videoValue = videoUrlDraft.trim().startsWith("http")
-        ? videoUrlDraft.trim()
-        : videoDraft === "__none" || videoDraft === "__url" ? null : videoDraft;
-      await saveUserProfile(user.uid, { social, profileVideo: videoValue });
+      await saveUserProfile(user.uid, { social });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
 
       await savePublicProfile.mutateAsync({
@@ -387,9 +407,9 @@ export default function ProfilePage() {
           <span className="text-xs">{t("profileEdit")}</span>
         </Button>
         <div className="relative">
-          {profileVideoSrc ? (
+          {avatarVideoSrc || profileVideoSrc ? (
             <video
-              src={profileVideoSrc}
+              src={avatarVideoSrc || profileVideoSrc!}
               autoPlay
               loop
               muted
@@ -565,7 +585,9 @@ export default function ProfilePage() {
               className="group relative rounded-full"
               aria-label={t("profileChangePhoto")}
             >
-              {avatarSrc ? (
+              {avatarVideoSrc || profileVideoSrc ? (
+                <video src={avatarVideoSrc || profileVideoSrc!} autoPlay loop muted playsInline className="h-20 w-20 rounded-full border-2 border-border object-cover" />
+              ) : avatarSrc ? (
                 <img src={avatarSrc} alt={displayName} className="h-20 w-20 rounded-full border-2 border-border object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <span
@@ -582,14 +604,14 @@ export default function ProfilePage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,video/*"
               className="hidden"
               onChange={(e) => {
                 onAvatarPicked(e.target.files?.[0]);
                 e.currentTarget.value = "";
               }}
             />
-            <span className="text-xs text-muted-foreground">{t("profileChangePhoto")}</span>
+            <span className="text-xs text-muted-foreground">{t("profileMediaHint")}</span>
             {avatarSrc && (
               <button
                 type="button"
@@ -682,36 +704,6 @@ export default function ProfilePage() {
                 />
               </div>
             </div>
-
-            {/* Profile video — Telegram-style avatar video (CEO-only for now) */}
-            {profile?.ceo && (
-              <div className="w-full space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5">
-                <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-amber-400">
-                  <Video className="h-3.5 w-3.5" />
-                  {t("profileVideo")}
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-300">
-                    <Crown className="h-2.5 w-2.5" />CEO
-                  </span>
-                </p>
-                <Select value={videoDraft} onValueChange={setVideoDraft}>
-                  <SelectTrigger className="h-8 rounded-lg text-sm"><SelectValue /></SelectTrigger>
-                  <SelectContent className="glass-panel border-border/60">
-                    <SelectItem value="__none">{t("profileVideoNone")}</SelectItem>
-                    {PROFILE_BACKGROUNDS.map((b) => (
-                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                    ))}
-                    <SelectItem value="__url">URL</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={videoUrlDraft}
-                  onChange={(e) => setVideoUrlDraft(e.target.value)}
-                  placeholder="https://…mp4"
-                  className="h-8 rounded-lg text-sm"
-                  maxLength={300}
-                />
-              </div>
-            )}
 
             {/* Public profile toggle */}
             <div className="flex w-full items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2.5">

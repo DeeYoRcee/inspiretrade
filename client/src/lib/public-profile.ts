@@ -51,6 +51,8 @@ export interface PublicProfileSnapshot {
   usernames?: { username: string; key: string }[];
   /** profile video (CEO-only for now) — plays inside the avatar circle */
   profileVideo?: string | null;
+  /** uploaded avatar video (Telegram-style looping profile video) */
+  avatarVideo?: string | null;
   /** social handles — rendered as Instagram / Telegram / X links */
   social?: { instagram?: string; telegram?: string; x?: string };
   /** a moved profile leaves this at the old handle — the page follows it */
@@ -154,7 +156,7 @@ export function createPublicProfileSnapshot({
   settings: PublicProfileSettings;
   avatar?: string | null;
   /** full private profile — carries usernames/social/profileVideo */
-  profile?: { usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null } | null;
+  profile?: { usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } | null;
 }): PublicProfileSnapshot {
   const usernameKey = username.trim().toLowerCase();
   const snapshot: PublicProfileSnapshot = {
@@ -178,6 +180,7 @@ export function createPublicProfileSnapshot({
   if (!list.some((u) => u.key === usernameKey)) list.push({ username: username.trim(), key: usernameKey });
   snapshot.usernames = list;
   if (profile?.profileVideo) snapshot.profileVideo = profile.profileVideo;
+  if (profile?.avatarVideo) snapshot.avatarVideo = profile.avatarVideo;
   if (profile?.social?.instagram || profile?.social?.telegram || profile?.social?.x) {
     snapshot.social = {
       instagram: profile.social.instagram || undefined,

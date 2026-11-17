@@ -20,8 +20,8 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
   const stats = profile.statistics;
   const recent = [...(profile.history || [])].slice(0, 5);
   const background = getProfileBackground(profile.background);
-  // profile video (CEO-only for now) plays inside the avatar circle
-  const videoSrc = (() => {
+  // looping avatar video: the uploaded one wins, legacy CEO catalog video as fallback
+  const videoSrc = profile.avatarVideo || (() => {
     const v = profile.profileVideo;
     if (!v) return null;
     if (/^https?:\/\//i.test(v)) return v;

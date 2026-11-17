@@ -49,7 +49,9 @@ async function fetchCryptoMids(binanceSyms: string[]): Promise<Record<string, nu
   throw lastErr ?? new Error("binance unreachable");
 }
 
-const GOLD_CODES: Record<string, string> = { XAUUSD: "XAU", XAGUSD: "XAG" };
+// XAGUSD only — XAUUSD now prices from Binance PAXG/USDT (feed = "binance"),
+// so the chart and the engine share one real-time source
+const GOLD_CODES: Record<string, string> = { XAGUSD: "XAG" };
 
 async function fetchSpot(code: string): Promise<number> {
   const res: any = await fetchJson(`https://api.gold-api.com/price/${code}`);
