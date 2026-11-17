@@ -173,42 +173,78 @@ export function useReplay() {
     }
   }, []);
 
-  // ---- RTDB persistence ------------------------------------------------------
+  // ---- persistence: RTDB when rules allow, localStorage fallback -------------
+
+  const lsKey = () => `it_replay_sessions_${auth.currentUser?.uid ?? "anon"}`;
+
+  const lsRead = useCallback((): Record<string, any> => {
+    try { return JSON.parse(localStorage.getItem(lsKey()) || "{}"); } catch { return {}; }
+  }, []);
+
+  const lsWrite = useCallback((map: Record<string, any>) => {
+    try {
+      // keep the local mirror small: last 6 sessions, closed-trades tail only
+      const ids = Object.values(map as any)
+        .filter((s: any) => s?.meta?.id)
+        .sort((a: any, b: any) => (b.meta.createdAt ?? 0) - (a.meta.createdAt ?? 0))
+        .slice(0, 6);
+      const trimmed: Record<string, any> = {};
+      for (const s of ids as any[]) {
+        trimmed[s.meta.id] = { ...s, wallet: s.wallet ? { ...s.wallet, closed: (s.wallet.closed ?? []).slice(-50) } : undefined };
+      }
+      localStorage.setItem(lsKey(), JSON.stringify(trimmed));
+    } catch { /* quota — ignore */ }
+  }, []);
 
   const persistSession = useCallback(async (
     meta: ReplaySessionMeta | null, barCount: number, cur: number, w: ReplayWallet, tf: Timeframe,
   ) => {
     const uid = auth.currentUser?.uid;
     if (!uid || !meta) return;
+    const payload = {
+      meta, cursor: cur, barCount, tfSec: TF_SECONDS[tf],
+      wallet: { balance: w.balance, seq: w.seq, positions: w.positions, orders: w.orders, closed: w.closed.slice(-300) },
+      updatedAt: Date.now(),
+    };
+    // RTDB first (uid-scoped rules; falls back to a local mirror when the
+    // rules haven't been deployed to production Firebase yet)
     try {
-      await set(dbRef(db, `replaySessions/${uid}/${meta.id}`), {
-        ...meta, cursor: cur, barCount, tfSec: TF_SECONDS[tf],
-        wallet: { balance: w.balance, seq: w.seq, positions: w.positions, orders: w.orders, closed: w.closed.slice(-300) },
-        updatedAt: Date.now(),
-      });
+      await set(dbRef(db, `replaySessions/${uid}/${meta.id}`), payload);
       await set(dbRef(db, `replaySessions/${uid}/latest`), meta.id);
-    } catch { /* rules/offline — session stays in memory */ }
-  }, []);
+    } catch { /* rules/offline — local mirror keeps it */ }
+    const map = lsRead();
+    map[meta.id] = payload;
+    lsWrite(map);
+  }, [lsRead, lsWrite]);
 
   const savedSessions = useCallback(async (): Promise<ReplaySessionMeta[]> => {
     const uid = auth.currentUser?.uid;
     if (!uid) return [];
+    const metas: ReplaySessionMeta[] = [];
     try {
       const snap = await get(dbRef(db, `replaySessions/${uid}`));
-      if (!snap.exists()) return [];
-      const val = snap.val() as Record<string, any>;
-      return Object.values(val)
-        .filter((s: any) => s?.id && s?.symbol)
-        .sort((a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-        .slice(0, 10);
-    } catch { return []; }
-  }, []);
+      if (snap.exists()) {
+        const val = snap.val() as Record<string, any>;
+        metas.push(...Object.values(val)
+          .filter((s: any) => s?.meta?.id || (s?.id && s?.symbol))
+          .map((s: any) => (s.meta ? (s.meta as ReplaySessionMeta) : ({ id: s.id, symbol: s.symbol, timeframe: s.timeframe, startISO: s.startISO, createdAt: s.createdAt }) as ReplaySessionMeta)));
+      }
+    } catch { /* rules/offline — fall back to the local mirror */ }
+    const local = lsRead();
+    for (const s of Object.values(local) as any[]) {
+      if (s?.meta?.id && !metas.some((m) => m.id === s.meta.id)) metas.push(s.meta as ReplaySessionMeta);
+    }
+    return metas.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)).slice(0, 10);
+  }, [lsRead]);
 
   const deleteSession = useCallback(async (id: string) => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
     try { await remove(dbRef(db, `replaySessions/${uid}/${id}`)); } catch { /* ignore */ }
-  }, []);
+    const map = lsRead();
+    delete map[id];
+    lsWrite(map);
+  }, [lsRead, lsWrite]);
 
   const resumeSession = useCallback(async (meta: ReplaySessionMeta) => {
     const uid = auth.currentUser?.uid;
@@ -217,15 +253,29 @@ export function useReplay() {
     setError(null);
     setProgressText("Restoring session…");
     try {
-      const snap = await get(dbRef(db, `replaySessions/${uid}/${meta.id}`));
-      const saved: any = snap.exists() ? snap.val() : null;
       const startMs = new Date(meta.startISO).getTime();
       const toSec = Math.floor(Date.now() / 1000);
       const res = await loadHistoryRange(meta.symbol, meta.timeframe, Math.floor(startMs / 1000), toSec);
-      const cur = Math.min(saved?.cursor ?? 0, res.bars.length - 1);
-      const w: ReplayWallet = saved?.wallet
-        ? { balance: saved.wallet.balance, seq: saved.wallet.seq ?? 1, positions: saved.wallet.positions ?? [], orders: saved.wallet.orders ?? [], closed: saved.wallet.closed ?? [] }
-        : newReplayWallet(100000);
+      let cur = 0;
+      let w: ReplayWallet | null = null;
+      try {
+        const snap = await get(dbRef(db, `replaySessions/${uid}/${meta.id}`));
+        if (snap.exists()) {
+          const saved: any = snap.val();
+          cur = Math.min(saved?.cursor ?? 0, res.bars.length - 1);
+          if (saved?.wallet) {
+            w = { balance: saved.wallet.balance, seq: saved.wallet.seq ?? 1, positions: saved.wallet.positions ?? [], orders: saved.wallet.orders ?? [], closed: saved.wallet.closed ?? [] };
+          }
+        }
+      } catch { /* rules/offline — try the local mirror */ }
+      if (!w) {
+        const local = lsRead()[meta.id];
+        if (local?.wallet) {
+          cur = Math.min(local.cursor ?? 0, res.bars.length - 1);
+          w = { balance: local.wallet.balance, seq: local.wallet.seq ?? 1, positions: local.wallet.positions ?? [], orders: local.wallet.orders ?? [], closed: local.wallet.closed ?? [] };
+        }
+      }
+      if (!w) w = newReplayWallet(100000);
       setSession(meta);
       sessionRef.current = meta;
       setBars(res.bars);
@@ -235,17 +285,15 @@ export function useReplay() {
       progressRef.current = 0;
       setWallet(w);
       walletRef.current = w;
-      const specLocal = getInstrument(meta.symbol)!;
       setForming(makeForming(res.bars[cur], 0, TF_SECONDS[meta.timeframe]));
       setPhase("ready");
       setProgressText(null);
-      void specLocal;
     } catch (e: any) {
       setPhase("error");
       setError(String(e?.message || e));
       setProgressText(null);
     }
-  }, []);
+  }, [lsRead]);
 
   // ---- playback loop ---------------------------------------------------------
 

@@ -8,7 +8,7 @@
  * with a chart snapshot.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { push, ref as dbRef, get, set } from "firebase/database";
+import { push, ref as dbRef } from "firebase/database";
 import { Play, Pause, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, History as HistoryIcon, Trash2, BookMarked } from "lucide-react";
 import { INSTRUMENTS, getInstrument, type Timeframe } from "@shared/terminal";
 import { positionPnlUsd } from "@shared/trading-engine";
@@ -613,10 +613,12 @@ async function saveClosedTrade(
   if (saving.has(key)) return;
   saving.add(key);
   try {
-    const markerRef = dbRef(db, `replaySessions/${uid}/${ev.sessionId}/saved/${key.replace(/[.#$/[\]]/g, "_")}`);
-    const existing = await get(markerRef);
-    if (existing.exists()) return;
-    await set(markerRef, Date.now());
+    // Dedupe in localStorage per uid (the RTDB marker node needs rules that
+    // may not be deployed yet; the journal itself lives in trades/{uid} which
+    // is always writable).
+    const lsKey = `it_replay_journal_${uid}`;
+    const seen: string[] = (() => { try { return JSON.parse(localStorage.getItem(lsKey) || "[]"); } catch { return []; } })();
+    if (seen.includes(key)) return;
     const spec = (await import("@shared/terminal")).getInstrument(t.symbol);
     const screenshot = captureChart(chartBox);
     await push(dbRef(db, `trades/${uid}`), {
@@ -639,6 +641,8 @@ async function saveClosedTrade(
       replaySessionId: ev.sessionId,
       imageBase64: screenshot ?? undefined,
     });
+    seen.push(key);
+    try { localStorage.setItem(lsKey, JSON.stringify(seen.slice(-500))); } catch { /* quota */ }
     toast({ title: "Replay trade saved to journal", description: `${t.side.toUpperCase()} ${t.symbol} ${t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(2)} USD` });
   } catch { /* journal save is best-effort */ }
 }
