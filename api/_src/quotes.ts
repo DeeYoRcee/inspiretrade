@@ -224,7 +224,7 @@ const INTERVAL_SECONDS: Record<string, number> = {
  * outliers (|spot/lastClose − 1| > 2% — corrupted tick; metals cannot move
  * 2% inside one candle). Genuine prices are never modified. */
 export function mergeSpotBars(
-  bars: { time: number; open: number; high: number; low: number; close: number; volume: number }[],
+  bars: { time: number; open: number; high: number; low: number; close: number; volume?: number }[],
   spot: number,
   interval: string,
 ): boolean {
