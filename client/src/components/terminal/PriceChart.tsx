@@ -21,6 +21,8 @@ import {
 } from "lightweight-charts";
 import { loadFeed, subscribeFeed, binanceProvider, type FeedStatus } from "@/lib/market-data";
 import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/terminal";
+import { SPREAD_PIPS } from "@shared/trading-engine";
+import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
 import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
 import { useAuth } from "@/hooks/use-auth";
@@ -66,6 +68,82 @@ const COLORS = {
 
 const SUB_PANE_HEIGHT = 110;
 const PANE_BG = "#0a101f";
+
+// ---- main-series abstraction: candlestick / hollow / line / area -------------
+type MainKind = "candle" | "hollow" | "line" | "area";
+type MainSeriesApi = ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Area">;
+
+function hexAlpha(hex: string, a: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function createMainSeries(chart: IChartApi, type: ChartType, s: { upColor: string; downColor: string }): { series: MainSeriesApi; kind: MainKind } {
+  if (type === "line") {
+    return { kind: "line", series: chart.addLineSeries({ color: s.upColor, lineWidth: 2, priceLineVisible: true, lastValueVisible: true }) as MainSeriesApi };
+  }
+  if (type === "area") {
+    return {
+      kind: "area",
+      series: chart.addAreaSeries({
+        lineColor: s.upColor, topColor: hexAlpha(s.upColor, 0.26), bottomColor: "rgba(0,0,0,0)",
+        lineWidth: 2, priceLineVisible: true, lastValueVisible: true,
+      }) as MainSeriesApi,
+    };
+  }
+  const hollow = type === "hollow";
+  return {
+    kind: hollow ? "hollow" : "candle",
+    series: chart.addCandlestickSeries({
+      // hollow: rising candles transparent with a colored border, falling filled
+      upColor: hollow ? "rgba(0,0,0,0)" : s.upColor,
+      downColor: s.downColor,
+      borderUpColor: s.upColor, borderDownColor: s.downColor,
+      wickUpColor: s.upColor, wickDownColor: s.downColor,
+      priceLineVisible: true, priceLineWidth: 1, lastValueVisible: true,
+    }) as MainSeriesApi,
+  };
+}
+
+/** Theme the main series from user settings (per kind). */
+function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: string; downColor: string }): void {
+  if (kind === "candle") {
+    (series as ISeriesApi<"Candlestick">).applyOptions({
+      upColor: s.upColor, downColor: s.downColor,
+      borderUpColor: s.upColor, borderDownColor: s.downColor,
+      wickUpColor: s.upColor, wickDownColor: s.downColor,
+    });
+  } else if (kind === "hollow") {
+    (series as ISeriesApi<"Candlestick">).applyOptions({
+      upColor: "rgba(0,0,0,0)",
+      borderUpColor: s.upColor, wickUpColor: s.upColor,
+      downColor: s.downColor, borderDownColor: s.downColor, wickDownColor: s.downColor,
+    });
+  } else if (kind === "line") {
+    (series as ISeriesApi<"Line">).applyOptions({ color: s.upColor, lineWidth: 2 });
+  } else {
+    (series as ISeriesApi<"Area">).applyOptions({ lineColor: s.upColor, topColor: hexAlpha(s.upColor, 0.26), bottomColor: "rgba(0,0,0,0)", lineWidth: 2 });
+  }
+}
+
+function setMainData(series: MainSeriesApi, kind: MainKind, data: Bar[]): void {
+  if (kind === "line" || kind === "area") {
+    (series as ISeriesApi<"Line">).setData(data.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
+  } else {
+    (series as ISeriesApi<"Candlestick">).setData(data.map(toCandle));
+  }
+}
+
+function updateMain(series: MainSeriesApi, kind: MainKind, b: Bar): void {
+  if (kind === "line" || kind === "area") {
+    (series as ISeriesApi<"Line">).update({ time: b.time as UTCTimestamp, value: b.close });
+  } else {
+    (series as ISeriesApi<"Candlestick">).update(toCandle(b));
+  }
+}
 
 interface LoadedState { status: FeedStatus; message?: string; error?: string }
 
@@ -121,8 +199,13 @@ export function PriceChart({
   const mainHostRef = useRef<HTMLDivElement | null>(null);
   const chartAreaRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const candleRef = useRef<MainSeriesApi | null>(null);
+  const mainKindRef = useRef<MainKind>("candle");
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  // bid/ask price lines (engine-consistent spread around the mid)
+  const bidLineRef = useRef<IPriceLine | null>(null);
+  const askLineRef = useRef<IPriceLine | null>(null);
+  const lastMidRef = useRef<number | null>(null);
   const overlayRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const paneRef = useRef<Map<string, PaneHandle>>(new Map());
   const lineHandlesRef = useRef<IPriceLine[]>([]);
@@ -139,6 +222,13 @@ export function PriceChart({
 
   const [loaded, setLoaded] = useState<LoadedState>({ status: "connecting" });
   const [reloadKey, setReloadKey] = useState(0);
+  const [chartType, setChartTypeState] = useState<ChartType>(() => loadChartType());
+  const chartTypeRef = useRef(chartType);
+  chartTypeRef.current = chartType;
+  // drawing undo/redo (past/future snapshots of the committed list)
+  const historyRef = useRef<Drawing[][]>([]);
+  const futureRef = useRef<Drawing[][]>([]);
+  const [histLens, setHistLens] = useState({ u: 0, r: 0 });
   const [activeTool, setActiveTool] = useState<DrawingType | "cursor">("cursor");
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const drawingsRef = useRef(drawings);
@@ -153,6 +243,31 @@ export function PriceChart({
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") }; }
     catch { return DEFAULT_SETTINGS; }
   });
+
+  // ---- bid/ask price lines (server-consistent spread: SPREAD_PIPS × pipSize) --
+  const updateBidAsk = useCallback((mid: number | null) => {
+    const candle = candleRef.current;
+    if (!candle) return;
+    const s = settingsRef.current;
+    const inst = getInstrument(symbolRef.current);
+    if (!s.bidAsk || mid == null || !Number.isFinite(mid) || mid <= 0 || !inst) {
+      try { if (bidLineRef.current) candle.removePriceLine(bidLineRef.current); } catch { /* gone */ }
+      try { if (askLineRef.current) candle.removePriceLine(askLineRef.current); } catch { /* gone */ }
+      bidLineRef.current = null;
+      askLineRef.current = null;
+      return;
+    }
+    lastMidRef.current = mid;
+    const spread = (SPREAD_PIPS[symbolRef.current] ?? 2) * inst.pipSize;
+    const bid = mid - spread / 2;
+    const ask = mid + spread / 2;
+    const hang = (title: string, price: number, color: string, prev: IPriceLine | null): IPriceLine => {
+      if (prev) { prev.applyOptions({ price, title }); return prev; }
+      return candle.createPriceLine({ price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title });
+    };
+    bidLineRef.current = hang("BID", bid, "rgba(239,68,68,0.8)", bidLineRef.current);
+    askLineRef.current = hang("ASK", ask, "rgba(34,197,94,0.8)", askLineRef.current);
+  }, []);
 
   const { user } = useAuth();
   const uid = user?.uid ?? null;
@@ -221,6 +336,36 @@ export function PriceChart({
     canvasRef.current?.redraw();
   }, [settings]);
 
+  // ---- chart type switch: rebuild the main series in place (no flicker) -------
+  useEffect(() => {
+    saveChartType(chartType);
+    const chart = chartRef.current;
+    const old = candleRef.current;
+    if (!chart || !old) return;
+    const volume = volumeRef.current;
+    try { if (volume) chart.removeSeries(volume); } catch { /* gone */ }
+    try { chart.removeSeries(old); } catch { /* gone */ }
+    const main = createMainSeries(chart, chartType, { upColor: settingsRef.current.upColor, downColor: settingsRef.current.downColor });
+    candleRef.current = main.series;
+    mainKindRef.current = main.kind;
+    const volume2 = chart.addHistogramSeries({
+      priceScaleId: "vol",
+      priceFormat: { type: "volume" },
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
+    volumeRef.current = volume2;
+    volume2.applyOptions({ visible: settingsRef.current.volume });
+    if (barsRef.current.length) applyBarsToSeries("set");
+    applyMarkers();
+    setSeriesEpoch((e) => e + 1); // re-hang pending lines on the new series
+    updateBidAsk(lastMidRef.current);
+    updateLegend(null);
+    canvasRef.current?.redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartType]);
+
   // ---- create main chart once ------------------------------------------------
   useEffect(() => {
     const el = mainHostRef.current;
@@ -233,11 +378,10 @@ export function PriceChart({
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.26 } },
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, visible: false, rightOffset: 8 },
     });
-    const candles = chart.addCandlestickSeries({
-      upColor: COLORS.up, downColor: COLORS.down, borderUpColor: COLORS.up, borderDownColor: COLORS.down,
-      wickUpColor: COLORS.up, wickDownColor: COLORS.down,
-      priceLineVisible: true, priceLineWidth: 1, lastValueVisible: true,
-    });
+    chartRef.current = chart;
+    const main = createMainSeries(chart, chartTypeRef.current, { upColor: settingsRef.current.upColor, downColor: settingsRef.current.downColor });
+    candleRef.current = main.series;
+    mainKindRef.current = main.kind;
     const volume = chart.addHistogramSeries({
       priceScaleId: "vol",
       priceFormat: { type: "volume" },
@@ -245,9 +389,17 @@ export function PriceChart({
       priceLineVisible: false,
     });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
-    chartRef.current = chart;
-    candleRef.current = candles;
     volumeRef.current = volume;
+
+    // double-click → reset the scale (drawing hits are consumed upstream)
+    const onDbl = (e: MouseEvent) => {
+      e.preventDefault();
+      const ts = chartRef.current?.timeScale();
+      if (!ts) return;
+      ts.fitContent();
+      ts.scrollToRealTime();
+    };
+    el.addEventListener("dblclick", onDbl);
 
     // progressive history: near the left edge → prepend older Binance candles
     const onRangeChange = () => {
@@ -301,6 +453,7 @@ export function PriceChart({
       // order matters: kill every handle that could touch the chart AFTER remove()
       converterRef.current = null;
       ro.disconnect();
+      el.removeEventListener("dblclick", onDbl);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
       chart.unsubscribeCrosshairMove(onCross as any);
       for (const p of paneRef.current.values()) p.chart.remove();
@@ -389,8 +542,9 @@ export function PriceChart({
     const data = barsRef.current;
     if (!candle || !volume || !data.length) return;
     if (mode === "set") {
-      candle.applyOptions({ priceFormat: priceFormatRef.current });
-      candle.setData(data.map(toCandle));
+      (candle as ISeriesApi<"Candlestick">).applyOptions({ priceFormat: priceFormatRef.current } as any);
+      applyMainTheme(candle, mainKindRef.current, settingsRef.current);
+      setMainData(candle, mainKindRef.current, data);
       volume.setData(data.map(toVolume));
       // rebuild the time→index map (indicators + crosshair lookups)
       const idx = new Map<number, number>();
@@ -398,7 +552,7 @@ export function PriceChart({
       timeIdxRef.current = idx;
     } else {
       const last = data[data.length - 1];
-      candle.update(toCandle(last));
+      updateMain(candle, mainKindRef.current, last);
       volume.update(toVolume(last));
     }
 
@@ -483,6 +637,7 @@ export function PriceChart({
         applyBarsToSeries("set");
         applyMarkers();
         updateLegend(null);
+        updateBidAsk(bars.length ? bars[bars.length - 1].close : null);
         canvasRef.current?.redraw();
         chartRef.current?.timeScale().scrollToRealTime();
         setLoaded({ status, message });
@@ -491,6 +646,7 @@ export function PriceChart({
           barsRef.current = upsertLocal(barsRef.current, lastBar);
           applyBarsToSeries("update");
           updateLegend(null);
+          updateBidAsk(lastBar.close);
           canvasRef.current?.redraw();
           priceBusUpdate(symbol, lastBar.close); // panels read live prices from the store
         });
@@ -705,7 +861,8 @@ export function PriceChart({
   }, [accountId, applyMarkers]);
   useEffect(() => { applyMarkers(); }, [symbol, applyMarkers]);
 
-  // ---- pending-order price lines ------------------------------------------------
+  // ---- pending-order price lines (re-hung after every main-series swap) --------
+  const [seriesEpoch, setSeriesEpoch] = useState(0);
   useEffect(() => {
     const candle = candleRef.current;
     if (!candle) return;
@@ -726,7 +883,7 @@ export function PriceChart({
         }),
       );
     }
-  }, [safeMarks]);
+  }, [safeMarks, seriesEpoch]);
 
   // ---- trade lines (positions) ---------------------------------------------------
   const tradeLines = useMemo<TradeLine[]>(() => {
@@ -755,9 +912,53 @@ export function PriceChart({
   }, [uid, symbol]);
 
   const commitDrawings = useCallback((next: Drawing[]) => {
+    historyRef.current.push(drawingsRef.current);
+    if (historyRef.current.length > 100) historyRef.current.shift();
+    futureRef.current = [];
     setDrawings(next);
+    drawingsRef.current = next;
     if (uid) saveDrawings(uid, symbolRef.current, next);
+    setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
   }, [uid]);
+
+  const undoDrawings = useCallback(() => {
+    const prev = historyRef.current.pop();
+    if (!prev) return;
+    futureRef.current.push(drawingsRef.current);
+    setDrawings(prev);
+    drawingsRef.current = prev;
+    if (uid) saveDrawings(uid, symbolRef.current, prev);
+    setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
+  }, [uid]);
+
+  const redoDrawings = useCallback(() => {
+    const next = futureRef.current.pop();
+    if (!next) return;
+    historyRef.current.push(drawingsRef.current);
+    setDrawings(next);
+    drawingsRef.current = next;
+    if (uid) saveDrawings(uid, symbolRef.current, next);
+    setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
+  }, [uid]);
+
+  const toggleDrawingHidden = useCallback((id: string) => {
+    commitDrawings(drawingsRef.current.map((d) => (d.id === id ? { ...d, hidden: !d.hidden } : d)));
+  }, [commitDrawings]);
+
+  // ---- screenshot: the real rendered chart canvas → PNG download -------------
+  const screenshot = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const canvas = chart.takeScreenshot();
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `inspiretrade_${symbolRef.current}_${timeframeRef.current}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }, "image/png");
+  }, []);
 
   const commitIndicators = useCallback((next: IndicatorConfig[]) => {
     setIndicators(next);
@@ -778,6 +979,13 @@ export function PriceChart({
     const cls = chg >= 0 ? "text-emerald-400" : "text-red-400";
     let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>`;
     if (b.volume) html += ` <span class="text-slate-500">Vol</span> <span class="font-number text-slate-400">${compactNum(b.volume)}</span>`;
+    if (settingsRef.current.bidAsk && lastMidRef.current != null) {
+      const instL = getInstrument(symbolRef.current);
+      if (instL) {
+        const spreadL = (SPREAD_PIPS[symbolRef.current] ?? 2) * instL.pipSize;
+        html += ` <span class="text-red-400 font-number">BID ${(lastMidRef.current - spreadL / 2).toFixed(priceFormatRef.current.precision)}</span> <span class="text-emerald-400 font-number">ASK ${(lastMidRef.current + spreadL / 2).toFixed(priceFormatRef.current.precision)}</span>`;
+      }
+    }
     // indicator values at the hovered/last index
     for (const cfg of indicatorsRef.current) {
       const vals = indValuesRef.current.get(cfg.id);
@@ -829,13 +1037,24 @@ export function PriceChart({
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      const map: Record<string, DrawingType> = { t: "trend", h: "hline", v: "vline", r: "rect", f: "fib-retracement", x: "text", p: "channel", e: "fib-extension" };
+      // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — drawing undo & redo
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "z") {
+          e.preventDefault();
+          if (e.shiftKey) redoDrawings(); else undoDrawings();
+          return;
+        }
+        if (k === "y") { e.preventDefault(); redoDrawings(); return; }
+      }
+      if (e.key === "Escape") { setActiveTool("cursor"); return; }
+      const map: Record<string, DrawingType> = { t: "trend", h: "hline", v: "vline", r: "rect", f: "fib-retracement", x: "text", p: "channel", e: "fib-extension", i: "extended", m: "measure" };
       const k = map[e.key.toLowerCase()];
       if (k) { setActiveTool(k); e.preventDefault(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [undoDrawings, redoDrawings]);
 
   // ---- fullscreen ---------------------------------------------------------------------
   const toggleFullscreen = useCallback(() => {
@@ -913,6 +1132,13 @@ export function PriceChart({
         onFullscreen={toggleFullscreen}
         onClearDrawings={() => { commitDrawings([]); setSelectedDrawingId(null); if (uid) clearDrawingsRemote(uid, symbolRef.current); }}
         drawingsCount={drawings.length}
+        chartType={chartType}
+        onChartTypeChange={setChartTypeState}
+        canUndo={histLens.u > 0}
+        canRedo={histLens.r > 0}
+        onUndo={undoDrawings}
+        onRedo={redoDrawings}
+        onScreenshot={screenshot}
       />
 
       <div ref={chartAreaRef} className="relative min-h-0 flex-1">
@@ -949,10 +1175,13 @@ export function PriceChart({
             const rect = el.getBoundingClientRect();
             const time = conv.time(clientX - rect.left);
             const price = conv.price(clientY - rect.top);
-            setContextMenu({ clientX, clientY, x: clientX, y: clientY, hitDrawingId: hitId, time, price });
+            const hitHidden = hitId ? (drawingsRef.current.find((d) => d.id === hitId)?.hidden ?? false) : false;
+            setContextMenu({ clientX, clientY, x: clientX, y: clientY, hitDrawingId: hitId, hitHidden, time, price });
           }}
           tradeLines={tradeLines}
           onTradeLineMove={handleTradeLineMove}
+          tfSeconds={TF_SECONDS[timeframe] ?? 0}
+          digits={digits}
         />
 
         {/* OHLC legend */}
@@ -1020,6 +1249,7 @@ export function PriceChart({
           addHLine: addHLineAt,
           addText: addTextAt,
           deleteDrawing: (id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id)),
+          toggleHide: toggleDrawingHidden,
           clearDrawings: () => { commitDrawings([]); if (uid) clearDrawingsRemote(uid, symbolRef.current); },
           resetChart: resetView,
         }}

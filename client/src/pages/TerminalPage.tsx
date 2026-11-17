@@ -24,6 +24,8 @@ import { useReplay } from "@/hooks/use-replay";
 import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
 import { TradingBlotter } from "@/components/terminal/TradingBlotter";
+import { Watchlist } from "@/components/terminal/Watchlist";
+import { TerminalShell } from "@/components/terminal/TerminalShell";
 import { NewAccountDialog } from "@/components/terminal/NewAccountDialog";
 import {
   ReplayOverlay, ReplayBadge, ReplayControls, ReplayTicket, ReplayBook, useReplayJournalAutoSave,
@@ -170,43 +172,59 @@ export default function TerminalPage() {
       />
       {/* Phase 5 event strip: upcoming high-impact releases + relevant news */}
       <EventStrip symbol={chartSymbol} onOpenCalendar={() => setMode("calendar")} />
-      {/* chart + order ticket */}
-      <div className="flex min-h-0 flex-[3] gap-2">
-        <div ref={chartBoxRef} className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
-          <PriceChart
-            symbol={chartSymbol}
-            timeframe={chartTf}
-            marks={marks}
-            accountId={mode === "live" ? account?.id ?? null : null}
-            positions={chartPositions}
-            onModifyPosition={mode === "live" ? modifyPosition : async (positionId, patch) => { r.modifyPosition(positionId, patch); }}
-            onSymbolChange={mode === "live" ? setSymbol : () => { /* session-bound in replay */ }}
-            onTimeframeChange={mode === "live" ? setTimeframe : () => { /* session-bound in replay */ }}
-            replayBars={mode === "replay" && replayActive ? r.bars : null}
-            replayCursor={mode === "replay" && replayActive ? r.cursor : null}
-            replayForming={mode === "replay" && replayActive ? r.forming?.bar ?? null : null}
-            replayStatus={mode === "replay" && replayActive ? `REPLAY · ${r.session!.timeframe.toUpperCase()} · ${r.playing ? "playing" : "paused"}` : null}
-          />
-          {mode === "replay" && replayActive && <ReplayBadge />}
-          {mode === "replay" && !replayActive && (
-            <ReplayOverlay r={r} symbol={symbol} timeframe={timeframe} />
-          )}
-        </div>
-        {mode === "live" ? (
-          <TradingPanel
-            symbol={symbol}
-            eventGuard={eventGuard}
-            className="w-[340px] shrink-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/60"
-          />
-        ) : (
-          <ReplayTicket r={r} />
-        )}
-      </div>
-      {/* blotter / replay book below the chart */}
+
       {mode === "live" ? (
-        <TradingBlotter symbol={symbol} className="h-[260px] shrink-0" />
+        <TerminalShell
+          watchlist={<Watchlist symbol={symbol} onSymbolChange={setSymbol} />}
+          chart={
+            <div ref={chartBoxRef} className="relative h-full min-h-0 w-full overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
+              <PriceChart
+                symbol={chartSymbol}
+                timeframe={chartTf}
+                marks={marks}
+                accountId={account?.id ?? null}
+                positions={chartPositions}
+                onModifyPosition={modifyPosition}
+                onSymbolChange={setSymbol}
+                onTimeframeChange={setTimeframe}
+              />
+            </div>
+          }
+          ticket={
+            <TradingPanel
+              symbol={symbol}
+              eventGuard={eventGuard}
+              className="h-full w-full overflow-y-auto"
+            />
+          }
+          blotter={<TradingBlotter symbol={symbol} className="h-full w-full" />}
+        />
       ) : (
         <>
+          {/* chart + replay ticket */}
+          <div className="flex min-h-0 flex-[3] gap-2">
+            <div ref={chartBoxRef} className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
+              <PriceChart
+                symbol={chartSymbol}
+                timeframe={chartTf}
+                marks={marks}
+                accountId={null}
+                positions={chartPositions}
+                onModifyPosition={async (positionId, patch) => { r.modifyPosition(positionId, patch); }}
+                onSymbolChange={() => { /* session-bound in replay */ }}
+                onTimeframeChange={() => { /* session-bound in replay */ }}
+                replayBars={mode === "replay" && replayActive ? r.bars : null}
+                replayCursor={mode === "replay" && replayActive ? r.cursor : null}
+                replayForming={mode === "replay" && replayActive ? r.forming?.bar ?? null : null}
+                replayStatus={mode === "replay" && replayActive ? `REPLAY · ${r.session!.timeframe.toUpperCase()} · ${r.playing ? "playing" : "paused"}` : null}
+              />
+              {mode === "replay" && replayActive && <ReplayBadge />}
+              {mode === "replay" && !replayActive && (
+                <ReplayOverlay r={r} symbol={symbol} timeframe={timeframe} />
+              )}
+            </div>
+            <ReplayTicket r={r} />
+          </div>
           <ReplayControls r={r} />
           <ReplayBook r={r} />
         </>

@@ -14,7 +14,7 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import {
   hitTest, makeDrawing, renderDrawing, setupCanvas,
-  TOOL_POINT_COUNT, drawHandle, type Drawing, type DrawingType, type XY,
+  TOOL_POINT_COUNT, drawHandle, type Drawing, type DrawingPoint, type DrawingType, type XY,
 } from "@/lib/drawings";
 
 export interface TradeLine {
@@ -70,9 +70,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   tradeLines: TradeLine[];
   onTradeLineMove: (positionId: string, kind: TradeLine["kind"], price: number) => void;
   toolDefaults?: Partial<Drawing["style"]>;
+  /** timeframe seconds — measure tool computes the bar count label */
+  tfSeconds?: number;
+  /** instrument digits — measure tool formats the price delta */
+  digits?: number;
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
   onSelect, onDelete, onEdit, onContextMenu, tradeLines, onTradeLineMove,
+  tfSeconds = 0, digits = 2,
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -91,6 +96,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   tradeRef.current = tradeLines;
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
+  const tfRef = useRef(tfSeconds);
+  tfRef.current = tfSeconds;
+  const digitsRef = useRef(digits);
+  digitsRef.current = digits;
+
+  /** measure tool summary: Δprice (Δ%) over N bars — computed in MARKET space */
+  const measureLabel = (a: DrawingPoint, b: DrawingPoint): string => {
+    const dp = b.price - a.price;
+    const pct = a.price ? (dp / a.price) * 100 : 0;
+    const bars = tfRef.current > 0 ? Math.max(0, Math.round(Math.abs(b.time - a.time) / tfRef.current)) : null;
+    const sign = dp >= 0 ? "+" : "−";
+    const parts = [`${sign}${Math.abs(dp).toFixed(digitsRef.current)} (${sign}${Math.abs(pct).toFixed(2)}%)`];
+    if (bars != null) parts.push(`${bars} bars`);
+    return parts.join(" · ");
+  };
 
   const redraw = () => {
     const canvas = canvasRef.current;
@@ -127,10 +147,20 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const pts = toCanvas(drag.drawing);
       const m = mouseRef.current;
       if (m && pts.length < TOOL_POINT_COUNT[drag.drawing.type]) pts.push(m);
+      // measure preview: label from the first committed point → current mouse (market space)
+      if (drag.drawing.type === "measure" && drag.drawing.points.length === 1 && m) {
+        const t = conv.time(m.x);
+        const pr = conv.price(m.y);
+        if (t != null && pr != null) drag.drawing.text = measureLabel(drag.drawing.points[0], { time: t, price: pr });
+      }
       renderDrawing(ctx, drag.drawing, pts, W, H, true);
     } else if ((drag?.mode === "move" || drag?.mode === "handle") && drag.drawing) {
       const pts = toCanvas(drag.drawing);
       if (pts.length) {
+        // moving/resizing a measure keeps the summary in sync with its anchors
+        if (drag.drawing.type === "measure" && drag.drawing.points.length === 2) {
+          drag.drawing.text = measureLabel(drag.drawing.points[0], drag.drawing.points[1]);
+        }
         renderDrawing(ctx, drag.drawing, pts, W, H, true);
         if (drag.mode === "handle" && drag.handle != null) drawHandle(ctx, pts[drag.handle], true);
       }
@@ -241,6 +271,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
           const text = window.prompt("Annotation text", drawing.text || "") ?? "";
           if (!text.trim()) { dragRef.current = null; redraw(); return; }
           drawing.text = text.trim().slice(0, 200);
+        }
+        if (tool === "measure") {
+          drawing.text = measureLabel(drawing.points[0], drawing.points[1]);
         }
         onChange([...drawingsRef.current, drawing]);
         dragRef.current = null;

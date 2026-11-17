@@ -15,7 +15,7 @@
  */
 import { authedFetch } from "@/lib/api";
 import {
-  getInstrument, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS,
+  getInstrument, INSTRUMENTS, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS,
   aggregateBars, type Bar, type Timeframe,
 } from "@shared/terminal";
 
@@ -111,6 +111,23 @@ class BinanceProvider {
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
     return bars;
+  }
+
+  /**
+   * One-shot 24h ticker snapshot for the watchlist: { lastPrice, priceChangePercent }
+   * per Binance symbol — a single REST round-trip for every crypto row.
+   */
+  async ticker24h(binanceSymbols: string[]): Promise<Record<string, { price: number; changePct: number }>> {
+    if (!binanceSymbols.length) return {};
+    const q = encodeURIComponent(JSON.stringify(binanceSymbols));
+    const raw: any[] = await this.restGet(`/api/v3/ticker/24hr?symbols=${q}`);
+    const out: Record<string, { price: number; changePct: number }> = {};
+    for (const t of raw) {
+      const price = Number(t.lastPrice);
+      const changePct = Number(t.priceChangePercent);
+      if (Number.isFinite(price) && price > 0) out[String(t.symbol)] = { price, changePct: Number.isFinite(changePct) ? changePct : 0 };
+    }
+    return out;
   }
 
   /** REST klines fetch — used for history AND for gap-fill / safety polling. */
@@ -408,4 +425,49 @@ export function subscribeFeed(symbol: string, tf: Timeframe, cb: UpdateCb): () =
     try { return binanceProvider.subscribe(symbol, tf, cb); } catch { return () => {}; }
   }
   try { return quotesProvider.subscribe(symbol, tf, cb); } catch { return () => {}; }
+}
+
+
+// ---------------------------------------------------------------------------
+// Watchlist snapshot — one refresh cycle for every catalog instrument.
+// crypto: Binance 24h ticker (one call) · the rest: /api/quotes daily bars
+// (last close + previous close → real day change). No synthetic prices.
+// ---------------------------------------------------------------------------
+
+export interface WatchlistQuote { price: number; changePct: number }
+
+export async function fetchWatchlistQuotes(): Promise<Record<string, WatchlistQuote>> {
+  const out: Record<string, WatchlistQuote> = {};
+  const crypto = INSTRUMENTS.filter((i) => i.feed === "binance" && i.binance);
+  const quoted = INSTRUMENTS.filter((i) => i.feed !== "binance" && i.yahoo);
+
+  const tasks: Promise<void>[] = [
+    binanceProvider
+      .ticker24h(crypto.map((i) => i.binance!))
+      .then((snap) => {
+        for (const i of crypto) {
+          const s = snap[i.binance!];
+          if (s) out[i.symbol] = s;
+        }
+      })
+      .catch(() => { /* transient — next refresh retries */ }),
+  ];
+
+  for (const i of quoted) {
+    tasks.push(
+      authedFetch<any>(`/api/quotes?symbol=${encodeURIComponent(i.yahoo!)}&range=5d&interval=1d`)
+        .then((res) => {
+          const bars: Bar[] = res?.bars || [];
+          if (bars.length < 1) return;
+          const last = bars[bars.length - 1];
+          const prev = bars.length > 1 ? bars[bars.length - 2] : null;
+          if (!(last.close > 0)) return;
+          const changePct = prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+          out[i.symbol] = { price: last.close, changePct };
+        })
+        .catch(() => { /* transient — next refresh retries */ }),
+    );
+  }
+  await Promise.all(tasks);
+  return out;
 }

@@ -9,8 +9,8 @@
  */
 
 export type DrawingType =
-  | "trend" | "hline" | "vline" | "rect" | "ray"
-  | "fib-retracement" | "fib-extension" | "channel" | "text";
+  | "trend" | "hline" | "vline" | "rect" | "ray" | "extended"
+  | "fib-retracement" | "fib-extension" | "channel" | "text" | "measure";
 
 export interface DrawingPoint { time: number; price: number }
 
@@ -24,12 +24,14 @@ export interface DrawingStyle {
 export interface Drawing {
   id: string;
   type: DrawingType;
-  /** 1 point: hline/vline/text · 2: trend/rect/ray/fib-retr · 3: fib-ext/channel */
+  /** 1 point: hline/vline/text · 2: trend/rect/ray/extended/measure/fib-retr · 3: fib-ext/channel */
   points: DrawingPoint[];
   style: DrawingStyle;
   text?: string;
   /** true → ignored by hit-testing (interactive drag in progress) */
   locked?: boolean;
+  /** true → not rendered and not hit-tested (visibility toggle) */
+  hidden?: boolean;
 }
 
 export const FIB_RETRACEMENT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -48,8 +50,8 @@ export function makeDrawing(type: DrawingType, points: DrawingPoint[], text?: st
 
 /** Points required by each tool (clicked before the drawing commits). */
 export const TOOL_POINT_COUNT: Record<DrawingType, number> = {
-  trend: 2, hline: 1, vline: 1, rect: 2, ray: 2,
-  "fib-retracement": 2, "fib-extension": 3, channel: 3, text: 1,
+  trend: 2, hline: 1, vline: 1, rect: 2, ray: 2, extended: 2,
+  "fib-retracement": 2, "fib-extension": 3, channel: 3, text: 1, measure: 2,
 };
 
 // ---------------------------------------------------------------------------
@@ -79,6 +81,32 @@ export function rayToEdge(a: XY, b: XY, w: number, h: number): { a: XY; b: XY } 
   if (dy !== 0) tMax = Math.min(tMax, dy > 0 ? (h - a.y) / dy : (0 - a.y) / dy);
   if (!Number.isFinite(tMax)) tMax = 1;
   return { a, b: { x: a.x + dx * tMax, y: a.y + dy * tMax } };
+}
+
+/**
+ * Extended line AB — infinite in BOTH directions, clipped to the canvas.
+ * Returns the visible segment as { a, b }.
+ */
+export function extendedToEdge(a: XY, b: XY, w: number, h: number): { a: XY; b: XY } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) return { a, b };
+  // parametrize P(t) = a + t·d; find the t-interval that stays inside the box
+  let tMin = -Infinity;
+  let tMax = Infinity;
+  const clip = (num: number, den: number) => {
+    if (den === 0) return;
+    const t = num / den;
+    if (den > 0) tMax = Math.min(tMax, t);
+    else tMin = Math.max(tMin, t);
+  };
+  clip(0 - a.x, dx); clip(w - a.x, dx);
+  clip(0 - a.y, dy); clip(h - a.y, dy);
+  if (tMin > tMax) return { a, b };
+  return {
+    a: { x: a.x + dx * tMin, y: a.y + dy * tMin },
+    b: { x: a.x + dx * tMax, y: a.y + dy * tMax },
+  };
 }
 
 /** Third anchor of a parallel channel: the line through A′B′ translated by C−P (projection). */
@@ -137,7 +165,7 @@ export function hitTest(
 ): HitResult | null {
   for (let i = drawings.length - 1; i >= 0; i--) {
     const d = drawings[i];
-    if (d.locked) continue;
+    if (d.locked || d.hidden) continue;
     const pts = toCanvas(d);
     if (!pts.length) continue;
 
@@ -157,6 +185,11 @@ export function hitTest(
         if (distToSegmentSq(p, ext.a, ext.b) <= LINE_HIT * LINE_HIT) return { index: i };
         break;
       }
+      case "extended": {
+        const ext = extendedToEdge(pts[0], pts[1], canvasW, canvasH);
+        if (distToSegmentSq(p, ext.a, ext.b) <= LINE_HIT * LINE_HIT) return { index: i };
+        break;
+      }
       case "hline":
         if (Math.abs(p.y - pts[0].y) <= LINE_HIT) return { index: i };
         break;
@@ -165,6 +198,9 @@ export function hitTest(
         break;
       case "rect":
         // inside the rect or on one of its edges
+        if (pointInRect(p, pts[0], pts[1], LINE_HIT)) return { index: i };
+        break;
+      case "measure":
         if (pointInRect(p, pts[0], pts[1], LINE_HIT)) return { index: i };
         break;
       case "channel": {
@@ -265,7 +301,7 @@ export function renderDrawing(
   canvasH: number,
   selected: boolean,
 ): void {
-  if (!pts.length) return;
+  if (!pts.length || d.hidden) return;
   applyStyle(ctx, d.style, selected ? 1 : 0.92);
 
   switch (d.type) {
@@ -274,6 +310,11 @@ export function renderDrawing(
       break;
     case "ray": {
       const ext = rayToEdge(pts[0], pts[1], canvasW, canvasH);
+      drawSegment(ctx, ext.a, ext.b);
+      break;
+    }
+    case "extended": {
+      const ext = extendedToEdge(pts[0], pts[1], canvasW, canvasH);
       drawSegment(ctx, ext.a, ext.b);
       break;
     }
@@ -342,6 +383,33 @@ export function renderDrawing(
         ctx.globalAlpha = 0.9;
         ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
         ctx.fillText(`${(lvl * 100).toFixed(1)}%`, x2 - 58, y - 3);
+        ctx.restore();
+      }
+      break;
+    }
+    case "measure": {
+      const x = Math.min(pts[0].x, pts[1].x);
+      const y = Math.min(pts[0].y, pts[1].y);
+      const w = Math.abs(pts[1].x - pts[0].x);
+      const h = Math.abs(pts[1].y - pts[0].y);
+      ctx.save();
+      ctx.globalAlpha = 0.14;
+      ctx.fillRect(x, y, w, h);
+      ctx.restore();
+      ctx.strokeRect(x, y, w, h);
+      // committed measure text (market-space summary, set by the canvas layer)
+      if (d.text) {
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+        const tw = ctx.measureText(d.text).width + 10;
+        const lx = Math.min(x + w / 2 - tw / 2, canvasW - tw - 4);
+        const ly = Math.max(4, y + h / 2 - d.style.fontSize);
+        ctx.fillStyle = "rgba(15,23,42,0.9)";
+        ctx.fillRect(lx, ly, tw, d.style.fontSize + 8);
+        ctx.fillStyle = d.style.color;
+        ctx.fillText(d.text, lx + 5, ly + d.style.fontSize + 2);
         ctx.restore();
       }
       break;

@@ -22,12 +22,13 @@ export interface ChartSettings {
   legend: boolean;
   magnet: boolean;
   volume: boolean;
+  bidAsk: boolean;
   upColor: string;
   downColor: string;
 }
 
 export const DEFAULT_SETTINGS: ChartSettings = {
-  grid: true, countdown: true, legend: true, magnet: false, volume: true,
+  grid: true, countdown: true, legend: true, magnet: false, volume: true, bidAsk: true,
   upColor: "#22c55e", downColor: "#ef4444",
 };
 
@@ -44,7 +45,7 @@ export function SettingsDialog({
   if (!open) return null;
   const toggles: [keyof ChartSettings, string][] = [
     ["grid", "Show grid"], ["legend", "OHLC legend"], ["countdown", "Candle-close countdown"],
-    ["magnet", "Magnet crosshair"], ["volume", "Volume histogram"],
+    ["magnet", "Magnet crosshair"], ["volume", "Volume histogram"], ["bidAsk", "Bid / Ask price lines"],
   ];
   return (
     <ChartDialog title="Chart settings" onClose={onClose}>
@@ -267,18 +268,20 @@ export function DrawingPropsDialog({
 }: {
   drawing: Drawing | null;
   onClose: () => void;
-  onSave: (id: string, patch: Partial<Pick<Drawing, "style" | "text">>) => void;
+  onSave: (id: string, patch: Partial<Pick<Drawing, "style" | "text" | "hidden">>) => void;
 }) {
   const [color, setColor] = useState("#38bdf8");
   const [width, setWidth] = useState(2);
   const [dash, setDash] = useState<Drawing["style"]["dash"]>("solid");
   const [text, setText] = useState("");
+  const [visible, setVisible] = useState(true);
   useEffect(() => {
     if (drawing) {
       setColor(drawing.style.color);
       setWidth(drawing.style.width);
       setDash(drawing.style.dash);
       setText(drawing.text ?? "");
+      setVisible(!drawing.hidden);
     }
   }, [drawing]);
   if (!drawing) return null;
@@ -301,11 +304,15 @@ export function DrawingPropsDialog({
           <label className="col-span-2"><span className="mb-0.5 block text-[10px] text-slate-400">Text</span>
             <input value={text} onChange={(e) => setText(e.target.value)} className="num-input" /></label>
         )}
+        <label className="col-span-2 flex cursor-pointer items-center justify-between pt-1">
+          <span className="text-slate-300">Visible on chart</span>
+          <input type="checkbox" checked={visible} onChange={(e) => setVisible(e.target.checked)} className="h-4 w-4 accent-sky-500" />
+        </label>
       </div>
       <div className="mt-3">
         <DialogFooter
           onCancel={onClose}
-          onOk={() => { onSave(drawing.id, { style: { ...drawing.style, color, width, dash }, ...(drawing.type === "text" ? { text: text.slice(0, 200) } : {}) }); onClose(); }}
+          onOk={() => { onSave(drawing.id, { style: { ...drawing.style, color, width, dash }, hidden: !visible, ...(drawing.type === "text" ? { text: text.slice(0, 200) } : {}) }); onClose(); }}
           okLabel="Save"
         />
       </div>
@@ -322,6 +329,8 @@ export interface ContextMenuState {
   /** clientX/clientY for positioning */
   clientX: number; clientY: number;
   hitDrawingId: string | null;
+  /** the hit drawing's visibility — labels the hide/show action */
+  hitHidden?: boolean;
   /** market coordinates at the click — for add-hline/add-text */
   time: number | null;
   price: number | null;
@@ -336,6 +345,7 @@ export function ChartContextMenu({
     addHLine: (price: number) => void;
     addText: (time: number, price: number) => void;
     deleteDrawing: (id: string) => void;
+    toggleHide: (id: string) => void;
     clearDrawings: () => void;
     resetChart: () => void;
   };
@@ -353,6 +363,7 @@ export function ChartContextMenu({
   if (!state) return null;
   const items: { label: string; danger?: boolean; onClick: () => void }[] = [];
   if (state.hitDrawingId) {
+    items.push({ label: state.hitHidden ? "Show drawing" : "Hide drawing", onClick: () => actions.toggleHide(state.hitDrawingId!) });
     items.push({ label: "Delete drawing", danger: true, onClick: () => actions.deleteDrawing(state.hitDrawingId!) });
   }
   if (state.price != null) {

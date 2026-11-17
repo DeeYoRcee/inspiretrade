@@ -11,7 +11,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { getInstrument } from "@shared/terminal";
-import type { OrderKind } from "@shared/trading-engine";
+import { SPREAD_PIPS, type OrderKind } from "@shared/trading-engine";
+import { Minus, Plus } from "lucide-react";
 import { useTrading } from "@/hooks/use-trading";
 import { usePrice } from "@/lib/price-store";
 import {
@@ -43,6 +44,11 @@ export function TradingPanel({
     placeOrder, error, clearError,
   } = useTrading();
   const price = usePrice(symbol);
+  const inst = getInstrument(symbol);
+  // engine-consistent two-sided quote: SPREAD_PIPS × pipSize around the mid
+  const spread = ((SPREAD_PIPS[symbol] ?? 2) * (inst?.pipSize ?? 0.01));
+  const bid = price != null ? price - spread / 2 : null;
+  const ask = price != null ? price + spread / 2 : null;
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderKind, setOrderKind] = useState<"market" | "limit" | "stop">("market");
@@ -58,15 +64,14 @@ export function TradingPanel({
     clearError();
   }, [error, clearError, toast]);
 
-  const inst = getInstrument(symbol);
   const d = inst?.digits ?? 2;
   const contract = inst?.contractSize ?? 1;
   const balance = account?.balance ?? 0;
   const locked = !!account?.rules && account.status !== "active";
 
-  // display entry: buy at ask / sell at bid — approximate with the mid + half spread
+  // display entry: buy fills at ask / sell fills at bid — same model as the engine
   const displayEntry = orderKind === "market"
-    ? (price != null && inst ? (side === "buy" ? price + inst.pipSize * 1.25 : price - inst.pipSize * 1.25) : price)
+    ? (side === "buy" ? ask : bid)
     : (limitPrice ? Number(limitPrice) : null);
   const slPx = slPrice ? Number(slPrice) : null;
   const lotsNum = Math.max(0.01, Number(lots) || 0.01);
@@ -100,11 +105,13 @@ export function TradingPanel({
     }
   };
 
-  // opt-in guard: with "confirm trades near major events" enabled, an order
-  // inside the warning window asks for an explicit confirmation first. Without
-  // that setting this is a no-op — trades are never blocked automatically.
+  // every MARKET order asks for an explicit confirmation (professional ticket
+  // behavior); pending orders fire directly unless the event guard is active
+  // ("confirm trades near major events" — opt-in, never blocks automatically)
+  const [confirmMode, setConfirmMode] = useState<"market" | "event">("market");
   const submit = async () => {
-    if (eventGuard) {
+    if (orderKind === "market" || eventGuard) {
+      setConfirmMode(eventGuard ? "event" : "market");
       setConfirmOpen(true);
       return;
     }
@@ -136,9 +143,16 @@ export function TradingPanel({
             </div>
           )}
           <div className="grid grid-cols-2 gap-1.5">
-            <button onClick={() => setSide("buy")} disabled={locked} className={cn("rounded-lg py-2 font-bold transition-colors disabled:opacity-40", side === "buy" ? "bg-emerald-500 text-black" : "bg-emerald-500/10 text-emerald-400")}>BUY</button>
-            <button onClick={() => setSide("sell")} disabled={locked} className={cn("rounded-lg py-2 font-bold transition-colors disabled:opacity-40", side === "sell" ? "bg-red-500 text-black" : "bg-red-500/10 text-red-400")}>SELL</button>
+            <button onClick={() => setSide("buy")} disabled={locked} className={cn("rounded-lg py-1.5 font-bold transition-colors disabled:opacity-40", side === "buy" ? "bg-emerald-500 text-black" : "bg-emerald-500/10 text-emerald-400")}>
+              <span className="block text-[11px] leading-tight">BUY</span>
+              <span className="block font-number text-[10px] leading-tight opacity-80">{ask != null ? ask.toFixed(d) : "—"}</span>
+            </button>
+            <button onClick={() => setSide("sell")} disabled={locked} className={cn("rounded-lg py-1.5 font-bold transition-colors disabled:opacity-40", side === "sell" ? "bg-red-500 text-black" : "bg-red-500/10 text-red-400")}>
+              <span className="block text-[11px] leading-tight">SELL</span>
+              <span className="block font-number text-[10px] leading-tight opacity-80">{bid != null ? bid.toFixed(d) : "—"}</span>
+            </button>
           </div>
+          <p className="text-center font-number text-[10px] text-slate-500">spread {spread.toFixed(d > 4 ? 5 : d)}</p>
           <div className="flex gap-1.5">
             {(["market", "limit", "stop"] as const).map((k) => (
               <button key={k} onClick={() => setOrderKind(k)} disabled={locked} className={cn("flex-1 rounded-lg border px-2 py-1 text-[11px] font-semibold capitalize disabled:opacity-40", orderKind === k ? "border-emerald-500/50 text-emerald-400" : "border-border/60 text-muted-foreground")}>{k}</button>
@@ -151,7 +165,11 @@ export function TradingPanel({
           )}
           <div className="grid grid-cols-2 gap-1.5">
             <Field label="Lots">
-              <input type="number" step="0.01" min="0.01" value={lots} onChange={(e) => setLots(e.target.value)} className="num-input" />
+              <div className="flex items-stretch gap-1">
+                <button type="button" onClick={() => setLots(String(Math.max(0.01, Math.round((lotsNum - 0.01) * 100) / 100)))} className="w-6 rounded border border-border/60 text-slate-400 hover:text-foreground" title="− 0.01"><Minus className="h-3 w-3" /></button>
+                <input type="number" step="0.01" min="0.01" value={lots} onChange={(e) => setLots(e.target.value)} className="num-input" />
+                <button type="button" onClick={() => setLots(String(Math.round((lotsNum + 0.01) * 100) / 100))} className="w-6 rounded border border-border/60 text-slate-400 hover:text-foreground" title="+ 0.01"><Plus className="h-3 w-3" /></button>
+              </div>
             </Field>
             <Field label="Risk %">
               <input type="number" step="0.1" min="0" value={riskPct} onChange={(e) => setRiskPct(e.target.value)} className="num-input" />
@@ -188,11 +206,29 @@ export function TradingPanel({
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent className="border-slate-700 bg-slate-900 text-slate-100">
           <AlertDialogHeader>
-            <AlertDialogTitle>Major event imminent — place this order?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {eventGuard?.currency} "{eventGuard?.eventName}" starts in about {eventGuard?.minutesUntil} min.
-              Spreads can widen and prices can gap around the release. You enabled order confirmations
-              for this window — confirm to send the {side.toUpperCase()} {symbol} order anyway.
+            <AlertDialogTitle>
+              {confirmMode === "event"
+                ? "Major event imminent — place this order?"
+                : `Confirm ${side.toUpperCase()} ${symbol} — ${orderKind} order`}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-left">
+                {confirmMode === "event" && (
+                  <p>
+                    {eventGuard?.currency} "{eventGuard?.eventName}" starts in about {eventGuard?.minutesUntil} min.
+                    Spreads can widen and prices can gap around the release. Confirm to send the order anyway.
+                  </p>
+                )}
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg border border-slate-700/70 p-2 text-[11px] text-slate-300">
+                  <dt className="text-slate-500">Side</dt><dd className={side === "buy" ? "font-bold text-emerald-400" : "font-bold text-red-400"}>{side.toUpperCase()} {lotsNum} lots</dd>
+                  <dt className="text-slate-500">Est. entry</dt><dd className="font-number">{displayEntry != null ? displayEntry.toFixed(d) : "—"}</dd>
+                  {slPx != null && (<><dt className="text-slate-500">Stop loss</dt><dd className="font-number">{slPx.toFixed(d)}</dd></>)}
+                  {tpPrice && (<><dt className="text-slate-500">Take profit</dt><dd className="font-number">{Number(tpPrice).toFixed(d)}</dd></>)}
+                  <dt className="text-slate-500">Est. risk</dt><dd className="font-number text-red-400">{estRisk != null ? `$${estRisk.toFixed(2)}` : "—"}</dd>
+                  <dt className="text-slate-500">Margin required</dt><dd className="font-number">{marginRequired != null ? `$${marginRequired.toFixed(2)}` : "—"}</dd>
+                  <dt className="text-slate-500">Free margin after</dt><dd className="font-number">{metrics && marginRequired != null ? `$${(metrics.freeMargin - marginRequired).toFixed(2)}` : "—"}</dd>
+                </dl>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
