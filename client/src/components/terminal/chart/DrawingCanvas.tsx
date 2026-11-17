@@ -361,6 +361,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         onChange([...drawingsRef.current, drawing]);
         dragRef.current = null;
         onToolCommitted();
+        (window as any).__commitProbe = { id: drawing.id, tool, at: Date.now() };
         onSelect(drawing.id);
       } else {
         dragRef.current = { mode: "draw", drawing };
