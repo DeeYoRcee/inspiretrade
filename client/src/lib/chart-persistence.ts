@@ -65,9 +65,13 @@ export function subscribeDrawings(
     rtdb(`chart/${uid}/drawings/${symbol}`),
     (snap) => {
       const remote = snap.val() as Record<string, Drawing> | null;
-      if (remote && Object.keys(remote).length >= 0) {
+      if (remote) {
         cb(Object.values(remote));
         localSet(uid, "drawings", symbol, remote);
+      } else {
+        // the new symbol has NO stored drawings — clear the previous
+        // symbol's list instead of leaving it on the chart (isolation)
+        cb([]);
       }
     },
     () => { /* rules/offline — LS only */ },

@@ -302,13 +302,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   };
 
   const onPointerDown = (e: PointerEvent) => {
-    ((window as any).__pdTrace = (window as any).__pdTrace || []).push(["enter", e.button, e.clientX, e.clientY]);
     if (e.button !== 0) return; // right button → context menu path
     const conv = converterRef.current;
     const target = attachEl();
-    if (!conv || !target) { ((window as any).__pdTrace || []).push(["no-conv-or-target"]); return; }
+    if (!conv || !target) return;
     const p = localXY(e);
-    ((window as any).__pdTrace || []).push(["local", Math.round(p.x), Math.round(p.y), "pane", Math.round(conv.paneW), Math.round(conv.paneH)]);
     if (p.x < 0 || p.y < 0 || p.x > conv.paneW || p.y > conv.paneH) return; // price scale etc.
 
     // 1) trade-line drag (SL/TP) — wins over drawings
@@ -363,7 +361,6 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         onChange([...drawingsRef.current, drawing]);
         dragRef.current = null;
         onToolCommitted();
-        (window as any).__commitProbe = { id: drawing.id, tool, at: Date.now() };
         onSelect(drawing.id);
       } else {
         dragRef.current = { mode: "draw", drawing };
@@ -373,9 +370,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
 
     // 3) hit-test drawings → select + begin move/handle
-    if (lockedRef.current || hiddenAllRef.current) { ((window as any).__pdTrace || []).push(["locked-or-hidden"]); return; } // LOCK/HIDE: objects are frozen
+    if (lockedRef.current || hiddenAllRef.current) return; // LOCK/HIDE: objects are frozen
     const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
-    ((window as any).__pdTrace || []).push(["hit", hit ? hit.index : "none", drawingsRef.current.length, "tool", toolRef.current]);
     if (hit) {
       const d = drawingsRef.current[hit.index];
       // Ctrl/Shift-click edits the multi-selection — no drag, no chart pan
@@ -417,7 +413,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
 
     // 4) empty space — deselect (do NOT block chart pan)
-    if (selectedRef.current) { (window as any).__nullSite = "step4-empty"; onSelect(null); }
+    if (selectedRef.current) onSelect(null);
     if (onSelectIds && multiIdsRef.current.length > 1) onSelectIds([]);
   };
 
@@ -627,7 +623,6 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       if (e.key === "Escape") {
         dragRef.current = null;
         toolRef.current = null;
-        (window as any).__nullSite = "escape";
         onSelect(null);
         redraw();
       }
