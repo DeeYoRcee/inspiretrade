@@ -1341,7 +1341,7 @@ export function PriceChart({
             fontSize: settingsRef.current.drawFontSize,
           }}
           selectedId={selectedDrawingId}
-          onSelect={setSelectedDrawingId}
+          onSelect={(id) => { (window as any).__selProbe = { at: Date.now(), id }; setSelectedDrawingId(id); }}
           onDelete={(id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id))}
           onEdit={(id) => setEditingDrawing(drawingsRef.current.find((d) => d.id === id) ?? null)}
           onContextMenu={(clientX, clientY, hitId) => {
@@ -1367,6 +1367,7 @@ export function PriceChart({
         {/* floating properties bar for the selected drawing */}
         {(() => {
           const sel = drawings.find((d) => d.id === selectedDrawingId);
+          (window as any).__barProbe = { hasSel: !!sel, selId: selectedDrawingId, n: drawings.length };
           if (!sel || locked) return null;
           return (
             <DrawingPropsBar
