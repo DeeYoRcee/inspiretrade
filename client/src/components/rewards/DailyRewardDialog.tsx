@@ -51,7 +51,8 @@ export function DailyRewardDialog() {
   const claimedToday = economy?.lastClaimDate === today;
   const open = !!user && !isLoading && !claimedToday && !dismissed;
 
-  const streak = economy?.streak ?? 0;
+  // Number() guard — a streak stored as a string would break the cycle math
+  const streak = Number(economy?.streak) || 0;
   // Days already claimed inside the current 7-day cycle
   const claimedInCycle = claimedToday
     ? cycleDayOf(streak)            // today's claim already counted in streak

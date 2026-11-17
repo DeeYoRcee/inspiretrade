@@ -160,10 +160,11 @@ var claim_default = handle(async (req, res) => {
     const eco = current || { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };
     if (eco.lastClaimDate === today) return void 0;
     const continued = eco.lastClaimDate === previousDate(today);
-    const streak = continued ? (eco.streak || 0) + 1 : 1;
+    const streak = continued ? Math.floor(Number(eco.streak) || 0) + 1 : 1;
     const cycleDay2 = cycleDayOf(streak);
     const caseType2 = caseTypeForCycleDay(cycleDay2);
     return {
+      ...eco,
       coins: eco.coins || 0,
       cases: (eco.cases || 0) + (caseType2 === "inspire" ? 1 : 0),
       goldCases: (eco.goldCases || 0) + (caseType2 === "gold" ? 1 : 0),

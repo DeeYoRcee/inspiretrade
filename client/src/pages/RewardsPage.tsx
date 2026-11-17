@@ -48,7 +48,8 @@ export default function RewardsPage() {
   const goldCases = economy?.goldCases ?? 0;
 
   // daily claim state — 7-day cycle (day 7 = Gold Case), no streak display
-  const streak = economy?.streak ?? 0;
+  // Number() guard — a streak stored as a string would break the cycle math
+  const streak = Number(economy?.streak) || 0;
   const lastClaimDate = economy?.lastClaimDate;
   const claimedToday = lastClaimDate === todayTashkent();
   const claimedInCycle = claimedToday ? cycleDayOf(streak) : streak % REWARD_CYCLE_DAYS;

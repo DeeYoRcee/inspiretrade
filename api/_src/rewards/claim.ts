@@ -20,11 +20,18 @@ export default handle(async (req, res) => {
       const eco = current || { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };
       if (eco.lastClaimDate === today) return undefined; // abort: already claimed
       const continued = eco.lastClaimDate === previousDate(today);
-      const streak = continued ? (eco.streak || 0) + 1 : 1;
+      // Number() guard: a streak stored as a string ("7") would otherwise be
+      // concatenated ("7" + 1 = "71") and the 7-day cycle would never follow
+      // 1→7 again — the reported "cycle doesn't restart" bug. One claim
+      // normalizes the field back to a clean number.
+      const streak = continued ? Math.floor(Number(eco.streak) || 0) + 1 : 1;
       const cycleDay = cycleDayOf(streak);
       const caseType = caseTypeForCycleDay(cycleDay);
-      // coins stay untouched — daily rewards grant cases only
+      // spread eco — a transaction return REPLACES the node, so a bare object
+      // would wipe fields written elsewhere (customCases from opened custom
+      // cases, future fields); coins stay untouched — cases only
       return {
+        ...eco,
         coins: eco.coins || 0,
         cases: (eco.cases || 0) + (caseType === "inspire" ? 1 : 0),
         goldCases: (eco.goldCases || 0) + (caseType === "gold" ? 1 : 0),
