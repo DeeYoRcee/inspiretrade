@@ -544,11 +544,48 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
     if (dragRef.current) {
       e.stopPropagation();
+      const dragDraw = dragRef.current.mode === "draw" ? dragRef.current : null;
+      // ---- TradingView gesture: press → drag → release finalizes ------------
+      // A real drag (≥4px) that leaves a fixed-point tool exactly one point
+      // short commits on RELEASE. Without this the stroke survived pointer-up
+      // waiting for a second click — the tool looked stuck active and the
+      // drawn line was invisible until that extra click. Plain click-click
+      // remains the alternative; multi-point collectors (path/polyline) and
+      // freehand keep their own commit rules.
+      if (dragDraw?.drawing && toolRef.current) {
+        const tool = toolRef.current;
+        const wanted = TOOL_POINT_COUNT[tool];
+        const d = dragDraw.drawing;
+        if (wanted >= 2 && !CLICK_COLLECT_TOOLS.has(tool) && d.points.length === wanted - 1) {
+          const conv = converterRef.current;
+          const p = conv ? localXY(e) : null;
+          const lastPt = d.points[d.points.length - 1];
+          const px = conv?.x(lastPt.time) ?? -9999;
+          const py = conv?.y(lastPt.price) ?? -9999;
+          if (conv && p && (Math.abs(p.x - px) > 4 || Math.abs(p.y - py) > 4)) {
+            const time = conv.time(p.x);
+            const price = conv.price(p.y);
+            if (time != null && price != null) {
+              const drawing = { ...d, points: [...d.points, { time, price }] };
+              if (tool === "measure") {
+                drawing.text = measureLabel(drawing.points[0], drawing.points[1]);
+              }
+              e.stopPropagation();
+              dragRef.current = null;
+              onChange([...drawingsRef.current, drawing]);
+              onToolCommitted();
+              onSelect(drawing.id);
+              redraw();
+              return;
+            }
+          }
+        }
+      }
       // draw-mode drags survive the pointer-up: trend/fib/rect/etc. collect
       // one point per CLICK and commit when the tool's point count is reached
       // (the old code nulled the in-progress drawing here — multi-point tools
       // could never finish)
-      if (dragRef.current.mode !== "draw") finishDrag();
+      if (dragRef.current && dragRef.current.mode !== "draw") finishDrag();
     }
   };
 

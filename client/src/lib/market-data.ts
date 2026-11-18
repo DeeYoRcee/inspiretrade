@@ -389,12 +389,100 @@ class QuotesProvider {
     // candle moving without hammering the proxy.
     const timer = setInterval(tick, 10000);
     this.timers.set(key, timer);
+
+    // ---- Phase 15: real-time spot tail for metals (XAUUSD / XAGUSD) -------
+    // Yahoo's chart candles for GC=F trail ~10 min behind the market (measured
+    // rmt age 602s live). gold-api.com serves the genuine spot price with
+    // CORS * and second-fresh updatedAt — poll it DIRECTLY from the browser
+    // every second (no server hop) and paint the live tail onto the chart.
+    // The 10s REST resync above keeps running for the delayed history; the
+    // spot merger connects the delayed tail to the live bucket with flat
+    // fill-forward bars (volume 0) so history and real-time candles join
+    // without fabricated movement or duplicate timestamps.
+    const inst = getInstrument(symbol);
+    const spotCode = inst?.spotCode;
+    let spotTimer: ReturnType<typeof setInterval> | null = null;
+    let spotInflight = false;
+    if (spotCode && tf !== "1d") {
+      setSpotState({ state: "connecting", lastTickAt: 0, providerDelaySec: null });
+      const spotTick = async () => {
+        if (spotInflight) return;
+        spotInflight = true;
+        try {
+          const controller = new AbortController();
+          const abortTimer = setTimeout(() => controller.abort(), 3500);
+          const res = await fetch(`https://api.gold-api.com/price/${spotCode}`, { signal: controller.signal });
+          clearTimeout(abortTimer);
+          if (!res.ok) throw new Error(`gold-api ${res.status}`);
+          const data: any = await res.json();
+          const price = Number(data?.price);
+          // the provider stamps its own price — that stamp is the honest
+          // latency number the badge reports (not our poll round-trip)
+          const providerAt = Date.parse(data?.updatedAt || "") || 0;
+          if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
+          const providerDelaySec = providerAt ? Math.max(0, Math.round((Date.now() - providerAt) / 1000)) : null;
+          if (providerDelaySec != null && providerDelaySec > 600) throw new Error("STALE_SPOT"); // market closed
+          const bars = this.history.get(key);
+          if (!bars?.length) return; // history not loaded yet — next tick paints
+          const sec = TF_SECONDS[tf];
+          const merged = mergeSpotTail(bars, price, sec);
+          spotFails = 0;
+          if (merged) {
+            this.history.set(key, merged);
+            setSpotState({ state: "live", lastTickAt: Date.now(), providerDelaySec });
+            statsState.delaySec = providerDelaySec;
+            markTick();
+            this.listeners.get(key)?.forEach((c) => cb({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: true }));
+          }
+        } catch {
+          spotFails += 1;
+          if (spotFails >= 5) setSpotState({ state: "disconnected", lastTickAt: getSpotState().lastTickAt, providerDelaySec: null });
+        } finally {
+          spotInflight = false;
+        }
+      };
+      let spotFails = 0;
+      void spotTick();
+      spotTimer = setInterval(spotTick, 1000);
+      this.timers.set(`${key}:spot`, spotTimer);
+    }
     return () => {
       clearInterval(timer);
       this.timers.delete(key);
+      if (spotTimer) { clearInterval(spotTimer); this.timers.delete(`${key}:spot`); }
       this.listeners.get(key)?.delete(cb);
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Live spot tail — see client/src/lib/spot-tail.ts (pure, unit-tested module).
+// ---------------------------------------------------------------------------
+import { mergeSpotTail } from "@/lib/spot-tail";
+export { mergeSpotTail };
+
+// ---- spot connection store — honest badge state for the live tail ----------
+export type SpotConn = "connecting" | "live" | "disconnected";
+export interface SpotState {
+  state: SpotConn;
+  lastTickAt: number;
+  /** the provider's own freshness (updatedAt stamp age) in seconds */
+  providerDelaySec: number | null;
+}
+let spotState: SpotState = { state: "connecting", lastTickAt: 0, providerDelaySec: null };
+let spotSnapshot: SpotState = { ...spotState };
+const spotListeners = new Set<() => void>();
+function setSpotState(next: SpotState) {
+  if (spotState.state === next.state && spotState.providerDelaySec === next.providerDelaySec
+    && next.state === "live" && Date.now() - spotState.lastTickAt < 500) return;
+  spotState = next;
+  spotSnapshot = { ...next };
+  spotListeners.forEach((l) => l());
+}
+export function getSpotState(): SpotState { return spotSnapshot; }
+export function subscribeSpot(cb: () => void): () => void {
+  spotListeners.add(cb);
+  return () => spotListeners.delete(cb);
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +618,12 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
   const delayNote = delaySec != null && delaySec >= 60 ? ` · ~${Math.max(1, Math.round(delaySec / 60))} min` : delaySec != null && delaySec > 5 ? ` · ~${delaySec}s` : "";
   const metal = inst.assetClass === "metal";
   let message: string;
-  if (source?.startsWith("spot+stooq") || source === "stooq") {
+  if (metal && inst.spotCode) {
+    // Phase 15: the browser paints a real gold-api spot tail every second —
+    // the badge switches to LIVE reactively (subscribeSpot); this static
+    // message names the history source honestly, never "COMEX" as spot.
+    message = `Spot live tail (gold-api 1s) · history: ${source?.startsWith("spot+") ? source.split("+")[1] : "yahoo GC=F (delayed)"}`;
+  } else if (source?.startsWith("spot+stooq") || source === "stooq") {
     message = `Gold spot · live gold-api tail + stooq spot history${delayNote}`;
   } else if (source?.startsWith("spot+yahoo")) {
     message = `Live spot (gold-api) tail · older bars delayed${delayNote}`;

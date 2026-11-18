@@ -21,6 +21,7 @@ import {
 } from "lightweight-charts";
 import {
   loadFeed, subscribeFeed, binanceProvider, getConnectionState, subscribeConnection, getFeedStats, markChartUpdate,
+  getSpotState, subscribeSpot, type SpotState,
   type FeedStatus,
 } from "@/lib/market-data";
 import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/terminal";
@@ -704,9 +705,18 @@ export function PriceChart({
         chartRef.current?.timeScale().scrollToRealTime();
         setLoaded({ status, message });
 
-        unsub = subscribeFeed(symbol, timeframe, ({ lastBar }) => {
-          barsRef.current = upsertLocal(barsRef.current, lastBar);
-          applyBarsToSeries("update");
+        unsub = subscribeFeed(symbol, timeframe, ({ bars, lastBar }) => {
+          // spot-tail ticks may BRIDGE the delayed history to the live bucket
+          // with fill-forward bars — a length change is structural (new
+          // timestamps) and must go through the full setData path, not the
+          // tail-only upsert, or the new candles never render
+          if (bars.length !== barsRef.current.length) {
+            barsRef.current = bars;
+            applyBarsToSeries("set");
+          } else {
+            barsRef.current = upsertLocal(barsRef.current, lastBar);
+            applyBarsToSeries("update");
+          }
           markChartUpdate();
           updateLegend(null);
           updateBidAsk(lastBar.close);
@@ -1223,8 +1233,11 @@ export function PriceChart({
   }, [onSymbolChange, onTimeframeChange, uid]);
 
   // honest connection badge: crypto reflects the REAL ws/rest state machine,
+  // metals reflect the browser-direct gold-api spot poll (Phase 15), other
   // quotes feeds are labelled delayed with the provider source — never "LIVE"
   const isCryptoFeed = getInstrument(symbol)?.feed === "binance";
+  const spotInst = getInstrument(symbol)?.spotCode ? true : false;
+  const spot = useSyncExternalStore(subscribeSpot, getSpotState);
   const statusChip = loaded.status !== "error" && (() => {
     const c = conn.binance;
     let dot = "bg-emerald-400";
@@ -1235,6 +1248,20 @@ export function PriceChart({
       else if (c === "connecting") { dot = "bg-sky-400 animate-pulse"; label = "Connecting…"; }
       else if (c === "reconnecting") { dot = "bg-amber-400 animate-pulse"; label = "RECONNECTING…"; }
       else { dot = "bg-slate-500"; label = "OFFLINE"; }
+    } else if (spotInst) {
+      // metals: the 1s gold-api tail is the real-time layer; the delayed
+      // Yahoo/stooq history is named honestly next to it
+      if (spot.state === "live") {
+        const d = spot.providerDelaySec;
+        dot = "bg-emerald-400";
+        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""} · history delayed`;
+      } else if (spot.state === "connecting") {
+        dot = "bg-sky-400 animate-pulse";
+        label = "Spot connecting…";
+      } else {
+        dot = "bg-amber-400 animate-pulse";
+        label = "Spot feed down — delayed data only";
+      }
     } else {
       dot = "bg-amber-400";
       label = loaded.message || "DELAYED";
@@ -1639,6 +1666,20 @@ export function PriceChart({
           addHLine: addHLineAt,
           addText: addTextAt,
           deleteDrawing: (id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id)),
+          duplicateDrawing: (id) => {
+            const src = drawingsRef.current.find((d) => d.id === id);
+            if (!src) return;
+            // one tf-bucket to the right + a hair of price offset — clearly a
+            // separate object, immediately selectable
+            const step = TF_SECONDS[timeframeRef.current] ?? 60;
+            const copy: Drawing = {
+              ...src,
+              id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+              points: src.points.map((q) => ({ time: q.time + step, price: q.price * 1.001 })),
+            };
+            commitDrawings([...drawingsRef.current, copy]);
+            setSelectedDrawingId(copy.id);
+          },
           toggleHide: toggleDrawingHidden,
           clearDrawings: () => { commitDrawings([]); if (uid) clearDrawingsRemote(uid, symbolRef.current); },
           resetChart: resetView,

@@ -382,6 +382,7 @@ export function ChartContextMenu({
     addHLine: (price: number) => void;
     addText: (time: number, price: number) => void;
     deleteDrawing: (id: string) => void;
+    duplicateDrawing: (id: string) => void;
     toggleHide: (id: string) => void;
     clearDrawings: () => void;
     resetChart: () => void;
@@ -410,6 +411,7 @@ export function ChartContextMenu({
   const items: { label: string; danger?: boolean; onClick: () => void }[] = [];
   if (state.hitDrawingId) {
     items.push({ label: state.hitHidden ? "Show drawing" : "Hide drawing", onClick: () => actions.toggleHide(state.hitDrawingId!) });
+    items.push({ label: "Duplicate drawing", onClick: () => actions.duplicateDrawing(state.hitDrawingId!) });
     items.push({ label: "Delete drawing", danger: true, onClick: () => actions.deleteDrawing(state.hitDrawingId!) });
   }
   if (state.price != null) {
