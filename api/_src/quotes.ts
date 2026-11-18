@@ -13,7 +13,7 @@
  * Responses are cached at the edge (s-maxage) to keep upstream request volume
  * low and stay inside Vercel Hobby function limits.
  */
-import { handle, requireUser } from "./lib/firebase";
+import { handle, requireUser, rtdb } from "./lib/firebase";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
@@ -267,6 +267,73 @@ export default handle(async (req, res) => {
   const period1 = toSec(url.searchParams.get("period1"));
   const period2 = toSec(url.searchParams.get("period2"));
   const periodMode = period1 != null && period2 != null && period2 > period1;
+
+  // ---- Phase 16: self-recorded spot candles (XAU / XAG) ------------------
+  // There is no free keyless provider of genuine XAUUSD-SPOT 1m OHLC history
+  // (Yahoo spot symbols are delisted, stooq sits behind a browser PoW
+  // challenge, institutional feeds need credentials), and Yahoo's GC=F is a
+  // COMEX futures contract — a DIFFERENT instrument that must never be mixed
+  // into a spot chart. Instead the terminal records its own real spot
+  // candles: every 1s gold-api tick observed by any client is folded into a
+  // minute candle and merged here (o=earliest, c=latest, h/l envelope,
+  // samples=max). Gaps stay gaps — nothing is fabricated.
+  const action = (url.searchParams.get("action") || "").trim();
+  if (action === "spot-history") {
+    const code = (url.searchParams.get("code") || "XAU").toUpperCase() === "XAG" ? "XAG" : "XAU";
+    const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
+    const obj: Record<string, any> = snap.val() || {};
+    const now = Math.floor(Date.now() / 1000);
+    const minT = now - 8 * 86400;
+    const candles = Object.entries(obj)
+      .map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) }))
+      .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT)
+      .sort((a, b) => a.t - b.t);
+    return res.json({ ok: true, code, candles });
+  }
+  if (action === "spot-record" && req.method === "POST") {
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const records: any[] = Array.isArray(raw?.records) ? raw.records.slice(0, 4) : [];
+    const now = Math.floor(Date.now() / 1000);
+    const minuteNow = Math.floor(now / 60) * 60;
+    let accepted = 0;
+    for (const rec of records) {
+      const code = rec?.code === "XAG" ? "XAG" : rec?.code === "XAU" ? "XAU" : null;
+      if (!code) continue;
+      const incoming = (Array.isArray(rec?.candles) ? rec.candles.slice(0, 40) : [])
+        .map((c: any) => ({ t: Number(c?.t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 1) }))
+        .filter((c: any) => {
+          // same validity rules as the client (shared/spot-tail logic, inlined
+          // for the bundled function): aligned, sane envelope, ≤ 8 days old
+          if (!Number.isFinite(c.t) || c.t % 60 !== 0 || c.t > minuteNow || c.t < now - 8 * 86400) return false;
+          if (![c.o, c.h, c.l, c.c].every((v: number) => Number.isFinite(v) && v > 0)) return false;
+          if (c.h < Math.max(c.o, c.c) || c.l > Math.min(c.o, c.c) || c.h < c.l) return false;
+          if (!Number.isFinite(c.s) || c.s < 1 || c.s > 60) return false;
+          return true;
+        });
+      if (!incoming.length) continue;
+      const ref = rtdb().ref(`spotTicks/${code}`);
+      const snap = await ref.once("value");
+      const existing: Record<string, any> = snap.val() || {};
+      const update: Record<string, { o: number; h: number; l: number; c: number; s: number }> = {};
+      for (const inc of incoming) {
+        const ex = existing[String(inc.t)];
+        if (!ex) { update[String(inc.t)] = { o: inc.o, h: inc.h, l: inc.l, c: inc.c, s: inc.s }; accepted += 1; continue; }
+        // deterministic merge (mirror of client mergeSpotCandles): the stored
+        // candle holds the earlier open, the incoming one the newest close,
+        // high/low/samples take the envelope
+        update[String(inc.t)] = {
+          o: Number(ex.o) || inc.o,
+          c: inc.c,
+          h: Math.max(inc.h, Number(ex.h) || inc.h),
+          l: Math.min(inc.l, Number(ex.l) || inc.l),
+          s: Math.max(inc.s, Number(ex.s || 0)),
+        };
+        accepted += 1;
+      }
+      if (Object.keys(update).length) await ref.update(update);
+    }
+    return res.json({ ok: true, accepted });
+  }
 
   // ---- Batch quote mode: GET /api/quotes?symbols=EURUSD=X,GC=F ----------
   // Light last-price snapshot for the Market Watch panel.

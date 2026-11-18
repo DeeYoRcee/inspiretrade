@@ -74,6 +74,10 @@ async function requireUser(req) {
   if (!decoded?.uid) throw new HttpError(401, "INVALID_TOKEN", "Invalid token payload");
   return { uid: decoded.uid, email: decoded.email, name: decoded.name };
 }
+function rtdb() {
+  ensureApp();
+  return admin.database();
+}
 function handle(fn) {
   return async (req, res) => {
     try {
@@ -358,6 +362,57 @@ var quotes_default = handle(async (req, res) => {
   const period1 = toSec(url.searchParams.get("period1"));
   const period2 = toSec(url.searchParams.get("period2"));
   const periodMode = period1 != null && period2 != null && period2 > period1;
+  const action = (url.searchParams.get("action") || "").trim();
+  if (action === "spot-history") {
+    const code = (url.searchParams.get("code") || "XAU").toUpperCase() === "XAG" ? "XAG" : "XAU";
+    const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
+    const obj = snap.val() || {};
+    const now = Math.floor(Date.now() / 1e3);
+    const minT = now - 8 * 86400;
+    const candles = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT).sort((a, b) => a.t - b.t);
+    return res.json({ ok: true, code, candles });
+  }
+  if (action === "spot-record" && req.method === "POST") {
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const records = Array.isArray(raw?.records) ? raw.records.slice(0, 4) : [];
+    const now = Math.floor(Date.now() / 1e3);
+    const minuteNow = Math.floor(now / 60) * 60;
+    let accepted = 0;
+    for (const rec of records) {
+      const code = rec?.code === "XAG" ? "XAG" : rec?.code === "XAU" ? "XAU" : null;
+      if (!code) continue;
+      const incoming = (Array.isArray(rec?.candles) ? rec.candles.slice(0, 40) : []).map((c) => ({ t: Number(c?.t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 1) })).filter((c) => {
+        if (!Number.isFinite(c.t) || c.t % 60 !== 0 || c.t > minuteNow || c.t < now - 8 * 86400) return false;
+        if (![c.o, c.h, c.l, c.c].every((v) => Number.isFinite(v) && v > 0)) return false;
+        if (c.h < Math.max(c.o, c.c) || c.l > Math.min(c.o, c.c) || c.h < c.l) return false;
+        if (!Number.isFinite(c.s) || c.s < 1 || c.s > 60) return false;
+        return true;
+      });
+      if (!incoming.length) continue;
+      const ref = rtdb().ref(`spotTicks/${code}`);
+      const snap = await ref.once("value");
+      const existing = snap.val() || {};
+      const update = {};
+      for (const inc of incoming) {
+        const ex = existing[String(inc.t)];
+        if (!ex) {
+          update[String(inc.t)] = { o: inc.o, h: inc.h, l: inc.l, c: inc.c, s: inc.s };
+          accepted += 1;
+          continue;
+        }
+        update[String(inc.t)] = {
+          o: Number(ex.o) || inc.o,
+          c: inc.c,
+          h: Math.max(inc.h, Number(ex.h) || inc.h),
+          l: Math.min(inc.l, Number(ex.l) || inc.l),
+          s: Math.max(inc.s, Number(ex.s || 0))
+        };
+        accepted += 1;
+      }
+      if (Object.keys(update).length) await ref.update(update);
+    }
+    return res.json({ ok: true, accepted });
+  }
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
     if (!list.length) return res.status(200).json({ ok: true, quotes: [] });

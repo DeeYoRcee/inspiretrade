@@ -38,12 +38,16 @@ export function historyAvailability(symbol: string, tf: Timeframe): Availability
   if (inst.feed === "binance") {
     return { maxDaysBack: null, note: "Binance provides years of real history for this timeframe" };
   }
+  // Phase 16 honesty: replay/backtest history still comes from the delayed
+  // Yahoo provider — for metals that underlier is a COMEX futures contract,
+  // never presented as spot
+  const suffix = inst.assetClass === "metal" ? " · COMEX futures underlier (not spot)" : "";
   const interval = YAHOO_INTERVAL[tf].interval;
   switch (interval) {
-    case "1m": return { maxDaysBack: 30, note: "The delayed provider keeps ~30 days of 1-minute history" };
-    case "5m": case "15m": case "30m": return { maxDaysBack: 60, note: "The delayed provider keeps ~60 days of this granularity" };
-    case "60m": return { maxDaysBack: 730, note: "The delayed provider keeps ~2 years of hourly history" };
-    default: return { maxDaysBack: 730, note: "The delayed provider keeps ~2 years of this granularity" };
+    case "1m": return { maxDaysBack: 30, note: `The delayed provider keeps ~30 days of 1-minute history${suffix}` };
+    case "5m": case "15m": case "30m": return { maxDaysBack: 60, note: `The delayed provider keeps ~60 days of this granularity${suffix}` };
+    case "60m": return { maxDaysBack: 730, note: `The delayed provider keeps ~2 years of hourly history${suffix}` };
+    default: return { maxDaysBack: 730, note: `The delayed provider keeps ~2 years of this granularity${suffix}` };
   }
 }
 

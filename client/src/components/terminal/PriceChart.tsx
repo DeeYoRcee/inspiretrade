@@ -428,7 +428,22 @@ export function PriceChart({
       layout: { background: { type: ColorType.Solid, color: COLORS.bg }, textColor: COLORS.text, fontSize: 11, attributionLogo: false },
       grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.26 } },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, visible: true, rightOffset: 8 },
+      // Phase 16: the time axis and crosshair labels render in the VIEWER'S
+      // timezone (TradingView behavior) — bar timestamps stay UNIX UTC under
+      // the hood, only the presentation is local
+      timeScale: {
+        borderVisible: false, timeVisible: true, secondsVisible: false, visible: true, rightOffset: 8,
+        tickMarkFormatter: (t: number, kind: number) => {
+          const d = new Date(t * 1000);
+          const hm = () => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+          if (kind <= 1) return d.toLocaleDateString([], { month: "short", year: "numeric" });
+          if (kind === 2) return d.toLocaleDateString([], { day: "2-digit", month: "short" });
+          return hm();
+        },
+      },
+      localization: {
+        timeFormatter: (t: number) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+      },
       // TradingView-style crosshair: labels on BOTH axes snap to the hovered
       // candle, axis labels match the dark theme
       crosshair: {
@@ -1087,7 +1102,7 @@ export function PriceChart({
     // TradingView-style: the exact bar under the crosshair, with its own timestamp
     const ts2 = new Date(b.time * 1000);
     const hh = (n: number) => String(n).padStart(2, "0");
-    const stamp = `${hh(ts2.getUTCDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getUTCMonth()]} ${hh(ts2.getUTCHours())}:${hh(ts2.getUTCMinutes())}`;
+    const stamp = `${hh(ts2.getDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getMonth()]} ${hh(ts2.getHours())}:${hh(ts2.getMinutes())}`;
     const instL2 = getInstrument(symbolRef.current);
     let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> <span class="text-slate-400">— ${instL2?.name ?? ""}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span> <span class="text-slate-500 font-number">${stamp}</span>`;
     if (b.volume) html += ` <span class="text-slate-500">Vol</span> <span class="font-number text-slate-400">${compactNum(b.volume)}</span>`;
@@ -1254,13 +1269,13 @@ export function PriceChart({
       if (spot.state === "live") {
         const d = spot.providerDelaySec;
         dot = "bg-emerald-400";
-        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""} · history delayed`;
+        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""} · self-recorded candles`;
       } else if (spot.state === "connecting") {
         dot = "bg-sky-400 animate-pulse";
         label = "Spot connecting…";
       } else {
         dot = "bg-amber-400 animate-pulse";
-        label = "Spot feed down — delayed data only";
+        label = "Spot feed down — recorded candles only";
       }
     } else {
       dot = "bg-amber-400";

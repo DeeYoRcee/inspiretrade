@@ -369,41 +369,49 @@ class QuotesProvider {
     const key = `${symbol}:${tf}`;
     if (!this.listeners.has(key)) this.listeners.set(key, new Set());
     this.listeners.get(key)!.add(cb);
-    const tick = async () => {
-      // in-flight guard: a slow response must never stack requests or let an
-      // older answer overwrite a newer one (chart jumping backwards)
-      if (this.inflight.has(key)) return;
-      this.inflight.add(key);
-      try {
-        await this.loadNetwork(symbol, tf);
-        const bars = this.history.get(key)!;
-        if (bars.length) { markTick(); this.listeners.get(key)?.forEach((c) => cb({ bars, lastBar: bars[bars.length - 1], isRealtime: false })); }
-      } catch { /* transient — next poll retries */ } finally {
-        this.inflight.delete(key);
-      }
-    };
-    // first tick right away — but skip it when the history was just fetched
-    // (fresh cache), so mounting the chart never duplicates the load request
-    if (Date.now() - (this.loadedAt.get(key) ?? 0) > 10000) void tick();
-    // REST polling — 10s; Yahoo data is delayed anyway, this keeps the last
-    // candle moving without hammering the proxy.
-    const timer = setInterval(tick, 10000);
-    this.timers.set(key, timer);
-
-    // ---- Phase 15: real-time spot tail for metals (XAUUSD / XAGUSD) -------
-    // Yahoo's chart candles for GC=F trail ~10 min behind the market (measured
-    // rmt age 602s live). gold-api.com serves the genuine spot price with
-    // CORS * and second-fresh updatedAt — poll it DIRECTLY from the browser
-    // every second (no server hop) and paint the live tail onto the chart.
-    // The 10s REST resync above keeps running for the delayed history; the
-    // spot merger connects the delayed tail to the live bucket with flat
-    // fill-forward bars (volume 0) so history and real-time candles join
-    // without fabricated movement or duplicate timestamps.
     const inst = getInstrument(symbol);
     const spotCode = inst?.spotCode;
+
+    // ---- Phase 16: metals run on the SELF-RECORDED spot engine -------------
+    // There is no keyless provider of real XAUUSD-SPOT 1m OHLC history, and
+    // Yahoo GC=F is a COMEX futures contract (a different instrument, ~10 min
+    // delayed) that must never be mixed into a spot chart. So metals charts
+    // are built entirely from the terminal's own recorded spot candles: the
+    // 1s gold-api poller folds each observed price into real minute candles
+    // (local + server merge), higher timeframes aggregate up from m1, and no
+    // Yahoo/stooq REST history poll runs for metals at all.
+    if (!spotCode) {
+      const tick = async () => {
+        // in-flight guard: a slow response must never stack requests or let an
+        // older answer overwrite a newer one (chart jumping backwards)
+        if (this.inflight.has(key)) return;
+        this.inflight.add(key);
+        try {
+          await this.loadNetwork(symbol, tf);
+          const bars = this.history.get(key)!;
+          if (bars.length) { markTick(); this.listeners.get(key)?.forEach((c) => cb({ bars, lastBar: bars[bars.length - 1], isRealtime: false })); }
+        } catch { /* transient — next poll retries */ } finally {
+          this.inflight.delete(key);
+        }
+      };
+      // first tick right away — but skip it when the history was just fetched
+      // (fresh cache), so mounting the chart never duplicates the load request
+      if (Date.now() - (this.loadedAt.get(key) ?? 0) > 10000) void tick();
+      // REST polling — 10s; Yahoo data is delayed anyway, this keeps the last
+      // candle moving without hammering the proxy.
+      const timer = setInterval(tick, 10000);
+      this.timers.set(key, timer);
+    }
+
+    // ---- real-time spot tail + recorder (metals) ----------------------------
+    // gold-api.com serves the genuine spot price with CORS * and a fresh
+    // updatedAt stamp — poll it DIRECTLY from the browser every second, paint
+    // the live bucket, and RECORD the price into the self-built candle set.
     let spotTimer: ReturnType<typeof setInterval> | null = null;
+    let spotResync: ReturnType<typeof setInterval> | null = null;
     let spotInflight = false;
-    if (spotCode && tf !== "1d") {
+    if (spotCode) {
+      ensureSpotFlusher();
       setSpotState({ state: "connecting", lastTickAt: 0, providerDelaySec: null });
       const spotTick = async () => {
         if (spotInflight) return;
@@ -422,18 +430,34 @@ class QuotesProvider {
           if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
           const providerDelaySec = providerAt ? Math.max(0, Math.round((Date.now() - providerAt) / 1000)) : null;
           if (providerDelaySec != null && providerDelaySec > 600) throw new Error("STALE_SPOT"); // market closed
+          // record the observed price into the self-built candle set (every
+          // timeframe benefits — the recorder is timeframe-independent)
+          recordSpot(spotCode, price);
           const bars = this.history.get(key);
-          if (!bars?.length) return; // history not loaded yet — next tick paints
-          const sec = TF_SECONDS[tf];
-          const merged = mergeSpotTail(bars, price, sec);
-          spotFails = 0;
-          if (merged) {
-            this.history.set(key, merged);
-            setSpotState({ state: "live", lastTickAt: Date.now(), providerDelaySec });
-            statsState.delaySec = providerDelaySec;
-            markTick();
-            this.listeners.get(key)?.forEach((c) => cb({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: true }));
+          if (!bars?.length) {
+            // the very first recorded minute just opened — pull it into the
+            // chart immediately instead of waiting for the 3 min resync
+            await this.loadRecordedSpot(symbol, tf);
+            const fresh = this.history.get(key);
+            if (fresh?.length) {
+              this.listeners.get(key)?.forEach((c) => cb({ bars: fresh, lastBar: fresh[fresh.length - 1], isRealtime: false }));
+            }
+            return;
           }
+          if (tf !== "1d") {
+            const sec = TF_SECONDS[tf];
+            // bridging fill-forward is capped at 5 buckets for recorded data:
+            // beyond that the missing minutes stay an honest gap on the axis
+            const merged = mergeSpotTail(bars, price, sec, 5);
+            if (merged) {
+              this.history.set(key, merged);
+              statsState.delaySec = providerDelaySec;
+              markTick();
+              this.listeners.get(key)?.forEach((c) => cb({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: true }));
+            }
+          }
+          spotFails = 0;
+          setSpotState({ state: "live", lastTickAt: Date.now(), providerDelaySec });
         } catch {
           spotFails += 1;
           if (spotFails >= 5) setSpotState({ state: "disconnected", lastTickAt: getSpotState().lastTickAt, providerDelaySec: null });
@@ -445,21 +469,141 @@ class QuotesProvider {
       void spotTick();
       spotTimer = setInterval(spotTick, 1000);
       this.timers.set(`${key}:spot`, spotTimer);
+
+      // slow resync of the recorded history (other devices' observations merge
+      // in; 3 min cadence keeps RTDB reads negligible)
+      spotResync = setInterval(async () => {
+        if (this.inflight.has(key)) return;
+        this.inflight.add(key);
+        try {
+          await this.loadRecordedSpot(symbol, tf);
+          const bars = this.history.get(key)!;
+          if (bars.length) this.listeners.get(key)?.forEach((c) => cb({ bars, lastBar: bars[bars.length - 1], isRealtime: false }));
+        } catch { /* transient */ } finally {
+          this.inflight.delete(key);
+        }
+      }, 180000);
+      this.timers.set(`${key}:rec`, spotResync);
     }
     return () => {
-      clearInterval(timer);
+      const timer = this.timers.get(key);
+      if (timer) clearInterval(timer);
       this.timers.delete(key);
       if (spotTimer) { clearInterval(spotTimer); this.timers.delete(`${key}:spot`); }
+      if (spotResync) { clearInterval(spotResync); this.timers.delete(`${key}:rec`); }
       this.listeners.get(key)?.delete(cb);
     };
+  }
+
+  /**
+   * Phase 16 — load the SELF-RECORDED spot history for a metals instrument
+   * and place the aggregated series for `tf` into the history cache. Sources:
+   * server RTDB merge (all devices) ∪ localStorage (this device) ∪ the
+   * in-progress minute. Pure spot — no futures, no delayed proxies.
+   */
+  async loadRecordedSpot(symbol: string, tf: Timeframe): Promise<Bar[]> {
+    const inst = getInstrument(symbol)!;
+    const code = inst.spotCode!;
+    const now = Math.floor(Date.now() / 1000);
+    // server merge first (authoritative across devices), fall back to local
+    let candles: SpotCandle[] = [];
+    try {
+      const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}`);
+      if (res?.ok && Array.isArray(res.candles)) {
+        candles = res.candles.filter((c: any) => validSpotCandle(c, now));
+      }
+    } catch { /* server unavailable → local records only */ }
+    candles = mergeSpotSeries(candles, loadLocalSpot(code));
+    // include the in-progress minute + unflushed completions
+    const st = spotRec.get(code);
+    if (st) candles = mergeSpotSeries(candles, [...st.unflushed, ...(st.minute ? [st.minute] : [])].filter((c) => validSpotCandle(c, now)));
+    saveLocalSpot(code, candles);
+    const m1: Bar[] = candles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s }));
+    const key = `${symbol}:${tf}`;
+    const sec = TF_SECONDS[tf];
+    const bars = dedupSort(tf === "1m" ? m1.slice() : aggregateBars(m1, sec / 60));
+    this.source.set(key, tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`);
+    this.identity.set(key, "spot");
+    this.history.set(key, bars);
+    this.loadedAt.set(key, Date.now());
+    return bars;
   }
 }
 
 // ---------------------------------------------------------------------------
 // Live spot tail — see client/src/lib/spot-tail.ts (pure, unit-tested module).
 // ---------------------------------------------------------------------------
-import { mergeSpotTail } from "@/lib/spot-tail";
+import { mergeSpotTail, recordSpotTick, mergeSpotSeries, validSpotCandle, type SpotCandle } from "@/lib/spot-tail";
 export { mergeSpotTail };
+
+// ---- Phase 16: self-recorded spot candles (XAU / XAG) ----------------------
+// Every 1s gold-api observation is folded into a real minute candle. Finished
+// minutes persist to localStorage immediately and batch-merge to the server
+// every ~20s so ALL devices converge on the same recorded candle set. There
+// is deliberately NO seeding: candles exist only where ticks were actually
+// observed — gaps stay gaps.
+const SPOT_REC_KEY = (code: string) => `it_spot_rec_${code}`;
+const SPOT_REC_MAX = 4320; // 3 days of minutes per code (quota-safe)
+const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCandle[] }>();
+
+function loadLocalSpot(code: string): SpotCandle[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(SPOT_REC_KEY(code)) || "[]");
+    return Array.isArray(arr) ? arr.filter((c: any) => c && Number.isFinite(c.t)) : [];
+  } catch { return []; }
+}
+
+function saveLocalSpot(code: string, candles: SpotCandle[]) {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - 8 * 86400;
+    localStorage.setItem(SPOT_REC_KEY(code), JSON.stringify(candles.filter((c) => c.t >= cutoff).slice(-SPOT_REC_MAX)));
+  } catch { /* quota exceeded — recorder degrades to in-memory */ }
+}
+
+/** Fold one observed spot price into the recorder (minute bucketing). */
+function recordSpot(code: string, price: number) {
+  if (!(price > 0)) return;
+  const state = spotRec.get(code) ?? { minute: null as SpotCandle | null, unflushed: [] as SpotCandle[] };
+  const prev = state.minute;
+  const next = recordSpotTick(prev, price, Math.floor(Date.now() / 1000));
+  if (prev && next.t !== prev.t) {
+    // minute completed → persist locally + queue for the server merge
+    saveLocalSpot(code, mergeSpotSeries(loadLocalSpot(code), [prev]));
+    if (prev.s > 0 && state.unflushed.length < 60) state.unflushed.push(prev);
+  }
+  state.minute = next;
+  spotRec.set(code, state);
+}
+
+/** Push unflushed minute candles to the server (bounded, idempotent merge). */
+async function flushSpotRecords() {
+  for (const [code, st] of spotRec) {
+    if (!st.unflushed.length) continue;
+    const batch = st.unflushed.splice(0, 30);
+    try {
+      const res = await authedFetch<any>("/api/quotes?action=spot-record", { records: [{ code, candles: batch }] });
+      if (!res?.ok) st.unflushed.unshift(...batch); // retry later
+    } catch {
+      st.unflushed.unshift(...batch); // offline — keep, localStorage already has them
+    }
+  }
+}
+/** Recorded m1 minutes for a code (server-unknown here: local + in-progress). */
+export function recordedMinuteCount(code: string): number {
+  const st = spotRec.get(code);
+  const pending = st ? st.unflushed.length + (st.minute ? 1 : 0) : 0;
+  return loadLocalSpot(code).length + pending;
+}
+
+let spotFlushTimer: ReturnType<typeof setInterval> | null = null;
+function ensureSpotFlusher() {
+  if (spotFlushTimer) return;
+  spotFlushTimer = setInterval(() => { void flushSpotRecords(); }, 20000);
+  // also flush when the tab hides/closes — candles must not be lost
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => { if (document.hidden) void flushSpotRecords(); });
+  }
+}
 
 // ---- spot connection store — honest badge state for the live tail ----------
 export type SpotConn = "connecting" | "live" | "disconnected";
@@ -608,33 +752,38 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     assertPriceIdentity(inst, bars);
     return { bars, status: "live" };
   }
+  // ---- Phase 16: metals = SELF-RECORDED spot engine ------------------------
+  // Real XAUUSD Spot candles built from observed gold-api ticks. COMEX
+  // futures (GC=F) and stooq CSV are NEVER mixed into a spot chart; history
+  // availability is reported honestly (candles exist only where ticks were
+  // actually observed).
+  if (inst.spotCode) {
+    const bars = await quotesProvider.loadRecordedSpot(symbol, tf);
+    assertPriceIdentity(inst, bars);
+    const m1 = recordedMinuteCount(inst.spotCode);
+    const delaySec = getSpotState().providerDelaySec;
+    const message = m1 > 0
+      ? `${symbol} Spot · self-recorded candles (gold-api 1s) · m1 history: ${m1} min`
+      : `${symbol} Spot · recording started — m1 candles build in real time (no history yet)`;
+    return { bars, status: "polling", message, delaySec };
+  }
   const { bars, source, identity } = await quotesProvider.load(symbol, tf);
   assertPriceIdentity(inst, bars);
-  // honest labelling — the badge names the ACTUAL underlier of every bar:
-  // "spot+stooq"/"spot+yahoo" = gold-api live spot tail + spot history,
-  // plain "yahoo" for a metals instrument = COMEX futures fallback and the
-  // user must see that, plain "yahoo"/"stooq" for FX = delayed spot candles
+  // honest labelling — FX/indices keep their real (delayed) providers and the
+  // badge names the ACTUAL underlier of every bar
   const delaySec = statsState.delaySec;
   const delayNote = delaySec != null && delaySec >= 60 ? ` · ~${Math.max(1, Math.round(delaySec / 60))} min` : delaySec != null && delaySec > 5 ? ` · ~${delaySec}s` : "";
-  const metal = inst.assetClass === "metal";
   let message: string;
-  if (metal && inst.spotCode) {
-    // Phase 15: the browser paints a real gold-api spot tail every second —
-    // the badge switches to LIVE reactively (subscribeSpot); this static
-    // message names the history source honestly, never "COMEX" as spot.
-    message = `Spot live tail (gold-api 1s) · history: ${source?.startsWith("spot+") ? source.split("+")[1] : "yahoo GC=F (delayed)"}`;
-  } else if (source?.startsWith("spot+stooq") || source === "stooq") {
+  if (source?.startsWith("spot+stooq") || source === "stooq") {
     message = `Gold spot · live gold-api tail + stooq spot history${delayNote}`;
   } else if (source?.startsWith("spot+yahoo")) {
     message = `Live spot (gold-api) tail · older bars delayed${delayNote}`;
-  } else if (metal && source === "yahoo") {
-    message = `⚠ COMEX futures fallback — spot history unavailable${delayNote}`;
   } else if (inst.assetClass === "forex") {
     message = `FX spot (Yahoo) — delayed${delayNote}`;
   } else {
     message = `Delayed data (${source || "Yahoo"})${delayNote}`;
   }
-  if (identity === "futures" && !metal) message = `Futures fallback · ${message}`;
+  if (identity === "futures") message = `Futures fallback · ${message}`;
   return { bars, status: "polling", message, delaySec };
 }
 
