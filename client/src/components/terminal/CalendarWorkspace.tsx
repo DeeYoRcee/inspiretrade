@@ -28,6 +28,8 @@ import SessionsBoard from "./SessionsBoard";
 import AlertsPanel from "./AlertsPanel";
 
 const IMPACTS: Impact[] = ["High", "Medium", "Low", "Holiday"];
+const CAL_IMPACTS_KEY = "it-cal-impacts";
+const CAL_CURRENCIES_KEY = "it-cal-currencies";
 
 const IMPACT_STYLE: Record<Impact, string> = {
   High: "border-red-500/50 bg-red-500/10 text-red-300",
@@ -177,7 +179,7 @@ function FilterBar({
     <div className="flex flex-wrap items-center gap-2">
       <div className="relative">
         <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-        <Input value={search} onChange={(e) => onSearch(e.target.value)} placeholder="Search events…" className="h-8 w-44 border-slate-700 bg-slate-950 pl-7 text-xs" />
+        <Input value={search} onChange={(e) => onSearch(e.target.value)} placeholder="Search events…" className="cal-panel h-8 w-44 border-slate-700 bg-slate-950 pl-7 text-xs" />
       </div>
       <div className="flex items-center gap-1">
         {IMPACTS.map((i) => (
@@ -222,7 +224,7 @@ function EventTable({
     return <div className="rounded-lg border border-dashed border-slate-700 p-6 text-center text-xs text-slate-500">{emptyText}</div>;
   }
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-slate-800">
+    <div className="cal-panel min-h-0 flex-1 overflow-auto rounded-lg border border-slate-800">
       <table className="w-full min-w-[760px] border-collapse text-left text-xs">
         <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
           <tr className="text-[10px] uppercase tracking-wide text-slate-500">
@@ -258,8 +260,26 @@ function CalendarTabPane({ symbol }: { symbol?: string }) {
   const { settings } = useEconWarnSettings();
   const now = useTicker(1000);
   const [search, setSearch] = useState("");
-  const [impacts, setImpacts] = useState<Set<Impact>>(() => new Set(["High", "Medium"]));
-  const [currencies, setCurrencies] = useState<Set<string>>(new Set());
+  // impact / currency filters persist across visits (localStorage): picking
+  // "High" only and coming back later must NOT resurrect Medium/Low rows
+  const [impacts, setImpacts] = useState<Set<Impact>>(() => {
+    try {
+      const raw = localStorage.getItem(CAL_IMPACTS_KEY);
+      if (raw) {
+        const list = JSON.parse(raw) as Impact[];
+        const valid = list.filter((x) => IMPACTS.includes(x));
+        if (valid.length) return new Set(valid);
+      }
+    } catch { /* corrupted store — fall through to defaults */ }
+    return new Set(["High", "Medium"]);
+  });
+  const [currencies, setCurrencies] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(CAL_CURRENCIES_KEY);
+      if (raw) return new Set(JSON.parse(raw) as string[]);
+    } catch { /* corrupted store — defaults */ }
+    return new Set();
+  });
   const [detail, setDetail] = useState<CalEventFull | null>(null);
 
   const allEvents = query.data?.events ?? [];
@@ -278,8 +298,20 @@ function CalendarTabPane({ symbol }: { symbol?: string }) {
   const nextHigh = allEvents.find((e) => e.impact === "High" && e.date > now) ?? null;
   const loading = query.isLoading;
 
-  const toggleImpact = (i: Impact) => setImpacts((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
-  const toggleCurrency = (c: string) => setCurrencies((prev) => { const n = new Set(prev); if (n.has(c)) n.delete(c); else n.add(c); return n; });
+  const toggleImpact = (i: Impact) => setImpacts((prev) => {
+    const n = new Set(prev);
+    if (n.has(i)) n.delete(i); else n.add(i);
+    // never allow an empty filter (all off = nothing would ever render)
+    const store = n.size ? [...n] : [...IMPACTS];
+    try { localStorage.setItem(CAL_IMPACTS_KEY, JSON.stringify(store)); } catch { /* private mode */ }
+    return n.size ? n : new Set(IMPACTS);
+  });
+  const toggleCurrency = (c: string) => setCurrencies((prev) => {
+    const n = new Set(prev);
+    if (n.has(c)) n.delete(c); else n.add(c);
+    try { localStorage.setItem(CAL_CURRENCIES_KEY, JSON.stringify([...n])); } catch { /* private mode */ }
+    return n;
+  });
 
   const bell = (ev: CalEventFull) => {
     addEventAlert({ eventId: ev.id, title: ev.title, currency: ev.currency, date: ev.date, minutesBefore: 30 });
@@ -287,9 +319,9 @@ function CalendarTabPane({ symbol }: { symbol?: string }) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2.5">
+    <div className="cal-root flex min-h-0 flex-1 flex-col gap-2.5">
       {/* header: next high-impact countdown + warning + range + refresh */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+      <div className="cal-panel flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
         <div className="text-xs">
           <span className="text-[10px] uppercase tracking-wide text-slate-500">Next high-impact event</span>
           <div className="flex items-center gap-2 font-semibold text-slate-100">
@@ -382,8 +414,26 @@ function HistoryTabPane() {
   const { events, loading, stale, updatedAt } = useEconEvents();
   const now = useTicker(30000);
   const [search, setSearch] = useState("");
-  const [impacts, setImpacts] = useState<Set<Impact>>(() => new Set(["High", "Medium"]));
-  const [currencies, setCurrencies] = useState<Set<string>>(new Set());
+  // impact / currency filters persist across visits (localStorage): picking
+  // "High" only and coming back later must NOT resurrect Medium/Low rows
+  const [impacts, setImpacts] = useState<Set<Impact>>(() => {
+    try {
+      const raw = localStorage.getItem(CAL_IMPACTS_KEY);
+      if (raw) {
+        const list = JSON.parse(raw) as Impact[];
+        const valid = list.filter((x) => IMPACTS.includes(x));
+        if (valid.length) return new Set(valid);
+      }
+    } catch { /* corrupted store — fall through to defaults */ }
+    return new Set(["High", "Medium"]);
+  });
+  const [currencies, setCurrencies] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(CAL_CURRENCIES_KEY);
+      if (raw) return new Set(JSON.parse(raw) as string[]);
+    } catch { /* corrupted store — defaults */ }
+    return new Set();
+  });
   const [detail, setDetail] = useState<CalEventFull | null>(null);
 
   const currenciesList = useMemo(() => [...new Set(events.map((e) => e.currency))].sort(), [events]);
@@ -401,8 +451,20 @@ function HistoryTabPane() {
       .slice(0, 300);
   }, [events, impacts, currencies, search, now]);
 
-  const toggleImpact = (i: Impact) => setImpacts((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
-  const toggleCurrency = (c: string) => setCurrencies((prev) => { const n = new Set(prev); if (n.has(c)) n.delete(c); else n.add(c); return n; });
+  const toggleImpact = (i: Impact) => setImpacts((prev) => {
+    const n = new Set(prev);
+    if (n.has(i)) n.delete(i); else n.add(i);
+    // never allow an empty filter (all off = nothing would ever render)
+    const store = n.size ? [...n] : [...IMPACTS];
+    try { localStorage.setItem(CAL_IMPACTS_KEY, JSON.stringify(store)); } catch { /* private mode */ }
+    return n.size ? n : new Set(IMPACTS);
+  });
+  const toggleCurrency = (c: string) => setCurrencies((prev) => {
+    const n = new Set(prev);
+    if (n.has(c)) n.delete(c); else n.add(c);
+    try { localStorage.setItem(CAL_CURRENCIES_KEY, JSON.stringify([...n])); } catch { /* private mode */ }
+    return n;
+  });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2.5">

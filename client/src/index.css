@@ -313,3 +313,32 @@ img[src="/logo.png"] {
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Terminal calendar theme adaptation (Task 1): the calendar workspace renders
+ * inside the dark terminal, but the site supports 10 themes — on LIGHT the
+ * slate panels must not stay midnight-dark. `.cal-root` scopes the overrides.
+ * ------------------------------------------------------------------------- */
+:root[data-theme="light"] .cal-root { color-scheme: light; }
+:root[data-theme="light"] .cal-root .cal-panel {
+  background-color: hsl(var(--card) / 0.92) !important;
+  border-color: hsl(220 13% 88%) !important;
+  color: hsl(var(--foreground)) !important;
+}
+:root[data-theme="light"] .cal-root .cal-panel .text-slate-100,
+:root[data-theme="light"] .cal-root .cal-panel .text-slate-200,
+:root[data-theme="light"] .cal-root .cal-panel .text-slate-300 { color: hsl(220 25% 18%) !important; }
+:root[data-theme="light"] .cal-root .cal-panel .text-slate-400,
+:root[data-theme="light"] .cal-root .cal-panel .text-slate-500 { color: hsl(220 12% 45%) !important; }
+:root[data-theme="light"] .cal-root .cal-panel .border-slate-800,
+:root[data-theme="light"] .cal-root .cal-panel .border-slate-700,
+:root[data-theme="light"] .cal-root .cal-panel .border-slate-700\/70,
+:root[data-theme="light"] .cal-root .cal-panel .border-slate-700\/60 { border-color: hsl(220 13% 87%) !important; }
+:root[data-theme="light"] .cal-root .cal-panel .bg-slate-950,
+:root[data-theme="light"] .cal-root .cal-panel .bg-slate-900\/60,
+:root[data-theme="light"] .cal-root .cal-panel .bg-slate-900\/80,
+:root[data-theme="light"] .cal-root .cal-panel .bg-slate-900\/95 { background-color: hsl(var(--card) / 0.95) !important; }
+:root[data-theme="light"] .cal-root .cal-panel tr:hover { background-color: hsl(220 40% 96%) !important; }
+:root[data-theme="light"] .cal-root .cal-panel .text-emerald-400 { color: hsl(152 60% 32%) !important; }
+:root[data-theme="light"] .cal-root .cal-panel .text-red-400 { color: hsl(0 68% 42%) !important; }
+:root[data-theme="light"] .cal-root .cal-panel .text-sky-300 { color: hsl(203 80% 34%) !important; }

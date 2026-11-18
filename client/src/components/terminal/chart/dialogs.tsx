@@ -387,14 +387,23 @@ export function ChartContextMenu({
     resetChart: () => void;
   };
 }) {
+  // Close on OUTSIDE pointerdown only. The capture-phase listener used to
+  // close on EVERY pointerdown — including the one on a menu item — which
+  // unmounted the menu before pointerup, so onClick never fired and
+  // "Delete drawing" (and every other action) silently did nothing.
+  const menuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!state) return;
-    const close = () => onClose();
+    const close = (e: PointerEvent) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      onClose();
+    };
+    const closeAny = () => onClose();
     window.addEventListener("pointerdown", close, true);
-    window.addEventListener("wheel", close, true);
+    window.addEventListener("wheel", closeAny, true);
     return () => {
       window.removeEventListener("pointerdown", close, true);
-      window.removeEventListener("wheel", close, true);
+      window.removeEventListener("wheel", closeAny, true);
     };
   }, [state, onClose]);
   if (!state) return null;
@@ -417,7 +426,7 @@ export function ChartContextMenu({
     top: Math.min(state.clientY, window.innerHeight - items.length * 30 - 20),
   };
   return (
-    <div style={style} className="fixed z-50 w-44 rounded-lg border border-slate-700 bg-slate-900 py-1 shadow-2xl">
+    <div ref={menuRef} style={style} className="fixed z-50 w-44 rounded-lg border border-slate-700 bg-slate-900 py-1 shadow-2xl">
       {items.map((it) => (
         <button
           key={it.label}
