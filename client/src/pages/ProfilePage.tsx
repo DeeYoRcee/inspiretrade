@@ -329,11 +329,13 @@ export default function ProfilePage() {
     try {
       // social handles + profile video persist to the private profile first
       const clean = (v: string) => v.trim().replace(/^@/, "").slice(0, 40);
-      const social = {
-        instagram: clean(igDraft) || undefined,
-        telegram: clean(tgDraft) || undefined,
-        x: clean(xDraft) || undefined,
-      };
+      // only defined keys — RTDB set() rejects undefined values outright
+      // (this is what made "some error" toast appear for every bio save with
+      // an empty social field)
+      const social: Record<string, string> = {};
+      if (clean(igDraft)) social.instagram = clean(igDraft);
+      if (clean(tgDraft)) social.telegram = clean(tgDraft);
+      if (clean(xDraft)) social.x = clean(xDraft);
       await saveUserProfile(user.uid, { social });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
 

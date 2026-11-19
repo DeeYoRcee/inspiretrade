@@ -108,7 +108,12 @@ export async function saveUserProfile(uid: string, profile: Partial<UserProfile>
   const r = ref(db, `users/${uid}/profile`);
   const snap = await get(r);
   const existing = snap.exists() ? snap.val() : {};
-  await set(r, { ...existing, ...profile, uid });
+  // RTDB rejects undefined values — drop them at every depth before set()
+  const strip = (v: any): any =>
+    Array.isArray(v) ? v.map(strip)
+    : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, strip(x)]))
+    : v === undefined ? null : v;
+  await set(r, { ...strip(existing), ...strip(profile), uid });
 }
 
 export async function checkUsernameAvailable(username: string): Promise<boolean> {
