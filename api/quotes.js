@@ -295,6 +295,11 @@ var STOOQ_MAP = {
   "^GDAXI": "^dax",
   "^FTSE": "^ukx"
 };
+var INDEX_FUTURES_FALLBACK = {
+  "^NDX": "NQ=F",
+  "^DJI": "YM=F",
+  "^GSPC": "ES=F"
+};
 var stooqOf = (sym) => STOOQ_MAP[sym] ?? (sym.endsWith("=X") ? sym.slice(0, -2).toLowerCase() : null);
 function csvToQuotes(csv) {
   const out = {};
@@ -807,6 +812,45 @@ var quotes_default = handle(async (req, res) => {
     return res.status(400).json({ ok: false, error: "BAD_SYMBOL" });
   }
   const yurl = periodMode ? `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?period1=${period1}&period2=${period2}&interval=${encodeURIComponent(interval)}&includePrePost=false` : `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
+  const yahooBarsFor = async (yahooSym, label) => {
+    const res2 = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSym)}?${periodMode ? `period1=${period1}&period2=${period2}` : `range=${range}`}&interval=${interval}`,
+      { headers: { "User-Agent": UA, Accept: "application/json" } }
+    );
+    if (!res2.ok) throw new Error(`YAHOO_HTTP_${res2.status}`);
+    const data = await res2.json();
+    const chartResult = data?.chart?.result?.[0];
+    if (!chartResult) throw new Error("YAHOO_NO_RESULT");
+    const meta = chartResult.meta || {};
+    if (String(meta.symbol || "").toUpperCase() !== yahooSym.toUpperCase()) throw new Error("YAHOO_SYMBOL_MISMATCH");
+    const timestamps = chartResult.timestamp || [];
+    const q = chartResult.indicators?.quote?.[0] || {};
+    const raw = timestamps.map((t, i) => ({
+      time: t,
+      open: q.open?.[i],
+      high: q.high?.[i],
+      low: q.low?.[i],
+      close: q.close?.[i],
+      volume: q.volume?.[i] ?? 0
+    })).filter((b) => [b.time, b.open, b.high, b.low, b.close].every(Number.isFinite) && b.time > 0);
+    if (!raw.length) throw new Error("YAHOO_NO_BARS");
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
+    if (!bars.length) throw new Error("YAHOO_NO_VALID_BARS");
+    const last = bars[bars.length - 1];
+    return {
+      source: label,
+      delayed: true,
+      delaySec: Math.max(0, Math.floor(Date.now() / 1e3) - last.time),
+      identity: "futures",
+      symbol: symbols,
+      currency: meta.currency ?? null,
+      regularMarketPrice: last.close,
+      previousClose: meta.chartPreviousClose ?? null,
+      bars
+    };
+  };
   const fromYahoo = async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
@@ -941,6 +985,11 @@ var quotes_default = handle(async (req, res) => {
     "1h": "1h",
     "1d": "1day"
   };
+  const fromYahooFutures = async () => {
+    const fut = INDEX_FUTURES_FALLBACK[symbols];
+    if (!fut) throw new Error("NO_FUTURES_FALLBACK");
+    return yahooBarsFor(fut, "yahoo-futures");
+  };
   const fromTwelveData = async () => {
     if (!TD_FOREX.has(bareCode)) throw new Error("NO_TD_MAP");
     const ti = TD_INTERVAL[interval];
@@ -1048,7 +1097,7 @@ var quotes_default = handle(async (req, res) => {
     const cacheKey = periodMode ? `${symbols}|p:${Math.floor(period1 / 600)}-${Math.floor(period2 / 600)}|${interval}` : `${symbols}|${range}|${interval}`;
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromTwelveData, fromStooq, fromFxStore];
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr = null;
       let staleResult = null;
       for (const attempt of chain) {

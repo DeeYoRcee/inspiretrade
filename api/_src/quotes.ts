@@ -35,6 +35,20 @@ const STOOQ_MAP: Record<string, string> = {
   "^FTSE": "^ukx",
 };
 
+/**
+ * Phase 18: cash-index futures fallback. Yahoo's cash-index intraday feed
+ * (^NDX etc.) can serve day-old bars from datacenter IPs while the INDEX
+ * FUTURES contracts on the same API stay fresh (verified: ^NDX 944 min vs
+ * NQ=F 10 min). A futures contract is a different instrument, so the
+ * fallback result carries identity:"futures" and the badge says Futures
+ * fallback — never silently mixed into a spot chart.
+ */
+const INDEX_FUTURES_FALLBACK: Record<string, string> = {
+  "^NDX": "NQ=F",
+  "^DJI": "YM=F",
+  "^GSPC": "ES=F",
+};
+
 const stooqOf = (sym: string) => STOOQ_MAP[sym] ?? (sym.endsWith("=X") ? sym.slice(0, -2).toLowerCase() : null);
 
 function csvToQuotes(csv: string): Record<string, { price: number | null; previousClose: number | null }> {
@@ -685,6 +699,43 @@ export default handle(async (req, res) => {
     ? `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?period1=${period1}&period2=${period2}&interval=${encodeURIComponent(interval)}&includePrePost=false`
     : `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbols)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
 
+  const yahooBarsFor = async (yahooSym: string, label: string) => {
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSym)}?${periodMode
+        ? `period1=${period1}&period2=${period2}`
+        : `range=${range}`}&interval=${interval}`,
+      { headers: { "User-Agent": UA, Accept: "application/json" } },
+    );
+    if (!res.ok) throw new Error(`YAHOO_HTTP_${res.status}`);
+    const data: any = await res.json();
+    const chartResult = data?.chart?.result?.[0];
+    if (!chartResult) throw new Error("YAHOO_NO_RESULT");
+    const meta = chartResult.meta || {};
+    if (String(meta.symbol || "").toUpperCase() !== yahooSym.toUpperCase()) throw new Error("YAHOO_SYMBOL_MISMATCH");
+    const timestamps: number[] = chartResult.timestamp || [];
+    const q = chartResult.indicators?.quote?.[0] || {};
+    const raw: RawBar[] = timestamps.map((t: number, i: number) => ({
+      time: t, open: q.open?.[i], high: q.high?.[i], low: q.low?.[i], close: q.close?.[i], volume: q.volume?.[i] ?? 0,
+    })).filter((b: RawBar) => [b.time, b.open, b.high, b.low, b.close].every(Number.isFinite) && b.time > 0);
+    if (!raw.length) throw new Error("YAHOO_NO_BARS");
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
+    if (!bars.length) throw new Error("YAHOO_NO_VALID_BARS");
+    const last = bars[bars.length - 1];
+    return {
+      source: label,
+      delayed: true,
+      delaySec: Math.max(0, Math.floor(Date.now() / 1000) - last.time),
+      identity: "futures",
+      symbol: symbols,
+      currency: meta.currency ?? null,
+      regularMarketPrice: last.close,
+      previousClose: meta.chartPreviousClose ?? null,
+      bars,
+    };
+  };
+
   const fromYahoo = async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -821,6 +872,12 @@ export default handle(async (req, res) => {
   };
   // hard daily ceiling for TD history-fallback requests — the counter itself
   // is module-level and shared with the spot backfill below
+  const fromYahooFutures = async () => {
+    const fut = INDEX_FUTURES_FALLBACK[symbols];
+    if (!fut) throw new Error("NO_FUTURES_FALLBACK");
+    return yahooBarsFor(fut, "yahoo-futures");
+  };
+
   const fromTwelveData = async () => {
     if (!TD_FOREX.has(bareCode)) throw new Error("NO_TD_MAP");
     const ti = TD_INTERVAL[interval];
@@ -945,7 +1002,7 @@ export default handle(async (req, res) => {
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
       const chain = METALS_FIRST
         ? [fromStooq, fromYahoo]
-        : [fromYahoo, fromTwelveData, fromStooq, fromFxStore];
+        : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr: unknown = null;
       // staleness-aware chain (Phase 18): a source can SUCCEED while serving
       // day-old bars (Yahoo's cash-index feed does exactly that for ^NDX from
