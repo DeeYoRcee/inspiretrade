@@ -672,6 +672,7 @@ var quotes_default = handle(async (req, res) => {
       const chunk = wanted.slice(i, i + 5);
       const files = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
       filesUsed += files.filter(Boolean).length;
+      if (oldest == null && newest == null && files.every((f) => f == null) && i >= 5) break;
       for (let k = 0; k < chunk.length; k++) {
         const buf = files[k];
         if (!buf) continue;
