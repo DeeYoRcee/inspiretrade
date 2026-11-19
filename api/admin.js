@@ -373,7 +373,10 @@ var set_username_default = handle(async (req, res) => {
       await db3.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
     }
   }
-  await db3.ref(`publicProfiles/${key}/ceo`).set(true);
+  const live = (await db3.ref(`publicProfiles/${key}`).once("value")).val();
+  if (live && live.uid) {
+    await db3.ref(`publicProfiles/${key}/ceo`).set(true);
+  }
   await db3.ref(`privatePublicProfileSettings/${admin2.uid}`).transaction((s) => {
     if (!s) return s;
     return { ...s, publishedUsername: key, updatedAt: Date.now() };
@@ -441,7 +444,8 @@ var profile_repair_default = handle(async (req, res) => {
     if (val.uid && val.uid !== uid) continue;
     const isStub = typeof val.redirect === "string" && !val.uid;
     const brokenOwnSnapshot = !!val.uid && !(val.username && val.usernameKey && val.displayName);
-    if (isStub || brokenOwnSnapshot) {
+    const orphanOwned = !val.uid && !val.redirect;
+    if (isStub || brokenOwnSnapshot || orphanOwned) {
       await db3.ref(`publicProfiles/${key}`).remove();
       purged.push(key);
     }
@@ -1504,9 +1508,10 @@ async function purgeProfileStubs(admin2, role, body) {
     const val = snap.val() || {};
     const isStub = typeof val.redirect === "string" && !val.uid;
     const brokenSnapshot = !!val.uid && val.uid === uid && !(val.username && val.usernameKey && val.displayName);
+    const orphanOwned = !val.uid && !val.redirect;
     const foreignSnapshot = !!val.uid && val.uid !== uid;
     if (foreignSnapshot) continue;
-    if (isStub || brokenSnapshot) {
+    if (isStub || brokenSnapshot || orphanOwned) {
       await dbR.ref(`publicProfiles/${key}`).remove();
       purged.push(key);
     }

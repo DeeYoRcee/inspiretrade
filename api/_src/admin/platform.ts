@@ -294,9 +294,10 @@ export async function purgeProfileStubs(admin: AuthedUser, role: AdminRole, body
     const val = snap.val() || {};
     const isStub = typeof val.redirect === "string" && !val.uid;
     const brokenSnapshot = !!val.uid && val.uid === uid && !(val.username && val.usernameKey && val.displayName);
+    const orphanOwned = !val.uid && !val.redirect; // Phase 21: bare {ceo:true} orphan
     const foreignSnapshot = !!val.uid && val.uid !== uid;
     if (foreignSnapshot) continue; // never touch another user's live snapshot
-    if (isStub || brokenSnapshot) {
+    if (isStub || brokenSnapshot || orphanOwned) {
       await dbR.ref(`publicProfiles/${key}`).remove();
       purged.push(key);
     }

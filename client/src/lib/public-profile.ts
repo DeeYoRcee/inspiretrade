@@ -156,7 +156,7 @@ export function createPublicProfileSnapshot({
   settings: PublicProfileSettings;
   avatar?: string | null;
   /** full private profile — carries usernames/social/profileVideo */
-  profile?: { usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } | null;
+  profile?: { ceo?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } | null;
 }): PublicProfileSnapshot {
   const usernameKey = username.trim().toLowerCase();
   const snapshot: PublicProfileSnapshot = {
@@ -179,6 +179,9 @@ export function createPublicProfileSnapshot({
   // the current primary is always part of the collection
   if (!list.some((u) => u.key === usernameKey)) list.push({ username: username.trim(), key: usernameKey });
   snapshot.usernames = list;
+  // the platform-owner badge must survive every republish (the old
+  // set-username only stamped it server-side on an existing snapshot)
+  if (profile?.ceo) snapshot.ceo = true;
   if (profile?.profileVideo) snapshot.profileVideo = profile.profileVideo;
   if (profile?.avatarVideo) snapshot.avatarVideo = profile.avatarVideo;
   if (profile?.social?.instagram || profile?.social?.telegram || profile?.social?.x) {

@@ -61,8 +61,18 @@ export default handle(async (req, res) => {
       await db.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
     }
   }
-  // (re)stamp ceo on whatever snapshot is live under the new key
-  await db.ref(`publicProfiles/${key}/ceo`).set(true);
+  // (re)stamp ceo on whatever snapshot is live under the new key — but NEVER
+  // create a bare record. Phase 21 root-cause fix for "the owner cannot create
+  // a public profile": for a first-time owner there is no snapshot yet, and
+  // the old unconditional set() produced a uid-less {ceo:true} orphan that
+  // blocked the client's own publish forever (the rules deny overwriting a
+  // record whose uid doesn't match, and the stub purge didn't recognize it).
+  // The badge now lands with the snapshot the owner publishes from
+  // PublicProfileSettings (the builder carries profile.ceo).
+  const live = (await db.ref(`publicProfiles/${key}`).once("value")).val();
+  if (live && live.uid) {
+    await db.ref(`publicProfiles/${key}/ceo`).set(true);
+  }
 
   // Phase 20: keep the publish settings in sync — the public-profile page
   // saves under settings.publishedUsername; a stale value pointed at the

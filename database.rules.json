@@ -95,6 +95,27 @@
             "$other": { ".validate": false }
           }
         },
+        "ceo": { ".validate": "newData.isBoolean()" },
+        "background": { ".validate": "newData.isString() && newData.val().length <= 100" },
+        "avatar": { ".validate": "newData.isString() && newData.val().length <= 200000" },
+        "usernames": {
+          "$i": {
+            ".validate": "newData.hasChildren(['username', 'key'])",
+            "username": { ".validate": "newData.isString() && newData.val().length <= 80" },
+            "key": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "$other": { ".validate": false }
+          }
+        },
+        "profileVideo": { ".validate": "newData.isString() && newData.val().length <= 300" },
+        "avatarVideo": { ".validate": "newData.isString() && newData.val().length <= 300" },
+        "social": {
+          ".validate": "newData.hasChildren()",
+          "instagram": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "telegram": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "x": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "$other": { ".validate": false }
+        },
+        "redirect": { ".validate": "newData.isString() && newData.val().length <= 40" },
         "$other": {
           ".validate": false
         }

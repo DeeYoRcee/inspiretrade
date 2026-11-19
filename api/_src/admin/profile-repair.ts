@@ -82,7 +82,12 @@ export default handle(async (req, res) => {
     if (val.uid && val.uid !== uid) continue; // another user's live snapshot — never touch
     const isStub = typeof val.redirect === "string" && !val.uid;
     const brokenOwnSnapshot = !!val.uid && !(val.username && val.usernameKey && val.displayName);
-    if (isStub || brokenOwnSnapshot) {
+    // Phase 21: a uid-less, redirect-less orphan (the bare {ceo:true} record
+    // set-username used to stamp on a first-time owner's fresh handle) — the
+    // caller provably owns the handle, so remove it and let the real snapshot
+    // be created under the rules.
+    const orphanOwned = !val.uid && !val.redirect;
+    if (isStub || brokenOwnSnapshot || orphanOwned) {
       await db.ref(`publicProfiles/${key}`).remove();
       purged.push(key);
     }
