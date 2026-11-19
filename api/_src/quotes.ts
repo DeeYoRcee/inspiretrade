@@ -665,9 +665,13 @@ export default handle(async (req, res) => {
     const used = Number((await tdDayRef().once("value")).val() || 0);
     if (used >= TD_DAILY_BUDGET) throw new Error("TD_BUDGET_EXHAUSTED");
     const outputsize = interval === "1m" ? 5000 : interval === "5m" ? 4000 : 2000;
+    const fmt = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 19).replace("T", " ");
     // datetime comes back in real UTC (timezone=UTC) — the same anchors the
     // spot engine uses, so the merged chart stays minute-aligned
-    const u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    let u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    // period mode (replay/backtest) must honor the requested window: TD needs
+    // explicit start/end in UTC, otherwise it returns the newest bars only
+    if (periodMode) u += `&start_date=${encodeURIComponent(fmt(period1 as number))}&end_date=${encodeURIComponent(fmt(period2 as number))}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 9000);
     let d: any = null;

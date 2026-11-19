@@ -730,7 +730,9 @@ var quotes_default = handle(async (req, res) => {
     const used = Number((await tdDayRef().once("value")).val() || 0);
     if (used >= TD_DAILY_BUDGET) throw new Error("TD_BUDGET_EXHAUSTED");
     const outputsize = interval === "1m" ? 5e3 : interval === "5m" ? 4e3 : 2e3;
-    const u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    const fmt = (sec) => new Date(sec * 1e3).toISOString().slice(0, 19).replace("T", " ");
+    let u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    if (periodMode) u += `&start_date=${encodeURIComponent(fmt(period1))}&end_date=${encodeURIComponent(fmt(period2))}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 9e3);
     let d = null;
