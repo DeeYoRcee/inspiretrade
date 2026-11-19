@@ -48,13 +48,13 @@
     --background: 270 24% 8%; --foreground: 280 20% 97%; --card: 270 20% 12%; --card-foreground: 280 20% 97%; --popover: 270 20% 13%; --popover-foreground: 280 20% 97%; --primary: 285 78% 72%; --primary-foreground: 270 30% 10%; --secondary: 270 17% 20%; --secondary-foreground: 280 20% 97%; --muted: 270 17% 20%; --muted-foreground: 275 12% 70%; --accent: 285 20% 24%; --accent-foreground: 280 20% 97%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 275 15% 27%; --input: 275 15% 27%; --ring: 285 78% 72%;
   }
 
-  :root[data-theme="vault"] {
+  :root[data-theme="bull"] {
     color-scheme: dark;
-    --background: 40 45% 4%; --foreground: 42 40% 96%; --card: 40 38% 8%; --card-foreground: 42 40% 96%; --popover: 40 38% 9%; --popover-foreground: 42 40% 96%; --primary: 43 88% 58%; --primary-foreground: 40 45% 6%; --secondary: 40 30% 16%; --secondary-foreground: 42 30% 92%; --muted: 40 28% 15%; --muted-foreground: 40 15% 70%; --accent: 40 32% 20%; --accent-foreground: 42 40% 96%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 43 45% 22%; --input: 43 45% 22%; --ring: 43 88% 58%;
+    --background: 350 55% 5%; --foreground: 350 20% 95%; --card: 350 40% 9%; --card-foreground: 350 20% 95%; --popover: 350 40% 10%; --popover-foreground: 350 20% 95%; --primary: 0 84% 60%; --primary-foreground: 350 40% 6%; --secondary: 350 25% 16%; --secondary-foreground: 350 20% 95%; --muted: 350 22% 14%; --muted-foreground: 350 12% 68%; --accent: 350 28% 19%; --accent-foreground: 350 20% 95%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 350 25% 21%; --input: 350 25% 21%; --ring: 0 84% 60%;
   }
-  :root[data-theme="matrix"] {
+  :root[data-theme="f1"] {
     color-scheme: dark;
-    --background: 120 20% 3%; --foreground: 130 45% 92%; --card: 120 18% 6%; --card-foreground: 130 45% 92%; --popover: 120 18% 7%; --popover-foreground: 130 45% 92%; --primary: 140 70% 52%; --primary-foreground: 120 25% 4%; --secondary: 120 14% 13%; --secondary-foreground: 130 35% 85%; --muted: 120 14% 12%; --muted-foreground: 130 12% 62%; --accent: 120 16% 17%; --accent-foreground: 130 45% 92%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 140 30% 18%; --input: 140 30% 18%; --ring: 140 70% 52%;
+    --background: 0 45% 5%; --foreground: 0 15% 95%; --card: 0 35% 9%; --card-foreground: 0 15% 95%; --popover: 0 35% 10%; --popover-foreground: 0 15% 95%; --primary: 0 78% 55%; --primary-foreground: 0 40% 6%; --secondary: 0 20% 15%; --secondary-foreground: 0 15% 95%; --muted: 0 18% 13%; --muted-foreground: 0 10% 66%; --accent: 0 24% 18%; --accent-foreground: 0 15% 95%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 0 22% 20%; --input: 0 22% 20%; --ring: 0 78% 55%;
   }
 
   *, *::before, *::after { box-sizing: border-box; }
@@ -294,56 +294,51 @@ img[src="/logo.png"] {
 :root[data-theme="knight"] .hover-glow:hover { box-shadow: 0 0 24px -6px hsl(42 78% 58% / 0.35); }
 
 /* theme picker dots — real swatches per theme (settings page + navbar) */
-/* ---- Animated themes (Phase 18) ------------------------------------------
-   Vault: slowly drifting gold "bullion glow" light pools over near-black.
-   Matrix: faint vertical digital-rain streaks via a fixed body::before layer.
+/* ---- Animated themes (Phase 19) ------------------------------------------
+   Bull Market: a rising-red heat glow with a faint candle-silhouette grid
+   pulsing over the looping bull.mp4 backdrop.
+   Formula 1: fast diagonal speed streaks over the looping f1.mp4 backdrop.
    Both are GPU-cheap (background-position / transform only) and respect
    prefers-reduced-motion. */
-:root[data-theme="vault"] body {
-  background-color: hsl(40 45% 4%);
+:root[data-theme="bull"] body {
+  background-color: hsl(350 55% 5%);
   background-image:
-    radial-gradient(ellipse 55% 45% at 22% 18%, hsl(43 90% 55% / 0.13), transparent 60%),
-    radial-gradient(ellipse 50% 40% at 80% 72%, hsl(38 85% 48% / 0.11), transparent 62%),
-    radial-gradient(ellipse 40% 34% at 55% 45%, hsl(48 80% 60% / 0.07), transparent 65%);
-  background-size: 160% 160%, 150% 150%, 130% 130%;
-  animation: vault-drift 26s ease-in-out infinite alternate;
+    radial-gradient(ellipse 60% 42% at 50% 78%, hsl(0 85% 50% / 0.10), transparent 62%),
+    radial-gradient(ellipse 46% 36% at 16% 22%, hsl(350 70% 42% / 0.08), transparent 60%);
+  background-size: 170% 170%, 150% 150%;
+  animation: bull-pulse 14s ease-in-out infinite alternate;
 }
-@keyframes vault-drift {
-  0% { background-position: 0% 0%, 100% 100%, 50% 50%; }
-  50% { background-position: 60% 30%, 30% 70%, 55% 40%; }
-  100% { background-position: 40% 55%, 70% 25%, 45% 65%; }
+@keyframes bull-pulse {
+  0% { background-position: 50% 100%, 0% 0%; }
+  50% { background-position: 40% 78%, 60% 40%; }
+  100% { background-position: 62% 88%, 20% 66%; }
 }
-:root[data-theme="matrix"] body {
-  background-color: hsl(120 20% 3%);
-}
-:root[data-theme="matrix"] body::before {
+:root[data-theme="f1"] body::before {
   content: "";
   position: fixed;
-  inset: -100% 0 0 0;
+  inset: -20% -30%;
   z-index: -1;
   pointer-events: none;
   background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0px, transparent 90px,
-    hsl(140 70% 50% / 0.05) 92px, transparent 95px,
-    transparent 140px,
-    hsl(130 60% 45% / 0.035) 143px, transparent 146px
+    100deg,
+    transparent 0px, transparent 118px,
+    hsl(0 85% 55% / 0.055) 121px, transparent 127px,
+    transparent 150px,
+    hsl(0 0% 100% / 0.03) 152px, transparent 156px
   );
-  mask-image: linear-gradient(to bottom, transparent, black 25%, black 75%, transparent);
-  -webkit-mask-image: linear-gradient(to bottom, transparent, black 25%, black 75%, transparent);
-  animation: matrix-rain 9s linear infinite;
+  animation: f1-streaks 3.6s linear infinite;
 }
-@keyframes matrix-rain {
-  from { transform: translateY(0); }
-  to { transform: translateY(280px); }
+@keyframes f1-streaks {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-160px, 36px, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  :root[data-theme="vault"] body { animation: none; }
-  :root[data-theme="matrix"] body::before { animation: none; }
+  :root[data-theme="bull"] body { animation: none; }
+  :root[data-theme="f1"] body::before { animation: none; }
 }
 
-.theme-dot-vault { background: linear-gradient(135deg, #0d0a06, #d4a017); }
-.theme-dot-matrix { background: linear-gradient(135deg, #050805, #22c55e); }
+.theme-dot-bull { background: linear-gradient(135deg, #17060a 35%, #ef4444); }
+.theme-dot-f1 { background: linear-gradient(135deg, #2a0707 40%, #dc2626 65%, #f5f5f5); }
 
 .theme-dot-dark { background: #0a0a0f; }
 .theme-dot-light { background: #f6f8fa; }

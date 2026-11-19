@@ -277,8 +277,51 @@ async function decodeDukaDay(buf, code, day) {
   return out;
 }
 
-// api/_src/quotes.ts
+// api/_src/lib/truefx.ts
+var TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var CACHE_TTL_MS = 2e3;
+var cache = null;
+var inflight = null;
+var truefxQuotes = async () => {
+  const now = Date.now();
+  if (cache && now - cache.at < CACHE_TTL_MS) return cache.quotes;
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8e3);
+    try {
+      const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA, Accept: "text/csv" }, signal: controller.signal });
+      if (!res.ok) return cache?.quotes ?? {};
+      const text = await res.text();
+      const out = {};
+      for (const line of text.split("\n")) {
+        const f = line.split(",");
+        if (f.length < 8) continue;
+        const pair = f[0]?.trim();
+        if (!pair || !pair.includes("/")) continue;
+        const code = pair.replace("/", "");
+        const bid = Number.parseFloat(String(f[2]) + String(f[3]));
+        const ask = Number.parseFloat(String(f[4]) + String(f[5]));
+        const ts = Number(f[1]);
+        const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
+        if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
+        out[code] = { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
+      }
+      if (Object.keys(out).length) cache = { at: Date.now(), quotes: out };
+      return out;
+    } catch {
+      return cache?.quotes ?? {};
+    } finally {
+      clearTimeout(timer);
+      inflight = null;
+    }
+  })();
+  return inflight;
+};
+
+// api/_src/quotes.ts
+var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 var STOOQ_MAP = {
   "GC=F": "xauusd",
   "SI=F": "xagusd",
@@ -358,42 +401,42 @@ function stooqCsvToBars(csv) {
 var STOOQ_INTERVAL = { "1m": "5", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "1d": "d" };
 var barsCache = /* @__PURE__ */ new Map();
 var batchCache = /* @__PURE__ */ new Map();
-var inflight = /* @__PURE__ */ new Map();
+var inflight2 = /* @__PURE__ */ new Map();
 var BARS_FRESH_MS = 12e3;
 var BARS_STALE_MS = 6e4;
 var BATCH_FRESH_MS = 3e4;
 var BATCH_STALE_MS = 12e4;
-function pruneCache(cache, staleMs) {
-  if (cache.size < 64) return;
+function pruneCache(cache2, staleMs) {
+  if (cache2.size < 64) return;
   const cutoff = Date.now() - staleMs * 2;
-  for (const [k, v] of cache) if (v.at < cutoff) cache.delete(k);
+  for (const [k, v] of cache2) if (v.at < cutoff) cache2.delete(k);
 }
-async function doFetch(cache, key, fetcher) {
-  let p = inflight.get(key);
+async function doFetch(cache2, key, fetcher) {
+  let p = inflight2.get(key);
   if (!p) {
     p = (async () => {
       const payload = await fetcher();
-      cache.set(key, { at: Date.now(), payload });
+      cache2.set(key, { at: Date.now(), payload });
       return payload;
     })().finally(() => {
-      inflight.delete(key);
+      inflight2.delete(key);
     });
-    inflight.set(key, p);
+    inflight2.set(key, p);
   }
   return p;
 }
-async function cachedPayload(cache, key, freshMs, staleMs, fetcher) {
-  const hit = cache.get(key);
+async function cachedPayload(cache2, key, freshMs, staleMs, fetcher) {
+  const hit = cache2.get(key);
   if (hit && Date.now() - hit.at < freshMs) return hit.payload;
   if (hit && Date.now() - hit.at < staleMs) {
-    if (!inflight.has(key)) void doFetch(cache, key, fetcher).catch(() => {
+    if (!inflight2.has(key)) void doFetch(cache2, key, fetcher).catch(() => {
     });
-    pruneCache(cache, staleMs);
+    pruneCache(cache2, staleMs);
     return hit.payload;
   }
   try {
-    const payload = await doFetch(cache, key, fetcher);
-    pruneCache(cache, staleMs);
+    const payload = await doFetch(cache2, key, fetcher);
+    pruneCache(cache2, staleMs);
     return payload;
   } catch (e) {
     if (hit) return hit.payload;
@@ -424,35 +467,6 @@ async function fetchSpot(code) {
     return cached?.price ?? null;
   }
 }
-var TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
-var truefxQuotes = async () => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8e3);
-  try {
-    const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA, Accept: "text/csv" }, signal: controller.signal });
-    if (!res.ok) return {};
-    const text = await res.text();
-    const out = {};
-    for (const line of text.split("\n")) {
-      const f = line.split(",");
-      if (f.length < 8) continue;
-      const pair = f[0]?.trim();
-      if (!pair || !pair.includes("/")) continue;
-      const code = pair.replace("/", "");
-      const bid = Number.parseFloat(String(f[2]) + String(f[3]));
-      const ask = Number.parseFloat(String(f[4]) + String(f[5]));
-      const ts = Number(f[1]);
-      const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
-      if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
-      out[code] = { price: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
-    }
-    return out;
-  } catch {
-    return {};
-  } finally {
-    clearTimeout(timer);
-  }
-};
 var INTERVAL_SECONDS = {
   "1m": 60,
   "2m": 120,
@@ -554,7 +568,7 @@ var quotes_default = handle(async (req, res) => {
           accepted += 1;
           continue;
         }
-        update[String(inc.t)] = {
+        update[String(inc.t)] = Number(ex.s || 0) === 0 && inc.s < 3 ? { o: Number(ex.o) || inc.o, c: Number(ex.c) || inc.c, h: Math.max(inc.h, Number(ex.h) || inc.h), l: Math.min(inc.l, Number(ex.l) || inc.l), s: Math.max(inc.s, Number(ex.s || 0)) } : {
           o: Number(ex.o) || inc.o,
           c: inc.c,
           h: Math.max(inc.h, Number(ex.h) || inc.h),
@@ -634,8 +648,19 @@ var quotes_default = handle(async (req, res) => {
         if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
         if (o < loPrice || o > hiPrice) continue;
         const existing = recorded[String(t)];
-        if (existing && Number(existing.s || 0) >= 1) continue;
-        update[String(t)] = { o, h, l, c, s: 0 };
+        if (!existing) {
+          update[String(t)] = { o, h, l, c, s: 0 };
+        } else if (Number(existing.s || 0) <= 2) {
+          update[String(t)] = { o, h: Math.max(h, Number(existing.h) || h), l: Math.min(l, Number(existing.l) || l), c, s: Number(existing.s || 1) };
+        } else if (Number(existing.h) < h || Number(existing.l) > l) {
+          update[String(t)] = {
+            o: Number(existing.o),
+            c: Number(existing.c),
+            s: Number(existing.s || 1),
+            h: Math.max(Number(existing.h) || h, h),
+            l: Math.min(Number(existing.l) || l, l)
+          };
+        }
         if (oldest == null || t < oldest) oldest = t;
       }
       if (Object.keys(update).length) {
@@ -752,13 +777,13 @@ var quotes_default = handle(async (req, res) => {
       const quotes = await Promise.all(
         list.map(async (sym) => {
           const t = tfx[sym.replace(/=X$/, "")];
-          if (t) return { symbol: sym, price: t.price, previousClose: t.open, source: "truefx", live: true };
+          if (t) return { symbol: sym, price: t.mid, previousClose: t.open, source: "truefx", live: true };
           try {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 6e3);
             const yres = await fetch(
               `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1d`,
-              { headers: { "User-Agent": UA, Accept: "application/json" }, signal: controller.signal }
+              { headers: { "User-Agent": UA2, Accept: "application/json" }, signal: controller.signal }
             );
             clearTimeout(timer);
             if (!yres.ok) throw new Error(String(yres.status));
@@ -778,7 +803,7 @@ var quotes_default = handle(async (req, res) => {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 6e3);
             const sres = await fetch(`https://stooq.com/q/l/?s=${stooqSyms.join("+")}&f=sd2t2ohlcv&h&e=csv`, {
-              headers: { "User-Agent": UA },
+              headers: { "User-Agent": UA2 },
               signal: controller.signal
             });
             clearTimeout(timer);
@@ -797,7 +822,7 @@ var quotes_default = handle(async (req, res) => {
         }
       }
       await Promise.all(list.map(async (sym, i) => {
-        const code = SPOT_API_MAP[sym];
+        const code = SPOT_API_MAP[sym] ?? (sym === "XAUUSD" ? "XAU" : sym === "XAGUSD" ? "XAG" : null);
         if (!code) return;
         const spot = await fetchSpot(code);
         if (spot != null && quotes[i]) quotes[i].price = spot;
@@ -815,7 +840,7 @@ var quotes_default = handle(async (req, res) => {
   const yahooBarsFor = async (yahooSym, label) => {
     const res2 = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSym)}?${periodMode ? `period1=${period1}&period2=${period2}` : `range=${range}`}&interval=${interval}`,
-      { headers: { "User-Agent": UA, Accept: "application/json" } }
+      { headers: { "User-Agent": UA2, Accept: "application/json" } }
     );
     if (!res2.ok) throw new Error(`YAHOO_HTTP_${res2.status}`);
     const data = await res2.json();
@@ -855,7 +880,7 @@ var quotes_default = handle(async (req, res) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const yres = await fetch(yurl, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
+      headers: { "User-Agent": UA2, Accept: "application/json" },
       signal: controller.signal
     });
     clearTimeout(timer);
@@ -875,19 +900,15 @@ var quotes_default = handle(async (req, res) => {
     const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
     const bars = deduped.bars;
     const meta = result.meta || {};
-    const spotCode = SPOT_API_MAP[symbols];
     let live = false;
-    if (spotCode && !periodMode) {
-      const spot = await fetchSpot(spotCode);
-      if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
-    } else if (DUKA_MAP[bareCode] && !periodMode) {
+    if (DUKA_MAP[bareCode] && !periodMode) {
       const t = (await truefxQuotes())[bareCode];
-      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
+      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     const rmt = Number(meta.regularMarketTime);
     const delaySec = live ? 0 : Number.isFinite(rmt) && rmt > 0 ? Math.max(0, Math.floor(Date.now() / 1e3) - rmt) : void 0;
     return {
-      source: live ? SPOT_API_MAP[symbols] ? "spot+yahoo" : "truefx+yahoo" : "yahoo",
+      source: live ? "truefx+yahoo" : "yahoo",
       delayed: !live,
       delaySec,
       // what the yahoo identifier actually represents for THIS request —
@@ -911,7 +932,7 @@ var quotes_default = handle(async (req, res) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const sres = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sq)}&i=${si}`, {
-      headers: { "User-Agent": UA },
+      headers: { "User-Agent": UA2 },
       signal: controller.signal
     });
     clearTimeout(timer);
@@ -1031,7 +1052,7 @@ var quotes_default = handle(async (req, res) => {
     let live = false;
     if (!periodMode) {
       const t = (await truefxQuotes())[bareCode];
-      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
+      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     const last = bars[bars.length - 1];
     return {

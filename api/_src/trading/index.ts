@@ -22,6 +22,8 @@
  *   POST ?action=cancel                   { accountId, orderId }
  *   POST ?action=evaluate                 { accountId }   — SL/TP/pending/stop-out/rules (idempotent)
  *   POST ?action=reset                    { accountId }   — reset to starting balance (fresh challenge attempt)
+ *   GET  ?action=quote&symbol=            → the engine's current two-sided quote
+ *                                           (the trading ticket mirrors it)
  *   GET  ?action=challenge-types          → active challenge formats (prop-firm marketplace)
  *   GET  ?action=leaderboard&period=      → daily|weekly|monthly|all verified rankings
  *   GET/POST ?action=admin-*              → admin surface (requireAdmin): challenge type
@@ -33,6 +35,7 @@ import { handle, requireUser, json, assertPost, type AuthedUser } from "../lib/f
 import { getAdminRole, getPlatformSettings } from "../lib/platform";
 import { assertRole } from "../admin/platform-guard";
 import * as store from "./store";
+import { getQuotes } from "./prices";
 import * as propAdmin from "./admin";
 import * as leaderboard from "./leaderboard";
 
@@ -73,6 +76,15 @@ async function requireAccountAccess(_user: AuthedUser, uid: string, accountId: s
 }
 
 const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) => Promise<void>> = {
+  async quote(req, res) {
+    // Phase 19 §1: the ticket's PRE-trade bid/ask must mirror the engine —
+    // same price service, same genuine/synthetic spread model (the old
+    // client-side SPREAD_PIPS estimate diverged from TrueFX-based fills).
+    const url = new URL(req.url || "/", "http://localhost");
+    const symbol = String(url.searchParams.get("symbol") || "").toUpperCase();
+    const quotes = await getQuotes(symbol ? [symbol] : []);
+    json(res, 200, { quote: quotes[symbol] ?? null });
+  },
   async accounts(_req, res, user) {
     json(res, 200, { accounts: await store.listAccounts(user.uid) });
   },
@@ -268,7 +280,7 @@ export default handle(async (req, res) => {
     return json(res, 400, { error: "BAD_ACTION", message: "Unknown trading action" });
   }
   // read-only actions accept GET — everything else is POST-only (state changes)
-  const GET_ACTIONS = new Set(["history", "challenge-types", "leaderboard", "accounts"]);
+  const GET_ACTIONS = new Set(["history", "challenge-types", "leaderboard", "accounts", "quote"]);
   if (GET_ACTIONS.has(action)) {
     // GET with bearer token (read-only)
     const user = await requireUser(req);

@@ -717,19 +717,47 @@ export function PriceChart({
         updateLegend(null);
         updateBidAsk(bars.length ? bars[bars.length - 1].close : null);
         canvasRef.current?.redraw();
-        chartRef.current?.timeScale().scrollToRealTime();
+        // Phase 19: open on a readable default window (~130 bars) instead of
+        // the previous zoom state — the chart instance persists across
+        // instrument/timeframe switches, so a zoomed-out M1 view carried over
+        // and made the new instrument's candles nearly invisible. The user's
+        // zoom is preserved from here on (live updates never touch it).
+        try {
+          const ts = chartRef.current?.timeScale();
+          if (ts && bars.length) {
+            ts.setVisibleLogicalRange({ from: Math.max(0, bars.length - 130), to: bars.length + 8 });
+          }
+        } catch { /* race — fallback scroll */ }
         setLoaded({ status, message });
 
         unsub = subscribeFeed(symbol, timeframe, ({ bars, lastBar }) => {
-          // spot-tail ticks may BRIDGE the delayed history to the live bucket
-          // with fill-forward bars — a length change is structural (new
-          // timestamps) and must go through the full setData path, not the
-          // tail-only upsert, or the new candles never render
-          if (bars.length !== barsRef.current.length) {
+          const prev = barsRef.current;
+          // PURE APPEND (new minute/tail fills ≤6 bars, nothing prepended or
+          // replaced) → cheap series.update() per new bar: the user's zoom,
+          // scroll position and autoscale window are untouched, and we skip
+          // re-rendering thousands of candles every minute (§5/§8). The old
+          // full setData ran on EVERY new candle — the visible range could
+          // jump and big histories stuttered.
+          const pureAppend =
+            bars.length > prev.length && prev.length > 0 &&
+            bars.length - prev.length <= 6 &&
+            bars[0].time === prev[0].time &&
+            bars[prev.length - 1].time === prev[prev.length - 1].time;
+          if (pureAppend) {
+            barsRef.current = bars;
+            for (let i = prev.length; i < bars.length; i++) {
+              updateMain(candleRef.current!, mainKindRef.current, bars[i]);
+              volumeRef.current?.update(toVolume(bars[i]));
+            }
+            const idx = timeIdxRef.current;
+            for (let i = prev.length; i < bars.length; i++) idx.set(bars[i].time, i);
+            applyBarsToSeries("update"); // indicators + tail refresh
+          } else if (bars.length !== prev.length) {
+            // structural change (prepend / big resync) — full rebuild
             barsRef.current = bars;
             applyBarsToSeries("set");
           } else {
-            barsRef.current = upsertLocal(barsRef.current, lastBar);
+            barsRef.current = upsertLocal(prev, lastBar);
             applyBarsToSeries("update");
           }
           markChartUpdate();
@@ -1155,11 +1183,22 @@ export function PriceChart({
       el.style.top = `${Math.max(2, Math.min(el.parentElement!.clientHeight - 20, y - 9))}px`;
       el.style.right = `${scaleW + 4}px`;
       el.textContent = text;
-      // last real data update stamp (badge) — imperative, no re-renders
+      // last real data update stamp (badge) — imperative, no re-renders.
+      // Phase 19 transparency: stamp + MEASURED freshness (age in seconds)
+      // + the provider's own lag; the text goes red when the feed is stale.
       const tickEl = lastTickRef.current;
       if (tickEl) {
-        const at = getConnectionState().lastTickAt;
-        tickEl.textContent = at ? `· upd ${new Date(at).toLocaleTimeString([], { hour12: false })}` : "";
+        const inst = getInstrument(symbolRef.current);
+        const s = getSpotState();
+        const at = inst?.spotCode ? s.lastTickAt : getConnectionState().lastTickAt;
+        const age = at ? Math.max(0, Math.round((Date.now() - at) / 1000)) : null;
+        const stale = age != null && age > 120; // no update for 2 min → stale
+        tickEl.textContent = at
+          ? `· upd ${new Date(at).toLocaleTimeString([], { hour12: false })} · ${age}s ago` +
+            (inst?.spotCode && s.providerDelaySec != null && s.providerDelaySec > 15 ? ` · feed +${s.providerDelaySec}s` : "") +
+            (stale ? " · STALE" : "")
+          : "";
+        tickEl.style.color = stale ? "#f87171" : "";
       }
     }, 500);
     return () => clearInterval(timer);

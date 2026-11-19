@@ -15,6 +15,7 @@ import { SPREAD_PIPS, type OrderKind } from "@shared/trading-engine";
 import { Minus, Plus } from "lucide-react";
 import { useTrading } from "@/hooks/use-trading";
 import { usePrice } from "@/lib/price-store";
+import { useServerQuote } from "@/hooks/use-server-quote";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -45,10 +46,17 @@ export function TradingPanel({
   } = useTrading();
   const price = usePrice(symbol);
   const inst = getInstrument(symbol);
-  // engine-consistent two-sided quote: SPREAD_PIPS × pipSize around the mid
+  // Phase 19 §1: the displayed bid/ask comes from the ENGINE's quote endpoint
+  // (same price service that fills the order — genuine TrueFX spreads for
+  // majors, SPREAD_PIPS around the gold-api spot mid for metals, × the
+  // platform multiplier). The price-bus estimate below is only the offline
+  // fallback; the fill itself was ALWAYS server-side.
+  const serverQuote = useServerQuote(symbol);
   const spread = ((SPREAD_PIPS[symbol] ?? 2) * (inst?.pipSize ?? 0.01));
-  const bid = price != null ? price - spread / 2 : null;
-  const ask = price != null ? price + spread / 2 : null;
+  const fbBid = price != null ? price - spread / 2 : null;
+  const fbAsk = price != null ? price + spread / 2 : null;
+  const bid = serverQuote?.bid ?? fbBid;
+  const ask = serverQuote?.ask ?? fbAsk;
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderKind, setOrderKind] = useState<"market" | "limit" | "stop">("market");
@@ -152,7 +160,10 @@ export function TradingPanel({
               <span className="block font-number text-[10px] leading-tight opacity-80">{bid != null ? bid.toFixed(d) : "—"}</span>
             </button>
           </div>
-          <p className="text-center font-number text-[10px] text-slate-500">spread {spread.toFixed(d > 4 ? 5 : d)}</p>
+          <p className="text-center font-number text-[10px] text-slate-500">
+            spread {(serverQuote ? Math.abs(serverQuote.ask - serverQuote.bid) : spread).toFixed(d > 4 ? 5 : d)}
+            {serverQuote ? ` · ${serverQuote.source}${serverQuote.live ? "" : " (delayed)"}` : " · estimating…"}
+          </p>
           <div className="flex gap-1.5">
             {(["market", "limit", "stop"] as const).map((k) => (
               <button key={k} onClick={() => setOrderKind(k)} disabled={locked} className={cn("flex-1 rounded-lg border px-2 py-1 text-[11px] font-semibold capitalize disabled:opacity-40", orderKind === k ? "border-emerald-500/50 text-emerald-400" : "border-border/60 text-muted-foreground")}>{k}</button>

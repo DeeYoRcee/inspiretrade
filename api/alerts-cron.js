@@ -7411,18 +7411,20 @@ var INSTRUMENTS = [
   // explicitly as futures. The live tail is gold-api's keyless spot feed.
   // PAXGUSDT / XAUTUSDT are tokenized assets (~0.4% below spot) and are
   // deliberately NOT used — they are different financial instruments.
-  { symbol: "XAUUSD", name: "Gold Spot / U.S. Dollar", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F", spotCode: "XAU", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 0.01, priceBand: [1e3, 2e4], feedLabel: "gold-api spot \xB7 history stooq (spot)" },
-  { symbol: "XAGUSD", name: "Silver Spot / U.S. Dollar", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5e3, quote: "USD", feed: "quotes", yahoo: "SI=F", spotCode: "XAG", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [5, 200], feedLabel: "gold-api spot \xB7 history stooq (spot)" },
-  // ---- Forex majors — Yahoo's FX identifiers ARE the genuine interbank
-  // spot market (EURUSD=X = "EUR/USD"), delayed by Yahoo's own distribution.
-  // The badge reports the measured delay and never claims real-time.
-  { symbol: "EURUSD", name: "Euro / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "EURUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.5, 2], feedLabel: "Yahoo FX spot (delayed)" },
-  { symbol: "GBPUSD", name: "British Pound / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2.2], feedLabel: "Yahoo FX spot (delayed)" },
-  { symbol: "USDJPY", name: "U.S. Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 1e5, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [80, 250], feedLabel: "Yahoo FX spot (delayed)" },
-  { symbol: "AUDUSD", name: "Australian Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.3], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "XAUUSD", name: "Gold Spot / U.S. Dollar", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F", spotCode: "XAU", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 0.01, priceBand: [1e3, 2e4], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
+  { symbol: "XAGUSD", name: "Silver Spot / U.S. Dollar", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5e3, quote: "USD", feed: "quotes", yahoo: "SI=F", spotCode: "XAG", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [5, 200], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
+  // ---- Forex majors — TrueFX prices the 10 majors LIVE (genuine bid/ask:
+  // the chart paints BID to match Dukascopy's BID-side history, execution
+  // quotes take the mid). Yahoo's FX identifiers are the genuine interbank
+  // spot market but delayed by Yahoo's distribution — they supply history
+  // and the execution fallback for pairs TrueFX does not carry (NZDUSD).
+  { symbol: "EURUSD", name: "Euro / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "EURUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.5, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "GBPUSD", name: "British Pound / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2.2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "USDJPY", name: "U.S. Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 1e5, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [80, 250], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "AUDUSD", name: "Australian Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.3], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
   { symbol: "NZDUSD", name: "New Zealand Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "NZDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.2], feedLabel: "Yahoo FX spot (delayed)" },
-  { symbol: "USDCAD", name: "U.S. Dollar / Canadian Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CAD", feed: "quotes", yahoo: "USDCAD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2], feedLabel: "Yahoo FX spot (delayed)" },
-  { symbol: "USDCHF", name: "U.S. Dollar / Swiss Franc", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CHF", feed: "quotes", yahoo: "USDCHF=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.6, 1.6], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "USDCAD", name: "U.S. Dollar / Canadian Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CAD", feed: "quotes", yahoo: "USDCAD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "USDCHF", name: "U.S. Dollar / Swiss Franc", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CHF", feed: "quotes", yahoo: "USDCHF=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.6, 1.6], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
   // ---- Crypto — Binance is the industry-standard price venue. Binance
   // quotes USDT pairs (BTC/USDT), the badge discloses that basis (USDT ≈ USD).
   { symbol: "BTCUSD", name: "Bitcoin / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "BTCUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5e3, 5e5], feedLabel: "Binance \xB7 BTC/USDT (USDT \u2248 USD)" },
@@ -7752,6 +7754,7 @@ var alerts_cron_default = handle(async (req, res) => {
   const cryptoNeeded = /* @__PURE__ */ new Set();
   const yahooNeeded = /* @__PURE__ */ new Set();
   const yahooDailyNeeded = /* @__PURE__ */ new Set();
+  const spotNeeded = /* @__PURE__ */ new Set();
   for (const [uid, alerts] of Object.entries(all)) {
     for (const [id, a] of Object.entries(alerts || {})) {
       if (!a || a.paused) continue;
@@ -7766,6 +7769,11 @@ var alerts_cron_default = handle(async (req, res) => {
       if (inst.feed === "binance" && inst.binance) {
         cryptoNeeded.add(inst.binance);
         if (kind === "dailyHL") cryptoNeeded.add(inst.binance);
+      } else if (inst.spotCode) {
+        spotNeeded.add(inst.spotCode);
+        if (kind === "dailyHL") {
+          yahooNeeded.add(inst.yahoo);
+        }
       } else if (inst.yahoo) {
         yahooNeeded.add(inst.yahoo);
         if (kind === "dailyHL") yahooDailyNeeded.add(inst.yahoo);
@@ -7774,6 +7782,17 @@ var alerts_cron_default = handle(async (req, res) => {
   }
   const prices = /* @__PURE__ */ new Map();
   const prevDay = /* @__PURE__ */ new Map();
+  if (spotNeeded.size) {
+    await Promise.allSettled([...spotNeeded].map(async (code) => {
+      const r = await fetch(`https://api.gold-api.com/price/${code}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const p = Number(d?.price);
+      if (!Number.isFinite(p) || p <= 0) return;
+      const inst = INSTRUMENTS.find((i) => i.spotCode === code);
+      if (inst) prices.set(inst.symbol, p);
+    }));
+  }
   if (cryptoNeeded.size) {
     try {
       const url = `https://api.binance.com/api/v3/ticker/price?symbols=${encodeURIComponent(JSON.stringify([...cryptoNeeded]))}`;
@@ -7803,7 +7822,7 @@ var alerts_cron_default = handle(async (req, res) => {
       const result = data?.chart?.result?.[0];
       const meta = result?.meta || {};
       const inst = INSTRUMENTS.find((i) => i.yahoo === sym);
-      if (inst && meta.regularMarketPrice != null) prices.set(inst.symbol, meta.regularMarketPrice);
+      if (inst && !inst.spotCode && meta.regularMarketPrice != null) prices.set(inst.symbol, meta.regularMarketPrice);
       const ts = result?.timestamp || [];
       const q = result?.indicators?.quote?.[0] || {};
       if (inst && ts.length >= 2) {

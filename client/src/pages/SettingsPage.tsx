@@ -42,19 +42,24 @@ export default function SettingsPage() {
       {/* ===== Theme ===== */}
       <section className="glass-panel rounded-2xl border-border/50 p-5">
         <h2 className="flex items-center gap-2 text-lg font-bold"><Palette className="h-5 w-5 text-primary" />{t("themeTitle")}</h2>
-        <div className="mt-4 flex flex-wrap gap-2">
+        {/* Phase 19: fixed 3-row grid (3 cols mobile / 4 cols desktop) —
+            chips keep constant size and every chip reserves the check slot,
+            so selecting a theme can never reflow the row ("falling apart") */}
+        <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4">
           {THEMES.map((th: Theme) => (
             <button
               key={th}
               onClick={() => setTheme(th)}
               className={cn(
-                "flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors",
+                "flex h-11 items-center gap-2 overflow-hidden rounded-xl border px-3 text-sm font-medium transition-colors",
                 theme === th ? "border-primary/60 bg-primary/10 text-primary" : "border-border/60 text-muted-foreground hover:text-foreground",
               )}
             >
-              <span className={cn("h-3.5 w-3.5 rounded-full border border-foreground/20", `theme-dot-${th}`)} />
-              {THEME_LABELS[th]}
-              {theme === th && <Check className="h-3.5 w-3.5" />}
+              <span className={cn("h-3.5 w-3.5 shrink-0 rounded-full border border-foreground/20", `theme-dot-${th}`)} />
+              <span className="truncate">{THEME_LABELS[th]}</span>
+              <span className="ml-auto flex w-3.5 shrink-0 justify-center">
+                {theme === th && <Check className="h-3.5 w-3.5" />}
+              </span>
             </button>
           ))}
         </div>

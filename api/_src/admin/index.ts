@@ -12,6 +12,9 @@
  *   ?action=chat-delete     POST { messageId }
  *   ?action=chat-send       POST { text } — posts AS the CEO (stamped server-side)
  *   ?action=set-username    POST { username } — owner claims ANY handle (CEO badge)
+ *   ?action=repair-profile-stub POST { key? } — ANY user: clear a uid-less
+ *                             redirect stub at a handle they provably own
+ *                             (self-service fix for PERMISSION_DENIED saves)
  */
 import gift from "./gift";
 import withdrawals from "./withdrawals";
@@ -19,6 +22,7 @@ import deposits from "./deposits";
 import chatDelete from "./chat-delete";
 import chatSend from "./chat-send";
 import setUsername from "./set-username";
+import profileRepair from "./profile-repair";
 import usernameMarket from "./username-market";
 import caseAdmin from "./cases";
 import * as platform from "./platform";
@@ -99,6 +103,12 @@ export default async function handler(req: any, res: any) {
       return chatSend(req, res);
     case "set-username":
       return setUsername(req, res);
+    case "repair-profile-stub":
+      // Phase 19: self-service stub repair for ANY authenticated user whose
+      // handle is provably theirs — the admin purge endpoint needs an admin
+      // ROLE the CEO flag does not grant, which left users stuck on
+      // "an admin needs to repair it" after an owner username move
+      return profileRepair(req, res);
     case "usernameList":
     case "usernameUnlist":
       return usernameMarket(req, res);

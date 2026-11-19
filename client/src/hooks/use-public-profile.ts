@@ -80,25 +80,35 @@ export function useSavePublicProfile() {
       const usernameKey = username.toLowerCase();
       const previousUsernameKey = settings.publishedUsername?.toLowerCase() || null;
 
-      // Phase 18 self-heal: admin username moves leave redirect records with
-      // no uid at old handles — the security rules then deny the OWNER any
-      // write there (data.uid check fails on a uid-less stub), so bio saves
-      // and the public toggle die with PERMISSION_DENIED. Ask the server to
-      // purge the stubs first; after that the create-branch of the rules
-      // accepts the snapshot again.
+      // Phase 18/19 self-heal: admin username moves leave redirect records
+      // with no uid at old handles — the security rules then deny the OWNER
+      // any write there (data.uid check fails on a uid-less stub), so bio
+      // saves and the public toggle die with PERMISSION_DENIED. Phase 19:
+      // any user can now repair their OWN handle via repair-profile-stub
+      // (server proves ownership against usernames/ + the held-username map);
+      // the admin purge stays as the fallback for admins.
       const targetSnap = await get(ref(db, `publicProfiles/${usernameKey}`));
       const targetVal = targetSnap.val();
       if (targetSnap.exists() && targetVal && typeof targetVal === "object" && !targetVal.uid) {
+        const locked = "Profile handle is locked by an incomplete rename — press Save again. If it still fails, contact support.";
         try {
-          const res = await authedFetch<any>("/api/admin?action=purge-profile-stubs", {});
-          if (!res?.ok) throw new Error("purge failed");
+          const res = await authedFetch<any>("/api/admin?action=repair-profile-stub", { key: usernameKey });
+          if (!res?.ok) throw new Error("repair failed");
           const still = (await get(ref(db, `publicProfiles/${usernameKey}`))).val();
           if (still && typeof still === "object" && !still.uid) {
-            throw new Error("Profile handle is locked by a broken redirect — an admin needs to repair it.");
+            // self-service repair did not clear it — try the admin purge path
+            try {
+              const adminRes = await authedFetch<any>("/api/admin?action=purge-profile-stubs", {});
+              if (!adminRes?.ok) throw new Error("purge failed");
+              const after = (await get(ref(db, `publicProfiles/${usernameKey}`))).val();
+              if (after && typeof after === "object" && !after.uid) throw new Error("still locked");
+            } catch {
+              throw new Error(locked);
+            }
           }
         } catch (e) {
-          if (e instanceof Error && e.message.includes("locked")) throw e;
-          throw new Error("Profile handle is locked by a broken redirect — an admin needs to repair it.");
+          if (e instanceof Error && e.message.startsWith("Profile handle")) throw e;
+          throw new Error(locked);
         }
       }
       const updates: Record<string, unknown> = {

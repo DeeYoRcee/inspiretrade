@@ -415,7 +415,13 @@ export default function ProfilePage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="relative isolate overflow-hidden rounded-3xl border border-border/50 pb-6 pt-10 text-center"
+        className={cn(
+          "relative isolate overflow-hidden rounded-3xl border pb-6 pt-10 text-center",
+          // Phase 19: CEO accounts get a permanent gold stroke on their profile
+          profile?.ceo
+            ? "border-amber-400/80 shadow-[0_0_28px_rgba(251,191,36,0.18)]"
+            : "border-border/50",
+        )}
         style={profileBackground ? { background: profileBackground.tint } : undefined}
       >
         {profileBackground && (
@@ -459,25 +465,40 @@ export default function ProfilePage() {
               playsInline
               preload="metadata"
               onClick={() => setMediaView({ src: avatarVideoSrc || profileVideoSrc!, kind: "video" })}
-              className="mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 border-background object-cover shadow-lg"
+              className={cn(
+                "mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 object-cover shadow-lg",
+                profile?.ceo ? "border-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.35)]" : "border-background",
+              )}
             />
           ) : avatarSrc ? (
             <img
               src={avatarSrc}
               alt={displayName}
               onClick={() => setMediaView({ src: avatarSrc, kind: "image" })}
-              className="mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 border-background object-cover shadow-lg"
+              className={cn(
+                "mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 object-cover shadow-lg",
+                profile?.ceo ? "border-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.35)]" : "border-background",
+              )}
               referrerPolicy="no-referrer"
             />
           ) : (
             <div
-              className="mx-auto flex h-24 w-24 items-center justify-center rounded-full text-3xl font-bold text-white shadow-lg"
+              className={cn(
+                "mx-auto flex h-24 w-24 items-center justify-center rounded-full border-4 text-3xl font-bold text-white shadow-lg",
+                profile?.ceo ? "border-amber-400" : "border-background",
+              )}
               style={{ background: `linear-gradient(160deg, ${gradient[0]}, ${gradient[1]})` }}
             >
               {initials}
             </div>
           )}
           <h1 className="mt-4 text-xl font-bold tracking-tight">{displayName}</h1>
+          {/* CEO badge — gold, mirrors the gold profile stroke */}
+          {profile?.ceo && (
+            <span className="mt-2 inline-flex items-center rounded-full border border-amber-400/60 bg-amber-400/15 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
+              CEO
+            </span>
+          )}
           <p className="mt-0.5 text-[15px] font-medium text-[#3390ec]">
             {username ? `@${username}` : t("profileNoUsername")}
           </p>

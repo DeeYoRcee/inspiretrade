@@ -421,6 +421,13 @@ class QuotesProvider {
     if (spotCode) {
       ensureSpotFlusher();
       setSpotState({ state: "connecting", lastTickAt: 0, providerDelaySec: null });
+      // Phase 18 tick-feed investigation: gold-api serves REST only — there is
+      // NO WebSocket/tick stream, and its price stamp (updatedAt) advances
+      // roughly every 5–15s (verified live 2026-11-19). 1s polling therefore
+      // captures every DISTINCT provider price; the minute candle folds all
+      // observed prices into the OHLC envelope (recordSpotTick), so no
+      // intra-sample extreme can be recovered beyond what the provider
+      // publishes — the honest limit of the free feed.
       const spotTick = async () => {
         if (spotInflight) return;
         spotInflight = true;
@@ -799,7 +806,10 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const td = quotesProvider.providerBarCount(inst.spotCode);
     const delaySec = getSpotState().providerDelaySec;
     const hist = m1 > 0 ? `m1 history: ${m1} min${td > 0 ? ` (${td} Twelve Data backfill)` : ""}` : "recording started — candles build in real time";
-    const message = `${symbol} Spot · gold-api live 1s · ${hist}`;
+    // Phase 19 §6: name the underlier explicitly — Spot Gold/Silver (physical
+    // spot, gold-api), never "Gold" which reads as the COMEX futures contract
+    const metalName = symbol === "XAUUSD" ? "Spot Gold" : symbol === "XAGUSD" ? "Spot Silver" : `${symbol} Spot`;
+    const message = `${metalName} · gold-api live 1s · ${hist}`;
     return { bars, status: "polling", message, delaySec };
   }
   const { bars, source, identity } = await quotesProvider.load(symbol, tf);

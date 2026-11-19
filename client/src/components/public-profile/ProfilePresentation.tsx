@@ -1,4 +1,5 @@
 import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
 import { getProfileBackground } from "@/lib/profile-backgrounds";
@@ -29,7 +30,13 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
   })();
 
   return (
-    <article className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-[0_24px_90px_rgba(0,0,0,.28)]">
+    <article
+      className={cn(
+        "overflow-hidden rounded-3xl border bg-card shadow-[0_24px_90px_rgba(0,0,0,.28)]",
+        // Phase 19: CEO profiles carry the gold stroke on the public page too
+        profile.ceo ? "border-amber-400/80 shadow-[0_0_36px_rgba(251,191,36,0.15)]" : "border-border/60",
+      )}
+    >
       {/* Telegram-like mini profile card — Steam-style animated background */}
       <header
         className="relative isolate overflow-hidden bg-gradient-to-b from-emerald-950 via-[#071712] to-slate-950 px-5 pb-7 pt-9 text-center text-white sm:px-8"
