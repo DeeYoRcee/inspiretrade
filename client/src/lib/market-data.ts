@@ -334,6 +334,13 @@ class QuotesProvider {
     const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo!)}&range=${useCfg.range}&interval=${useCfg.interval}`);
     if (!res?.ok) throw new Error(res?.detail || "FEED_UNAVAILABLE");
     if (res.source) this.source.set(key, res.source);
+    // Phase 17: Dukascopy deep 1m store — one free key-less backfill per
+    // session per pair; the store then serves replay windows and acts as the
+    // last-resort chart source when Yahoo/TD/stooq all fail
+    if (inst.assetClass === "forex" && tf === "1m" && !fxBackfillTried.has(symbol)) {
+      fxBackfillTried.add(symbol);
+      authedFetch("/api/quotes?action=backfill-fx", { code: symbol, days: 30 }).catch(() => {});
+    }
     if (res.identity) this.identity.set(key, res.identity);
     if (res.delaySec != null) statsState.delaySec = res.delaySec;
     // client-side defense-in-depth: the server already validates, but the
@@ -572,6 +579,7 @@ const SPOT_REC_KEY = (code: string) => `it_spot_rec_${code}`;
 const SPOT_REC_MAX = 4320; // 3 days of minutes per code (quota-safe)
 const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCandle[] }>();
 const spotBackfillTried = new Set<string>();
+const fxBackfillTried = new Set<string>();
 
 function loadLocalSpot(code: string): SpotCandle[] {
   try {
@@ -805,8 +813,11 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     message = `Gold spot · live gold-api tail + stooq spot history${delayNote}`;
   } else if (source?.startsWith("spot+yahoo")) {
     message = `Live spot (gold-api) tail · older bars delayed${delayNote}`;
+  } else if (source?.startsWith("truefx")) {
+    message = `FX live (TrueFX) real-time tail${delayNote}`;
   } else if (inst.assetClass === "forex") {
-    message = `FX spot (Yahoo) — delayed${delayNote}`;
+    const srcName = source === "dukascopy-store" ? "Dukascopy store" : source === "twelvedata" ? "Twelve Data" : "Yahoo";
+    message = `FX spot (${srcName}) — delayed${delayNote}`;
   } else {
     message = `Delayed data (${source || "Yahoo"})${delayNote}`;
   }

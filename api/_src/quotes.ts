@@ -206,6 +206,47 @@ import {
   validateBars, alignAndDedupe, spotMergeGuard, bucketStart,
   type RawBar,
 } from "../../shared/feed-validation";
+import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
+
+/**
+ * TrueFX free real-time feed (Phase 17) — no key, anonymous CSV, covers the
+ * 10 majors live (EUR/USD, USD/JPY, GBP/USD, EUR/GBP, USD/CHF, EUR/JPY,
+ * EUR/CHF, USD/CAD, AUD/USD, GBP/JPY). One request answers every pair, so
+ * the live-quote poll stops hammering Yahoo for the majors and the badge
+ * can honestly say real-time. Format: PAIR,ts_ms,bigBid,pipsBid,bigAsk,
+ * pipsAsk,high,low,open — price = bigFigure concatenated with points
+ * ("1.09"+"921" → 1.09921; "159."+"920" → 159.920, verified against the
+ * Dukascopy Nov 17 daily candle range).
+ */
+const TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
+const truefxQuotes = async (): Promise<Record<string, { price: number; ts: number; open: number | null }>> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA, Accept: "text/csv" }, signal: controller.signal });
+    if (!res.ok) return {};
+    const text = await res.text();
+    const out: Record<string, { price: number; ts: number; open: number | null }> = {};
+    for (const line of text.split("\n")) {
+      const f = line.split(",");
+      if (f.length < 8) continue;
+      const pair = f[0]?.trim();
+      if (!pair || !pair.includes("/")) continue;
+      const code = pair.replace("/", "");
+      const bid = Number.parseFloat(String(f[2]) + String(f[3]));
+      const ask = Number.parseFloat(String(f[4]) + String(f[5]));
+      const ts = Number(f[1]);
+      const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
+      if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
+      out[code] = { price: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
+    }
+    return out;
+  } catch {
+    return {};
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 const INTERVAL_SECONDS: Record<string, number> = {
   "1m": 60, "2m": 120, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -449,14 +490,84 @@ export default handle(async (req, res) => {
     return res.json({ ok: true, code, written, oldest });
   }
 
+  // ---- Dukascopy deep forex backfill (Phase 17) ----------------------------
+  // Free, key-less, months-deep 1m forex history — one LZMA file per UTC day
+  // per pair (publication lag ≈ 1–2 days, weekends 404). Bars land in
+  // RTDB fxBars/{code}/{minute} = {o,h,l,c,v} and serve charts/replay via
+  // fromFxStore. No credits to burn — just a cooldown + a light daily file
+  // cap as an abuse guard.
+  if (action === "backfill-fx" && req.method === "POST") {
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const code = String(raw?.code || "").toUpperCase();
+    const dukaSym = DUKA_MAP[code];
+    if (!dukaSym) return res.json({ ok: false, reason: "not-on-duka" });
+    const days = Math.min(Math.max(Number(raw?.days) || 30, 1), 35);
+    const gate = rtdb().ref(`config/dukaBackfillAt/${code}`);
+    const lastAt = Number((await gate.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 90000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((90000 - (nowMs - lastAt)) / 1000) });
+    await gate.set(nowMs);
+    const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
+    let filesUsed = Number((await usageRef.once("value")).val() || 0);
+    if (filesUsed >= 600) return res.json({ ok: false, reason: "daily-cap" });
+
+    // walk back day by day, starting 2 days ago (publication lag), parallel
+    // batches of 5 to stay well inside the function time budget
+    const today = new Date();
+    const wanted: Date[] = [];
+    for (let i = 2; i < days + 2 && wanted.length < days; i++) wanted.push(new Date(today.getTime() - i * 86400000));
+    const update: Record<string, { o: number; h: number; l: number; c: number; v: number }> = {};
+    let filesFetched = 0;
+    let oldest: number | null = null;
+    let newest: number | null = null;
+    for (let i = 0; i < wanted.length; i += 5) {
+      const chunk = wanted.slice(i, i + 5);
+      const files = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
+      filesUsed += files.filter(Boolean).length;
+      for (let k = 0; k < chunk.length; k++) {
+        const buf = files[k];
+        if (!buf) continue;
+        filesFetched += 1;
+        const bars = await decodeDukaDay(buf, code, chunk[k]);
+        for (const b of bars) {
+          update[String(b.t)] = { o: b.o, h: b.h, l: b.l, c: b.c, v: b.v };
+          if (oldest == null || b.t < oldest) oldest = b.t;
+          if (newest == null || b.t > newest) newest = b.t;
+        }
+      }
+    }
+    await usageRef.set(filesUsed);
+    let written = 0;
+    const entries = Object.entries(update);
+    if (entries.length) {
+      const ref = rtdb().ref(`fxBars/${code}`);
+      for (let i = 0; i < entries.length; i += 2000) {
+        await ref.update(Object.fromEntries(entries.slice(i, i + 2000)));
+      }
+      written = entries.length;
+      const meta = (await rtdb().ref(`fxMeta/${code}`).once("value")).val() || {};
+      await rtdb().ref(`fxMeta/${code}`).set({
+        oldest: meta.oldest && oldest ? Math.min(meta.oldest, oldest) : (oldest ?? meta.oldest ?? 0),
+        newest: meta.newest && newest ? Math.max(meta.newest, newest) : (newest ?? meta.newest ?? 0),
+        updatedAt: nowMs,
+      });
+    }
+    return res.json({ ok: true, code, written, oldest, newest, files: filesFetched });
+  }
+
   // ---- Batch quote mode: GET /api/quotes?symbols=EURUSD=X,GC=F ----------
   // Light last-price snapshot for the Market Watch panel.
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
     if (!list.length) return res.status(200).json({ ok: true, quotes: [] });
     const payload = await cachedPayload(batchCache, list.slice().sort().join(","), BATCH_FRESH_MS, BATCH_STALE_MS, async () => {
+      // TrueFX first: one anonymous request prices the 10 majors in real
+      // time — Yahoo only has to answer what TrueFX does not cover
+      const tfx = await truefxQuotes();
       const quotes = await Promise.all(
       list.map(async (sym) => {
+        const t = tfx[sym];
+        if (t) return { symbol: sym, price: t.price, previousClose: t.open, source: "truefx", live: true };
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 6000);
@@ -564,6 +675,11 @@ export default handle(async (req, res) => {
     if (spotCode && !periodMode) {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
+    } else if (DUKA_MAP[symbols] && !periodMode) {
+      // forex: TrueFX majors paint a real-time tail the same way gold-api
+      // does for metals — the delayed Yahoo stream gets a live last bucket
+      const t = (await truefxQuotes())[symbols];
+      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
     }
     // measured delay: the provider's own market-time lag (0 when the live
     // spot merge succeeded) — the chart says "Delayed data (yahoo) · ~9 min"
@@ -571,7 +687,7 @@ export default handle(async (req, res) => {
     const rmt = Number(meta.regularMarketTime);
     const delaySec = live ? 0 : Number.isFinite(rmt) && rmt > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - rmt) : undefined;
     return {
-      source: live ? "spot+yahoo" : "yahoo",
+      source: live ? (SPOT_API_MAP[symbols] ? "spot+yahoo" : "truefx+yahoo") : "yahoo",
       delayed: !live,
       delaySec,
       // what the yahoo identifier actually represents for THIS request —
@@ -694,16 +810,67 @@ export default handle(async (req, res) => {
     const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
     const bars = deduped.bars;
     if (!bars.length) throw new Error("TD_NO_VALID_BARS");
+    let live = false;
+    if (!periodMode) {
+      const t = (await truefxQuotes())[symbols];
+      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
+    }
     const last = bars[bars.length - 1];
     return {
-      source: "twelvedata",
-      delayed: true,
-      delaySec: Math.max(0, Math.floor(Date.now() / 1000) - last.time),
+      source: live ? "truefx+twelvedata" : "twelvedata",
+      delayed: !live,
+      delaySec: live ? 0 : Math.max(0, Math.floor(Date.now() / 1000) - last.time),
       identity: "spot",
       symbol: symbols,
       currency: null,
       regularMarketPrice: last.close,
       previousClose: bars.length > 1 ? bars[bars.length - 2].close : null,
+      bars,
+    };
+  };
+
+  // ---- Dukascopy store source (Phase 17) -----------------------------------
+  // Serves the months-deep 1m history pre-backfilled into fxBars/{code} by
+  // the backfill-fx action. Zero upstream requests, zero credits. In period
+  // mode (replay/backtest) it answers first when the window is stored; in
+  // live range mode it is the LAST resort — Yahoo/TD/stooq give a fresher
+  // tail, the store gives depth.
+  const fromFxStore = async () => {
+    if (interval !== "1m") throw new Error("FX_STORE_1M_ONLY");
+    if (!DUKA_MAP[symbols]) throw new Error("NO_FX_STORE");
+    const meta = (await rtdb().ref(`fxMeta/${symbols}`).once("value")).val() || {};
+    if (!meta?.oldest) throw new Error("FX_STORE_EMPTY");
+    const nowSec = Math.floor(Date.now() / 1000);
+    let t1: number, t2: number;
+    if (periodMode) {
+      t1 = period1 as number;
+      t2 = period2 as number;
+    } else {
+      const days = range.endsWith("d") ? Number(range.slice(0, -1)) || 5 : 5;
+      t1 = nowSec - days * 86400;
+      t2 = nowSec;
+    }
+    const snap = await rtdb().ref(`fxBars/${symbols}`)
+      .orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
+    const val: Record<string, any> = snap.val() || {};
+    const raw: RawBar[] = Object.entries(val).map(([k, b]) => ({
+      time: Number(k), open: Number(b?.o), high: Number(b?.h), low: Number(b?.l), close: Number(b?.c), volume: Number(b?.v ?? 0),
+    })).filter((b) => [b.time, b.open, b.high, b.low, b.close].every(Number.isFinite) && b.time > 0);
+    if (raw.length < 200) throw new Error("FX_STORE_THIN");
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
+    if (!bars.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    const last = bars[bars.length - 1];
+    return {
+      source: "dukascopy-store",
+      delayed: true,
+      delaySec: Math.max(0, nowSec - Number(meta.newest || last.time)),
+      identity: "spot",
+      symbol: symbols,
+      currency: null,
+      regularMarketPrice: last.close,
+      previousClose: null,
       bars,
     };
   };
@@ -721,7 +888,7 @@ export default handle(async (req, res) => {
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
       const chain = METALS_FIRST
         ? [fromStooq, fromYahoo]
-        : [fromYahoo, fromTwelveData, fromStooq];
+        : [fromYahoo, fromTwelveData, fromStooq, fromFxStore];
       let firstErr: unknown = null;
       for (const attempt of chain) {
         try {

@@ -48,9 +48,10 @@ for (const [inPath, outPath] of entries) {
     platform: "node",
     format: "esm",
     target: "node20",
-    // firebase-admin must stay external: it resolves from node_modules at
-    // runtime and bundling it would blow past the function size limit.
-    external: ["firebase-admin"],
+    // firebase-admin and lzma-native must stay external: they resolve from
+    // node_modules at runtime and bundling them would blow past the function
+    // size limit (lzma-native also ships a native binding).
+    external: ["firebase-admin", "lzma-native"],
     // ESM output has no require() — but inlined CJS deps (web-push chain:
     // debug/supports-color) call require("tty") dynamically at load. Provide a
     // real require via createRequire so those dynamic built-in lookups work.

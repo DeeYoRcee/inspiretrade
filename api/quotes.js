@@ -185,6 +185,94 @@ function spotMergeGuard(bars, spot, g) {
   return { ok: true };
 }
 
+// api/_src/lib/duka.ts
+import { decompress } from "lzma-native";
+var DUKA_MAP = {
+  EURUSD: "EURUSD",
+  GBPUSD: "GBPUSD",
+  USDJPY: "USDJPY",
+  USDCHF: "USDCHF",
+  USDCAD: "USDCAD",
+  AUDUSD: "AUDUSD",
+  NZDUSD: "NZDUSD",
+  EURGBP: "EURGBP",
+  EURJPY: "EURJPY",
+  EURCHF: "EURCHF",
+  EURAUD: "EURAUD",
+  EURNZD: "EURNZD",
+  EURCAD: "EURCAD",
+  GBPJPY: "GBPJPY",
+  GBPCHF: "GBPCHF",
+  GBPAUD: "GBPAUD",
+  GBPCAD: "GBPCAD",
+  GBPNZD: "GBPNZD",
+  AUDJPY: "AUDJPY",
+  AUDNZD: "AUDNZD",
+  AUDCAD: "AUDCAD",
+  AUDCHF: "AUDCHF",
+  NZDJPY: "NZDJPY",
+  NZDCAD: "NZDCAD",
+  NZDCHF: "NZDCHF",
+  CADJPY: "CADJPY",
+  CADCHF: "CADCHF",
+  CHFJPY: "CHFJPY",
+  USDSGD: "USDSGD",
+  USDNOK: "USDNOK",
+  USDSEK: "USDSEK",
+  USDZAR: "USDZAR",
+  USDTRY: "USDTRY",
+  USDMXN: "USDMXN"
+};
+var JPY_QUOTE = /* @__PURE__ */ new Set(["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY"]);
+function dukaPoints(code) {
+  return JPY_QUOTE.has(code) ? 1e3 : 1e5;
+}
+var DUKA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+async function fetchDukaDay(dukaSym, day) {
+  const y = day.getUTCFullYear();
+  const m = day.getUTCMonth();
+  const d = day.getUTCDate();
+  const url = `https://datafeed.dukascopy.com/datafeed/${dukaSym}/${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/BID_candles_min_1.bi5`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12e3);
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.length > 100 ? buf : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function decodeDukaDay(buf, code, day) {
+  const raw = await new Promise((resolve) => {
+    decompress(buf, (result) => {
+      if (result == null) return resolve(Buffer.alloc(0));
+      resolve(Buffer.isBuffer(result) ? result : Buffer.from(result));
+    });
+  }).catch(() => Buffer.alloc(0));
+  if (raw.length < 24) return [];
+  const div = dukaPoints(code);
+  const dayStart = Math.floor(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()) / 1e3);
+  const out = [];
+  for (let off = 0; off + 24 <= raw.length; off += 24) {
+    const t = dayStart + raw.readInt32BE(off);
+    const o = raw.readInt32BE(off + 4) / div;
+    const h = raw.readInt32BE(off + 8) / div;
+    const l = raw.readInt32BE(off + 12) / div;
+    const c = raw.readInt32BE(off + 16) / div;
+    const v = raw.readFloatBE(off + 20);
+    if (![o, h, l, c].every(Number.isFinite) || !Number.isFinite(v)) continue;
+    if (h < Math.max(o, c) || l > Math.min(o, c) || h < l || o <= 0) continue;
+    if (h === l && v <= 0) continue;
+    if (!Number.isFinite(t) || t % 60 !== 0) continue;
+    out.push({ t, o, h, l, c, v: Math.round(v * 100) / 100 });
+  }
+  return out;
+}
+
 // api/_src/quotes.ts
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 var STOOQ_MAP = {
@@ -327,6 +415,35 @@ async function fetchSpot(code) {
     return cached?.price ?? null;
   }
 }
+var TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
+var truefxQuotes = async () => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8e3);
+  try {
+    const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA, Accept: "text/csv" }, signal: controller.signal });
+    if (!res.ok) return {};
+    const text = await res.text();
+    const out = {};
+    for (const line of text.split("\n")) {
+      const f = line.split(",");
+      if (f.length < 8) continue;
+      const pair = f[0]?.trim();
+      if (!pair || !pair.includes("/")) continue;
+      const code = pair.replace("/", "");
+      const bid = Number.parseFloat(String(f[2]) + String(f[3]));
+      const ask = Number.parseFloat(String(f[4]) + String(f[5]));
+      const ts = Number(f[1]);
+      const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
+      if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
+      out[code] = { price: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
+    }
+    return out;
+  } catch {
+    return {};
+  } finally {
+    clearTimeout(timer);
+  }
+};
 var INTERVAL_SECONDS = {
   "1m": 60,
   "2m": 120,
@@ -525,12 +642,70 @@ var quotes_default = handle(async (req, res) => {
     }
     return res.json({ ok: true, code, written, oldest });
   }
+  if (action === "backfill-fx" && req.method === "POST") {
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const code = String(raw?.code || "").toUpperCase();
+    const dukaSym = DUKA_MAP[code];
+    if (!dukaSym) return res.json({ ok: false, reason: "not-on-duka" });
+    const days = Math.min(Math.max(Number(raw?.days) || 30, 1), 35);
+    const gate = rtdb().ref(`config/dukaBackfillAt/${code}`);
+    const lastAt = Number((await gate.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 9e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((9e4 - (nowMs - lastAt)) / 1e3) });
+    await gate.set(nowMs);
+    const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
+    let filesUsed = Number((await usageRef.once("value")).val() || 0);
+    if (filesUsed >= 600) return res.json({ ok: false, reason: "daily-cap" });
+    const today = /* @__PURE__ */ new Date();
+    const wanted = [];
+    for (let i = 2; i < days + 2 && wanted.length < days; i++) wanted.push(new Date(today.getTime() - i * 864e5));
+    const update = {};
+    let filesFetched = 0;
+    let oldest = null;
+    let newest = null;
+    for (let i = 0; i < wanted.length; i += 5) {
+      const chunk = wanted.slice(i, i + 5);
+      const files = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
+      filesUsed += files.filter(Boolean).length;
+      for (let k = 0; k < chunk.length; k++) {
+        const buf = files[k];
+        if (!buf) continue;
+        filesFetched += 1;
+        const bars = await decodeDukaDay(buf, code, chunk[k]);
+        for (const b of bars) {
+          update[String(b.t)] = { o: b.o, h: b.h, l: b.l, c: b.c, v: b.v };
+          if (oldest == null || b.t < oldest) oldest = b.t;
+          if (newest == null || b.t > newest) newest = b.t;
+        }
+      }
+    }
+    await usageRef.set(filesUsed);
+    let written = 0;
+    const entries = Object.entries(update);
+    if (entries.length) {
+      const ref = rtdb().ref(`fxBars/${code}`);
+      for (let i = 0; i < entries.length; i += 2e3) {
+        await ref.update(Object.fromEntries(entries.slice(i, i + 2e3)));
+      }
+      written = entries.length;
+      const meta = (await rtdb().ref(`fxMeta/${code}`).once("value")).val() || {};
+      await rtdb().ref(`fxMeta/${code}`).set({
+        oldest: meta.oldest && oldest ? Math.min(meta.oldest, oldest) : oldest ?? meta.oldest ?? 0,
+        newest: meta.newest && newest ? Math.max(meta.newest, newest) : newest ?? meta.newest ?? 0,
+        updatedAt: nowMs
+      });
+    }
+    return res.json({ ok: true, code, written, oldest, newest, files: filesFetched });
+  }
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
     if (!list.length) return res.status(200).json({ ok: true, quotes: [] });
     const payload = await cachedPayload(batchCache, list.slice().sort().join(","), BATCH_FRESH_MS, BATCH_STALE_MS, async () => {
+      const tfx = await truefxQuotes();
       const quotes = await Promise.all(
         list.map(async (sym) => {
+          const t = tfx[sym];
+          if (t) return { symbol: sym, price: t.price, previousClose: t.open, source: "truefx", live: true };
           try {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 6e3);
@@ -619,11 +794,14 @@ var quotes_default = handle(async (req, res) => {
     if (spotCode && !periodMode) {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
+    } else if (DUKA_MAP[symbols] && !periodMode) {
+      const t = (await truefxQuotes())[symbols];
+      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
     }
     const rmt = Number(meta.regularMarketTime);
     const delaySec = live ? 0 : Number.isFinite(rmt) && rmt > 0 ? Math.max(0, Math.floor(Date.now() / 1e3) - rmt) : void 0;
     return {
-      source: live ? "spot+yahoo" : "yahoo",
+      source: live ? SPOT_API_MAP[symbols] ? "spot+yahoo" : "truefx+yahoo" : "yahoo",
       delayed: !live,
       delaySec,
       // what the yahoo identifier actually represents for THIS request —
@@ -759,11 +937,16 @@ var quotes_default = handle(async (req, res) => {
     const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
     const bars = deduped.bars;
     if (!bars.length) throw new Error("TD_NO_VALID_BARS");
+    let live = false;
+    if (!periodMode) {
+      const t = (await truefxQuotes())[symbols];
+      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
+    }
     const last = bars[bars.length - 1];
     return {
-      source: "twelvedata",
-      delayed: true,
-      delaySec: Math.max(0, Math.floor(Date.now() / 1e3) - last.time),
+      source: live ? "truefx+twelvedata" : "twelvedata",
+      delayed: !live,
+      delaySec: live ? 0 : Math.max(0, Math.floor(Date.now() / 1e3) - last.time),
       identity: "spot",
       symbol: symbols,
       currency: null,
@@ -772,11 +955,54 @@ var quotes_default = handle(async (req, res) => {
       bars
     };
   };
+  const fromFxStore = async () => {
+    if (interval !== "1m") throw new Error("FX_STORE_1M_ONLY");
+    if (!DUKA_MAP[symbols]) throw new Error("NO_FX_STORE");
+    const meta = (await rtdb().ref(`fxMeta/${symbols}`).once("value")).val() || {};
+    if (!meta?.oldest) throw new Error("FX_STORE_EMPTY");
+    const nowSec = Math.floor(Date.now() / 1e3);
+    let t1, t2;
+    if (periodMode) {
+      t1 = period1;
+      t2 = period2;
+    } else {
+      const days = range.endsWith("d") ? Number(range.slice(0, -1)) || 5 : 5;
+      t1 = nowSec - days * 86400;
+      t2 = nowSec;
+    }
+    const snap = await rtdb().ref(`fxBars/${symbols}`).orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
+    const val = snap.val() || {};
+    const raw = Object.entries(val).map(([k, b]) => ({
+      time: Number(k),
+      open: Number(b?.o),
+      high: Number(b?.h),
+      low: Number(b?.l),
+      close: Number(b?.c),
+      volume: Number(b?.v ?? 0)
+    })).filter((b) => [b.time, b.open, b.high, b.low, b.close].every(Number.isFinite) && b.time > 0);
+    if (raw.length < 200) throw new Error("FX_STORE_THIN");
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
+    if (!bars.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    const last = bars[bars.length - 1];
+    return {
+      source: "dukascopy-store",
+      delayed: true,
+      delaySec: Math.max(0, nowSec - Number(meta.newest || last.time)),
+      identity: "spot",
+      symbol: symbols,
+      currency: null,
+      regularMarketPrice: last.close,
+      previousClose: null,
+      bars
+    };
+  };
   try {
     const cacheKey = periodMode ? `${symbols}|p:${Math.floor(period1 / 600)}-${Math.floor(period2 / 600)}|${interval}` : `${symbols}|${range}|${interval}`;
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromTwelveData, fromStooq];
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromTwelveData, fromStooq, fromFxStore];
       let firstErr = null;
       for (const attempt of chain) {
         try {
