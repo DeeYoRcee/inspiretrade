@@ -359,6 +359,20 @@ function mergeSpotBars(bars, spot, interval) {
   }
   return false;
 }
+var TD_DAILY_BUDGET = 260;
+var tdDayRef = () => rtdb().ref(`config/tdUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
+var tdSpend = async (n = 1) => {
+  try {
+    await tdDayRef().transaction((cur) => Number(cur || 0) + n);
+  } catch {
+  }
+};
+var tdKey = async () => {
+  const env = String(process.env.TWELVE_DATA_API_KEY || "");
+  if (/^[a-f0-9]{32}$/i.test(env)) return env;
+  const stored = String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
+  return /^[a-f0-9]{32}$/i.test(stored) ? stored : "";
+};
 var quotes_default = handle(async (req, res) => {
   await requireUser(req);
   const url = new URL(req.url || "/", "http://localhost");
@@ -457,6 +471,8 @@ var quotes_default = handle(async (req, res) => {
     if (nowMs - lastAt < 12e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((12e4 - (nowMs - lastAt)) / 1e3) });
     await gateRef.set(nowMs);
     const symbol = code === "XAG" ? "XAG/USD" : "XAU/USD";
+    const used = Number((await tdDayRef().once("value")).val() || 0);
+    if (used >= TD_DAILY_BUDGET) return res.json({ ok: false, reason: "td-budget-exhausted" });
     const nowSec = Math.floor(Date.now() / 1e3);
     const minuteNow = Math.floor(nowSec / 60) * 60;
     const oldestAllowed = nowSec - 60 * 86400;
@@ -476,6 +492,7 @@ var quotes_default = handle(async (req, res) => {
         const r = await fetch(`https://api.twelvedata.com/time_series?${qs.toString()}`, { signal: controller.signal });
         clearTimeout(timer);
         d = await r.json();
+        await tdSpend(1);
       } catch {
         break;
       }
@@ -660,11 +677,104 @@ var quotes_default = handle(async (req, res) => {
       bars: capped
     };
   };
+  const TD_FOREX = /* @__PURE__ */ new Set([
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "USDCHF",
+    "USDCAD",
+    "AUDUSD",
+    "NZDUSD",
+    "EURGBP",
+    "EURJPY",
+    "EURCHF",
+    "EURAUD",
+    "EURNZD",
+    "EURCAD",
+    "GBPJPY",
+    "GBPCHF",
+    "GBPAUD",
+    "GBPCAD",
+    "GBPNZD",
+    "AUDJPY",
+    "AUDNZD",
+    "AUDCAD",
+    "AUDCHF",
+    "NZDJPY",
+    "NZDCAD",
+    "NZDCHF",
+    "CADJPY",
+    "CADCHF",
+    "CHFJPY",
+    "USDSGD",
+    "USDNOK",
+    "USDSEK",
+    "USDZAR",
+    "USDTRY",
+    "USDMXN"
+  ]);
+  const TD_INTERVAL = {
+    "1m": "1min",
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "1h",
+    "1d": "1day"
+  };
+  const fromTwelveData = async () => {
+    if (!TD_FOREX.has(symbols)) throw new Error("NO_TD_MAP");
+    const ti = TD_INTERVAL[interval];
+    if (!ti) throw new Error("NO_TD_INTERVAL");
+    const apiKey = await tdKey();
+    if (!apiKey) throw new Error("NO_TD_KEY");
+    const used = Number((await tdDayRef().once("value")).val() || 0);
+    if (used >= TD_DAILY_BUDGET) throw new Error("TD_BUDGET_EXHAUSTED");
+    const outputsize = interval === "1m" ? 5e3 : interval === "5m" ? 4e3 : 2e3;
+    const u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9e3);
+    let d = null;
+    try {
+      const r = await fetch(u, { signal: controller.signal });
+      d = await r.json();
+    } catch (e) {
+      throw new Error(`twelvedata ${String(e?.message || e).slice(0, 60)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    const values = Array.isArray(d?.values) ? d.values : [];
+    if (!values.length) throw new Error(`TD: ${String(d?.message || "EMPTY").slice(0, 70)}`);
+    await tdSpend(1);
+    const raw = values.map((v) => ({
+      time: Math.floor(Date.parse(String(v?.datetime || "").replace(" ", "T") + "Z") / 1e3),
+      open: Number(v?.open),
+      high: Number(v?.high),
+      low: Number(v?.low),
+      close: Number(v?.close),
+      volume: 0
+    })).filter((b) => Number.isFinite(b.time) && b.time > 0 && [b.open, b.high, b.low, b.close].every(Number.isFinite));
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
+    if (!bars.length) throw new Error("TD_NO_VALID_BARS");
+    const last = bars[bars.length - 1];
+    return {
+      source: "twelvedata",
+      delayed: true,
+      delaySec: Math.max(0, Math.floor(Date.now() / 1e3) - last.time),
+      identity: "spot",
+      symbol: symbols,
+      currency: null,
+      regularMarketPrice: last.close,
+      previousClose: bars.length > 1 ? bars[bars.length - 2].close : null,
+      bars
+    };
+  };
   try {
     const cacheKey = periodMode ? `${symbols}|p:${Math.floor(period1 / 600)}-${Math.floor(period2 / 600)}|${interval}` : `${symbols}|${range}|${interval}`;
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromStooq];
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromTwelveData, fromStooq];
       let firstErr = null;
       for (const attempt of chain) {
         try {

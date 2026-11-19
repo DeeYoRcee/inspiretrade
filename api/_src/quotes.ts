@@ -248,6 +248,25 @@ export function mergeSpotBars(
   return false; // spot bucket precedes the last bar (clock skew) — leave bars untouched
 }
 
+// ---- Twelve Data shared budget (Phase 16c) ---------------------------------
+// The repo is public — the key lives only in RTDB config/providerKeys/
+// twelvedata or the TWELVE_DATA_API_KEY env var. A daily RTDB counter keeps
+// the free tier (8 req/min, 800 credits/day) from being drained by history
+// fallbacks and backfills; both spend from the same daily budget.
+const TD_DAILY_BUDGET = 260;
+const tdDayRef = () => rtdb().ref(`config/tdUsage/${new Date().toISOString().slice(0, 10)}`);
+const tdSpend = async (n = 1) => {
+  try {
+    await tdDayRef().transaction((cur: any) => Number(cur || 0) + n);
+  } catch { /* budget tracking is best-effort */ }
+};
+const tdKey = async (): Promise<string> => {
+  const env = String(process.env.TWELVE_DATA_API_KEY || "");
+  if (/^[a-f0-9]{32}$/i.test(env)) return env;
+  const stored = String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
+  return /^[a-f0-9]{32}$/i.test(stored) ? stored : "";
+};
+
 export default handle(async (req, res) => {
   await requireUser(req);
 
@@ -375,6 +394,8 @@ export default handle(async (req, res) => {
     await gateRef.set(nowMs);
 
     const symbol = code === "XAG" ? "XAG/USD" : "XAU/USD";
+    const used = Number((await tdDayRef().once("value")).val() || 0);
+    if (used >= TD_DAILY_BUDGET) return res.json({ ok: false, reason: "td-budget-exhausted" });
     const nowSec = Math.floor(Date.now() / 1000);
     const minuteNow = Math.floor(nowSec / 60) * 60;
     const oldestAllowed = nowSec - 60 * 86400; // 60 days of 1m is plenty for M1→D1
@@ -395,6 +416,7 @@ export default handle(async (req, res) => {
         const r = await fetch(`https://api.twelvedata.com/time_series?${qs.toString()}`, { signal: controller.signal });
         clearTimeout(timer);
         d = await r.json();
+        await tdSpend(1);
       } catch { break; }
       const values: any[] = Array.isArray(d?.values) ? d.values : [];
       if (!values.length) break;
@@ -612,6 +634,76 @@ export default handle(async (req, res) => {
     };
   };
 
+  // ---- Twelve Data fallback (Phase 16c) ------------------------------------
+  // Yahoo rate-limits datacenter IPs intermittently; stooq has no 1m CSV at
+  // all, so a Yahoo blip used to strand forex M1 charts in a hard error state.
+  // The user's Twelve Data free key covers every catalog forex pair (verified
+  // 2026-11-19: majors, crosses and exotics — 26/26 OK, timezone=UTC), so it
+  // slots into the chain between Yahoo and stooq. The repo is public — the
+  // key lives only in RTDB config/providerKeys/twelvedata or the
+  // TWELVE_DATA_API_KEY env var, and a daily RTDB budget counter keeps the
+  // free tier (8 req/min, 800 credits/day) from being drained by fallbacks.
+  const TD_FOREX = new Set([
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+    "EURGBP", "EURJPY", "EURCHF", "EURAUD", "EURNZD", "EURCAD",
+    "GBPJPY", "GBPCHF", "GBPAUD", "GBPCAD", "GBPNZD",
+    "AUDJPY", "AUDNZD", "AUDCAD", "AUDCHF",
+    "NZDJPY", "NZDCAD", "NZDCHF", "CADJPY", "CADCHF", "CHFJPY",
+    "USDSGD", "USDNOK", "USDSEK", "USDZAR", "USDTRY", "USDMXN",
+  ]);
+  const TD_INTERVAL: Record<string, string> = {
+    "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "1d": "1day",
+  };
+  // hard daily ceiling for TD history-fallback requests — the counter itself
+  // is module-level and shared with the spot backfill below
+  const fromTwelveData = async () => {
+    if (!TD_FOREX.has(symbols)) throw new Error("NO_TD_MAP");
+    const ti = TD_INTERVAL[interval];
+    if (!ti) throw new Error("NO_TD_INTERVAL");
+    const apiKey = await tdKey();
+    if (!apiKey) throw new Error("NO_TD_KEY");
+    const used = Number((await tdDayRef().once("value")).val() || 0);
+    if (used >= TD_DAILY_BUDGET) throw new Error("TD_BUDGET_EXHAUSTED");
+    const outputsize = interval === "1m" ? 5000 : interval === "5m" ? 4000 : 2000;
+    // datetime comes back in real UTC (timezone=UTC) — the same anchors the
+    // spot engine uses, so the merged chart stays minute-aligned
+    const u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9000);
+    let d: any = null;
+    try {
+      const r = await fetch(u, { signal: controller.signal });
+      d = await r.json();
+    } catch (e: any) {
+      throw new Error(`twelvedata ${String(e?.message || e).slice(0, 60)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    const values: any[] = Array.isArray(d?.values) ? d.values : [];
+    if (!values.length) throw new Error(`TD: ${String(d?.message || "EMPTY").slice(0, 70)}`);
+    await tdSpend(1);
+    const raw: RawBar[] = values.map((v) => ({
+      time: Math.floor(Date.parse(String(v?.datetime || "").replace(" ", "T") + "Z") / 1000),
+      open: Number(v?.open), high: Number(v?.high), low: Number(v?.low), close: Number(v?.close), volume: 0,
+    })).filter((b) => Number.isFinite(b.time) && b.time > 0 && [b.open, b.high, b.low, b.close].every(Number.isFinite));
+    const checked = validateBars(raw);
+    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
+    const bars = deduped.bars;
+    if (!bars.length) throw new Error("TD_NO_VALID_BARS");
+    const last = bars[bars.length - 1];
+    return {
+      source: "twelvedata",
+      delayed: true,
+      delaySec: Math.max(0, Math.floor(Date.now() / 1000) - last.time),
+      identity: "spot",
+      symbol: symbols,
+      currency: null,
+      regularMarketPrice: last.close,
+      previousClose: bars.length > 1 ? bars[bars.length - 2].close : null,
+      bars,
+    };
+  };
+
   try {
     const cacheKey = periodMode
       ? `${symbols}|p:${Math.floor((period1 as number) / 600)}-${Math.floor((period2 as number) / 600)}|${interval}`
@@ -625,7 +717,7 @@ export default handle(async (req, res) => {
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
       const chain = METALS_FIRST
         ? [fromStooq, fromYahoo]
-        : [fromYahoo, fromStooq];
+        : [fromYahoo, fromTwelveData, fromStooq];
       let firstErr: unknown = null;
       for (const attempt of chain) {
         try {
