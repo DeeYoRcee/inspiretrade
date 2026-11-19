@@ -217,9 +217,10 @@ async function fetchSpot(code: string): Promise<number | null> {
 }
 
 import {
-  validateBars, alignAndDedupe, spotMergeGuard, bucketStart,
+  validateBars, alignAndDedupe, spotMergeGuard, bucketStart, minuteIslandFilter,
   type RawBar,
 } from "../../shared/feed-validation";
+import { aggregateBars } from "../../shared/terminal";
 import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
 
 /**
@@ -231,6 +232,73 @@ import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
  * price = bigFigure concatenated with points ("1.09"+"921" → 1.09921).
  */
 import { truefxQuotes } from "./lib/truefx";
+
+// ---- Phase 20: TrueFX live-minute recorder ---------------------------------
+// Yahoo's FX intraday 1m bars are CLOSE-ONLY (O=H=L=C on every bar — verified
+// 2026-11-19: EURUSD=X 6712/6712, GBPUSD=X 2493/2493 flat) and the Dukascopy
+// store publishes with a 1-2 day lag, so TODAY's session has no real OHLC
+// source at all. The recorder fills that hole with genuine data: every
+// request that already fetches TrueFX folds the observed BID into an RTDB
+// minute candle (fxLive/{code}/{minute} = {o,h,l,c,s}) — the same
+// self-recording contract the metals engine uses. Candles exist only where
+// ticks were actually observed (a 10s chart poll ≈ 6 samples/minute), gaps
+// stay gaps, nothing is fabricated. fxBars (full-tick Dukascopy OHLC) wins
+// wherever both exist; fxLive fills the publication gap.
+type FxLiveMinute = { o: number; h: number; l: number; c: number; s: number };
+const FXLIVE_MAX_AGE_SEC = 3 * 86400;
+const fxLiveCache = new Map<string, { at: number; minutes: Map<number, FxLiveMinute> }>();
+
+async function fxLiveMinutes(code: string): Promise<Map<number, FxLiveMinute>> {
+  const nowMs = Date.now();
+  const hit = fxLiveCache.get(code);
+  if (hit && nowMs - hit.at < 60000) return hit.minutes;
+  const minutes = new Map<number, FxLiveMinute>();
+  try {
+    const snap = await rtdb().ref(`fxLive/${code}`).once("value");
+    const obj: Record<string, any> = snap.val() || {};
+    const cutoff = Math.floor(nowMs / 1000) - FXLIVE_MAX_AGE_SEC;
+    for (const [k, v] of Object.entries(obj)) {
+      const t = Number(k);
+      const o = Number(v?.o), h = Number(v?.h), l = Number(v?.l), c = Number(v?.c), s = Number(v?.s || 1);
+      if (!Number.isFinite(t) || t < cutoff || t % 60 !== 0) continue;
+      if (![o, h, l, c].every(Number.isFinite) || o <= 0) continue;
+      minutes.set(t, { o, h, l, c, s: Number.isFinite(s) ? s : 1 });
+    }
+  } catch { /* RTDB hiccup — the recorder continues with an empty map */ }
+  fxLiveCache.set(code, { at: nowMs, minutes });
+  return minutes;
+}
+
+/** Fold observed TrueFX BIDs into the live-minute recorder (best-effort —
+ * a recording failure must never block the market-data response). */
+async function recordFxLiveBids(bids: Record<string, number | undefined>): Promise<void> {
+  const t = Math.floor(Date.now() / 1000 / 60) * 60;
+  const update: Record<string, FxLiveMinute> = {};
+  const touched: string[] = [];
+  try {
+    for (const [code, bid] of Object.entries(bids)) {
+      if (!DUKA_MAP[code] || !(bid > 0)) continue;
+      const minutes = await fxLiveMinutes(code);
+      const ex = minutes.get(t);
+      const merged: FxLiveMinute = ex
+        ? { o: ex.o, c: bid, h: Math.max(ex.h, bid), l: Math.min(ex.l, bid), s: ex.s + 1 }
+        : { o: bid, c: bid, h: bid, l: bid, s: 1 };
+      minutes.set(t, merged);
+      update[`fxLive/${code}/${t}`] = merged;
+      touched.push(code);
+    }
+    if (Object.keys(update).length) {
+      await rtdb().ref().update(update);
+      // occasional lazy prune — the recorder only ever reads the last 3 days
+      if (Math.random() < 0.05) {
+        const cutoff = String(t - FXLIVE_MAX_AGE_SEC);
+        for (const code of touched) {
+          void rtdb().ref(`fxLive/${code}`).orderByKey().endAt(cutoff).limitToFirst(2000).remove().catch(() => {});
+        }
+      }
+    }
+  } catch { /* recording is best-effort */ }
+}
 
 const INTERVAL_SECONDS: Record<string, number> = {
   "1m": 60, "2m": 120, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -619,6 +687,10 @@ export default handle(async (req, res) => {
       // TrueFX first: one anonymous request prices the 10 majors in real
       // time — Yahoo only has to answer what TrueFX does not cover
       const tfx = await truefxQuotes();
+      // Phase 20: every TrueFX fetch feeds the live-minute recorder — the
+      // Market Watch poll alone keeps today's real OHLC accumulating for
+      // every catalog major, even with no chart open
+      void recordFxLiveBids(Object.fromEntries(Object.entries(tfx).map(([c, q]) => [c, q.bid])));
       const quotes = await Promise.all(
       list.map(async (sym) => {
         const t = tfx[sym.replace(/=X$/, "")];
@@ -775,7 +847,24 @@ export default handle(async (req, res) => {
     let live = false;
     if (DUKA_MAP[bareCode] && !periodMode) {
       const t = (await truefxQuotes())[bareCode];
+      // Phase 20: record the observed BID BEFORE any rejection below — every
+      // request must feed the live-minute recorder or a cold session would
+      // never accumulate today's real OHLC
+      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
       if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
+    }
+    // Phase 20: Yahoo's FX intraday 1m bars are CLOSE-ONLY — every bar
+    // arrives O=H=L=C (verified live 2026-11-19: EURUSD=X 6712/6712 flat,
+    // GBPUSD=X 2493/2493). Rendered as candlesticks they are 1-2px dots —
+    // the "tiny green dots" defect. A flat series is not candle data: reject
+    // it so the chain serves genuine OHLC (the Dukascopy store ∪ TrueFX
+    // live recorder, then Twelve Data) instead. Higher FX intervals carry
+    // real OHLC (5m 11% flat = quiet minutes, 15m+ <1%) and stay.
+    if (DUKA_MAP[bareCode] && interval === "1m" && bars.length > 20) {
+      const flat = bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length;
+      if (flat / bars.length >= 0.9) {
+        throw new Error(`FLAT_FX_OHLC: ${Math.round((100 * flat) / bars.length)}% of ${symbols} 1m bars are O=H=L=C — close-only series, not candles`);
+      }
     }
     // measured delay: the provider's own market-time lag (0 when the live
     // spot merge succeeded) — the chart says "Delayed data (yahoo) · ~9 min"
@@ -917,6 +1006,8 @@ export default handle(async (req, res) => {
       const t = (await truefxQuotes())[bareCode];
       // Phase 18: paint the genuine BID — same price side as the Dukascopy
       // BID history the store serves; mid is reserved for execution quotes
+      // Phase 20: and feed the live-minute recorder
+      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
       if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     const last = bars[bars.length - 1];
@@ -933,17 +1024,19 @@ export default handle(async (req, res) => {
     };
   };
 
-  // ---- Dukascopy store source (Phase 17) -----------------------------------
+  // ---- Dukascopy store source (Phase 17, Phase 20 live union) --------------
   // Serves the months-deep 1m history pre-backfilled into fxBars/{code} by
-  // the backfill-fx action. Zero upstream requests, zero credits. In period
-  // mode (replay/backtest) it answers first when the window is stored; in
-  // live range mode it is the LAST resort — Yahoo/TD/stooq give a fresher
-  // tail, the store gives depth.
+  // the backfill-fx action, UNIONED with the TrueFX live-minute recorder
+  // (fxLive/{code}) that fills Dukascopy's 1-2 day publication gap with real
+  // observed BID candles. Zero upstream candle requests, zero credits. In
+  // period mode (replay/backtest) it answers first when the window is stored;
+  // in live range mode it is the primary FX intraday source — Yahoo's 1m FX
+  // is close-only (FLAT_FX_OHLC) and Twelve Data is budget-limited.
   const fromFxStore = async () => {
-    if (interval !== "1m") throw new Error("FX_STORE_1M_ONLY");
     if (!DUKA_MAP[bareCode]) throw new Error("NO_FX_STORE");
+    const sec = INTERVAL_SECONDS[interval];
+    if (!sec || sec > 3600) throw new Error("FX_STORE_INTRADAY_ONLY");
     const meta = (await rtdb().ref(`fxMeta/${bareCode}`).once("value")).val() || {};
-    if (!meta?.oldest) throw new Error("FX_STORE_EMPTY");
     const nowSec = Math.floor(Date.now() / 1000);
     let t1: number, t2: number;
     if (periodMode) {
@@ -954,36 +1047,54 @@ export default handle(async (req, res) => {
       t1 = nowSec - days * 86400;
       t2 = nowSec;
     }
-    // Live range mode: a stale store (Dukascopy publishes with a 1–2 day lag)
-    // must NEVER become the primary chart — a tail a day old looks broken.
-    // Only answer live ranges when the newest stored bar is under 90 minutes
-    // old; deep replay windows bypass the freshness check.
-    const nowSecPre = Math.floor(Date.now() / 1000);
-    if (!periodMode && Number(meta.newest || 0) < nowSecPre - 90 * 60) {
-      throw new Error("FX_STORE_STALE");
-    }
+    // store depth (Dukascopy BID 1m — full-tick OHLC, authoritative)
     const snap = await rtdb().ref(`fxBars/${bareCode}`)
       .orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
     const val: Record<string, any> = snap.val() || {};
-    const raw: RawBar[] = Object.entries(val).map(([k, b]) => ({
-      time: Number(k), open: Number(b?.o), high: Number(b?.h), low: Number(b?.l), close: Number(b?.c), volume: Number(b?.v ?? 0),
-    })).filter((b) => [b.time, b.open, b.high, b.low, b.close].every(Number.isFinite) && b.time > 0);
+    const byTime = new Map<number, RawBar>();
+    for (const [k, b] of Object.entries(val)) {
+      const time = Number(k);
+      const o = Number(b?.o), h = Number(b?.h), l = Number(b?.l), c = Number(b?.c);
+      if ([time, o, h, l, c].every(Number.isFinite) && time > 0 && o > 0 && h >= l && l > 0) {
+        byTime.set(time, { time, open: o, high: h, low: l, close: c, volume: Number(b?.v ?? 0) });
+      }
+    }
+    // live union: the recorder's real observed BID minutes fill the gap the
+    // publication lag leaves; the store wins wherever both exist
+    const live = await fxLiveMinutes(bareCode);
+    for (const [time, m] of live) {
+      if (time < t1 || time > t2 || byTime.has(time)) continue;
+      byTime.set(time, { time, open: m.o, high: m.h, low: m.l, close: m.c, volume: m.s });
+    }
+    const raw = [...byTime.values()].sort((a, b) => a.time - b.time);
     if (raw.length < 200) throw new Error("FX_STORE_THIN");
-    const checked = validateBars(raw);
-    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
-    const bars = deduped.bars;
-    if (!bars.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    // Phase 20: stuck-price glitch islands (a provider serving a stale price
+    // with a fresh stamp) are rejected before they can reach a chart
+    const island = minuteIslandFilter(raw);
+    const checked = validateBars(island.bars);
+    const deduped = alignAndDedupe(checked.bars, 60);
+    const m1 = deduped.bars;
+    if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
+    const newest = bars[bars.length - 1].time;
+    // Live range mode: a stale union must NEVER become the primary chart —
+    // a tail a day old looks broken. The recorder keeps the union fresh
+    // whenever any user is polling; a truly dead session errors honestly.
+    if (!periodMode && newest < nowSec - 90 * 60) {
+      throw new Error("FX_STORE_STALE");
+    }
     const last = bars[bars.length - 1];
     return {
-      source: "dukascopy-store",
-      delayed: true,
-      delaySec: Math.max(0, nowSec - Number(meta.newest || last.time)),
+      source: "fx-store+live",
+      delayed: newest < nowSec - 300,
+      delaySec: Math.max(0, nowSec - newest),
       identity: "spot",
       symbol: bareCode,
       currency: null,
       regularMarketPrice: last.close,
-      previousClose: null,
+      previousClose: bars.length > 1 ? bars[bars.length - 2].close : null,
       bars,
+      islandBars: island.rejected,
     };
   };
 
@@ -998,9 +1109,18 @@ export default handle(async (req, res) => {
     // For FX and indices the yahoo symbol is already the genuine underlying.
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
+      // Phase 20 FX intraday order: Yahoo first (real OHLC on 5m+ and the
+      // live-tail paint on every interval — and it feeds the fxLive recorder
+      // before any rejection), then the store ∪ live recorder (genuine OHLC,
+      // months deep, zero credits), THEN budget-limited Twelve Data. The old
+      // order put TD second: Yahoo's 1m FX is close-only, so every M1 poll
+      // drained the 260/day budget and the chart died by midday.
+      const fxIntraday = DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
       const chain = METALS_FIRST
         ? [fromStooq, fromYahoo]
-        : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
+        : fxIntraday
+          ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq]
+          : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr: unknown = null;
       // staleness-aware chain (Phase 18): a source can SUCCEED while serving
       // day-old bars (Yahoo's cash-index feed does exactly that for ^NDX from

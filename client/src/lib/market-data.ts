@@ -63,7 +63,7 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
 // Binance (crypto — real live)
 // ---------------------------------------------------------------------------
 
-import { validateBars, dedupeBars, checkBar, type RawBar } from "@shared/feed-validation";
+import { validateBars, dedupeBars, checkBar, minuteIslandFilter, type RawBar } from "@shared/feed-validation";
 import { upsertBar, wsBackoffDelay, nextEndpointIndex } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
@@ -351,6 +351,15 @@ class QuotesProvider {
     statsState.repairedBars += checked.repaired;
     statsState.duplicateBars += deduped.dropped;
     let bars: Bar[] = deduped.bars as Bar[];
+    // Phase 20 defense-in-depth: Yahoo's FX intraday 1m is CLOSE-ONLY
+    // (O=H=L=C on every bar — verified 2026-11-19). The server rejects it
+    // (FLAT_FX_OHLC), but the chart never trusts the wire: a flat FX
+    // intraday series here means the whole server chain failed — refuse it
+    // rather than render the dot-candle defect.
+    if (inst.assetClass === "forex" && TF_SECONDS[tf] < 86400 && bars.length > 20
+      && bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length / bars.length >= 0.9) {
+      throw new Error("FLAT_FX_OHLC: provider returned close-only bars — refusing dot candles");
+    }
     // bucket length = the TARGET timeframe in minutes (3m→3, 2h→120, 4h→240).
     // The old TF_SECONDS[tf]/TF_SECONDS[agg] ratio only happens to be minutes
     // for the 1m base: from the 1h base it passed 2/4 "minutes" → 2- and
@@ -553,7 +562,17 @@ class QuotesProvider {
     const st = spotRec.get(code);
     if (st) candles = mergeSpotSeries(candles, [...st.unflushed, ...(st.minute ? [st.minute] : [])].filter((c) => validSpotCandle(c, now)));
     saveLocalSpot(code, candles);
-    const m1: Bar[] = candles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s }));
+    const m1raw: Bar[] = candles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s }));
+    // Phase 20: reject stuck-price glitch islands ALREADY in the store (the
+    // guard above only protects ticks recorded from now on) — a provider
+    // that served a stale price for hours must not reach the chart as
+    // "separate candle groups". The rejection count is surfaced honestly in
+    // the feed badge message.
+    const island = minuteIslandFilter(m1raw as RawBar[]);
+    lastSpotIslandRejected = island.rejected;
+    const m1 = island.bars as Bar[];
+    // seed the recorder's glitch anchor from the clean tail
+    if (m1.length) spotAnchor.set(code, { close: m1[m1.length - 1].close, at: Date.now() });
     const key = `${symbol}:${tf}`;
     const sec = TF_SECONDS[tf];
     const bars = dedupSort(tf === "1m" ? m1.slice() : aggregateBars(m1, sec / 60));
@@ -587,6 +606,9 @@ const SPOT_REC_MAX = 4320; // 3 days of minutes per code (quota-safe)
 const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCandle[] }>();
 const spotBackfillTried = new Set<string>();
 const fxBackfillTried = new Set<string>();
+/** glitch-island bars rejected from the recorded spot history (last load) —
+ *  surfaced in the feed badge so the data rejection is visible, not silent */
+let lastSpotIslandRejected = 0;
 
 function loadLocalSpot(code: string): SpotCandle[] {
   try {
@@ -602,9 +624,25 @@ function saveLocalSpot(code: string, candles: SpotCandle[]) {
   } catch { /* quota exceeded — recorder degrades to in-memory */ }
 }
 
-/** Fold one observed spot price into the recorder (minute bucketing). */
+/** Fold one observed spot price into the recorder (minute bucketing).
+ *  Phase 20 glitch guard: gold-api once served a STALE price (~3655 vs the
+ *  real ~3700-3740 market) stamped with a FRESH updatedAt for hours — every
+ *  bad tick became a "real" recorded candle and the store grew a ~2% price
+ *  island that rendered as disconnected candle groups. A recorded tick must
+ *  sit within 2% of the last accepted close: metals cannot move 2% between
+ *  1-second observations (the same bound the live-tail outlier guard uses).
+ *  The anchor follows every accepted tick, so genuine trends record fine. */
+const spotAnchor = new Map<string, { close: number; at: number }>();
+const SPOT_GLITCH_REJECT_MS = 30 * 60000; // a stale anchor never blocks fresh truth
+
 function recordSpot(code: string, price: number) {
   if (!(price > 0)) return;
+  const anchor = spotAnchor.get(code);
+  if (anchor && anchor.close > 0 && Date.now() - anchor.at < SPOT_GLITCH_REJECT_MS
+    && Math.abs(price / anchor.close - 1) > 0.02) {
+    statsState.spotGlitchTicks++;
+    return; // glitched provider tick — never recorded, never rendered
+  }
   const state = spotRec.get(code) ?? { minute: null as SpotCandle | null, unflushed: [] as SpotCandle[] };
   const prev = state.minute;
   const next = recordSpotTick(prev, price, Math.floor(Date.now() / 1000));
@@ -615,6 +653,7 @@ function recordSpot(code: string, price: number) {
   }
   state.minute = next;
   spotRec.set(code, state);
+  spotAnchor.set(code, { close: next.c, at: Date.now() });
 }
 
 /** Push unflushed minute candles to the server (bounded, idempotent merge). */
@@ -706,6 +745,8 @@ export interface FeedStats {
   repairedBars: number;
   duplicateBars: number;
   outOfOrderTicks: number;
+  /** provider ticks rejected by the recorder's 2% glitch guard (Phase 20) */
+  spotGlitchTicks: number;
   /** epoch ms of the last real data delivery (any provider) */
   lastTickAt: number;
   /** epoch ms of the last chart-applied update */
@@ -717,7 +758,7 @@ export interface FeedStats {
 }
 
 const statsState: FeedStats = {
-  invalidBars: 0, repairedBars: 0, duplicateBars: 0, outOfOrderTicks: 0,
+  invalidBars: 0, repairedBars: 0, duplicateBars: 0, outOfOrderTicks: 0, spotGlitchTicks: 0,
   lastTickAt: 0, lastChartUpdateAt: 0, tps10s: 0, delaySec: null,
 };
 const tickTimes: number[] = [];
@@ -806,10 +847,11 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const td = quotesProvider.providerBarCount(inst.spotCode);
     const delaySec = getSpotState().providerDelaySec;
     const hist = m1 > 0 ? `m1 history: ${m1} min${td > 0 ? ` (${td} Twelve Data backfill)` : ""}` : "recording started — candles build in real time";
+    const glitch = lastSpotIslandRejected > 0 ? ` · ${lastSpotIslandRejected} glitch bars rejected` : "";
     // Phase 19 §6: name the underlier explicitly — Spot Gold/Silver (physical
     // spot, gold-api), never "Gold" which reads as the COMEX futures contract
     const metalName = symbol === "XAUUSD" ? "Spot Gold" : symbol === "XAGUSD" ? "Spot Silver" : `${symbol} Spot`;
-    const message = `${metalName} · gold-api live 1s · ${hist}`;
+    const message = `${metalName} · gold-api live 1s · ${hist}${glitch}`;
     return { bars, status: "polling", message, delaySec };
   }
   const { bars, source, identity } = await quotesProvider.load(symbol, tf);
@@ -826,7 +868,7 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
   } else if (source?.startsWith("truefx")) {
     message = `FX live (TrueFX) real-time tail${delayNote}`;
   } else if (inst.assetClass === "forex") {
-    const srcName = source === "dukascopy-store" ? "Dukascopy store" : source === "twelvedata" ? "Twelve Data" : "Yahoo";
+    const srcName = source === "fx-store+live" ? "Dukascopy + TrueFX live" : source === "dukascopy-store" ? "Dukascopy store" : source === "twelvedata" ? "Twelve Data" : "Yahoo";
     message = `FX spot (${srcName}) — delayed${delayNote}`;
   } else {
     message = `Delayed data (${source || "Yahoo"})${delayNote}`;

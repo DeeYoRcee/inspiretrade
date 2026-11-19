@@ -80,27 +80,47 @@ export function useSavePublicProfile() {
       const usernameKey = username.toLowerCase();
       const previousUsernameKey = settings.publishedUsername?.toLowerCase() || null;
 
-      // Phase 18/19 self-heal: admin username moves leave redirect records
-      // with no uid at old handles — the security rules then deny the OWNER
-      // any write there (data.uid check fails on a uid-less stub), so bio
-      // saves and the public toggle die with PERMISSION_DENIED. Phase 19:
-      // any user can now repair their OWN handle via repair-profile-stub
-      // (server proves ownership against usernames/ + the held-username map);
-      // the admin purge stays as the fallback for admins.
-      const targetSnap = await get(ref(db, `publicProfiles/${usernameKey}`));
-      const targetVal = targetSnap.val();
-      if (targetSnap.exists() && targetVal && typeof targetVal === "object" && !targetVal.uid) {
+      // Phase 20: resolve a redirect chain FIRST. Owner-grade username moves
+      // (set-username) leave { redirect } stubs at old handles, and the
+      // publish settings can still name a handle that has since moved — the
+      // save then targeted a stub key, which the RTDB rules deny (the
+      // data.uid check fails on a uid-less record) and died with the
+      // "Profile handle is locked" error. The honest save target is the key
+      // where the caller's OWN live snapshot actually sits.
+      const followOwnChain = async (startKey: string): Promise<string> => {
+        let key = startKey;
+        for (let hops = 0; hops < 3; hops++) {
+          const val = (await get(ref(db, `publicProfiles/${key}`))).val() as any;
+          if (val && typeof val === "object" && val.uid === user.uid) return key; // live own snapshot
+          if (val && typeof val === "object" && !val.uid && typeof val.redirect === "string") {
+            key = String(val.redirect).toLowerCase(); // follow the redirect
+            continue;
+          }
+          return startKey; // dead end — nothing of ours here
+        }
+        return startKey;
+      };
+      const saveKey = await followOwnChain(usernameKey);
+
+      // Phase 18/19 self-heal (kept for stubs the redirect chain cannot
+      // resolve): admin username moves leave redirect records with no uid at
+      // old handles — the security rules then deny the OWNER any write there
+      // (data.uid check fails on a uid-less stub), so bio saves and the
+      // public toggle die with PERMISSION_DENIED. Any user repairs their OWN
+      // handle via repair-profile-stub; the admin purge stays as the fallback.
+      const saveSnap = (await get(ref(db, `publicProfiles/${saveKey}`))).val();
+      if (saveSnap && typeof saveSnap === "object" && !(saveSnap as any).uid) {
         const locked = "Profile handle is locked by an incomplete rename — press Save again. If it still fails, contact support.";
         try {
-          const res = await authedFetch<any>("/api/admin?action=repair-profile-stub", { key: usernameKey });
+          const res = await authedFetch<any>("/api/admin?action=repair-profile-stub", { key: saveKey });
           if (!res?.ok) throw new Error("repair failed");
-          const still = (await get(ref(db, `publicProfiles/${usernameKey}`))).val();
+          const still = (await get(ref(db, `publicProfiles/${saveKey}`))).val();
           if (still && typeof still === "object" && !still.uid) {
             // self-service repair did not clear it — try the admin purge path
             try {
               const adminRes = await authedFetch<any>("/api/admin?action=purge-profile-stubs", {});
               if (!adminRes?.ok) throw new Error("purge failed");
-              const after = (await get(ref(db, `publicProfiles/${usernameKey}`))).val();
+              const after = (await get(ref(db, `publicProfiles/${saveKey}`))).val();
               if (after && typeof after === "object" && !after.uid) throw new Error("still locked");
             } catch {
               throw new Error(locked);
@@ -114,13 +134,18 @@ export function useSavePublicProfile() {
       const updates: Record<string, unknown> = {
         [`privatePublicProfileSettings/${user.uid}`]: {
           ...settings,
-          publishedUsername: settings.enabled ? usernameKey : null,
+          publishedUsername: settings.enabled ? saveKey : null,
           updatedAt: Date.now(),
         },
       };
 
-      if (previousUsernameKey && previousUsernameKey !== usernameKey) {
-        updates[`publicProfiles/${previousUsernameKey}`] = null;
+      // clear a PREVIOUS published snapshot only when it is the caller's own
+      // real record — a { redirect } stub stays put so old URLs keep working
+      if (previousUsernameKey && previousUsernameKey !== saveKey) {
+        const prevVal = (await get(ref(db, `publicProfiles/${previousUsernameKey}`))).val() as any;
+        if (prevVal && typeof prevVal === "object" && prevVal.uid === user.uid) {
+          updates[`publicProfiles/${previousUsernameKey}`] = null;
+        }
       }
 
       if (settings.enabled) {
@@ -141,9 +166,12 @@ export function useSavePublicProfile() {
         } catch { /* profile read is best-effort */ }
         if (!avatar) avatar = user.photoURL || null;
 
-        updates[`publicProfiles/${usernameKey}`] = createPublicProfileSnapshot({
+        updates[`publicProfiles/${saveKey}`] = createPublicProfileSnapshot({
           uid: user.uid,
-          username,
+          // the snapshot must carry the KEY it is stored under — when the
+          // settings handle moved (redirect-followed above), usernameKey has
+          // to match saveKey or the public page's consistency check breaks
+          username: saveKey,
           displayName,
           trades,
           settings,
@@ -151,11 +179,17 @@ export function useSavePublicProfile() {
           profile: profileFields,
         });
       } else if (previousUsernameKey) {
-        updates[`publicProfiles/${previousUsernameKey}`] = null;
+        // disabling — clear the LIVE published snapshot (follow the chain if
+        // the settings handle has since moved), stubs stay for old URLs
+        const liveKey = await followOwnChain(previousUsernameKey);
+        const liveVal = (await get(ref(db, `publicProfiles/${liveKey}`))).val() as any;
+        if (liveVal && typeof liveVal === "object" && liveVal.uid === user.uid) {
+          updates[`publicProfiles/${liveKey}`] = null;
+        }
       }
 
       await update(ref(db), updates);
-      return { usernameKey, enabled: settings.enabled };
+      return { usernameKey: saveKey, enabled: settings.enabled };
     },
     onSuccess: async ({ usernameKey }) => {
       await Promise.all([

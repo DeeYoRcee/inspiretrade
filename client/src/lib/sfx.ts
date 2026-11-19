@@ -443,7 +443,10 @@ export const ENTRY_SOUNDS: { id: EntrySoundId; label: string }[] = [
   { id: "none", label: "Silent" },
 ];
 
-const ENTRY_SOUND_KEY = "tj-entry-sound";
+// v2: the v1 key carried the pre-picker default ("saber") that nobody
+// consciously chose — Phase 20.2 turns sounds OFF by default, so the pick
+// namespace resets once and the Settings choice persists under the new key
+const ENTRY_SOUND_KEY = "tj-entry-sound-v2";
 
 function isEntrySound(v: string | null): v is EntrySoundId {
   return v !== null && ENTRY_SOUNDS.some((s) => s.id === v);
@@ -452,9 +455,11 @@ function isEntrySound(v: string | null): v is EntrySoundId {
 export function getEntrySound(): EntrySoundId {
   try {
     const v = localStorage.getItem(ENTRY_SOUND_KEY);
-    return isEntrySound(v) ? v : "saber";
+    // Phase 20.2: silent by default — the user opted out of entry sounds for
+    // now; picking any option in Settings re-enables and persists it
+    return isEntrySound(v) ? v : "none";
   } catch {
-    return "saber";
+    return "none";
   }
 }
 

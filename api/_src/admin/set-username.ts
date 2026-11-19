@@ -57,12 +57,21 @@ export default handle(async (req, res) => {
   if (changedKey && oldKey) {
     const oldSnap = await db.ref(`publicProfiles/${oldKey}`).once("value");
     if (oldSnap.exists()) {
-      await db.ref(`publicProfiles/${key}`).set({ ...oldSnap.val(), username, usernameKey: key, ceo: true, updatedAt: Date.now() });
+      await db.ref(`publicProfiles/${key}`).set({ ...oldSnap.val(), username: key, usernameKey: key, ceo: true, updatedAt: Date.now() });
       await db.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
     }
   }
   // (re)stamp ceo on whatever snapshot is live under the new key
   await db.ref(`publicProfiles/${key}/ceo`).set(true);
+
+  // Phase 20: keep the publish settings in sync — the public-profile page
+  // saves under settings.publishedUsername; a stale value pointed at the
+  // redirect stub left at the old handle and blocked every save with
+  // "Profile handle is locked by an incomplete rename"
+  await db.ref(`privatePublicProfileSettings/${admin.uid}`).transaction((s: any) => {
+    if (!s) return s; // never published — nothing to sync
+    return { ...s, publishedUsername: key, updatedAt: Date.now() };
+  });
 
   await logLedger({ type: "owner_set_username", target: admin.uid, username, by: admin.email || admin.uid });
 

@@ -369,11 +369,15 @@ var set_username_default = handle(async (req, res) => {
   if (changedKey && oldKey) {
     const oldSnap = await db3.ref(`publicProfiles/${oldKey}`).once("value");
     if (oldSnap.exists()) {
-      await db3.ref(`publicProfiles/${key}`).set({ ...oldSnap.val(), username, usernameKey: key, ceo: true, updatedAt: Date.now() });
+      await db3.ref(`publicProfiles/${key}`).set({ ...oldSnap.val(), username: key, usernameKey: key, ceo: true, updatedAt: Date.now() });
       await db3.ref(`publicProfiles/${oldKey}`).set({ redirect: key, updatedAt: Date.now() });
     }
   }
   await db3.ref(`publicProfiles/${key}/ceo`).set(true);
+  await db3.ref(`privatePublicProfileSettings/${admin2.uid}`).transaction((s) => {
+    if (!s) return s;
+    return { ...s, publishedUsername: key, updatedAt: Date.now() };
+  });
   await logLedger({ type: "owner_set_username", target: admin2.uid, username, by: admin2.email || admin2.uid });
   res.status(200).json({ ok: true, username, key });
 });
@@ -412,6 +416,21 @@ var profile_repair_default = handle(async (req, res) => {
       ...published ? [published] : []
     ].map((k) => String(k).toLowerCase())
   );
+  if (requested && !ownedKeys.has(requested)) {
+    let key = requested;
+    for (let hops = 0; hops < 3; hops++) {
+      const s = (await db3.ref(`publicProfiles/${key}`).once("value")).val() || {};
+      if (s.uid === uid) {
+        ownedKeys.add(requested);
+        break;
+      }
+      if (!s.uid && typeof s.redirect === "string" && KEY_RE.test(String(s.redirect).toLowerCase())) {
+        key = String(s.redirect).toLowerCase();
+        continue;
+      }
+      break;
+    }
+  }
   const targets = requested ? [requested] : [...ownedKeys];
   const purged = [];
   for (const key of targets) {

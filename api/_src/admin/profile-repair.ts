@@ -53,6 +53,25 @@ export default handle(async (req, res) => {
     ].map((k) => String(k).toLowerCase()),
   );
 
+  // Phase 20: redirect-chain ownership proof — owner-grade username moves
+  // leave { redirect } stubs at old handles while the registry/held map can
+  // lag (or the handle was claimed by a path that never wrote usernames/).
+  // A uid-less stub whose redirect chain terminates at the CALLER'S OWN live
+  // snapshot is provably theirs: nobody else can put a redirect pointing at
+  // your profile under a handle they own.
+  if (requested && !ownedKeys.has(requested)) {
+    let key = requested;
+    for (let hops = 0; hops < 3; hops++) {
+      const s = (await db.ref(`publicProfiles/${key}`).once("value")).val() || {};
+      if (s.uid === uid) { ownedKeys.add(requested); break; }
+      if (!s.uid && typeof s.redirect === "string" && KEY_RE.test(String(s.redirect).toLowerCase())) {
+        key = String(s.redirect).toLowerCase();
+        continue;
+      }
+      break;
+    }
+  }
+
   const targets = requested ? [requested] : [...ownedKeys];
   const purged: string[] = [];
   for (const key of targets) {

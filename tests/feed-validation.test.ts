@@ -11,7 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "fs";
 import {
-  checkBar, validateBars, dedupeBars, alignAndDedupe, spotMergeGuard, bucketStart,
+  checkBar, validateBars, dedupeBars, alignAndDedupe, spotMergeGuard, bucketStart, minuteIslandFilter,
   type RawBar,
 } from "../shared/feed-validation.ts";
 import { upsertBar, wsBackoffDelay, nextEndpointIndex } from "../shared/candle-core.ts";
@@ -250,4 +250,71 @@ test("blocked endpoints rotate, working endpoints stay", () => {
   assert.equal(nextEndpointIndex(1, 3, false), 2);
   assert.equal(nextEndpointIndex(2, 3, false), 0, "wraps around the mirror list");
   assert.equal(nextEndpointIndex(1, 3, true), 1, "a working endpoint is kept");
+});
+
+// ---------------------------------------------------------------------------
+// Phase 20 — minuteIslandFilter (XAUUSD root cause: gold-api stale-price run)
+// ---------------------------------------------------------------------------
+
+test("minuteIslandFilter drops a flat stale-price glitch run and keeps everything else", () => {
+  const t = 1732000000; // any minute-aligned base
+  const bars: RawBar[] = [];
+  // 60 real morning minutes drifting 3735 → 3740
+  for (let i = 0; i < 60; i++) bars.push(bar(t + i * 60, 3735 + i * 0.08, 3736 + i * 0.08, 3734 + i * 0.08, 3735.5 + i * 0.08));
+  // glitch: 90 minutes flat at ~3655 (gold-api stale price, fresh stamp)
+  for (let i = 0; i < 90; i++) bars.push(bar(t + (60 + i) * 60, 3655, 3655.6, 3655.1, 3655.4, 60));
+  // real evening resumes at 3690 (gold really fell) and drifts down
+  for (let i = 0; i < 60; i++) bars.push(bar(t + (150 + i) * 60, 3690 - i * 0.05, 3691 - i * 0.05, 3689 - i * 0.05, 3689.5 - i * 0.05));
+  const res = minuteIslandFilter(bars);
+  assert.equal(res.rejected, 90, "the 90 glitch minutes are dropped");
+  assert.equal(res.bars.length, 120, "only the real candles survive");
+  assert.equal(res.ranges.length, 1);
+  assert.equal(res.ranges[0].from, t + 60 * 60);
+  assert.equal(res.ranges[0].to, t + 149 * 60);
+  // no artificial lines: the kept series ends before the glitch and resumes after
+  assert.equal(res.bars[59].close > 3700, true, "last pre-glitch bar stays real");
+  assert.equal(res.bars[60].close > 3680, true, "first post-glitch bar stays real");
+});
+
+test("minuteIslandFilter keeps a gradual real regime change (no 2% minute jump)", () => {
+  const t = 1732000000;
+  const bars: RawBar[] = [];
+  // a genuine 2% crash spread over 60 gradual minutes, then recovery — no
+  // single-minute jump exceeds 0.1%, so nothing is an island
+  let px = 3740;
+  for (let i = 0; i < 60; i++) { px -= 0.75; bars.push(bar(t + i * 60, px, px + 1, px - 1, px)); } // → ~3695
+  for (let i = 0; i < 60; i++) { px += 0.7; bars.push(bar(t + (60 + i) * 60, px, px + 1, px - 1, px)); } // back up
+  const res = minuteIslandFilter(bars);
+  assert.equal(res.rejected, 0, "gradual moves are never islands");
+  assert.equal(res.bars.length, 120);
+});
+
+test("minuteIslandFilter drops a single bad tick (1-minute island)", () => {
+  const t = 1732000000;
+  const bars: RawBar[] = [];
+  for (let i = 0; i < 30; i++) bars.push(bar(t + i * 60, 1.09, 1.0905, 1.0895, 1.09));
+  bars.push(bar(t + 30 * 60, 1.066, 1.066, 1.066, 1.066)); // 2.2% bad tick
+  for (let i = 31; i < 61; i++) bars.push(bar(t + i * 60, 1.09, 1.0905, 1.0895, 1.09));
+  const res = minuteIslandFilter(bars);
+  assert.equal(res.rejected, 1);
+  assert.equal(res.bars.length, 60);
+});
+
+test("minuteIslandFilter keeps an open-ended run (no return yet — cannot judge)", () => {
+  const t = 1732000000;
+  const bars: RawBar[] = [];
+  for (let i = 0; i < 30; i++) bars.push(bar(t + i * 60, 3740, 3741, 3739, 3740));
+  for (let i = 30; i < 90; i++) bars.push(bar(t + i * 60, 3655, 3655.6, 3655.1, 3655)); // glitch to the very end
+  const res = minuteIslandFilter(bars);
+  assert.equal(res.rejected, 0, "without a return jump the run stays (honest display)");
+});
+
+test("minuteIslandFilter keeps an island older than the duration cap", () => {
+  const t = 1732000000;
+  const bars: RawBar[] = [];
+  for (let i = 0; i < 30; i++) bars.push(bar(t + i * 60, 3740, 3741, 3739, 3740));
+  for (let i = 30; i < 30 + 420; i++) bars.push(bar(t + i * 60, 3655, 3655.6, 3655.1, 3655)); // 7h flat run
+  for (let i = 450; i < 480; i++) bars.push(bar(t + i * 60, 3690, 3691, 3689, 3690));
+  const res = minuteIslandFilter(bars);
+  assert.equal(res.rejected, 0, ">6h runs exceed the glitch duration cap and stay");
 });

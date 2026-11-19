@@ -244,3 +244,83 @@ export function assertPriceIdentity(
     throw new Error(`FEED_IDENTITY: ${last} is outside ${inst.symbol}'s price band [${lo}, ${hi}] — refusing another instrument's data`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 20 — minute-series "price island" filter (the XAUUSD root cause).
+//
+// REAL-WORLD FAILURE (verified 2026-11-19): gold-api served a STALE price
+// (~3655 vs the real ~3700-3740 market) stamped with a FRESH updatedAt for
+// hours. The 1s recorder folded every bad tick into real minute candles, so
+// the self-recorded store gained a dense flat run ~2% below the surrounding
+// truth — on the chart it rendered as "separate candle groups" with
+// unexplained gaps between them. The LIVE tail was already protected (the 2%
+// spot-outlier guard), but the recorded history had no such protection.
+//
+// A provider glitch has a shape no real market produces: a SINGLE-MINUTE
+// jump into the wrong level (>jumpPct — gold's worst real minutes stay below
+// ~1%), an internally calm run at that level, and a single-minute jump back
+// toward the pre-glitch level. A real regime change unfolds GRADUALLY (no
+// 2% minute-to-minute jump), so it never creates an island and is never
+// touched. Rule: reject the run between two consecutive >jumpPct close
+// jumps iff it sits meaningfully away from the pre-run anchor AND the level
+// after the run is closer to that anchor than the run itself was, within a
+// bounded duration. Everything else passes untouched.
+// ---------------------------------------------------------------------------
+
+export interface IslandFilterResult {
+  bars: RawBar[];
+  /** bars dropped as glitch islands */
+  rejected: number;
+  /** [from, to] epoch-second ranges of every dropped run — diagnostics */
+  ranges: { from: number; to: number }[];
+}
+
+export function minuteIslandFilter(
+  bars: RawBar[],
+  jumpPct = 0.02,
+  maxIslandSec = 6 * 3600,
+): IslandFilterResult {
+  const sorted = [...bars].sort((a, b) => a.time - b.time);
+  const out: RawBar[] = [];
+  const ranges: { from: number; to: number }[] = [];
+  let rejected = 0;
+  const n = sorted.length;
+  if (n < 3) return { bars: sorted, rejected, ranges };
+
+  // a glitch is a STUCK provider price: the whole island stays within ±0.75%
+  // of its initial level (the observed gold-api run: 3650-3665 = 0.36%) and
+  // its per-minute high-low range is nearly zero — a real traded market never
+  // sits that still for hours (gold's quietest real minutes range ~0.013%).
+  const PLATEAU_BAND = 0.0075;
+  const STUCK_RANGE_PCT = 0.0002; // mean per-minute range < 0.02% of price
+
+  let keepFrom = 0; // first index not yet committed to `out`
+  for (let j1 = 1; j1 < n; j1++) {
+    const prev = sorted[j1 - 1].close;
+    if (!(prev > 0) || Math.abs(sorted[j1].close / prev - 1) <= jumpPct) continue;
+    if (j1 < keepFrom) continue; // already inside a rejected island
+    // extend the island forward while the close stays on the plateau
+    let j2 = j1 + 1; // first index AFTER the island
+    while (
+      j2 < n &&
+      sorted[j2].time - sorted[j1].time <= maxIslandSec &&
+      Math.abs(sorted[j2].close / sorted[j1].close - 1) <= PLATEAU_BAND
+    ) j2++;
+    const island = sorted.slice(j1, j2);
+    const anchor = sorted[j1 - 1].close;
+    const meanClose = island.reduce((s, x) => s + x.close, 0) / island.length;
+    const islandDev = Math.abs(meanClose / anchor - 1);
+    const meanRange = island.reduce((s, x) => s + (x.high - x.low), 0) / island.length;
+    const stuck = meanRange / meanClose < STUCK_RANGE_PCT;
+    const returnDev = j2 < n ? Math.abs(sorted[j2].close / anchor - 1) : Infinity;
+    if (stuck && islandDev > jumpPct / 2 && returnDev < islandDev) {
+      out.push(...sorted.slice(keepFrom, j1));
+      rejected += island.length;
+      ranges.push({ from: island[0].time, to: island[island.length - 1].time });
+      keepFrom = j2;
+      j1 = j2 - 1; // resume scanning right after the island (loop ++ lands on j2)
+    }
+  }
+  out.push(...sorted.slice(keepFrom));
+  return { bars: out, rejected, ranges };
+}

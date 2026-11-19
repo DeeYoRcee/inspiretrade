@@ -184,6 +184,61 @@ function spotMergeGuard(bars, spot, g) {
   }
   return { ok: true };
 }
+function minuteIslandFilter(bars, jumpPct = 0.02, maxIslandSec = 6 * 3600) {
+  const sorted = [...bars].sort((a, b) => a.time - b.time);
+  const out = [];
+  const ranges = [];
+  let rejected = 0;
+  const n = sorted.length;
+  if (n < 3) return { bars: sorted, rejected, ranges };
+  const PLATEAU_BAND = 75e-4;
+  const STUCK_RANGE_PCT = 2e-4;
+  let keepFrom = 0;
+  for (let j1 = 1; j1 < n; j1++) {
+    const prev = sorted[j1 - 1].close;
+    if (!(prev > 0) || Math.abs(sorted[j1].close / prev - 1) <= jumpPct) continue;
+    if (j1 < keepFrom) continue;
+    let j2 = j1 + 1;
+    while (j2 < n && sorted[j2].time - sorted[j1].time <= maxIslandSec && Math.abs(sorted[j2].close / sorted[j1].close - 1) <= PLATEAU_BAND) j2++;
+    const island = sorted.slice(j1, j2);
+    const anchor = sorted[j1 - 1].close;
+    const meanClose = island.reduce((s, x) => s + x.close, 0) / island.length;
+    const islandDev = Math.abs(meanClose / anchor - 1);
+    const meanRange = island.reduce((s, x) => s + (x.high - x.low), 0) / island.length;
+    const stuck = meanRange / meanClose < STUCK_RANGE_PCT;
+    const returnDev = j2 < n ? Math.abs(sorted[j2].close / anchor - 1) : Infinity;
+    if (stuck && islandDev > jumpPct / 2 && returnDev < islandDev) {
+      out.push(...sorted.slice(keepFrom, j1));
+      rejected += island.length;
+      ranges.push({ from: island[0].time, to: island[island.length - 1].time });
+      keepFrom = j2;
+      j1 = j2 - 1;
+    }
+  }
+  out.push(...sorted.slice(keepFrom));
+  return { bars: out, rejected, ranges };
+}
+
+// shared/terminal.ts
+function aggregateBars(bars, factorMinutes) {
+  const bucket = factorMinutes * 60;
+  const out = [];
+  let cur = null;
+  for (const b of bars) {
+    const t = Math.floor(b.time / bucket) * bucket;
+    if (!cur || cur.time !== t) {
+      if (cur) out.push(cur);
+      cur = { time: t, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume ?? 0 };
+    } else {
+      cur.high = Math.max(cur.high, b.high);
+      cur.low = Math.min(cur.low, b.low);
+      cur.close = b.close;
+      cur.volume = (cur.volume ?? 0) + (b.volume ?? 0);
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
 
 // api/_src/lib/duka.ts
 import { decompress } from "lzma-native";
@@ -465,6 +520,56 @@ async function fetchSpot(code) {
     return price;
   } catch {
     return cached?.price ?? null;
+  }
+}
+var FXLIVE_MAX_AGE_SEC = 3 * 86400;
+var fxLiveCache = /* @__PURE__ */ new Map();
+async function fxLiveMinutes(code) {
+  const nowMs = Date.now();
+  const hit = fxLiveCache.get(code);
+  if (hit && nowMs - hit.at < 6e4) return hit.minutes;
+  const minutes = /* @__PURE__ */ new Map();
+  try {
+    const snap = await rtdb().ref(`fxLive/${code}`).once("value");
+    const obj = snap.val() || {};
+    const cutoff = Math.floor(nowMs / 1e3) - FXLIVE_MAX_AGE_SEC;
+    for (const [k, v] of Object.entries(obj)) {
+      const t = Number(k);
+      const o = Number(v?.o), h = Number(v?.h), l = Number(v?.l), c = Number(v?.c), s = Number(v?.s || 1);
+      if (!Number.isFinite(t) || t < cutoff || t % 60 !== 0) continue;
+      if (![o, h, l, c].every(Number.isFinite) || o <= 0) continue;
+      minutes.set(t, { o, h, l, c, s: Number.isFinite(s) ? s : 1 });
+    }
+  } catch {
+  }
+  fxLiveCache.set(code, { at: nowMs, minutes });
+  return minutes;
+}
+async function recordFxLiveBids(bids) {
+  const t = Math.floor(Date.now() / 1e3 / 60) * 60;
+  const update = {};
+  const touched = [];
+  try {
+    for (const [code, bid] of Object.entries(bids)) {
+      if (!DUKA_MAP[code] || !(bid > 0)) continue;
+      const minutes = await fxLiveMinutes(code);
+      const ex = minutes.get(t);
+      const merged = ex ? { o: ex.o, c: bid, h: Math.max(ex.h, bid), l: Math.min(ex.l, bid), s: ex.s + 1 } : { o: bid, c: bid, h: bid, l: bid, s: 1 };
+      minutes.set(t, merged);
+      update[`fxLive/${code}/${t}`] = merged;
+      touched.push(code);
+    }
+    if (Object.keys(update).length) {
+      await rtdb().ref().update(update);
+      if (Math.random() < 0.05) {
+        const cutoff = String(t - FXLIVE_MAX_AGE_SEC);
+        for (const code of touched) {
+          void rtdb().ref(`fxLive/${code}`).orderByKey().endAt(cutoff).limitToFirst(2e3).remove().catch(() => {
+          });
+        }
+      }
+    }
+  } catch {
   }
 }
 var INTERVAL_SECONDS = {
@@ -774,6 +879,7 @@ var quotes_default = handle(async (req, res) => {
     if (!list.length) return res.status(200).json({ ok: true, quotes: [] });
     const payload = await cachedPayload(batchCache, list.slice().sort().join(","), BATCH_FRESH_MS, BATCH_STALE_MS, async () => {
       const tfx = await truefxQuotes();
+      void recordFxLiveBids(Object.fromEntries(Object.entries(tfx).map(([c, q]) => [c, q.bid])));
       const quotes = await Promise.all(
         list.map(async (sym) => {
           const t = tfx[sym.replace(/=X$/, "")];
@@ -903,7 +1009,14 @@ var quotes_default = handle(async (req, res) => {
     let live = false;
     if (DUKA_MAP[bareCode] && !periodMode) {
       const t = (await truefxQuotes())[bareCode];
+      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
       if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
+    }
+    if (DUKA_MAP[bareCode] && interval === "1m" && bars.length > 20) {
+      const flat = bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length;
+      if (flat / bars.length >= 0.9) {
+        throw new Error(`FLAT_FX_OHLC: ${Math.round(100 * flat / bars.length)}% of ${symbols} 1m bars are O=H=L=C \u2014 close-only series, not candles`);
+      }
     }
     const rmt = Number(meta.regularMarketTime);
     const delaySec = live ? 0 : Number.isFinite(rmt) && rmt > 0 ? Math.max(0, Math.floor(Date.now() / 1e3) - rmt) : void 0;
@@ -1052,6 +1165,7 @@ var quotes_default = handle(async (req, res) => {
     let live = false;
     if (!periodMode) {
       const t = (await truefxQuotes())[bareCode];
+      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
       if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     const last = bars[bars.length - 1];
@@ -1068,10 +1182,10 @@ var quotes_default = handle(async (req, res) => {
     };
   };
   const fromFxStore = async () => {
-    if (interval !== "1m") throw new Error("FX_STORE_1M_ONLY");
     if (!DUKA_MAP[bareCode]) throw new Error("NO_FX_STORE");
+    const sec = INTERVAL_SECONDS[interval];
+    if (!sec || sec > 3600) throw new Error("FX_STORE_INTRADAY_ONLY");
     const meta = (await rtdb().ref(`fxMeta/${bareCode}`).once("value")).val() || {};
-    if (!meta?.oldest) throw new Error("FX_STORE_EMPTY");
     const nowSec = Math.floor(Date.now() / 1e3);
     let t1, t2;
     if (periodMode) {
@@ -1082,43 +1196,53 @@ var quotes_default = handle(async (req, res) => {
       t1 = nowSec - days * 86400;
       t2 = nowSec;
     }
-    const nowSecPre = Math.floor(Date.now() / 1e3);
-    if (!periodMode && Number(meta.newest || 0) < nowSecPre - 90 * 60) {
-      throw new Error("FX_STORE_STALE");
-    }
     const snap = await rtdb().ref(`fxBars/${bareCode}`).orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
     const val = snap.val() || {};
-    const raw = Object.entries(val).map(([k, b]) => ({
-      time: Number(k),
-      open: Number(b?.o),
-      high: Number(b?.h),
-      low: Number(b?.l),
-      close: Number(b?.c),
-      volume: Number(b?.v ?? 0)
-    })).filter((b) => [b.time, b.open, b.high, b.low, b.close].every(Number.isFinite) && b.time > 0);
+    const byTime = /* @__PURE__ */ new Map();
+    for (const [k, b] of Object.entries(val)) {
+      const time = Number(k);
+      const o = Number(b?.o), h = Number(b?.h), l = Number(b?.l), c = Number(b?.c);
+      if ([time, o, h, l, c].every(Number.isFinite) && time > 0 && o > 0 && h >= l && l > 0) {
+        byTime.set(time, { time, open: o, high: h, low: l, close: c, volume: Number(b?.v ?? 0) });
+      }
+    }
+    const live = await fxLiveMinutes(bareCode);
+    for (const [time, m] of live) {
+      if (time < t1 || time > t2 || byTime.has(time)) continue;
+      byTime.set(time, { time, open: m.o, high: m.h, low: m.l, close: m.c, volume: m.s });
+    }
+    const raw = [...byTime.values()].sort((a, b) => a.time - b.time);
     if (raw.length < 200) throw new Error("FX_STORE_THIN");
-    const checked = validateBars(raw);
-    const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
-    const bars = deduped.bars;
-    if (!bars.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    const island = minuteIslandFilter(raw);
+    const checked = validateBars(island.bars);
+    const deduped = alignAndDedupe(checked.bars, 60);
+    const m1 = deduped.bars;
+    if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
+    const newest = bars[bars.length - 1].time;
+    if (!periodMode && newest < nowSec - 90 * 60) {
+      throw new Error("FX_STORE_STALE");
+    }
     const last = bars[bars.length - 1];
     return {
-      source: "dukascopy-store",
-      delayed: true,
-      delaySec: Math.max(0, nowSec - Number(meta.newest || last.time)),
+      source: "fx-store+live",
+      delayed: newest < nowSec - 300,
+      delaySec: Math.max(0, nowSec - newest),
       identity: "spot",
       symbol: bareCode,
       currency: null,
       regularMarketPrice: last.close,
-      previousClose: null,
-      bars
+      previousClose: bars.length > 1 ? bars[bars.length - 2].close : null,
+      bars,
+      islandBars: island.rejected
     };
   };
   try {
     const cacheKey = periodMode ? `${symbols}|p:${Math.floor(period1 / 600)}-${Math.floor(period2 / 600)}|${interval}` : `${symbols}|${range}|${interval}`;
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
+      const fxIntraday = DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr = null;
       let staleResult = null;
       for (const attempt of chain) {
