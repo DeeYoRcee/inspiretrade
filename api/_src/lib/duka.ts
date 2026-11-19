@@ -45,18 +45,25 @@ export async function fetchDukaDay(dukaSym: string, day: Date): Promise<Buffer |
   const m = day.getUTCMonth(); // datafeed months are 0-indexed in the path
   const d = day.getUTCDate();
   const url = `https://datafeed.dukascopy.com/datafeed/${dukaSym}/${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/BID_candles_min_1.bi5`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
-  try {
-    const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    return buf.length > 100 ? buf : null; // tiny bodies are error pages
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+  // the datafeed CDN is notoriously flaky per connection — two attempts with
+  // a generous timeout beat one hard failure
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 100) return buf; // tiny bodies are error pages
+      }
+    } catch {
+      // fall through to the retry
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((r) => setTimeout(r, 400));
   }
+  return null;
 }
 
 export interface DukaBar { t: number; o: number; h: number; l: number; c: number; v: number }

@@ -233,18 +233,22 @@ async function fetchDukaDay(dukaSym, day) {
   const m = day.getUTCMonth();
   const d = day.getUTCDate();
   const url = `https://datafeed.dukascopy.com/datafeed/${dukaSym}/${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/BID_candles_min_1.bi5`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12e3);
-  try {
-    const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    return buf.length > 100 ? buf : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2e4);
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 100) return buf;
+      }
+    } catch {
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((r) => setTimeout(r, 400));
   }
+  return null;
 }
 async function decodeDukaDay(buf, code, day) {
   const raw = await new Promise((resolve) => {
@@ -494,7 +498,8 @@ var quotes_default = handle(async (req, res) => {
   await requireUser(req);
   const url = new URL(req.url || "/", "http://localhost");
   const batch = (url.searchParams.get("symbols") || "").trim();
-  const symbols = (url.searchParams.get("symbol") || "").trim();
+  let symbols = (url.searchParams.get("symbol") || "").trim();
+  const bareCode = symbols.replace(/=X$/i, "");
   const range = (url.searchParams.get("range") || "5d").trim();
   const interval = (url.searchParams.get("interval") || "1m").trim();
   const toSec = (v) => {
@@ -697,6 +702,42 @@ var quotes_default = handle(async (req, res) => {
     }
     return res.json({ ok: true, code, written, oldest, newest, files: filesFetched });
   }
+  if (action === "import-fx" && req.method === "POST") {
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const code = String(raw?.code || "").toUpperCase();
+    if (!DUKA_MAP[code]) return res.json({ ok: false, reason: "not-on-duka" });
+    const barsIn = Array.isArray(raw?.bars) ? raw.bars : [];
+    const nowSec = Math.floor(Date.now() / 1e3);
+    const update = {};
+    for (const b of barsIn.slice(0, 5e4)) {
+      const t = Math.floor(Number(b?.t));
+      const o = Number(b?.o), h = Number(b?.h), l = Number(b?.l), c = Number(b?.c), v = Number(b?.v ?? 0);
+      if (!Number.isFinite(t) || t % 60 !== 0 || t > Math.floor(nowSec / 60) * 60 || t < nowSec - 400 * 86400) continue;
+      if (![o, h, l, c].every((x) => Number.isFinite(x) && x > 0)) continue;
+      if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
+      if (o < 0.2 || o > 600) continue;
+      update[String(t)] = { o, h, l, c, v: Math.round(v * 100) / 100 };
+    }
+    const entries = Object.entries(update);
+    if (!entries.length) return res.json({ ok: false, reason: "no-valid-bars" });
+    let oldest = null, newest = null;
+    for (const [k, b] of entries) {
+      const tk = Number(k);
+      if (oldest == null || tk < oldest) oldest = tk;
+      if (newest == null || tk > newest) newest = tk;
+    }
+    const ref = rtdb().ref(`fxBars/${code}`);
+    for (let i = 0; i < entries.length; i += 2e3) {
+      await ref.update(Object.fromEntries(entries.slice(i, i + 2e3)));
+    }
+    const meta = (await rtdb().ref(`fxMeta/${code}`).once("value")).val() || {};
+    await rtdb().ref(`fxMeta/${code}`).set({
+      oldest: meta.oldest && oldest ? Math.min(meta.oldest, oldest) : oldest ?? 0,
+      newest: meta.newest && newest ? Math.max(meta.newest, newest) : newest ?? 0,
+      updatedAt: Date.now()
+    });
+    return res.json({ ok: true, code, written: entries.length, oldest, newest });
+  }
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
     if (!list.length) return res.status(200).json({ ok: true, quotes: [] });
@@ -704,7 +745,7 @@ var quotes_default = handle(async (req, res) => {
       const tfx = await truefxQuotes();
       const quotes = await Promise.all(
         list.map(async (sym) => {
-          const t = tfx[sym];
+          const t = tfx[sym.replace(/=X$/, "")];
           if (t) return { symbol: sym, price: t.price, previousClose: t.open, source: "truefx", live: true };
           try {
             const controller = new AbortController();
@@ -794,8 +835,8 @@ var quotes_default = handle(async (req, res) => {
     if (spotCode && !periodMode) {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
-    } else if (DUKA_MAP[symbols] && !periodMode) {
-      const t = (await truefxQuotes())[symbols];
+    } else if (DUKA_MAP[bareCode] && !periodMode) {
+      const t = (await truefxQuotes())[bareCode];
       if (t && mergeSpotBars(bars, t.price, interval)) live = true;
     }
     const rmt = Number(meta.regularMarketTime);
@@ -900,7 +941,7 @@ var quotes_default = handle(async (req, res) => {
     "1d": "1day"
   };
   const fromTwelveData = async () => {
-    if (!TD_FOREX.has(symbols)) throw new Error("NO_TD_MAP");
+    if (!TD_FOREX.has(bareCode)) throw new Error("NO_TD_MAP");
     const ti = TD_INTERVAL[interval];
     if (!ti) throw new Error("NO_TD_INTERVAL");
     const apiKey = await tdKey();
@@ -909,7 +950,7 @@ var quotes_default = handle(async (req, res) => {
     if (used >= TD_DAILY_BUDGET) throw new Error("TD_BUDGET_EXHAUSTED");
     const outputsize = interval === "1m" ? 5e3 : interval === "5m" ? 4e3 : 2e3;
     const fmt = (sec) => new Date(sec * 1e3).toISOString().slice(0, 19).replace("T", " ");
-    let u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    let u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${bareCode.slice(0, 3)}/${bareCode.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
     if (periodMode) u += `&start_date=${encodeURIComponent(fmt(period1))}&end_date=${encodeURIComponent(fmt(period2))}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 9e3);
@@ -939,7 +980,7 @@ var quotes_default = handle(async (req, res) => {
     if (!bars.length) throw new Error("TD_NO_VALID_BARS");
     let live = false;
     if (!periodMode) {
-      const t = (await truefxQuotes())[symbols];
+      const t = (await truefxQuotes())[bareCode];
       if (t && mergeSpotBars(bars, t.price, interval)) live = true;
     }
     const last = bars[bars.length - 1];
@@ -957,8 +998,8 @@ var quotes_default = handle(async (req, res) => {
   };
   const fromFxStore = async () => {
     if (interval !== "1m") throw new Error("FX_STORE_1M_ONLY");
-    if (!DUKA_MAP[symbols]) throw new Error("NO_FX_STORE");
-    const meta = (await rtdb().ref(`fxMeta/${symbols}`).once("value")).val() || {};
+    if (!DUKA_MAP[bareCode]) throw new Error("NO_FX_STORE");
+    const meta = (await rtdb().ref(`fxMeta/${bareCode}`).once("value")).val() || {};
     if (!meta?.oldest) throw new Error("FX_STORE_EMPTY");
     const nowSec = Math.floor(Date.now() / 1e3);
     let t1, t2;
@@ -970,7 +1011,7 @@ var quotes_default = handle(async (req, res) => {
       t1 = nowSec - days * 86400;
       t2 = nowSec;
     }
-    const snap = await rtdb().ref(`fxBars/${symbols}`).orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
+    const snap = await rtdb().ref(`fxBars/${bareCode}`).orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
     const val = snap.val() || {};
     const raw = Object.entries(val).map(([k, b]) => ({
       time: Number(k),
@@ -991,7 +1032,7 @@ var quotes_default = handle(async (req, res) => {
       delayed: true,
       delaySec: Math.max(0, nowSec - Number(meta.newest || last.time)),
       identity: "spot",
-      symbol: symbols,
+      symbol: bareCode,
       currency: null,
       regularMarketPrice: last.close,
       previousClose: null,

@@ -313,7 +313,11 @@ export default handle(async (req, res) => {
 
   const url = new URL(req.url || "/", "http://localhost");
   const batch = (url.searchParams.get("symbols") || "").trim();
-  const symbols = (url.searchParams.get("symbol") || "").trim();
+  let symbols = (url.searchParams.get("symbol") || "").trim();
+  // Phase 17: the catalog's yahoo identifiers carry an "=X" suffix for forex
+  // (EURUSD=X) — the Dukascopy/TrueFX/TD integrations key on the bare code,
+  // so normalize once at the front door. Yahoo itself accepts both spellings.
+  const bareCode = symbols.replace(/=X$/i, "");
   const range = (url.searchParams.get("range") || "5d").trim();
   const interval = (url.searchParams.get("interval") || "1m").trim();
   // Optional arbitrary epoch window (replay/backtest history loader). Accepts
@@ -555,6 +559,48 @@ export default handle(async (req, res) => {
     return res.json({ ok: true, code, written, oldest, newest, files: filesFetched });
   }
 
+  // ---- Bulk forex-store ingest (Phase 17) ----------------------------------
+  // The Dukascopy CDN is flaky per network: when an environment CAN reach it,
+  // it decodes day files locally and pushes the decoded bars here instead of
+  // letting every function call hammer the CDN. Same validation contract as
+  // backfill-fx; capped at 50k bars per call.
+  if (action === "import-fx" && req.method === "POST") {
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const code = String(raw?.code || "").toUpperCase();
+    if (!DUKA_MAP[code]) return res.json({ ok: false, reason: "not-on-duka" });
+    const barsIn: any[] = Array.isArray(raw?.bars) ? raw.bars : [];
+    const nowSec = Math.floor(Date.now() / 1000);
+    const update: Record<string, { o: number; h: number; l: number; c: number; v: number }> = {};
+    for (const b of barsIn.slice(0, 50000)) {
+      const t = Math.floor(Number(b?.t));
+      const o = Number(b?.o), h = Number(b?.h), l = Number(b?.l), c = Number(b?.c), v = Number(b?.v ?? 0);
+      if (!Number.isFinite(t) || t % 60 !== 0 || t > Math.floor(nowSec / 60) * 60 || t < nowSec - 400 * 86400) continue;
+      if (![o, h, l, c].every((x: number) => Number.isFinite(x) && x > 0)) continue;
+      if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
+      if (o < 0.2 || o > 600) continue; // forex band identity
+      update[String(t)] = { o, h, l, c, v: Math.round(v * 100) / 100 };
+    }
+    const entries = Object.entries(update);
+    if (!entries.length) return res.json({ ok: false, reason: "no-valid-bars" });
+    let oldest: number | null = null, newest: number | null = null;
+    for (const [k, b] of entries) {
+      const tk = Number(k);
+      if (oldest == null || tk < oldest) oldest = tk;
+      if (newest == null || tk > newest) newest = tk;
+    }
+    const ref = rtdb().ref(`fxBars/${code}`);
+    for (let i = 0; i < entries.length; i += 2000) {
+      await ref.update(Object.fromEntries(entries.slice(i, i + 2000)));
+    }
+    const meta = (await rtdb().ref(`fxMeta/${code}`).once("value")).val() || {};
+    await rtdb().ref(`fxMeta/${code}`).set({
+      oldest: meta.oldest && oldest ? Math.min(meta.oldest, oldest) : (oldest ?? 0),
+      newest: meta.newest && newest ? Math.max(meta.newest, newest) : (newest ?? 0),
+      updatedAt: Date.now(),
+    });
+    return res.json({ ok: true, code, written: entries.length, oldest, newest });
+  }
+
   // ---- Batch quote mode: GET /api/quotes?symbols=EURUSD=X,GC=F ----------
   // Light last-price snapshot for the Market Watch panel.
   if (batch) {
@@ -566,7 +612,7 @@ export default handle(async (req, res) => {
       const tfx = await truefxQuotes();
       const quotes = await Promise.all(
       list.map(async (sym) => {
-        const t = tfx[sym];
+        const t = tfx[sym.replace(/=X$/, "")];
         if (t) return { symbol: sym, price: t.price, previousClose: t.open, source: "truefx", live: true };
         try {
           const controller = new AbortController();
@@ -675,10 +721,10 @@ export default handle(async (req, res) => {
     if (spotCode && !periodMode) {
       const spot = await fetchSpot(spotCode);
       if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
-    } else if (DUKA_MAP[symbols] && !periodMode) {
+    } else if (DUKA_MAP[bareCode] && !periodMode) {
       // forex: TrueFX majors paint a real-time tail the same way gold-api
       // does for metals — the delayed Yahoo stream gets a live last bucket
-      const t = (await truefxQuotes())[symbols];
+      const t = (await truefxQuotes())[bareCode];
       if (t && mergeSpotBars(bars, t.price, interval)) live = true;
     }
     // measured delay: the provider's own market-time lag (0 when the live
@@ -773,7 +819,7 @@ export default handle(async (req, res) => {
   // hard daily ceiling for TD history-fallback requests — the counter itself
   // is module-level and shared with the spot backfill below
   const fromTwelveData = async () => {
-    if (!TD_FOREX.has(symbols)) throw new Error("NO_TD_MAP");
+    if (!TD_FOREX.has(bareCode)) throw new Error("NO_TD_MAP");
     const ti = TD_INTERVAL[interval];
     if (!ti) throw new Error("NO_TD_INTERVAL");
     const apiKey = await tdKey();
@@ -784,7 +830,7 @@ export default handle(async (req, res) => {
     const fmt = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 19).replace("T", " ");
     // datetime comes back in real UTC (timezone=UTC) — the same anchors the
     // spot engine uses, so the merged chart stays minute-aligned
-    let u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${symbols.slice(0, 3)}/${symbols.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
+    let u = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(`${bareCode.slice(0, 3)}/${bareCode.slice(3)}`)}&interval=${ti}&outputsize=${outputsize}&timezone=UTC&apikey=${apiKey}`;
     // period mode (replay/backtest) must honor the requested window: TD needs
     // explicit start/end in UTC, otherwise it returns the newest bars only
     if (periodMode) u += `&start_date=${encodeURIComponent(fmt(period1 as number))}&end_date=${encodeURIComponent(fmt(period2 as number))}`;
@@ -812,7 +858,7 @@ export default handle(async (req, res) => {
     if (!bars.length) throw new Error("TD_NO_VALID_BARS");
     let live = false;
     if (!periodMode) {
-      const t = (await truefxQuotes())[symbols];
+      const t = (await truefxQuotes())[bareCode];
       if (t && mergeSpotBars(bars, t.price, interval)) live = true;
     }
     const last = bars[bars.length - 1];
@@ -837,8 +883,8 @@ export default handle(async (req, res) => {
   // tail, the store gives depth.
   const fromFxStore = async () => {
     if (interval !== "1m") throw new Error("FX_STORE_1M_ONLY");
-    if (!DUKA_MAP[symbols]) throw new Error("NO_FX_STORE");
-    const meta = (await rtdb().ref(`fxMeta/${symbols}`).once("value")).val() || {};
+    if (!DUKA_MAP[bareCode]) throw new Error("NO_FX_STORE");
+    const meta = (await rtdb().ref(`fxMeta/${bareCode}`).once("value")).val() || {};
     if (!meta?.oldest) throw new Error("FX_STORE_EMPTY");
     const nowSec = Math.floor(Date.now() / 1000);
     let t1: number, t2: number;
@@ -850,7 +896,7 @@ export default handle(async (req, res) => {
       t1 = nowSec - days * 86400;
       t2 = nowSec;
     }
-    const snap = await rtdb().ref(`fxBars/${symbols}`)
+    const snap = await rtdb().ref(`fxBars/${bareCode}`)
       .orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
     const val: Record<string, any> = snap.val() || {};
     const raw: RawBar[] = Object.entries(val).map(([k, b]) => ({
@@ -867,7 +913,7 @@ export default handle(async (req, res) => {
       delayed: true,
       delaySec: Math.max(0, nowSec - Number(meta.newest || last.time)),
       identity: "spot",
-      symbol: symbols,
+      symbol: bareCode,
       currency: null,
       regularMarketPrice: last.close,
       previousClose: null,
