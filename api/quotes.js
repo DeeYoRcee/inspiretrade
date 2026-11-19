@@ -1012,6 +1012,10 @@ var quotes_default = handle(async (req, res) => {
       t1 = nowSec - days * 86400;
       t2 = nowSec;
     }
+    const nowSecPre = Math.floor(Date.now() / 1e3);
+    if (!periodMode && Number(meta.newest || 0) < nowSecPre - 90 * 60) {
+      throw new Error("FX_STORE_STALE");
+    }
     const snap = await rtdb().ref(`fxBars/${bareCode}`).orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
     const val = snap.val() || {};
     const raw = Object.entries(val).map(([k, b]) => ({

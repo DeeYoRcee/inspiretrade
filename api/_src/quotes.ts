@@ -899,6 +899,14 @@ export default handle(async (req, res) => {
       t1 = nowSec - days * 86400;
       t2 = nowSec;
     }
+    // Live range mode: a stale store (Dukascopy publishes with a 1–2 day lag)
+    // must NEVER become the primary chart — a tail a day old looks broken.
+    // Only answer live ranges when the newest stored bar is under 90 minutes
+    // old; deep replay windows bypass the freshness check.
+    const nowSecPre = Math.floor(Date.now() / 1000);
+    if (!periodMode && Number(meta.newest || 0) < nowSecPre - 90 * 60) {
+      throw new Error("FX_STORE_STALE");
+    }
     const snap = await rtdb().ref(`fxBars/${bareCode}`)
       .orderByKey().startAt(String(t1)).endAt(String(t2)).once("value");
     const val: Record<string, any> = snap.val() || {};

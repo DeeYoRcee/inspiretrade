@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { get, ref, update } from "firebase/database";
 import { db } from "@/lib/firebase";
+import { authedFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import type { Trade } from "@/hooks/use-trades";
 import {
@@ -78,6 +79,28 @@ export function useSavePublicProfile() {
 
       const usernameKey = username.toLowerCase();
       const previousUsernameKey = settings.publishedUsername?.toLowerCase() || null;
+
+      // Phase 18 self-heal: admin username moves leave redirect records with
+      // no uid at old handles — the security rules then deny the OWNER any
+      // write there (data.uid check fails on a uid-less stub), so bio saves
+      // and the public toggle die with PERMISSION_DENIED. Ask the server to
+      // purge the stubs first; after that the create-branch of the rules
+      // accepts the snapshot again.
+      const targetSnap = await get(ref(db, `publicProfiles/${usernameKey}`));
+      const targetVal = targetSnap.val();
+      if (targetSnap.exists() && targetVal && typeof targetVal === "object" && !targetVal.uid) {
+        try {
+          const res = await authedFetch<any>("/api/admin?action=purge-profile-stubs", {});
+          if (!res?.ok) throw new Error("purge failed");
+          const still = (await get(ref(db, `publicProfiles/${usernameKey}`))).val();
+          if (still && typeof still === "object" && !still.uid) {
+            throw new Error("Profile handle is locked by a broken redirect — an admin needs to repair it.");
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message.includes("locked")) throw e;
+          throw new Error("Profile handle is locked by a broken redirect — an admin needs to repair it.");
+        }
+      }
       const updates: Record<string, unknown> = {
         [`privatePublicProfileSettings/${user.uid}`]: {
           ...settings,

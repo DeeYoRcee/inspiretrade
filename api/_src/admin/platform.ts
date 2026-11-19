@@ -266,6 +266,50 @@ export async function setUserState(admin: AuthedUser, role: AdminRole, body: any
   throw new HttpError(400, "BAD_ACTION", "action must be suspend | reactivate | restrict | unrestrict");
 }
 
+/**
+ * Public-profile redirect stubs (Phase 18 repair): admin username moves leave
+ * { redirect } records at old handles. A chain that ends nowhere (or a stub
+ * at the PUBLISHED handle) makes every client-side save fail with
+ * PERMISSION_DENIED — the owner rules require data.uid === auth.uid and a
+ * stub has no uid, so the account can never overwrite it. This admin action
+ * purges every stub at the handles a user owns so the client can republish
+ * cleanly. Permission: user.note-level admins and up.
+ */
+export async function purgeProfileStubs(admin: AuthedUser, role: AdminRole, body: any) {
+  assertRole(role, "user.note");
+  const uid = String(body?.uid || admin.uid).trim();
+  if (!uid) throw new HttpError(400, "MISSING_UID", "uid is required");
+
+  const dbR = rtdb();
+  const registry = (await dbR.ref("usernames").once("value")).val() || {};
+  const owned = Object.entries(registry).filter(([, owner]) => owner === uid).map(([k]) => k);
+  const settingsSnap = await dbR.ref(`privatePublicProfileSettings/${uid}`).once("value");
+  const published = String(settingsSnap.val()?.publishedUsername || "").toLowerCase();
+  const targets = Array.from(new Set([...owned, ...(published ? [published] : [])]));
+
+  const purged: string[] = [];
+  for (const key of targets) {
+    const snap = await dbR.ref(`publicProfiles/${key}`).once("value");
+    if (!snap.exists()) continue;
+    const val = snap.val() || {};
+    const isStub = typeof val.redirect === "string" && !val.uid;
+    const brokenSnapshot = !!val.uid && val.uid === uid && !(val.username && val.usernameKey && val.displayName);
+    const foreignSnapshot = !!val.uid && val.uid !== uid;
+    if (foreignSnapshot) continue; // never touch another user's live snapshot
+    if (isStub || brokenSnapshot) {
+      await dbR.ref(`publicProfiles/${key}`).remove();
+      purged.push(key);
+    }
+  }
+  await writeAdminAlert({
+    type: "platform", severity: "info",
+    text: `Purged ${purged.length} public-profile stub(s) for ${uid.slice(0, 8)}… by ${admin.email || admin.uid}`,
+    uid,
+  });
+  await audit(admin, "profile_stub_purge", { uid, purged });
+  return { ok: true, uid, owned: targets, purged };
+}
+
 export async function addNote(admin: AuthedUser, role: AdminRole, body: any) {
   assertRole(role, "user.note");
   const uid = String(body?.uid || "").trim();

@@ -1339,6 +1339,39 @@ async function setUserState(admin2, role, body) {
   }
   throw new HttpError(400, "BAD_ACTION", "action must be suspend | reactivate | restrict | unrestrict");
 }
+async function purgeProfileStubs(admin2, role, body) {
+  assertRole(role, "user.note");
+  const uid = String(body?.uid || admin2.uid).trim();
+  if (!uid) throw new HttpError(400, "MISSING_UID", "uid is required");
+  const dbR = rtdb();
+  const registry = (await dbR.ref("usernames").once("value")).val() || {};
+  const owned = Object.entries(registry).filter(([, owner]) => owner === uid).map(([k]) => k);
+  const settingsSnap = await dbR.ref(`privatePublicProfileSettings/${uid}`).once("value");
+  const published = String(settingsSnap.val()?.publishedUsername || "").toLowerCase();
+  const targets = Array.from(/* @__PURE__ */ new Set([...owned, ...published ? [published] : []]));
+  const purged = [];
+  for (const key of targets) {
+    const snap = await dbR.ref(`publicProfiles/${key}`).once("value");
+    if (!snap.exists()) continue;
+    const val = snap.val() || {};
+    const isStub = typeof val.redirect === "string" && !val.uid;
+    const brokenSnapshot = !!val.uid && val.uid === uid && !(val.username && val.usernameKey && val.displayName);
+    const foreignSnapshot = !!val.uid && val.uid !== uid;
+    if (foreignSnapshot) continue;
+    if (isStub || brokenSnapshot) {
+      await dbR.ref(`publicProfiles/${key}`).remove();
+      purged.push(key);
+    }
+  }
+  await writeAdminAlert({
+    type: "platform",
+    severity: "info",
+    text: `Purged ${purged.length} public-profile stub(s) for ${uid.slice(0, 8)}\u2026 by ${admin2.email || admin2.uid}`,
+    uid
+  });
+  await audit(admin2, "profile_stub_purge", { uid, purged });
+  return { ok: true, uid, owned: targets, purged };
+}
 async function addNote(admin2, role, body) {
   assertRole(role, "user.note");
   const uid = String(body?.uid || "").trim();
@@ -1601,6 +1634,7 @@ var PLATFORM_ACTIONS = {
   "admin-settings-get": { GET: true, run: (_q, res, a, r) => getSettings(a, r).then((x) => res.json(x)) },
   "admin-roles-get": { GET: true, run: (_q, res, a, r) => getRoles(a, r).then((x) => res.json(x)) },
   "user-set-state": { GET: false, run: (_q, res, a, r, b) => setUserState(a, r, b).then((x) => res.json(x)) },
+  "purge-profile-stubs": { GET: false, run: (_q, res, a, r, b) => purgeProfileStubs(a, r, b).then((x) => res.json(x)) },
   "user-note": { GET: false, run: (_q, res, a, r, b) => addNote(a, r, b).then((x) => res.json(x)) },
   "admin-account-create": { GET: false, run: (_q, res, a, r, b) => createAccount2(a, r, b).then((x) => res.json(x)) },
   "admin-alerts-read": { GET: false, run: (_q, res, a, r, b) => markAlertsRead(a, r, b).then((x) => res.json(x)) },

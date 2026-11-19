@@ -2,7 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { ref } from "firebase/database";
+import { ref, getDatabase } from "firebase/database";
+import { MediaLightbox } from "@/components/media-lightbox";
+import type { PublicProfileSettings } from "@/lib/public-profile";
 import {
   Award, Camera, Clapperboard, Copy, Crown, Globe2, Instagram, Loader2, Package, Pencil, Send, Trash2, Twitter, Video,
 } from "lucide-react";
@@ -20,6 +22,8 @@ import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-publ
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createDefaultPublicProfileSettings } from "@/lib/public-profile";
+
+const USERNAME_TEST = /^[a-zA-Z0-9_]{3,20}$/;
 import { getProfileBackground, PROFILE_BACKGROUNDS } from "@/lib/profile-backgrounds";
 import { useLanguage } from "@/lib/language-context";
 import { useToast } from "@/hooks/use-toast";
@@ -133,6 +137,8 @@ export default function ProfilePage() {
   const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
+  // Telegram-style: tap the avatar photo/video → full-screen viewer
+  const [mediaView, setMediaView] = useState<{ src: string; kind: "image" | "video" } | null>(null);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
   const [igDraft, setIgDraft] = useState("");
   const [tgDraft, setTgDraft] = useState("");
@@ -331,17 +337,31 @@ export default function ProfilePage() {
       await saveUserProfile(user.uid, { social });
       queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
 
-      await savePublicProfile.mutateAsync({
-        username,
-        displayName: user.displayName || username,
-        trades: trades ?? [],
-        settings: {
-          ...(settings ?? createDefaultPublicProfileSettings()),
-          strategy: bioDraft.trim(),
-          // a bio typed in the profile dialog is meant to be seen
-          visibility: { ...(settings ?? createDefaultPublicProfileSettings()).visibility, strategy: bioDraft.trim() ? true : (settings ?? createDefaultPublicProfileSettings()).visibility.strategy },
-        },
+      // Phase 18: the bio is PRIVATE by default — it lives in the user's own
+      // settings node and saves WITHOUT a public username. The public
+      // snapshot only updates when the profile is actually published, so a
+      // bio can never again be blocked by username/redirect problems.
+      const base = settings ?? createDefaultPublicProfileSettings();
+      const strategy = bioDraft.trim();
+      const nextSettings: PublicProfileSettings = {
+        ...base,
+        strategy,
+        visibility: { ...base.visibility, strategy: strategy ? true : base.visibility.strategy },
+      };
+      const { update: rtdbUpdate } = await import("firebase/database");
+      await rtdbUpdate(ref(getDatabase(), `privatePublicProfileSettings/${user.uid}`), {
+        ...nextSettings,
+        updatedAt: Date.now(),
       });
+      if (nextSettings.enabled && username && USERNAME_TEST.test(username)) {
+        await savePublicProfile.mutateAsync({
+          username,
+          displayName: user.displayName || username,
+          trades: trades ?? [],
+          settings: nextSettings,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["publicProfileSettings", user.uid] });
       toast({ title: t("profileSaved") });
     } catch (error) {
       toast({
@@ -436,13 +456,15 @@ export default function ProfilePage() {
               muted
               playsInline
               preload="metadata"
-              className="mx-auto h-24 w-24 rounded-full border-4 border-background object-cover shadow-lg"
+              onClick={() => setMediaView({ src: avatarVideoSrc || profileVideoSrc!, kind: "video" })}
+              className="mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 border-background object-cover shadow-lg"
             />
           ) : avatarSrc ? (
             <img
               src={avatarSrc}
               alt={displayName}
-              className="mx-auto h-24 w-24 rounded-full border-4 border-background object-cover shadow-lg"
+              onClick={() => setMediaView({ src: avatarSrc, kind: "image" })}
+              className="mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 border-background object-cover shadow-lg"
               referrerPolicy="no-referrer"
             />
           ) : (
@@ -800,6 +822,12 @@ export default function ProfilePage() {
           publishPublic={(bg) => publishBackgroundSettings(bg).then(() => undefined)}
         />
       )}
+          <MediaLightbox
+        src={mediaView?.src ?? null}
+        kind={mediaView?.kind}
+        caption={displayName}
+        onClose={() => setMediaView(null)}
+      />
     </div>
   );
 }
