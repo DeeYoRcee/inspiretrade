@@ -725,6 +725,13 @@ var quotes_default = handle(async (req, res) => {
     const [loPrice, hiPrice] = code === "XAG" ? [5, 500] : [100, 2e4];
     const recordedSnap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const recorded = recordedSnap.val() || {};
+    let lastRecordedMin = null;
+    for (const k of Object.keys(recorded)) {
+      const t = Number(k);
+      if (Number.isFinite(t) && Number(recorded[k]?.s || 0) >= 1 && (lastRecordedMin == null || t > lastRecordedMin)) lastRecordedMin = t;
+    }
+    let newestTdSeen = 0;
+    let seamCap = null;
     let written = 0;
     let oldest = null;
     let endDate = "";
@@ -744,7 +751,7 @@ var quotes_default = handle(async (req, res) => {
       }
       const values = Array.isArray(d?.values) ? d.values : [];
       if (!values.length) break;
-      const update = {};
+      const valid = [];
       for (const v of values) {
         const t = Math.floor(Date.parse(String(v?.datetime || "").replace(" ", "T") + "Z") / 1e3);
         const o = Number(v?.open), h = Number(v?.high), l = Number(v?.low), c = Number(v?.close);
@@ -752,6 +759,17 @@ var quotes_default = handle(async (req, res) => {
         if (![o, h, l, c].every((x) => Number.isFinite(x) && x > 0)) continue;
         if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
         if (o < loPrice || o > hiPrice) continue;
+        if (t > newestTdSeen) newestTdSeen = t;
+        valid.push({ t, o, h, l, c });
+      }
+      if (seamCap == null && valid.length) {
+        const tdDelayed = minuteNow - newestTdSeen > 120;
+        seamCap = tdDelayed && lastRecordedMin != null && minuteNow - lastRecordedMin <= 15 * 60 ? lastRecordedMin : null;
+      }
+      const update = {};
+      for (const b of valid) {
+        if (seamCap != null && b.t > seamCap) continue;
+        const t = b.t, o = b.o, h = b.h, l = b.l, c = b.c;
         const existing = recorded[String(t)];
         if (!existing) {
           update[String(t)] = { o, h, l, c, s: 0 };

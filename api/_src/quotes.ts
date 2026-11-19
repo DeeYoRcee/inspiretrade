@@ -506,6 +506,25 @@ export default handle(async (req, res) => {
     // existing minutes with self-recorded ticks (s ≥ 1) WIN over provider bars
     const recordedSnap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const recorded: Record<string, any> = recordedSnap.val() || {};
+    // Phase 20.4 — seam protection. gold-api's live feed lags ~16-30s
+    // (measured 2026-11-19), but TD's own newest 1m bar can lag by minutes on
+    // the free tier. A provider bar for a minute the recorder never observed,
+    // landing right next to the live candle, renders minutes-old prices as if
+    // current — the user sees the chart tail "3-4 candles behind" the real
+    // market (TradingView). Rule: when TD's newest bar is stale (>2 min old)
+    // AND the recorder's own freshest observation is recent (≤15 min — the
+    // seam zone), provider bars NEWER than that observation are dropped and
+    // the seam stays a short honest gap; the live 1s tail continues fresh.
+    // When TD is fresh, or the recorder is long absent (tab closed for
+    // hours), the provider fills the seam normally — continuity beats a
+    // giant hole.
+    let lastRecordedMin: number | null = null;
+    for (const k of Object.keys(recorded)) {
+      const t = Number(k);
+      if (Number.isFinite(t) && Number(recorded[k]?.s || 0) >= 1 && (lastRecordedMin == null || t > lastRecordedMin)) lastRecordedMin = t;
+    }
+    let newestTdSeen = 0;
+    let seamCap: number | null = null;
     let written = 0;
     let oldest: number | null = null;
     let endDate = "";
@@ -523,7 +542,7 @@ export default handle(async (req, res) => {
       } catch { break; }
       const values: any[] = Array.isArray(d?.values) ? d.values : [];
       if (!values.length) break;
-      const update: Record<string, { o: number; h: number; l: number; c: number; s: number }> = {};
+      const valid: { t: number; o: number; h: number; l: number; c: number }[] = [];
       for (const v of values) {
         // datetime "YYYY-MM-DD HH:MM:SS" in UTC (timezone=UTC param)
         const t = Math.floor(Date.parse(String(v?.datetime || "").replace(" ", "T") + "Z") / 1000);
@@ -532,6 +551,17 @@ export default handle(async (req, res) => {
         if (![o, h, l, c].every((x: number) => Number.isFinite(x) && x > 0)) continue;
         if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
         if (o < loPrice || o > hiPrice) continue;
+        if (t > newestTdSeen) newestTdSeen = t;
+        valid.push({ t, o, h, l, c });
+      }
+      if (seamCap == null && valid.length) {
+        const tdDelayed = minuteNow - newestTdSeen > 120;
+        seamCap = tdDelayed && lastRecordedMin != null && minuteNow - lastRecordedMin <= 15 * 60 ? lastRecordedMin : null;
+      }
+      const update: Record<string, { o: number; h: number; l: number; c: number; s: number }> = {};
+      for (const b of valid) {
+        if (seamCap != null && b.t > seamCap) continue; // seam protection (above)
+        const t = b.t, o = b.o, h = b.h, l = b.l, c = b.c;
         const existing = recorded[String(t)];
         if (!existing) {
           // no self-recorded observation for this minute → genuine provider OHLC
