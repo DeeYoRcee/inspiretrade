@@ -947,9 +947,20 @@ export default handle(async (req, res) => {
         ? [fromStooq, fromYahoo]
         : [fromYahoo, fromTwelveData, fromStooq, fromFxStore];
       let firstErr: unknown = null;
+      // staleness-aware chain (Phase 18): a source can SUCCEED while serving
+      // day-old bars (Yahoo's cash-index feed does exactly that for ^NDX from
+      // datacenter IPs). For intraday live loads, remember the stale answer
+      // and let later sources try to beat it; serve the freshest available.
+      let staleResult: any = null;
       for (const attempt of chain) {
         try {
-          return { ok: true, ...(await attempt()) };
+          const result = { ok: true, ...(await attempt()) };
+          const tooStale = !periodMode && interval !== "1d" && Number(result.delaySec ?? 0) > 2700;
+          if (tooStale) {
+            if (!staleResult || Number(result.delaySec ?? 0) < Number(staleResult.delaySec ?? 1e9)) staleResult = result;
+            continue;
+          }
+          return result;
         } catch (e: any) {
           // stooq has no 1m CSV at all — skip it silently for 1m and let the
           // next source answer instead of burying the real error
@@ -960,6 +971,7 @@ export default handle(async (req, res) => {
           if (!firstErr) firstErr = e;
         }
       }
+      if (staleResult) return staleResult;
       throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");

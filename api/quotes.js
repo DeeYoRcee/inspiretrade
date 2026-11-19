@@ -1050,9 +1050,16 @@ var quotes_default = handle(async (req, res) => {
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
       const chain = METALS_FIRST ? [fromStooq, fromYahoo] : [fromYahoo, fromTwelveData, fromStooq, fromFxStore];
       let firstErr = null;
+      let staleResult = null;
       for (const attempt of chain) {
         try {
-          return { ok: true, ...await attempt() };
+          const result = { ok: true, ...await attempt() };
+          const tooStale = !periodMode && interval !== "1d" && Number(result.delaySec ?? 0) > 2700;
+          if (tooStale) {
+            if (!staleResult || Number(result.delaySec ?? 0) < Number(staleResult.delaySec ?? 1e9)) staleResult = result;
+            continue;
+          }
+          return result;
         } catch (e) {
           if (attempt === fromStooq && String(e?.message).includes("STOOQ_NO_1M")) {
             if (!firstErr) firstErr = e;
@@ -1061,6 +1068,7 @@ var quotes_default = handle(async (req, res) => {
           if (!firstErr) firstErr = e;
         }
       }
+      if (staleResult) return staleResult;
       throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");
