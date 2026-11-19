@@ -3,15 +3,26 @@
  *
  * Sources (all free, no key, REAL data — the engine never invents prices):
  *  - crypto      : Binance public REST ticker (live), mirror host failover
- *  - gold/silver : gold-api.com spot (live, seconds-fresh)
- *  - fx/indices  : Yahoo Finance chart meta (delayed by source, cached 45s)
+ *  - gold/silver : gold-api.com spot (live, seconds-fresh) — the SAME source
+ *                  the chart's live tail paints, so XAUUSD/XAGUSD execution
+ *                  prices and chart prices cannot drift (Phase 18: Yahoo's
+ *                  GC=F COMEX futures are no longer an execution source for
+ *                  spot metals — if the spot provider is down there is NO
+ *                  quote and orders fail loudly with 503, never silently
+ *                  against delayed futures prices)
+ *  - fx majors   : TrueFX genuine bid/ask (live) → mid = (bid+ask)/2, the
+ *                  real interbank spread is preserved (× platform multiplier)
+ *  - fx crosses,
+ *    indices     : Yahoo Finance chart meta (delayed by source, cached 45s,
+ *                  live:false — the honest badge reports it)
  *
  * Short in-memory TTLs per lambda instance keep repeated evaluator calls cheap
  * without ever executing against stale crypto/gold prices.
  */
 import { getInstrument, INSTRUMENTS } from "../../../shared/terminal";
-import { quoteFromMid, type Quote } from "../../../shared/trading-engine";
+import { quoteFromMid, quoteFromTwoSided, type Quote } from "../../../shared/trading-engine";
 import { getPlatformSettings } from "../lib/platform";
+import { truefxQuotes } from "../lib/truefx";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const BINANCE_HOSTS = ["api.binance.com", "data-api.binance.vision"];
@@ -19,7 +30,7 @@ const CRYPTO_TTL = 3000;
 const SPOT_TTL = 5000;
 const YAHOO_TTL = 45000;
 
-type MidInfo = { mid: number; source: string; live: boolean; time: number };
+type MidInfo = { mid: number; source: string; live: boolean; time: number; bid?: number; ask?: number };
 const cache = new Map<string, MidInfo>();
 
 async function fetchJson(url: string, timeoutMs = 6000, headers: Record<string, string> = {}): Promise<any> {
@@ -49,9 +60,12 @@ async function fetchCryptoMids(binanceSyms: string[]): Promise<Record<string, nu
   throw lastErr ?? new Error("binance unreachable");
 }
 
-// XAGUSD only — XAUUSD now prices from Binance PAXG/USDT (feed = "binance"),
-// so the chart and the engine share one real-time source
-const GOLD_CODES: Record<string, string> = { XAGUSD: "XAG" };
+// XAUUSD AND XAGUSD price from gold-api spot (the catalog feed stays
+// "quotes" — this map routes the execution mid to the same spot source the
+// chart paints). Tokenized gold (PAXG/XAUT) and COMEX futures (GC=F) are
+// deliberately NOT used: different instruments, different prices/delays —
+// they must never silently stand in for physical spot gold.
+const GOLD_CODES: Record<string, string> = { XAUUSD: "XAU", XAGUSD: "XAG" };
 
 async function fetchSpot(code: string): Promise<number> {
   const res: any = await fetchJson(`https://api.gold-api.com/price/${code}`);
@@ -102,23 +116,51 @@ export async function getMids(symbols: string[]): Promise<Record<string, MidInfo
             const p = await fetchSpot(GOLD_CODES[s]);
             out[s] = { mid: p, source: "gold-api", live: true, time: Date.now() };
             cache.set(s, out[s]);
-          } catch { /* spot down — Yahoo fallback below will fill it if listed */ }
+          } catch { /* spot down → NO quote: orders fail loudly (503) rather than executing against a different instrument */ }
         }
       })(),
       (async () => {
-        for (const s of yahoo) {
-          const inst = getInstrument(s);
-          if (!inst?.yahoo) continue;
-          try {
-            const p = await fetchYahooMid(inst.yahoo);
-            out[s] = { mid: p, source: "yahoo", live: false, time: Date.now() };
-            cache.set(s, out[s]);
-          } catch { /* leave missing — caller treats as unavailable */ }
+        // Phase 18: forex majors first from TrueFX's GENUINE bid/ask (one
+        // anonymous request prices all covered pairs in real time). Only a
+        // fresh tick (≤90s) counts as live — a weekend-stale stamp must fall
+        // through to Yahoo's delayed meta, never pose as real-time. Symbols
+        // TrueFX does not carry (NZDUSD, crosses outside its 10 majors) and
+        // indices go straight to the Yahoo meta path as before.
+        const fxSyms = yahoo.filter((s) => getInstrument(s)?.assetClass === "forex");
+        const rest = yahoo.filter((s) => !fxSyms.includes(s));
+        let tfx: Awaited<ReturnType<typeof truefxQuotes>> = {};
+        if (fxSyms.length) {
+          try { tfx = await truefxQuotes(); } catch { /* empty → all fall back to Yahoo */ }
         }
+        for (const s of fxSyms) {
+          const bare = s.replace(/=X$/i, "");
+          const t = tfx[bare];
+          // only a fresh tick (≤90s) with a sane two-sided quote counts as live
+          if (t && t.ts > 0 && Date.now() - t.ts < 90000 && t.ask > t.bid && t.bid > 0) {
+            out[s] = { mid: t.mid, bid: t.bid, ask: t.ask, source: "truefx", live: true, time: Date.now() };
+            cache.set(s, out[s]);
+            continue;
+          }
+          await fetchYahooFor(s, out);
+        }
+        for (const s of rest) await fetchYahooFor(s, out);
       })(),
     ]);
   }
   return out;
+}
+
+/** Yahoo chart-meta mid (delayed by source, honest live:false) — the fallback
+ *  execution path for instruments TrueFX does not carry. */
+async function fetchYahooFor(sym: string, out: Record<string, MidInfo>): Promise<void> {
+  const inst = getInstrument(sym);
+  if (!inst?.yahoo) return;
+  try {
+    const p = await fetchYahooMid(inst.yahoo);
+    const info = { mid: p, source: "yahoo", live: false, time: Date.now() };
+    out[sym] = info;
+    cache.set(sym, info);
+  } catch { /* leave missing — caller treats as unavailable */ }
 }
 
 /**
@@ -140,8 +182,10 @@ export function withConversionSymbols(symbols: string[]): string[] {
   return [...set];
 }
 
-/** Two-sided executable quotes (bid/ask around the mid, spread by instrument,
- *  scaled by the platform spreadMultiplier setting). */
+/** Two-sided executable quotes. Phase 18: when the feed supplies GENUINE two
+ *  sides (TrueFX bid/ask) the real interbank spread is kept and only widened
+ *  by the platform spreadMultiplier around the true mid; synthetic spreads
+ *  (SPREAD_PIPS around the mid) remain the fallback for mid-only feeds. */
 export async function getQuotes(symbols: string[]): Promise<Record<string, Quote>> {
   const mids = await getMids(withConversionSymbols(symbols));
   const settings = await getPlatformSettings();
@@ -150,11 +194,16 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, Quote
   for (const [sym, info] of Object.entries(mids)) {
     const inst = getInstrument(sym);
     if (!inst) continue;
-    const q = quoteFromMid(info.mid, inst, info.source, info.live, info.time);
-    if (mult !== 1) {
-      const spread = (q.ask - q.bid) * mult;
-      q.bid = q.mid - spread / 2;
-      q.ask = q.mid + spread / 2;
+    let q: Quote;
+    if (info.bid != null && info.ask != null && info.ask > info.bid) {
+      q = quoteFromTwoSided(info.bid, info.ask, mult, info.source, info.live, info.time);
+    } else {
+      q = quoteFromMid(info.mid, inst, info.source, info.live, info.time);
+      if (mult !== 1) {
+        const spread = (q.ask - q.bid) * mult;
+        q.bid = q.mid - spread / 2;
+        q.ask = q.mid + spread / 2;
+      }
     }
     out[sym] = q;
   }

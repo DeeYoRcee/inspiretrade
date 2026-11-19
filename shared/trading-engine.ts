@@ -53,6 +53,18 @@ export function quoteFromMid(mid: number, spec: InstrumentSpec, source: string, 
   return { mid, bid: mid - spread / 2, ask: mid + spread / 2, time, source, live };
 }
 
+/**
+ * Build a quote from a GENUINE two-sided feed (Phase 18 — TrueFX bid/ask):
+ * the real interbank spread is preserved and only widened by the platform
+ * spreadMultiplier around the true mid. Never called with a bid that is not
+ * a real bid — mid-only feeds go through quoteFromMid instead.
+ */
+export function quoteFromTwoSided(bid: number, ask: number, mult: number, source: string, live: boolean, time = Date.now()): Quote {
+  const mid = (bid + ask) / 2;
+  const half = ((ask - bid) / 2) * Math.max(1, mult);
+  return { mid, bid: mid - half, ask: mid + half, time, source, live };
+}
+
 /** Multiply a QUOTE-currency amount by this to get USD (from live prices). */
 export function convQuoteToUsd(quoteCcy: string, prices: Record<string, number>): number {
   if (!quoteCcy || quoteCcy === "USD") return 1;

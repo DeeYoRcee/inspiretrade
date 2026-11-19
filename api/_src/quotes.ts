@@ -223,44 +223,14 @@ import {
 import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
 
 /**
- * TrueFX free real-time feed (Phase 17) — no key, anonymous CSV, covers the
- * 10 majors live (EUR/USD, USD/JPY, GBP/USD, EUR/GBP, USD/CHF, EUR/JPY,
- * EUR/CHF, USD/CAD, AUD/USD, GBP/JPY). One request answers every pair, so
- * the live-quote poll stops hammering Yahoo for the majors and the badge
- * can honestly say real-time. Format: PAIR,ts_ms,bigBid,pipsBid,bigAsk,
- * pipsAsk,high,low,open — price = bigFigure concatenated with points
- * ("1.09"+"921" → 1.09921; "159."+"920" → 159.920, verified against the
- * Dukascopy Nov 17 daily candle range).
+ * TrueFX free real-time feed (Phase 17, moved to lib/truefx.ts in Phase 18) —
+ * no key, anonymous CSV, covers the 10 majors live. The lib exposes the
+ * genuine BID and ASK plus MID; the CHART paints BID (Dukascopy's free
+ * history is BID-side, broker charts plot bid) while execution quotes use
+ * MID. Format: PAIR,ts_ms,bigBid,pipsBid,bigAsk,pipsAsk,high,low,open —
+ * price = bigFigure concatenated with points ("1.09"+"921" → 1.09921).
  */
-const TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
-const truefxQuotes = async (): Promise<Record<string, { price: number; ts: number; open: number | null }>> => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA, Accept: "text/csv" }, signal: controller.signal });
-    if (!res.ok) return {};
-    const text = await res.text();
-    const out: Record<string, { price: number; ts: number; open: number | null }> = {};
-    for (const line of text.split("\n")) {
-      const f = line.split(",");
-      if (f.length < 8) continue;
-      const pair = f[0]?.trim();
-      if (!pair || !pair.includes("/")) continue;
-      const code = pair.replace("/", "");
-      const bid = Number.parseFloat(String(f[2]) + String(f[3]));
-      const ask = Number.parseFloat(String(f[4]) + String(f[5]));
-      const ts = Number(f[1]);
-      const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
-      if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
-      out[code] = { price: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
-    }
-    return out;
-  } catch {
-    return {};
-  } finally {
-    clearTimeout(timer);
-  }
-};
+import { truefxQuotes } from "./lib/truefx";
 
 const INTERVAL_SECONDS: Record<string, number> = {
   "1m": 60, "2m": 120, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
@@ -398,14 +368,20 @@ export default handle(async (req, res) => {
         if (!ex) { update[String(inc.t)] = { o: inc.o, h: inc.h, l: inc.l, c: inc.c, s: inc.s }; accepted += 1; continue; }
         // deterministic merge (mirror of client mergeSpotCandles): the stored
         // candle holds the earlier open, the incoming one the newest close,
-        // high/low/samples take the envelope
-        update[String(inc.t)] = {
-          o: Number(ex.o) || inc.o,
-          c: inc.c,
-          h: Math.max(inc.h, Number(ex.h) || inc.h),
-          l: Math.min(inc.l, Number(ex.l) || inc.l),
-          s: Math.max(inc.s, Number(ex.s || 0)),
-        };
+        // high/low/samples take the envelope.
+        // Phase 18: a PROVIDER bar (s = 0 — genuine Twelve Data minute OHLC)
+        // must not be degraded by a 1-2 sample recorded dot: only its envelope
+        // expands; with s ≥ 3 the observations are dense enough to take over
+        // the close honestly.
+        update[String(inc.t)] = Number(ex.s || 0) === 0 && inc.s < 3
+          ? { o: Number(ex.o) || inc.o, c: Number(ex.c) || inc.c, h: Math.max(inc.h, Number(ex.h) || inc.h), l: Math.min(inc.l, Number(ex.l) || inc.l), s: Math.max(inc.s, Number(ex.s || 0)) }
+          : {
+              o: Number(ex.o) || inc.o,
+              c: inc.c,
+              h: Math.max(inc.h, Number(ex.h) || inc.h),
+              l: Math.min(inc.l, Number(ex.l) || inc.l),
+              s: Math.max(inc.s, Number(ex.s || 0)),
+            };
         accepted += 1;
       }
       if (Object.keys(update).length) await ref.update(update);
@@ -489,8 +465,24 @@ export default handle(async (req, res) => {
         if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
         if (o < loPrice || o > hiPrice) continue;
         const existing = recorded[String(t)];
-        if (existing && Number(existing.s || 0) >= 1) continue; // self-recorded wins
-        update[String(t)] = { o, h, l, c, s: 0 };
+        if (!existing) {
+          // no self-recorded observation for this minute → genuine provider OHLC
+          update[String(t)] = { o, h, l, c, s: 0 };
+        } else if (Number(existing.s || 0) <= 2) {
+          // sparse recorded bar (1-2 observed samples ≈ a dot): replace the
+          // sampled OHLC with the provider's genuine minute OHLC, but the
+          // observed price is still real — keep it inside the envelope
+          update[String(t)] = { o, h: Math.max(h, Number(existing.h) || h), l: Math.min(l, Number(existing.l) || l), c, s: Number(existing.s || 1) };
+        } else if (Number(existing.h) < h || Number(existing.l) > l) {
+          // well-recorded bar (s ≥ 3): the observations are real, but the
+          // provider sees intra-minute extremes a 1s poll can miss — expand
+          // the envelope only; observed open/close stay untouched
+          update[String(t)] = {
+            o: Number(existing.o), c: Number(existing.c), s: Number(existing.s || 1),
+            h: Math.max(Number(existing.h) || h, h), l: Math.min(Number(existing.l) || l, l),
+          };
+        }
+        // else: recorded envelope already covers the provider bar — keep it
         if (oldest == null || t < oldest) oldest = t;
       }
       if (Object.keys(update).length) {
@@ -630,7 +622,7 @@ export default handle(async (req, res) => {
       const quotes = await Promise.all(
       list.map(async (sym) => {
         const t = tfx[sym.replace(/=X$/, "")];
-        if (t) return { symbol: sym, price: t.price, previousClose: t.open, source: "truefx", live: true };
+        if (t) return { symbol: sym, price: t.mid, previousClose: t.open, source: "truefx", live: true };
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 6000);
@@ -673,9 +665,12 @@ export default handle(async (req, res) => {
     }
 
     // live spot overwrite for mapped metals — Yahoo's batch meta is delayed,
-    // the gold-api spot is fresh (Market Watch should move in real time too)
+    // the gold-api spot is fresh (Market Watch should move in real time too).
+    // Phase 18: the catalog symbols themselves (XAUUSD/XAGUSD) are accepted
+    // alongside the yahoo futures identifiers — the spot price is the same
+    // genuine source the chart and the execution engine use.
     await Promise.all(list.map(async (sym, i) => {
-      const code = SPOT_API_MAP[sym];
+      const code = SPOT_API_MAP[sym] ?? (sym === "XAUUSD" ? "XAU" : sym === "XAGUSD" ? "XAG" : null);
       if (!code) return;
       const spot = await fetchSpot(code);
       if (spot != null && quotes[i]) quotes[i].price = spot;
@@ -765,21 +760,22 @@ export default handle(async (req, res) => {
     const deduped = alignAndDedupe(checked.bars, INTERVAL_SECONDS[interval] ?? 60);
     const bars = deduped.bars;
     const meta = result.meta || {};
-    // live spot overlay: Yahoo's candles trail 5-15 min behind — paint the
-    // fresh gold-api spot onto the current bar ONLY when the history is
-    // fresh enough (spotMergeGuard inside mergeSpotBars refuses stale gaps
-    // and outlier ticks; the honest DELAYED badge reports the real lag).
-    // Skipped in period mode: replay/backtest history must stay pure.
-    const spotCode = SPOT_API_MAP[symbols];
+    // live tail overlay (Phase 18 rules):
+    //  - metals: NOT painted here. SPOT_API_MAP's yahoo identifiers (GC=F/SI=F)
+    //    are COMEX FUTURES contracts — painting the gold-api SPOT onto futures
+    //    bars silently mixes two instruments (futures history + spot tail, with
+    //    a genuine $ basis between them). The spot chart chain answers from
+    //    stooq's genuine spot CSV first and paints there; if stooq is down the
+    //    chart shows plainly-delayed futures with the honest DELAYED badge.
+    //  - forex: TrueFX majors paint a real-time BID tail — bid, not mid, so
+    //    the live bucket stays on the same price side as the Dukascopy BID
+    //    history (execution quotes take the mid in trading/prices.ts).
+    // spotMergeGuard inside mergeSpotBars refuses stale gaps and outlier
+    // ticks; skipped in period mode: replay/backtest history must stay pure.
     let live = false;
-    if (spotCode && !periodMode) {
-      const spot = await fetchSpot(spotCode);
-      if (spot != null && mergeSpotBars(bars, spot, interval)) live = true;
-    } else if (DUKA_MAP[bareCode] && !periodMode) {
-      // forex: TrueFX majors paint a real-time tail the same way gold-api
-      // does for metals — the delayed Yahoo stream gets a live last bucket
+    if (DUKA_MAP[bareCode] && !periodMode) {
       const t = (await truefxQuotes())[bareCode];
-      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
+      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     // measured delay: the provider's own market-time lag (0 when the live
     // spot merge succeeded) — the chart says "Delayed data (yahoo) · ~9 min"
@@ -787,7 +783,7 @@ export default handle(async (req, res) => {
     const rmt = Number(meta.regularMarketTime);
     const delaySec = live ? 0 : Number.isFinite(rmt) && rmt > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - rmt) : undefined;
     return {
-      source: live ? (SPOT_API_MAP[symbols] ? "spot+yahoo" : "truefx+yahoo") : "yahoo",
+      source: live ? "truefx+yahoo" : "yahoo",
       delayed: !live,
       delaySec,
       // what the yahoo identifier actually represents for THIS request —
@@ -919,7 +915,9 @@ export default handle(async (req, res) => {
     let live = false;
     if (!periodMode) {
       const t = (await truefxQuotes())[bareCode];
-      if (t && mergeSpotBars(bars, t.price, interval)) live = true;
+      // Phase 18: paint the genuine BID — same price side as the Dukascopy
+      // BID history the store serves; mid is reserved for execution quotes
+      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     const last = bars[bars.length - 1];
     return {

@@ -150,3 +150,68 @@ export function caseReveal(rarity: string): void {
     note(c, t0, 329.63, 0.26, 0.14);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Entry chime — the brand sound under the InspireTrade splash screen.
+// A soft rising C-major motif (C5 → E5 → G5 → C6) with a low pad underneath:
+// ~1.6s, quiet enough to sit under the loading animation, not startle.
+// ---------------------------------------------------------------------------
+
+/** one soft chime note with a gentle detuned double (warmth) */
+function chimeNote(c: AudioContext, at: number, freq: number, dur: number, gain: number) {
+  for (const [type, g, det] of [["triangle", 1, 0], ["sine", 0.35, 3]] as const) {
+    const osc = c.createOscillator();
+    const gn = c.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq + det, at);
+    gn.gain.setValueAtTime(0.0001, at);
+    gn.gain.exponentialRampToValueAtTime(gain * g, at + 0.03);
+    gn.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    osc.connect(gn).connect(c.destination);
+    osc.start(at);
+    osc.stop(at + dur + 0.05);
+  }
+}
+
+function entryChime(): void {
+  const c = audio();
+  if (!c) return;
+  const t0 = c.currentTime + 0.05;
+  // low pad holds under the whole motif
+  chimeNote(c, t0, 261.63, 1.5, 0.05);
+  // the rising motif
+  [523.25, 659.25, 783.99].forEach((f, i) => chimeNote(c, t0 + i * 0.16, f, 0.5, 0.11));
+  // settle on the octave — the "arrived" note as the splash hands over
+  chimeNote(c, t0 + 0.52, 1046.5, 0.9, 0.1);
+}
+
+let entryChimePlayed = false;
+
+/**
+ * Play the splash chime once per tab session. Autoplay policy: browsers keep
+ * the AudioContext suspended until a user gesture, so on a cold load the
+ * chime waits for the first pointer/key press (usually the login click while
+ * the splash is still up) instead of failing silently forever.
+ */
+export function playEntryChimeOnce(): void {
+  if (entryChimePlayed || typeof window === "undefined") return;
+  entryChimePlayed = true;
+  const c = audio();
+  if (c && c.state === "running") {
+    entryChime();
+    return;
+  }
+  const tryPlay = () => {
+    window.removeEventListener("pointerdown", tryPlay);
+    window.removeEventListener("keydown", tryPlay);
+    const c2 = audio();
+    if (c2 && c2.state === "running") entryChime();
+  };
+  window.addEventListener("pointerdown", tryPlay);
+  window.addEventListener("keydown", tryPlay);
+  // give up after 30s — never leave listeners dangling for the whole session
+  setTimeout(() => {
+    window.removeEventListener("pointerdown", tryPlay);
+    window.removeEventListener("keydown", tryPlay);
+  }, 30000);
+}

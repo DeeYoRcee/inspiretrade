@@ -161,6 +161,7 @@ export default handle(async (req, res) => {
   const cryptoNeeded = new Set<string>();
   const yahooNeeded = new Set<string>();
   const yahooDailyNeeded = new Set<string>();
+  const spotNeeded = new Set<string>();
 
   for (const [uid, alerts] of Object.entries<any>(all)) {
     for (const [id, a] of Object.entries<any>(alerts || {})) {
@@ -176,6 +177,17 @@ export default handle(async (req, res) => {
       if (inst.feed === "binance" && inst.binance) {
         cryptoNeeded.add(inst.binance);
         if (kind === "dailyHL") cryptoNeeded.add(inst.binance); // 1d kline below
+      } else if (inst.spotCode) {
+        // Phase 18: metals alerts evaluate against the genuine gold-api SPOT
+        // price — the same source the chart and the execution engine use.
+        // GC=F (a COMEX futures contract with its own price/delay) must never
+        // decide a spot-metal alert.
+        spotNeeded.add(inst.spotCode);
+        if (kind === "dailyHL") {
+          // previous-day range comes from the futures daily bar (gold-api has
+          // no OHLC history) — a disclosed futures basis, never the spot price
+          yahooNeeded.add(inst.yahoo!);
+        }
       } else if (inst.yahoo) {
         yahooNeeded.add(inst.yahoo);
         if (kind === "dailyHL") yahooDailyNeeded.add(inst.yahoo);
@@ -185,6 +197,19 @@ export default handle(async (req, res) => {
 
   const prices = new Map<string, number>();       // by instrument symbol
   const prevDay = new Map<string, { high: number; low: number }>();
+
+  // metals spot prices (gold-api — the chart/execution source)
+  if (spotNeeded.size) {
+    await Promise.allSettled([...spotNeeded].map(async (code) => {
+      const r = await fetch(`https://api.gold-api.com/price/${code}`);
+      if (!r.ok) return;
+      const d: any = await r.json();
+      const p = Number(d?.price);
+      if (!Number.isFinite(p) || p <= 0) return;
+      const inst = INSTRUMENTS.find((i) => i.spotCode === code);
+      if (inst) prices.set(inst.symbol, p);
+    }));
+  }
 
   // crypto spot prices + previous day H/L (1d klines, real data)
   if (cryptoNeeded.size) {
@@ -216,7 +241,10 @@ export default handle(async (req, res) => {
       const result = data?.chart?.result?.[0];
       const meta = result?.meta || {};
       const inst = INSTRUMENTS.find((i) => i.yahoo === sym);
-      if (inst && meta.regularMarketPrice != null) prices.set(inst.symbol, meta.regularMarketPrice);
+      // Phase 18: spot metals keep their gold-api price — a futures meta price
+      // (GC=F/SI=F) must never overwrite it; the futures feed only contributes
+      // the previous-day range for dailyHL (a different instrument, disclosed)
+      if (inst && !inst.spotCode && meta.regularMarketPrice != null) prices.set(inst.symbol, meta.regularMarketPrice);
       const ts: number[] = result?.timestamp || [];
       const q = result?.indicators?.quote?.[0] || {};
       if (inst && ts.length >= 2) {
