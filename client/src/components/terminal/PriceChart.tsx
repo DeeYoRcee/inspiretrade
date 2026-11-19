@@ -27,6 +27,7 @@ import {
 import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/terminal";
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
+import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
 import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
 import { useAuth } from "@/hooks/use-auth";
@@ -47,13 +48,14 @@ import {
   DrawingCanvas, type ChartConverter, type DrawingCanvasHandle, type TradeLine,
 } from "@/components/terminal/chart/DrawingCanvas";
 import { ChartToolbar } from "@/components/terminal/chart/ChartToolbar";
+import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
 import { LeftRail } from "@/components/terminal/chart/LeftRail";
 import { DrawingPropsBar } from "@/components/terminal/chart/DrawingPropsBar";
 import { cursorCss, type CursorMode } from "@/components/terminal/chart/cursor-mode";
 import { loadDrawingTemplates, saveDrawingTemplate, deleteDrawingTemplate, type DrawingTemplate } from "@/lib/chart-persistence";
 import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorParamsDialog,
-  LayoutsDialog, SettingsDialog, SymbolSearchDialog, type ContextMenuState,
+  LayoutsDialog, SettingsDialog, type ContextMenuState,
 } from "@/components/terminal/chart/dialogs";
 import { Eye, EyeOff, X, Activity } from "lucide-react";
 import { useIsAdmin } from "@/hooks/use-admin";
@@ -277,6 +279,44 @@ export function PriceChart({
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") }; }
     catch { return DEFAULT_SETTINGS; }
   });
+  // Phase 21 — per-instrument overrides (Terminal Settings → Instrument):
+  // grid / bid-ask lines / candle colors live-merge over the global chart
+  // settings; the `it_chart_settings` blob keeps the GLOBAL values only, so
+  // XAUUSD customization never leaks into EURUSD.
+  const perInstrument = useInstrumentSettings(symbol);
+  const mergedSettings: ChartSettings = useMemo(() => ({
+    ...settings,
+    grid: perInstrument.grid ?? settings.grid,
+    bidAsk: perInstrument.bidAsk ?? settings.bidAsk,
+    upColor: perInstrument.upColor ?? settings.upColor,
+    downColor: perInstrument.downColor ?? settings.downColor,
+  }), [settings, perInstrument]);
+  // an instrument's own default chart type applies when its chart opens
+  // (the toolbar type button keeps setting the global default)
+  useEffect(() => {
+    const per = getInstrumentSettings(symbol).chartType;
+    if (per) setChartTypeState(per as ChartType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+  // Terminal Settings dialog edits the same store — pick up its changes live
+  useEffect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail as Partial<ChartSettings> | undefined;
+      if (d) setSettings((prev) => ({ ...prev, ...d }));
+    };
+    window.addEventListener("it_chart_settings_changed", h);
+    return () => window.removeEventListener("it_chart_settings_changed", h);
+  }, []);
+  // scale + crosshair modes broadcast by Terminal Settings → Chart section
+  useEffect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail as { scaleMode?: "normal" | "log" | "percent"; cursorMode?: CursorMode } | undefined;
+      if (d?.scaleMode) setScaleMode(d.scaleMode);
+      if (d?.cursorMode) setCursorMode(d.cursorMode);
+    };
+    window.addEventListener("it_chart_aux_changed", h);
+    return () => window.removeEventListener("it_chart_aux_changed", h);
+  }, []);
 
   // ---- bid/ask price lines (server-consistent spread: SPREAD_PIPS × pipSize) --
   const updateBidAsk = useCallback((mid: number | null) => {
@@ -318,8 +358,8 @@ export function PriceChart({
   const safeMarks = Array.isArray(marks) ? marks : [];
   const safePositions = Array.isArray(positions) ? positions : [];
 
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
+  const settingsRef = useRef(mergedSettings);
+  settingsRef.current = mergedSettings;
   const marksRef = useRef(safeMarks);
   marksRef.current = safeMarks;
   const positionsRef = useRef(safePositions);
@@ -366,27 +406,27 @@ export function PriceChart({
 
   // ---- settings + indicator appearance → chart options ----------------------
   useEffect(() => {
-    localStorage.setItem("it_chart_settings", JSON.stringify(settings));
+    localStorage.setItem("it_chart_settings", JSON.stringify(settings)); // global blob — per-instrument overrides stay separate
     const chart = chartRef.current;
     const candle = candleRef.current;
     if (!chart || !candle) return;
     chart.applyOptions({
-      grid: settings.grid
+      grid: mergedSettings.grid
         ? { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } }
         : { vertLines: { visible: false }, horzLines: { visible: false } },
       crosshair: {
-        mode: settings.magnet ? CrosshairMode.Magnet : CrosshairMode.Normal,
+        mode: mergedSettings.magnet ? CrosshairMode.Magnet : CrosshairMode.Normal,
         vertLine: { visible: true, labelVisible: true, color: "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
         horzLine: { visible: true, labelVisible: true, color: "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
       },
     });
     candle.applyOptions({
-      upColor: settings.upColor, downColor: settings.downColor,
-      borderUpColor: settings.upColor, borderDownColor: settings.downColor,
-      wickUpColor: settings.upColor, wickDownColor: settings.downColor,
+      upColor: mergedSettings.upColor, downColor: mergedSettings.downColor,
+      borderUpColor: mergedSettings.upColor, borderDownColor: mergedSettings.downColor,
+      wickUpColor: mergedSettings.upColor, wickDownColor: mergedSettings.downColor,
     });
     canvasRef.current?.redraw();
-  }, [settings]);
+  }, [settings, mergedSettings]);
 
   // ---- Volume is a real indicator now (Phase 20) -----------------------------
   // The histogram is driven by a visible "volume" indicator config (Indicators
@@ -1717,7 +1757,7 @@ export function PriceChart({
 
       {/* dialogs + context menu */}
       <SettingsDialog open={openDialog === "settings"} settings={settings} onClose={() => setOpenDialog(null)} onSave={setSettings} />
-      <SymbolSearchDialog
+      <InstrumentExplorer
         open={openDialog === "search"}
         current={symbol}
         onClose={() => setOpenDialog(null)}

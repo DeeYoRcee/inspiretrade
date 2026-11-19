@@ -14,6 +14,7 @@
  *  - automatic reconnect with backoff (WS) / polling interval (REST)
  */
 import { authedFetch } from "@/lib/api";
+import { getAllPrices } from "@/lib/price-store";
 import {
   getInstrument, INSTRUMENTS, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS, type InstrumentSpec,
   aggregateBars, type Bar, type Timeframe,
@@ -103,18 +104,28 @@ class BinanceProvider {
   }
 
   /**
-   * One-shot 24h ticker snapshot for the watchlist: { lastPrice, priceChangePercent }
-   * per Binance symbol — a single REST round-trip for every crypto row.
+   * One-shot 24h ticker snapshot for the watchlist/explorer: { lastPrice,
+   * priceChangePercent, open/high/low } per Binance symbol — a single REST
+   * round-trip for every crypto row. The extra OHLC fields are the same
+   * 24hr response's own numbers (no extra call, no synthetic data).
    */
-  async ticker24h(binanceSymbols: string[]): Promise<Record<string, { price: number; changePct: number }>> {
+  async ticker24h(binanceSymbols: string[]): Promise<Record<string, { price: number; changePct: number; open: number | null; high: number | null; low: number | null }>> {
     if (!binanceSymbols.length) return {};
     const q = encodeURIComponent(JSON.stringify(binanceSymbols));
     const raw: any[] = await this.restGet(`/api/v3/ticker/24hr?symbols=${q}`);
-    const out: Record<string, { price: number; changePct: number }> = {};
+    const out: Record<string, { price: number; changePct: number; open: number | null; high: number | null; low: number | null }> = {};
     for (const t of raw) {
       const price = Number(t.lastPrice);
       const changePct = Number(t.priceChangePercent);
-      if (Number.isFinite(price) && price > 0) out[String(t.symbol)] = { price, changePct: Number.isFinite(changePct) ? changePct : 0 };
+      if (!(price > 0)) continue;
+      const open = Number(t.openPrice), high = Number(t.highPrice), low = Number(t.lowPrice);
+      out[String(t.symbol)] = {
+        price,
+        changePct: Number.isFinite(changePct) ? changePct : 0,
+        open: open > 0 ? open : null,
+        high: high > 0 ? high : null,
+        low: low > 0 ? low : null,
+      };
     }
     return out;
   }
@@ -964,5 +975,96 @@ export async function fetchWatchlistQuotes(): Promise<Record<string, WatchlistQu
     );
   }
   await Promise.all(tasks);
+  return out;
+}
+
+/**
+ * Phase 21 — the enriched quotes snapshot the explorer/watchlist/info panel
+ * consume: price, day change (abs + %), daily OHLC, prev close and the
+ * quote time for EVERY catalog instrument, all from real provider data.
+ * crypto: the Binance 24h ticker's own numbers · the rest: /api/quotes
+ * daily bars (last OHLC + previous close → real day change). Live prices
+ * already streaming in the price-store override the (older) daily close.
+ */
+export interface QuoteRow {
+  symbol: string;
+  price: number | null;
+  changeAbs: number | null;
+  changePct: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  prevClose: number | null;
+  at: number;
+  source: "binance" | "yahoo";
+}
+
+export async function fetchQuotesSnapshot(): Promise<Record<string, QuoteRow>> {
+  const out: Record<string, QuoteRow> = {};
+  const crypto = INSTRUMENTS.filter((i) => i.feed === "binance" && i.binance);
+  const quoted = INSTRUMENTS.filter((i) => i.feed !== "binance" && i.yahoo);
+  const now = Date.now();
+
+  const tasks: Promise<void>[] = [
+    binanceProvider
+      .ticker24h(crypto.map((i) => i.binance!))
+      .then((snap) => {
+        for (const i of crypto) {
+          const s = snap[i.binance!];
+          if (!s) continue;
+          const prevClose = s.open && s.open > 0 ? s.open : null;
+          out[i.symbol] = {
+            symbol: i.symbol,
+            price: s.price,
+            changeAbs: prevClose ? s.price - prevClose : (s.changePct ? (s.price * s.changePct) / (100 + s.changePct) : null),
+            changePct: s.changePct || null,
+            open: s.open,
+            high: s.high,
+            low: s.low,
+            prevClose,
+            at: now,
+            source: "binance",
+          };
+        }
+      })
+      .catch(() => { /* transient — next refresh retries */ }),
+  ];
+
+  for (const i of quoted) {
+    tasks.push(
+      authedFetch<any>(`/api/quotes?symbol=${encodeURIComponent(i.yahoo!)}&range=5d&interval=1d`)
+        .then((res) => {
+          const bars: Bar[] = res?.bars || [];
+          if (bars.length < 1) return;
+          const last = bars[bars.length - 1];
+          const prev = bars.length > 1 ? bars[bars.length - 2] : null;
+          if (!(last.close > 0)) return;
+          out[i.symbol] = {
+            symbol: i.symbol,
+            price: last.close,
+            changeAbs: prev && prev.close > 0 ? last.close - prev.close : null,
+            changePct: prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null,
+            open: Number(last.open) || null,
+            high: Number(last.high) || null,
+            low: Number(last.low) || null,
+            prevClose: prev && prev.close > 0 ? prev.close : null,
+            at: Number(res?.at) || now,
+            source: "yahoo",
+          };
+        })
+        .catch(() => { /* transient — next refresh retries */ }),
+    );
+  }
+  await Promise.all(tasks);
+  // live tick wins over the daily close (fresh > stale, never fabricated)
+  const live = getAllPrices();
+  for (const sym of Object.keys(out)) {
+    const lp = live[sym];
+    const row = out[sym];
+    if (lp && lp > 0 && row.price && Math.abs(lp - row.price) / row.price < 0.5) {
+      row.price = lp;
+      row.at = now;
+    }
+  }
   return out;
 }

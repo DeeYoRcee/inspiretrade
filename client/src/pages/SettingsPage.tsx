@@ -1,13 +1,14 @@
 /**
- * Settings page — Language (4 languages), theme and the entry sound.
- * Terminal preferences (incl. chart/candle colors) live in the terminal's
- * own Chart settings dialog; the old "Terminal defaults" section was removed.
+ * Settings page — Language (4 languages), theme and the entry sound, plus
+ * the Phase 21 unified Terminal Settings dialog (general/appearance/chart/
+ * instrument/trading/notifications/data/shortcuts).
  */
 import { useState } from "react";
-import { Check, Globe2, Palette, Volume2, VolumeX } from "lucide-react";
+import { Check, Globe2, Palette, Settings2, Volume2, VolumeX } from "lucide-react";
 import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
 import { useTheme, THEMES, THEME_LABELS, type Theme } from "@/lib/theme-context";
 import { ENTRY_SOUNDS, getEntrySound, playEntrySound, setEntrySound, type EntrySoundId } from "@/lib/sfx";
+import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
@@ -15,9 +16,22 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   // the pickable splash sound — tapping a chip previews it AND saves it
   const [sound, setSound] = useState<EntrySoundId>(() => getEntrySound());
+  const [terminalOpen, setTerminalOpen] = useState(false);
 
   return (
     <div className="container mx-auto max-w-3xl space-y-5 p-4 pb-24">
+      {/* ===== Terminal settings (Phase 21 unified dialog) ===== */}
+      <section className="glass-panel rounded-2xl border-border/50 p-5">
+        <h2 className="flex items-center gap-2 text-lg font-bold"><Settings2 className="h-5 w-5 text-primary" />{t("terminalSettings")}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">{t("terminalSettingsHint")}</p>
+        <button
+          onClick={() => setTerminalOpen(true)}
+          className="mt-4 inline-flex items-center gap-2 rounded-xl border border-primary/50 bg-primary/10 px-4 py-2.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
+        >
+          <Settings2 className="h-4 w-4" /> {t("openTerminalSettings")}
+        </button>
+      </section>
+
       {/* ===== Language ===== */}
       <section className="glass-panel rounded-2xl border-border/50 p-5">
         <h2 className="flex items-center gap-2 text-lg font-bold"><Globe2 className="h-5 w-5 text-primary" />{t("language")}</h2>
@@ -103,6 +117,13 @@ export default function SettingsPage() {
         </div>
         <p className="mt-3 text-[11px] text-muted-foreground">{t("settingsSavedNote")}</p>
       </section>
+
+      {/* the unified dialog — opened from the section above */}
+      <TerminalSettingsDialog
+        open={terminalOpen}
+        onClose={() => setTerminalOpen(false)}
+        symbol="BTCUSD"
+      />
     </div>
   );
 }

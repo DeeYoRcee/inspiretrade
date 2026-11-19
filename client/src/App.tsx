@@ -39,8 +39,32 @@ import { useIsAdmin } from "@/hooks/use-admin";
 import { useEconomyInvalidator } from "@/hooks/use-economy";
 import { authedFetch } from "@/lib/api";
 import { captureRefFromUrl, popStoredRef, clearStoredRef } from "@/lib/referral";
+import { useTerminalSettings, setTerminalSettingsUser } from "@/lib/terminal-settings";
+import { setInstrumentSettingsUser } from "@/lib/instrument-settings";
+import { setWatchlistsUser } from "@/lib/watchlists";
 import { Activity, Send } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+
+/**
+ * Phase 21 — wires the unified settings/watchlist stores to the signed-in
+ * user (LS mirror instant + RTDB sync) and applies the global appearance
+ * settings (base font size + density class) to the document root.
+ */
+function SettingsSync() {
+  const { user } = useAuth();
+  const ts = useTerminalSettings();
+  useEffect(() => {
+    const uid = user?.uid || null;
+    void setTerminalSettingsUser(uid);
+    void setInstrumentSettingsUser(uid);
+    void setWatchlistsUser(uid);
+  }, [user?.uid]);
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${ts.appearance.fontSize}px`;
+    document.documentElement.classList.toggle("density-cozy", ts.appearance.density === "cozy");
+  }, [ts.appearance.fontSize, ts.appearance.density]);
+  return null;
+}
 
 function PremiumSuccessHandler() {
   const { user } = useAuth();
@@ -389,6 +413,7 @@ function App() {
           <AuthProvider>
             <TooltipProvider>
               <AppErrorBoundary>
+                <SettingsSync />
                 <Toaster />
                 <Router />
                 <MusicPlayer />

@@ -550,7 +550,8 @@ async function recordFxLiveBids(bids) {
   const update = {};
   const touched = [];
   try {
-    for (const [code, bid] of Object.entries(bids)) {
+    for (const [code, bidRaw] of Object.entries(bids)) {
+      const bid = Number(bidRaw);
       if (!DUKA_MAP[code] || !(bid > 0)) continue;
       const minutes = await fxLiveMinutes(code);
       const ex = minutes.get(t);

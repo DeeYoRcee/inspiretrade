@@ -38,15 +38,21 @@ import NewsWorkspace from "@/components/terminal/NewsWorkspace";
 import EventStrip from "@/components/terminal/EventStrip";
 import { useEventWarning, useEconWarnSettings } from "@/hooks/use-terminal-econ";
 import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Plus, RefreshCw, RotateCcw } from "lucide-react";
+import { Plus, RefreshCw, RotateCcw, Search, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
+import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
+import { getTerminalSettings } from "@/lib/terminal-settings";
+import { getInstrumentSettings } from "@/lib/instrument-settings";
+import { touchRecent } from "@/lib/watchlists";
+import { getInstrument } from "@shared/terminal";
 
 const SYMBOL_KEY = "it_terminal_symbol";
 const TF_KEY = "it_terminal_tf";
@@ -90,14 +96,47 @@ export default function TerminalPage() {
     try { if (p) localStorage.setItem(PANEL_KEY, p); else localStorage.removeItem(PANEL_KEY); } catch { /* private mode */ }
   };
 
-  const [symbol, setSymbol] = useState(() => localStorage.getItem(SYMBOL_KEY) || "BTCUSD");
-  const [timeframe, setTimeframe] = useState<Timeframe>(
-    () => (localStorage.getItem(TF_KEY) as Timeframe) || "5m",
-  );
+  const [symbol, setSymbolRaw] = useState(() => localStorage.getItem(SYMBOL_KEY) || getTerminalSettings().general.defaultSymbol);
+  const [timeframe, setTimeframeRaw] = useState<Timeframe>(() => {
+    const sym = localStorage.getItem(SYMBOL_KEY) || getTerminalSettings().general.defaultSymbol;
+    // the instrument's own default timeframe wins, then the last session's
+    // choice, then the global default (Phase 21 per-instrument settings)
+    return (getInstrumentSettings(sym).timeframe as Timeframe | undefined)
+      || (localStorage.getItem(TF_KEY) as Timeframe | undefined)
+      || getTerminalSettings().general.defaultTf;
+  });
+  // switching instruments applies THAT instrument's own timeframe default
+  const setSymbol = (s: string) => {
+    setSymbolRaw(s);
+    touchRecent(s);
+    const per = getInstrumentSettings(s).timeframe as Timeframe | undefined;
+    if (per) setTimeframeRaw(per);
+  };
+  const setTimeframe = (tf: Timeframe) => setTimeframeRaw(tf);
 
   useEffect(() => { localStorage.setItem(SYMBOL_KEY, symbol); }, [symbol]);
   useEffect(() => { localStorage.setItem(TF_KEY, timeframe); }, [timeframe]);
   useEffect(() => { localStorage.setItem(MODE_KEY, mode); }, [mode]);
+
+  // TradingView-style timeframe hotkeys — the number row switches timeframes
+  // (1m 3m 5m 15m 30m 1h 2h 4h 1d 1W; "0" = 10th). Skips text inputs and
+  // modifier combos so typing and system shortcuts stay untouched.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target as HTMLElement | null)?.isContentEditable) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const idx = "1234567890".indexOf(e.key);
+      if (idx < 0 || idx >= TIMEFRAMES.length - 1) return;
+      setTimeframeRaw(TIMEFRAMES[idx]);
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  // Phase 21 — the full instrument explorer + terminal settings dialog
+  const [explorerOpen, setExplorerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // replay state lives at the page level so the chart, ticket and book share it
   const r = useReplay();
@@ -145,6 +184,7 @@ export default function TerminalPage() {
           mode={mode} onModeChange={setMode}
           symbol={symbol} onSymbolChange={setSymbol}
           timeframe={timeframe} onTimeframeChange={setTimeframe}
+          onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)}
           accounts={[]} activeId={null} onAccountChange={setActiveId}
           metrics={null} busy={false} onRefresh={refreshNow}
           account={null} onReset={resetAccount}
@@ -176,6 +216,7 @@ export default function TerminalPage() {
         mode={mode} onModeChange={setMode}
         symbol={symbol} onSymbolChange={setSymbol}
         timeframe={timeframe} onTimeframeChange={setTimeframe}
+        onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)}
         accounts={mode === "live" ? accounts : []} activeId={account?.id ?? null} onAccountChange={setActiveId}
         metrics={mode === "live" ? metrics : null} busy={busy} onRefresh={refreshNow}
         account={mode === "live" ? account : null} onReset={resetAccount}
@@ -255,6 +296,13 @@ export default function TerminalPage() {
         </>
       )}
       <NewAccountDialog open={newAccountOpen} onClose={() => setNewAccountOpen(false)} />
+      <InstrumentExplorer
+        open={explorerOpen}
+        current={symbol}
+        onClose={() => setExplorerOpen(false)}
+        onSelect={setSymbol}
+      />
+      <TerminalSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} symbol={symbol} />
     </div>
   );
 }
@@ -266,12 +314,14 @@ export default function TerminalPage() {
 function Toolbar({
   mode, onModeChange,
   symbol, onSymbolChange, timeframe, onTimeframeChange,
+  onOpenExplorer, onOpenSettings,
   accounts, activeId, onAccountChange,
   metrics, busy, onRefresh, account, onReset, onNewAccount,
 }: {
   mode: TerminalMode; onModeChange: (m: TerminalMode) => void;
   symbol: string; onSymbolChange: (s: string) => void;
   timeframe: Timeframe; onTimeframeChange: (tf: Timeframe) => void;
+  onOpenExplorer: () => void; onOpenSettings: () => void;
   accounts: { id: string; label: string; type: string }[];
   activeId: string | null; onAccountChange: (id: string) => void;
   metrics: { balance: number; equity: number; floatingPnl: number; usedMargin: number; freeMargin: number; marginLevel: number | null } | null;
@@ -305,23 +355,17 @@ function Toolbar({
       {showMarkets && (
         <>
           <div className={cn(mode === "replay" && "pointer-events-none opacity-60")} title={mode === "replay" ? "The replay session is bound to the instrument chosen at start" : undefined}>
-            <Select value={symbol} onValueChange={onSymbolChange}>
-              <SelectTrigger className="w-[170px] font-semibold">
-                <SelectValue placeholder="Symbol" />
-              </SelectTrigger>
-              <SelectContent>
-                {ASSET_CLASSES.map((c) => (
-                  <SelectGroup key={c.id}>
-                    <SelectLabel>{c.label}</SelectLabel>
-                    {INSTRUMENTS.filter((i) => i.assetClass === c.id).map((i) => (
-                      <SelectItem key={i.symbol} value={i.symbol}>
-                        {i.symbol} <span className="ml-1 text-xs text-slate-400">{i.name}</span>
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Phase 21 — the toolbar symbol button opens the full instrument
+                explorer (search, categories, favorites, live prices) */}
+            <button
+              onClick={onOpenExplorer}
+              className="flex h-9 w-[210px] items-center justify-between rounded-md border border-slate-700/70 px-3 text-sm font-semibold text-slate-100 transition-colors hover:border-slate-500"
+            >
+              <span className="min-w-0 truncate">
+                {symbol} <span className="ml-1 text-xs font-normal text-slate-400">{getInstrument(symbol)?.name}</span>
+              </span>
+              <Search className="ml-2 h-3.5 w-3.5 shrink-0 text-slate-500" />
+            </button>
           </div>
 
           <div className={cn("flex items-center gap-0.5 rounded-md border border-slate-700/70 p-0.5", mode === "replay" && "pointer-events-none opacity-60")}>
@@ -338,6 +382,15 @@ function Toolbar({
               </button>
             ))}
           </div>
+
+          {/* Phase 21 — unified terminal settings */}
+          <button
+            onClick={onOpenSettings}
+            title="Terminal settings"
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/70 text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+          </button>
         </>
       )}
 

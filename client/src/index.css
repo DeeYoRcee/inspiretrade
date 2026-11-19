@@ -389,3 +389,6 @@ img[src="/logo.png"] {
 :root[data-theme="light"] .cal-root .cal-panel .text-emerald-400 { color: hsl(152 60% 32%) !important; }
 :root[data-theme="light"] .cal-root .cal-panel .text-red-400 { color: hsl(0 68% 42%) !important; }
 :root[data-theme="light"] .cal-root .cal-panel .text-sky-300 { color: hsl(203 80% 34%) !important; }
+
+/* Phase 21 — terminal density setting (Terminal Settings → Appearance) */
+html.density-cozy .wl-row { padding-top: 0.4rem; padding-bottom: 0.4rem; }

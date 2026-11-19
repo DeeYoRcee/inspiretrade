@@ -7,7 +7,7 @@
  * pending orders, history and statistics live in the TradingBlotter below
  * the chart.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { getInstrument } from "@shared/terminal";
@@ -16,6 +16,9 @@ import { Minus, Plus } from "lucide-react";
 import { useTrading } from "@/hooks/use-trading";
 import { usePrice } from "@/lib/price-store";
 import { useServerQuote } from "@/hooks/use-server-quote";
+import { useTerminalSettings } from "@/lib/terminal-settings";
+import { useInstrumentSettings } from "@/lib/instrument-settings";
+import { playEntrySound, getEntrySound } from "@/lib/sfx";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -59,12 +62,20 @@ export function TradingPanel({
   const ask = serverQuote?.ask ?? fbAsk;
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [orderKind, setOrderKind] = useState<"market" | "limit" | "stop">("market");
-  const [lots, setLots] = useState("0.10");
+  // Phase 21 — trading defaults come from Terminal Settings; the instrument's
+  // own overrides (Terminal Settings → Instrument) win when present. Field
+  // init + symbol switches both re-apply them.
+  const ts = useTerminalSettings();
+  const per = useInstrumentSettings(symbol);
+  const confirmOrders = ts.trading.oneClick ? false : ts.trading.confirmOrders;
+  const [orderKind, setOrderKind] = useState<"market" | "limit" | "stop">(
+    ts.trading.defaultOrderType === "limit" ? "limit" : "market",
+  );
+  const [lots, setLots] = useState(() => per.defaultLot ?? ts.trading.defaultLot);
   const [limitPrice, setLimitPrice] = useState("");
   const [slPrice, setSlPrice] = useState("");
   const [tpPrice, setTpPrice] = useState("");
-  const [riskPct, setRiskPct] = useState("1");
+  const [riskPct, setRiskPct] = useState(() => per.defaultRisk ?? ts.trading.defaultRisk);
 
   useEffect(() => {
     if (!error) return;
@@ -76,6 +87,16 @@ export function TradingPanel({
   const contract = inst?.contractSize ?? 1;
   const balance = account?.balance ?? 0;
   const locked = !!account?.rules && account.status !== "active";
+
+  // instrument switch → fresh ticket with that instrument's defaults
+  useEffect(() => {
+    setLots(per.defaultLot ?? ts.trading.defaultLot);
+    setRiskPct(per.defaultRisk ?? ts.trading.defaultRisk);
+    setSlPrice("");
+    setTpPrice("");
+    setLimitPrice("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
 
   // display entry: buy fills at ask / sell fills at bid — same model as the engine
   const displayEntry = orderKind === "market"
@@ -99,6 +120,23 @@ export function TradingPanel({
 
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // SL/TP prefill from the instrument's pip-based defaults — once per symbol,
+  // the first time a live entry price exists (buy = SL below / TP above)
+  const slTlPrefilledRef = useRef(false);
+  useEffect(() => { slTlPrefilledRef.current = false; }, [symbol]);
+  const pipSize = inst?.pipSize ?? 0.01;
+  useEffect(() => {
+    if (slTlPrefilledRef.current || displayEntry == null) return;
+    slTlPrefilledRef.current = true;
+    if (per.slPips != null) {
+      setSlPrice((side === "buy" ? displayEntry - Number(per.slPips) * pipSize : displayEntry + Number(per.slPips) * pipSize).toFixed(d));
+    }
+    if (per.tpPips != null) {
+      setTpPrice((side === "buy" ? displayEntry + Number(per.tpPips) * pipSize : displayEntry - Number(per.tpPips) * pipSize).toFixed(d));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayEntry, symbol]);
+
   const doSubmit = async () => {
     if (busy || locked) return;
     const kind: OrderKind = orderKind;
@@ -108,18 +146,24 @@ export function TradingPanel({
       sl: slPx, tp: tpPrice ? Number(tpPrice) : null,
     });
     if (res) {
+      if (ts.trading.entrySoundOnOrder) playEntrySound(getEntrySound());
       if (res.position) toast({ title: `${side === "buy" ? "BUY" : "SELL"} ${symbol} — filled`, description: `${lotsNum} lots @ ${res.position.entry.toFixed(d)} (server ${res.quote?.source ?? ""})` });
       else if (res.order) toast({ title: `${side === "buy" ? "Buy" : "Sell"} ${orderKind} placed`, description: `${symbol} trigger ${res.order.price}` });
     }
   };
 
-  // every MARKET order asks for an explicit confirmation (professional ticket
-  // behavior); pending orders fire directly unless the event guard is active
-  // ("confirm trades near major events" — opt-in, never blocks automatically)
+  // MARKET orders confirm explicitly unless one-click trading or a disabled
+  // confirmation is set in Terminal Settings; pending orders fire directly;
+  // the opt-in event guard ALWAYS confirms (safety beats speed near releases)
   const [confirmMode, setConfirmMode] = useState<"market" | "event">("market");
   const submit = async () => {
-    if (orderKind === "market" || eventGuard) {
-      setConfirmMode(eventGuard ? "event" : "market");
+    if (eventGuard) {
+      setConfirmMode("event");
+      setConfirmOpen(true);
+      return;
+    }
+    if (orderKind === "market" && confirmOrders) {
+      setConfirmMode("market");
       setConfirmOpen(true);
       return;
     }

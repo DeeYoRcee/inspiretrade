@@ -1,4 +1,5 @@
 import { useTheme } from "@/lib/theme-context";
+import { useTerminalSettings } from "@/lib/terminal-settings";
 
 /**
  * Steam-style animated theme backdrop: themes that ship with a looping video
@@ -16,8 +17,9 @@ const THEME_VIDEOS: Record<string, { src: string; opacity: number; veil: string 
 
 export function ThemeBackdrop() {
   const { theme } = useTheme();
+  const { themeBackdrop } = useTerminalSettings().appearance;
   const conf = THEME_VIDEOS[theme];
-  if (!conf) return null;
+  if (!conf || !themeBackdrop) return null;
   return (
     <div className="pointer-events-none fixed inset-0 z-[-2] overflow-hidden" aria-hidden>
       <video
