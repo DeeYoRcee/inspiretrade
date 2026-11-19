@@ -536,15 +536,26 @@ export default handle(async (req, res) => {
         if (!existing) {
           // no self-recorded observation for this minute → genuine provider OHLC
           update[String(t)] = { o, h, l, c, s: 0 };
+        } else if (
+          Number(existing.s || 0) > 2 &&
+          (Math.abs(c / Number(existing.c) - 1) > 0.02 || Math.abs(Number(existing.o) / c - 1) > 0.02)
+        ) {
+          // Phase 20.3: the recorded bar DISAGREES with the provider's real
+          // minute by >2% — a stuck-price glitch (gold-api served a stale
+          // price stamped fresh for hours on 2026-11-19; envelope-expanding
+          // such bars kept the corruption alive). The provider's genuine
+          // minute OHLC replaces the corrupted observations; the sample count
+          // survives so the volume block keeps its honest meaning.
+          update[String(t)] = { o, h, l, c, s: Number(existing.s || 1) };
         } else if (Number(existing.s || 0) <= 2) {
           // sparse recorded bar (1-2 observed samples ≈ a dot): replace the
           // sampled OHLC with the provider's genuine minute OHLC, but the
           // observed price is still real — keep it inside the envelope
           update[String(t)] = { o, h: Math.max(h, Number(existing.h) || h), l: Math.min(l, Number(existing.l) || l), c, s: Number(existing.s || 1) };
         } else if (Number(existing.h) < h || Number(existing.l) > l) {
-          // well-recorded bar (s ≥ 3): the observations are real, but the
-          // provider sees intra-minute extremes a 1s poll can miss — expand
-          // the envelope only; observed open/close stay untouched
+          // well-recorded bar (s ≥ 3, price-consistent): the observations are
+          // real, but the provider sees intra-minute extremes a 1s poll can
+          // miss — expand the envelope only; observed open/close stay untouched
           update[String(t)] = {
             o: Number(existing.o), c: Number(existing.c), s: Number(existing.s || 1),
             h: Math.max(Number(existing.h) || h, h), l: Math.min(Number(existing.l) || l, l),

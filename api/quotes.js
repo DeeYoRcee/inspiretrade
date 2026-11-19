@@ -755,6 +755,8 @@ var quotes_default = handle(async (req, res) => {
         const existing = recorded[String(t)];
         if (!existing) {
           update[String(t)] = { o, h, l, c, s: 0 };
+        } else if (Number(existing.s || 0) > 2 && (Math.abs(c / Number(existing.c) - 1) > 0.02 || Math.abs(Number(existing.o) / c - 1) > 0.02)) {
+          update[String(t)] = { o, h, l, c, s: Number(existing.s || 1) };
         } else if (Number(existing.s || 0) <= 2) {
           update[String(t)] = { o, h: Math.max(h, Number(existing.h) || h), l: Math.min(l, Number(existing.l) || l), c, s: Number(existing.s || 1) };
         } else if (Number(existing.h) < h || Number(existing.l) > l) {

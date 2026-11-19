@@ -529,48 +529,78 @@ class QuotesProvider {
     const inst = getInstrument(symbol)!;
     const code = inst.spotCode!;
     const now = Math.floor(Date.now() / 1000);
-    // server merge first (authoritative across devices), fall back to local
-    let candles: SpotCandle[] = [];
-    try {
-      const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}`);
-      if (res?.ok && Array.isArray(res.candles)) {
-        candles = res.candles.filter((c: any) => validSpotCandle(c, now, 30 * 86400));
-        const providerBars = candles.filter((c: SpotCandle) => c.s === 0).length;
-        if (providerBars > 0) this.spotProviderBars.set(code, providerBars);
-      }
-    } catch { /* server unavailable → local records only */ }
-    // Phase 16 + Twelve Data: while the self-recorded history is still thin,
-    // ask the server to backfill real XAU/USD 1m spot bars from Twelve Data
-    // (once per session; the key lives server-side, never in the repo — the
-    // cooldown + recorded-wins merge rules protect data integrity)
-    if (candles.length < 500 && !spotBackfillTried.has(code)) {
-      spotBackfillTried.add(code);
+    const loadServerCandles = async (): Promise<SpotCandle[]> => {
+      try {
+        const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}`);
+        if (res?.ok && Array.isArray(res.candles)) {
+          const out = (res.candles as SpotCandle[]).filter((c: any) => validSpotCandle(c, now, 30 * 86400));
+          const providerBars = out.filter((c: SpotCandle) => c.s === 0).length;
+          if (providerBars > 0) this.spotProviderBars.set(code, providerBars);
+          return out;
+        }
+      } catch { /* server unavailable → local records only */ }
+      return [];
+    };
+    const assemble = async (serverCandles: SpotCandle[]) => {
+      let cs = mergeSpotSeries(serverCandles, loadLocalSpot(code));
+      // include the in-progress minute + unflushed completions
+      const st = spotRec.get(code);
+      if (st) cs = mergeSpotSeries(cs, [...st.unflushed, ...(st.minute ? [st.minute] : [])].filter((c) => validSpotCandle(c, now)));
+      saveLocalSpot(code, cs);
+      const m1raw: Bar[] = cs.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s }));
+      // Phase 20: reject stuck-price glitch islands ALREADY in the store (the
+      // recorder guard only protects ticks recorded from now on) — a provider
+      // that served a stale price for hours must not reach the chart as
+      // "separate candle groups". The rejection count is surfaced honestly in
+      // the feed badge message.
+      const island = minuteIslandFilter(m1raw as RawBar[]);
+      return { candles: cs, m1: island.bars as Bar[], islandRejected: island.rejected };
+    };
+
+    let { candles, m1, islandRejected } = await assemble(await loadServerCandles());
+
+    // Phase 16 + Twelve Data backfill — Phase 20.3 widened triggers: a thin
+    // store, a BIG RECENT GAP (chart closed, device asleep — the visible
+    // 12:50→17:38 hole), SPARSE coverage of market hours (gold-api lagging →
+    // the honest recorder skips minutes), or glitch bars the island filter
+    // just rejected all mean the chart needs genuine provider 1m OHLC to be
+    // continuous. Twelve Data carries today's real XAU/USD minutes; the
+    // server merges with recorded-wins semantics and replaces >2%-conflicting
+    // stuck bars. The key lives server-side, never in the repo.
+    const inMarketHours = (t: number): boolean => {
+      // metals session: Sun 22:00 UTC → Fri 21:00 UTC (the Fri-evening→Sunday
+      // window is closed — missing minutes there are honest, not holes)
+      const d = new Date(t * 1000);
+      const dow = d.getUTCDay();
+      const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+      if (dow === 6) return false; // Saturday
+      if (dow === 5) return mins < 21 * 60; // Friday before 21:00
+      if (dow === 0) return mins >= 22 * 60; // Sunday after 22:00
+      return true;
+    };
+    const nowMin = Math.floor(now / 60) * 60;
+    const back6h = m1.filter((b) => b.time >= nowMin - 6 * 3600 && b.time <= nowMin);
+    let expected6h = 0;
+    for (let t = nowMin - 6 * 3600; t <= nowMin; t += 60) if (inMarketHours(t)) expected6h++;
+    const coverage = expected6h > 0 ? back6h.length / expected6h : 1;
+    const recent = m1.filter((b) => b.time >= now - 86400);
+    let recentGap = 0;
+    for (let i = 1; i < recent.length; i++) recentGap = Math.max(recentGap, recent[i].time - recent[i - 1].time - 60);
+    if (recent.length && recent[0].time > now - 86400 + 1800) recentGap = Math.max(recentGap, 1800);
+    const needsBackfill = candles.length < 500 || islandRejected > 0 || recentGap >= 1800 || coverage < 0.75;
+    if (needsBackfill && Date.now() - (spotBackfillAt.get(code) || 0) > SPOT_BACKFILL_TTL_MS) {
+      spotBackfillAt.set(code, Date.now());
       try {
         const r = await authedFetch<any>("/api/quotes?action=backfill-spot", { code });
         if (r?.ok && r.written > 0) {
-          const res2 = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}`);
-          if (res2?.ok && Array.isArray(res2.candles)) {
-            candles = res2.candles.filter((c: any) => validSpotCandle(c, Math.floor(Date.now() / 1000), 30 * 86400));
-            const providerBars = candles.filter((c: SpotCandle) => c.s === 0).length;
-            if (providerBars > 0) this.spotProviderBars.set(code, providerBars);
-          }
+          ({ candles, m1, islandRejected } = await assemble(await loadServerCandles()));
+        } else if (r && r.reason === "cooldown") {
+          spotBackfillAt.delete(code); // gate-blocked — retry on the next resync
         }
       } catch { /* backfill is best-effort */ }
     }
-    candles = mergeSpotSeries(candles, loadLocalSpot(code));
-    // include the in-progress minute + unflushed completions
-    const st = spotRec.get(code);
-    if (st) candles = mergeSpotSeries(candles, [...st.unflushed, ...(st.minute ? [st.minute] : [])].filter((c) => validSpotCandle(c, now)));
-    saveLocalSpot(code, candles);
-    const m1raw: Bar[] = candles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s }));
-    // Phase 20: reject stuck-price glitch islands ALREADY in the store (the
-    // guard above only protects ticks recorded from now on) — a provider
-    // that served a stale price for hours must not reach the chart as
-    // "separate candle groups". The rejection count is surfaced honestly in
-    // the feed badge message.
-    const island = minuteIslandFilter(m1raw as RawBar[]);
-    lastSpotIslandRejected = island.rejected;
-    const m1 = island.bars as Bar[];
+
+    lastSpotIslandRejected = islandRejected;
     // seed the recorder's glitch anchor from the clean tail
     if (m1.length) spotAnchor.set(code, { close: m1[m1.length - 1].close, at: Date.now() });
     const key = `${symbol}:${tf}`;
@@ -604,7 +634,11 @@ export { mergeSpotTail };
 const SPOT_REC_KEY = (code: string) => `it_spot_rec_${code}`;
 const SPOT_REC_MAX = 4320; // 3 days of minutes per code (quota-safe)
 const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCandle[] }>();
-const spotBackfillTried = new Set<string>();
+/** last successful Twelve Data backfill trigger per code — a 45-minute TTL
+ *  lets a still-sparse store re-trigger on later resyncs while the server's
+ *  2-minute gate protects TD's 8 req/min budget */
+const spotBackfillAt = new Map<string, number>();
+const SPOT_BACKFILL_TTL_MS = 45 * 60000;
 const fxBackfillTried = new Set<string>();
 /** glitch-island bars rejected from the recorded spot history (last load) —
  *  surfaced in the feed badge so the data rejection is visible, not silent */
