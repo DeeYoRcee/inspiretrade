@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { updateProfile } from "firebase/auth";
 import { ref, getDatabase } from "firebase/database";
 import { MediaLightbox } from "@/components/media-lightbox";
 import type { PublicProfileSettings } from "@/lib/public-profile";
@@ -136,6 +137,9 @@ export default function ProfilePage() {
   const [editOpen, setEditOpen] = useState(false);
   const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
+  // Phase 20: the display name (nick) is editable in the same dialog —
+  // saved to Firebase Auth (updateProfile) AND the RTDB profile
+  const [nameDraft, setNameDraft] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
   // Telegram-style: tap the avatar photo/video → full-screen viewer
   const [mediaView, setMediaView] = useState<{ src: string; kind: "image" | "video" } | null>(null);
@@ -145,7 +149,7 @@ export default function ProfilePage() {
   const [xDraft, setXDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const displayName = user?.displayName || profile?.username || user?.email?.split("@")[0] || "Trader";
+  const displayName = user?.displayName || profile?.displayName || profile?.username || user?.email?.split("@")[0] || "Trader";
   const username = profile?.username || null;
   const gradient = useMemo(() => gradientFor(user?.uid || displayName), [user?.uid, displayName]);
   const initials = useMemo(() => initialsOf(displayName), [displayName]);
@@ -206,10 +210,11 @@ export default function ProfilePage() {
 
   const openEdit = () => {
     setBioDraft(bio);
-    // prefill the social handles
+    // prefill the social handles + the display name (nick)
     setIgDraft(profile?.social?.instagram || "");
     setTgDraft(profile?.social?.telegram || "");
     setXDraft(profile?.social?.x || "");
+    setNameDraft(user?.displayName || profile?.displayName || "");
     setEditOpen(true);
   };
 
@@ -320,6 +325,23 @@ export default function ProfilePage() {
 
   const saveBio = async () => {
     if (!user) return;
+    // Phase 20: the nick saves FIRST and independently of the public profile —
+    // it must never be blocked by the username requirement. Firebase Auth
+    // (updateProfile) is what the whole UI reads; the RTDB profile mirrors it
+    // for the server/public snapshot. updateProfile never needs a fresh login.
+    const cleanName = nameDraft.trim().replace(/\s+/g, " ").slice(0, 40);
+    const prevName = user.displayName || profile?.displayName || "";
+    let effectiveName = prevName;
+    if (cleanName && cleanName !== prevName) {
+      try {
+        await updateProfile(user, { displayName: cleanName });
+        await saveUserProfile(user.uid, { displayName: cleanName });
+        queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
+        effectiveName = cleanName;
+      } catch {
+        toast({ title: t("error"), variant: "destructive" });
+      }
+    }
     if (!username) {
       setEditOpen(false);
       setUsernameDialogOpen(true);
@@ -358,7 +380,9 @@ export default function ProfilePage() {
       if (nextSettings.enabled && username && USERNAME_TEST.test(username)) {
         await savePublicProfile.mutateAsync({
           username,
-          displayName: user.displayName || username,
+          // the freshly typed nick wins — the Auth user object may not have
+          // re-emitted yet at this point
+          displayName: effectiveName || username,
           trades: trades ?? [],
           settings: nextSettings,
         });
@@ -689,6 +713,18 @@ export default function ProfilePage() {
                 {t("profileRemovePhoto")}
               </button>
             )}
+
+            {/* Name (nick) — Phase 20: the missing basic detail */}
+            <div className="w-full space-y-1.5">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("profileName")}</p>
+              <Input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder={t("profileNamePlaceholder")}
+                className="rounded-xl text-sm"
+                maxLength={40}
+              />
+            </div>
 
             {/* Bio */}
             <div className="w-full space-y-1.5">

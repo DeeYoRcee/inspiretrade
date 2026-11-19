@@ -21,7 +21,6 @@ export interface ChartSettings {
   countdown: boolean;
   legend: boolean;
   magnet: boolean;
-  volume: boolean;
   bidAsk: boolean;
   upColor: string;
   downColor: string;
@@ -36,8 +35,10 @@ export interface ChartSettings {
 
 // TradingView-reference palette: light bullish / gray bearish candles on the
 // dark charcoal background (users can restore green/red in chart settings)
+// Phase 20: `volume` is no longer a setting — Volume became a real indicator
+// (Indicators menu, persisted per user+symbol), off by default.
 export const DEFAULT_SETTINGS: ChartSettings = {
-  grid: true, countdown: true, legend: true, magnet: true, volume: true, bidAsk: true,
+  grid: true, countdown: true, legend: true, magnet: true, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
   drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12, oneShot: true,
 };
@@ -55,7 +56,7 @@ export function SettingsDialog({
   if (!open) return null;
   const toggles: [keyof ChartSettings, string][] = [
     ["grid", "Show grid"], ["legend", "OHLC legend"], ["countdown", "Candle-close countdown"],
-    ["magnet", "Magnet crosshair"], ["volume", "Volume histogram"], ["bidAsk", "Bid / Ask price lines"],
+    ["magnet", "Magnet crosshair"], ["bidAsk", "Bid / Ask price lines"],
   ];
   return (
     <ChartDialog title="Chart settings" onClose={onClose}>

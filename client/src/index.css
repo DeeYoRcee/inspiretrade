@@ -48,9 +48,9 @@
     --background: 270 24% 8%; --foreground: 280 20% 97%; --card: 270 20% 12%; --card-foreground: 280 20% 97%; --popover: 270 20% 13%; --popover-foreground: 280 20% 97%; --primary: 285 78% 72%; --primary-foreground: 270 30% 10%; --secondary: 270 17% 20%; --secondary-foreground: 280 20% 97%; --muted: 270 17% 20%; --muted-foreground: 275 12% 70%; --accent: 285 20% 24%; --accent-foreground: 280 20% 97%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 275 15% 27%; --input: 275 15% 27%; --ring: 285 78% 72%;
   }
 
-  :root[data-theme="bull"] {
+  :root[data-theme="money"] {
     color-scheme: dark;
-    --background: 350 55% 5%; --foreground: 350 20% 95%; --card: 350 40% 9%; --card-foreground: 350 20% 95%; --popover: 350 40% 10%; --popover-foreground: 350 20% 95%; --primary: 0 84% 60%; --primary-foreground: 350 40% 6%; --secondary: 350 25% 16%; --secondary-foreground: 350 20% 95%; --muted: 350 22% 14%; --muted-foreground: 350 12% 68%; --accent: 350 28% 19%; --accent-foreground: 350 20% 95%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 350 25% 21%; --input: 350 25% 21%; --ring: 0 84% 60%;
+    --background: 160 46% 5%; --foreground: 160 18% 95%; --card: 160 34% 9%; --card-foreground: 160 18% 95%; --popover: 160 34% 10%; --popover-foreground: 160 18% 95%; --primary: 152 66% 46%; --primary-foreground: 160 40% 6%; --secondary: 160 22% 15%; --secondary-foreground: 160 18% 95%; --muted: 160 20% 13%; --muted-foreground: 160 10% 68%; --accent: 160 26% 18%; --accent-foreground: 160 18% 95%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 160 22% 20%; --input: 160 22% 20%; --ring: 152 66% 46%;
   }
   :root[data-theme="f1"] {
     color-scheme: dark;
@@ -294,21 +294,21 @@ img[src="/logo.png"] {
 :root[data-theme="knight"] .hover-glow:hover { box-shadow: 0 0 24px -6px hsl(42 78% 58% / 0.35); }
 
 /* theme picker dots — real swatches per theme (settings page + navbar) */
-/* ---- Animated themes (Phase 19) ------------------------------------------
-   Bull Market: a rising-red heat glow with a faint candle-silhouette grid
-   pulsing over the looping bull.mp4 backdrop.
+/* ---- Animated themes (Phase 20) ------------------------------------------
+   Money Rain: an emerald wealth glow pulsing over the looping money.mp4
+   backdrop (flipping gold coins + green banknotes) — replaces Bull Market.
    Formula 1: fast diagonal speed streaks over the looping f1.mp4 backdrop.
    Both are GPU-cheap (background-position / transform only) and respect
    prefers-reduced-motion. */
-:root[data-theme="bull"] body {
-  background-color: hsl(350 55% 5%);
+:root[data-theme="money"] body {
+  background-color: hsl(160 46% 5%);
   background-image:
-    radial-gradient(ellipse 60% 42% at 50% 78%, hsl(0 85% 50% / 0.10), transparent 62%),
-    radial-gradient(ellipse 46% 36% at 16% 22%, hsl(350 70% 42% / 0.08), transparent 60%);
+    radial-gradient(ellipse 60% 42% at 50% 78%, hsl(152 70% 42% / 0.10), transparent 62%),
+    radial-gradient(ellipse 46% 36% at 16% 22%, hsl(44 80% 50% / 0.07), transparent 60%);
   background-size: 170% 170%, 150% 150%;
-  animation: bull-pulse 14s ease-in-out infinite alternate;
+  animation: money-pulse 14s ease-in-out infinite alternate;
 }
-@keyframes bull-pulse {
+@keyframes money-pulse {
   0% { background-position: 50% 100%, 0% 0%; }
   50% { background-position: 40% 78%, 60% 40%; }
   100% { background-position: 62% 88%, 20% 66%; }
@@ -333,11 +333,11 @@ img[src="/logo.png"] {
   to { transform: translate3d(-160px, 36px, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  :root[data-theme="bull"] body { animation: none; }
+  :root[data-theme="money"] body { animation: none; }
   :root[data-theme="f1"] body::before { animation: none; }
 }
 
-.theme-dot-bull { background: linear-gradient(135deg, #17060a 35%, #ef4444); }
+.theme-dot-money { background: linear-gradient(135deg, #04140d 35%, #2fbf71 60%, #f5c542); }
 .theme-dot-f1 { background: linear-gradient(135deg, #2a0707 40%, #dc2626 65%, #f5f5f5); }
 
 .theme-dot-dark { background: #0a0a0f; }

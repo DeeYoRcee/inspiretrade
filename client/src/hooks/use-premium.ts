@@ -9,6 +9,9 @@ export interface UserProfile {
   isPremium: boolean;
   premiumPlan?: string;
   premiumSince?: number;
+  /** display name (nick) — mirrors the Firebase Auth displayName so the
+   *  server/public snapshot can read it without an Auth round-trip */
+  displayName?: string | null;
   /** Small data-URL avatar uploaded from the profile page (RTDB stores it fine). */
   avatar?: string | null;
   /** Steam-style animated profile background — one of PROFILE_BACKGROUNDS ids. */

@@ -385,9 +385,29 @@ export function PriceChart({
       borderUpColor: settings.upColor, borderDownColor: settings.downColor,
       wickUpColor: settings.upColor, wickDownColor: settings.downColor,
     });
-    volumeRef.current?.applyOptions({ visible: settings.volume });
     canvasRef.current?.redraw();
   }, [settings]);
+
+  // ---- Volume is a real indicator now (Phase 20) -----------------------------
+  // The histogram is driven by a visible "volume" indicator config (Indicators
+  // menu, persisted per user+symbol) — NOT by a hardcoded always-on series.
+  // When it is hidden the candles reclaim the full pane height (no dead band).
+  const volumeVisible = indicators.some((i) => i.type === "volume" && i.visible);
+  const volumeVisibleRef = useRef(volumeVisible);
+  volumeVisibleRef.current = volumeVisible;
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.priceScale("right").applyOptions({
+      scaleMargins: { top: 0.08, bottom: volumeVisible ? 0.26 : 0.08 },
+    });
+    const volume = volumeRef.current;
+    if (volume) {
+      // fill or clear the histogram — setData([]) renders nothing
+      volume.setData(volumeVisible ? barsRef.current.map(toVolume) : []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [volumeVisible]);
 
   // ---- chart type switch: rebuild the main series in place (no flicker) -------
   useEffect(() => {
@@ -409,7 +429,6 @@ export function PriceChart({
     });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
     volumeRef.current = volume2;
-    volume2.applyOptions({ visible: settingsRef.current.volume });
     if (barsRef.current.length) applyBarsToSeries("set");
     applyMarkers();
     setSeriesEpoch((e) => e + 1); // re-hang pending lines on the new series
@@ -427,7 +446,7 @@ export function PriceChart({
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: COLORS.bg }, textColor: COLORS.text, fontSize: 11, attributionLogo: false },
       grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.26 } },
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
       // Phase 16: the time axis and crosshair labels render in the VIEWER'S
       // timezone (TradingView behavior) — bar timestamps stay UNIX UTC under
       // the hood, only the presentation is local
@@ -500,8 +519,7 @@ export function PriceChart({
             applyBarsToSeries("set");
             const newFrom = barsRef.current[0].time as UTCTimestamp;
             const oldTo = data[data.length - 1].time as UTCTimestamp;
-            try { ts.setVisibleRange({ from: newFrom, to: oldTo }); } catch { /* race — ignore */ }
-          })
+            try { ts.setVisibleRange({ from: newFrom, to: oldTo }); } catch { /* race — ignore */ }          })
           .catch(() => { /* transient — the next scroll tries again */ })
           .finally(() => { olderLoadingRef.current = false; });
       }
@@ -619,7 +637,8 @@ export function PriceChart({
       (candle as ISeriesApi<"Candlestick">).applyOptions({ priceFormat: priceFormatRef.current } as any);
       applyMainTheme(candle, mainKindRef.current, settingsRef.current);
       setMainData(candle, mainKindRef.current, data);
-      volume.setData(data.map(toVolume));
+      // volume histogram = the visible "volume" indicator only (Phase 20)
+      volume.setData(volumeVisibleRef.current ? data.map(toVolume) : []);
       // rebuild the time→index map (indicators + crosshair lookups)
       const idx = new Map<number, number>();
       for (let i = 0; i < data.length; i++) idx.set(data[i].time, i);
@@ -627,7 +646,7 @@ export function PriceChart({
     } else {
       const last = data[data.length - 1];
       updateMain(candle, mainKindRef.current, last);
-      volume.update(toVolume(last));
+      if (volumeVisibleRef.current) volume.update(toVolume(last));
     }
 
     // indicators: overlays on the main series + sub-pane series
@@ -722,8 +741,20 @@ export function PriceChart({
         // instrument/timeframe switches, so a zoomed-out M1 view carried over
         // and made the new instrument's candles nearly invisible. The user's
         // zoom is preserved from here on (live updates never touch it).
+        // Phase 20: the PRICE scale resets too — dragging the price axis once
+        // disables autoScale and that persisted across symbol switches, so
+        // XAUUSD opened on EURUSD's ~1.09 axis (invisible until the user
+        // zoomed around and "found" 3800). Re-enabling autoScale re-fits the
+        // new instrument's data to its own price.
         try {
-          const ts = chartRef.current?.timeScale();
+          const chart = chartRef.current;
+          const ts = chart?.timeScale();
+          if (chart) {
+            chart.priceScale("right").applyOptions({
+              autoScale: true,
+              scaleMargins: { top: 0.08, bottom: volumeVisibleRef.current ? 0.26 : 0.08 },
+            });
+          }
           if (ts && bars.length) {
             ts.setVisibleLogicalRange({ from: Math.max(0, bars.length - 130), to: bars.length + 8 });
           }
@@ -747,7 +778,7 @@ export function PriceChart({
             barsRef.current = bars;
             for (let i = prev.length; i < bars.length; i++) {
               updateMain(candleRef.current!, mainKindRef.current, bars[i]);
-              volumeRef.current?.update(toVolume(bars[i]));
+              if (volumeVisibleRef.current) volumeRef.current?.update(toVolume(bars[i]));
             }
             const idx = timeIdxRef.current;
             for (let i = prev.length; i < bars.length; i++) idx.set(bars[i].time, i);
@@ -798,7 +829,7 @@ export function PriceChart({
                next[next.length - 2]?.time === prev[prev.length - 1]?.time) {
       barsRef.current = next;
       candleRef.current?.update(toCandle(next[next.length - 1]));
-      volumeRef.current?.update(toVolume(next[next.length - 1]));
+      if (volumeVisibleRef.current) volumeRef.current?.update(toVolume(next[next.length - 1]));
       const idx = timeIdxRef.current;
       if (idx.size) idx.set(next[next.length - 1].time, next.length - 1);
     } else {

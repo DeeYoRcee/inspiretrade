@@ -152,60 +152,112 @@ export function caseReveal(rarity: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Entry chime — the brand sound under the InspireTrade splash screen.
-// A soft rising C-major motif (C5 → E5 → G5 → C6) with a low pad underneath:
-// ~1.6s, quiet enough to sit under the loading animation, not startle.
+// Entry sound — the brand sound under the InspireTrade splash screen.
+// Phase 20: a synthesized lightsaber ignition (Darth Vader register — deep,
+// menacing hum): the blade snaps on with a noise hiss, the oscillator sweeps
+// up into a detuned saw hum with the classic slow "woo-woo" wobble, then the
+// blade powers down. ~1.8s, quiet enough to sit under the splash animation.
 // ---------------------------------------------------------------------------
 
-/** one soft chime note with a gentle detuned double (warmth) */
-function chimeNote(c: AudioContext, at: number, freq: number, dur: number, gain: number) {
-  for (const [type, g, det] of [["triangle", 1, 0], ["sine", 0.35, 3]] as const) {
-    const osc = c.createOscillator();
-    const gn = c.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq + det, at);
-    gn.gain.setValueAtTime(0.0001, at);
-    gn.gain.exponentialRampToValueAtTime(gain * g, at + 0.03);
-    gn.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-    osc.connect(gn).connect(c.destination);
-    osc.start(at);
-    osc.stop(at + dur + 0.05);
-  }
-}
-
-function entryChime(): void {
+/** lightsaber ignition — hiss + rising detuned hum + wobble + power-down */
+function entrySaber(): void {
   const c = audio();
   if (!c) return;
   const t0 = c.currentTime + 0.05;
-  // low pad holds under the whole motif
-  chimeNote(c, t0, 261.63, 1.5, 0.05);
-  // the rising motif
-  [523.25, 659.25, 783.99].forEach((f, i) => chimeNote(c, t0 + i * 0.16, f, 0.5, 0.11));
-  // settle on the octave — the "arrived" note as the splash hands over
-  chimeNote(c, t0 + 0.52, 1046.5, 0.9, 0.1);
+  const dur = 1.8;
+
+  const master = c.createGain();
+  master.gain.setValueAtTime(0.0001, t0);
+  master.gain.exponentialRampToValueAtTime(0.15, t0 + 0.14); // the blade snaps on
+  master.gain.setValueAtTime(0.15, t0 + dur - 0.55);
+  master.gain.exponentialRampToValueAtTime(0.0001, t0 + dur); // powers down
+  master.connect(c.destination);
+
+  // the hum — two detuned saws + a sub octave through a resonant lowpass
+  const filter = c.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(380, t0);
+  filter.frequency.linearRampToValueAtTime(920, t0 + 0.3); // opens as it ignites
+  filter.Q.value = 7;
+  filter.connect(master);
+  const hums: { osc: OscillatorNode }[] = [];
+  for (const [type, freq, g] of [
+    ["sawtooth", 58, 1],
+    ["sawtooth", 60.7, 0.8],   // 2.7 Hz beat against the first saw
+    ["square", 29, 0.5],       // sub — the Vader-depth
+  ] as const) {
+    const osc = c.createOscillator();
+    const gn = c.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq * 0.4, t0);
+    osc.frequency.exponentialRampToValueAtTime(freq, t0 + 0.32); // rise into the hum
+    gn.gain.setValueAtTime(g, t0);
+    osc.connect(gn).connect(filter);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
+    hums.push({ osc });
+  }
+
+  // the classic slow "woo-woo" — amplitude wobble + a drifting pitch wobble
+  const lfo = c.createOscillator();
+  const lfoGain = c.createGain();
+  lfo.type = "sine";
+  lfo.frequency.value = 5.6;
+  lfoGain.gain.value = 0.045;
+  lfo.connect(lfoGain).connect(master.gain);
+  lfo.start(t0);
+  lfo.stop(t0 + dur + 0.05);
+  const wob = c.createOscillator();
+  const wobGain = c.createGain();
+  wob.type = "sine";
+  wob.frequency.value = 0.9;
+  wobGain.gain.value = 1.3;
+  wob.start(t0);
+  wob.stop(t0 + dur + 0.05);
+  for (const { osc } of hums) wobGain.connect(osc.frequency); // ±1.3 Hz drift
+  wob.connect(wobGain);
+
+  // ignition hiss — a noise burst through a bandpass sweeping up
+  const len = 0.5;
+  const buf = c.createBuffer(1, Math.ceil(c.sampleRate * len), c.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  const bp = c.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.frequency.setValueAtTime(900, t0);
+  bp.frequency.exponentialRampToValueAtTime(2600, t0 + 0.28);
+  bp.Q.value = 1.6;
+  const ng = c.createGain();
+  ng.gain.setValueAtTime(0.4, t0);
+  ng.gain.exponentialRampToValueAtTime(0.001, t0 + len);
+  src.connect(bp).connect(ng).connect(c.destination);
+  src.start(t0);
+  src.stop(t0 + len);
 }
 
-let entryChimePlayed = false;
+let entrySoundPlayed = false;
 
 /**
- * Play the splash chime once per tab session. Autoplay policy: browsers keep
+ * Play the splash sound once per tab session. Autoplay policy: browsers keep
  * the AudioContext suspended until a user gesture, so on a cold load the
- * chime waits for the first pointer/key press (usually the login click while
+ * saber waits for the first pointer/key press (usually the login click while
  * the splash is still up) instead of failing silently forever.
  */
 export function playEntryChimeOnce(): void {
-  if (entryChimePlayed || typeof window === "undefined") return;
-  entryChimePlayed = true;
+  if (entrySoundPlayed || typeof window === "undefined") return;
+  entrySoundPlayed = true;
   const c = audio();
   if (c && c.state === "running") {
-    entryChime();
+    entrySaber();
     return;
   }
   const tryPlay = () => {
     window.removeEventListener("pointerdown", tryPlay);
     window.removeEventListener("keydown", tryPlay);
     const c2 = audio();
-    if (c2 && c2.state === "running") entryChime();
+    if (c2 && c2.state === "running") entrySaber();
   };
   window.addEventListener("pointerdown", tryPlay);
   window.addEventListener("keydown", tryPlay);
