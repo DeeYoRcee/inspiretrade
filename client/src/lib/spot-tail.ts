@@ -117,17 +117,20 @@ export function mergeSpotSeries(base: SpotCandle[], incoming: SpotCandle[]): Spo
 
 /**
  * Reject anything that is not a plausible real spot candle: minute-aligned
- * timestamp, sane OHLC envelope (h ≥ max(o,c), l ≤ min(o,c), h ≥ l > 0),
- * bounded freshness (no forged history) and a physically possible sample
- * count (≤ 60 one-second observations per minute).
+ * timestamp, sane OHLC envelope (h ≥ max(o,c), l ≤ min(o,c), h ≥ l > 0) and
+ * a physically possible sample count.
+ *
+ * s = 0 is a PROVIDER-ORIGIN bar (Twelve Data 1m backfill — real XAU/USD
+ * spot OHLC without self-recorded ticks); s = 1..60 are self-recorded bars.
+ * Recorded bars always win over provider bars in the server merge.
  */
-export function validSpotCandle(c: SpotCandle, nowSec: number): boolean {
+export function validSpotCandle(c: SpotCandle, nowSec: number, maxAgeSec = 8 * 86400): boolean {
   if (!c || typeof c.t !== "number" || !Number.isFinite(c.t)) return false;
   if (c.t % 60 !== 0) return false;
-  if (c.t > Math.floor(nowSec / 60) * 60 || c.t < nowSec - 8 * 86400) return false; // no forged history
+  if (c.t > Math.floor(nowSec / 60) * 60 || c.t < nowSec - maxAgeSec) return false; // no forged history
   const { o, h, l, cc } = { o: c.o, h: c.h, l: c.l, cc: c.c };
   for (const v of [o, h, l, cc]) if (!Number.isFinite(v) || v <= 0) return false;
   if (h < Math.max(o, cc) || l > Math.min(o, cc) || h < l) return false;
-  if (!Number.isFinite(c.s) || c.s < 1 || c.s > 60) return false;
+  if (!Number.isFinite(c.s) || c.s < 0 || c.s > 60) return false;
   return true;
 }

@@ -317,6 +317,7 @@ class QuotesProvider {
   private loadedAt = new Map<string, number>();
   private inflight = new Set<string>();
   private source = new Map<string, string>(); // "yahoo" | "stooq" — surfaced in the feed message
+  private spotProviderBars = new Map<string, number>(); // code → Twelve Data backfill bars
   private identity = new Map<string, string>(); // "spot" | "futures" — what the response actually represented
 
   // network fetch + aggregation, always bypasses the fresh cache (poll path)
@@ -510,9 +511,29 @@ class QuotesProvider {
     try {
       const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}`);
       if (res?.ok && Array.isArray(res.candles)) {
-        candles = res.candles.filter((c: any) => validSpotCandle(c, now));
+        candles = res.candles.filter((c: any) => validSpotCandle(c, now, 30 * 86400));
+        const providerBars = candles.filter((c: SpotCandle) => c.s === 0).length;
+        if (providerBars > 0) this.spotProviderBars.set(code, providerBars);
       }
     } catch { /* server unavailable → local records only */ }
+    // Phase 16 + Twelve Data: while the self-recorded history is still thin,
+    // ask the server to backfill real XAU/USD 1m spot bars from Twelve Data
+    // (once per session; the key lives server-side, never in the repo — the
+    // cooldown + recorded-wins merge rules protect data integrity)
+    if (candles.length < 500 && !spotBackfillTried.has(code)) {
+      spotBackfillTried.add(code);
+      try {
+        const r = await authedFetch<any>("/api/quotes?action=backfill-spot", { code });
+        if (r?.ok && r.written > 0) {
+          const res2 = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}`);
+          if (res2?.ok && Array.isArray(res2.candles)) {
+            candles = res2.candles.filter((c: any) => validSpotCandle(c, Math.floor(Date.now() / 1000), 30 * 86400));
+            const providerBars = candles.filter((c: SpotCandle) => c.s === 0).length;
+            if (providerBars > 0) this.spotProviderBars.set(code, providerBars);
+          }
+        }
+      } catch { /* backfill is best-effort */ }
+    }
     candles = mergeSpotSeries(candles, loadLocalSpot(code));
     // include the in-progress minute + unflushed completions
     const st = spotRec.get(code);
@@ -527,6 +548,11 @@ class QuotesProvider {
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
     return bars;
+  }
+
+  /** Twelve Data backfill bars merged into the recorded set (for the badge). */
+  providerBarCount(code: string): number {
+    return this.spotProviderBars.get(code) ?? 0;
   }
 }
 
@@ -545,6 +571,7 @@ export { mergeSpotTail };
 const SPOT_REC_KEY = (code: string) => `it_spot_rec_${code}`;
 const SPOT_REC_MAX = 4320; // 3 days of minutes per code (quota-safe)
 const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCandle[] }>();
+const spotBackfillTried = new Set<string>();
 
 function loadLocalSpot(code: string): SpotCandle[] {
   try {
@@ -761,10 +788,10 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const bars = await quotesProvider.loadRecordedSpot(symbol, tf);
     assertPriceIdentity(inst, bars);
     const m1 = recordedMinuteCount(inst.spotCode);
+    const td = quotesProvider.providerBarCount(inst.spotCode);
     const delaySec = getSpotState().providerDelaySec;
-    const message = m1 > 0
-      ? `${symbol} Spot · self-recorded candles (gold-api 1s) · m1 history: ${m1} min`
-      : `${symbol} Spot · recording started — m1 candles build in real time (no history yet)`;
+    const hist = m1 > 0 ? `m1 history: ${m1} min${td > 0 ? ` (${td} Twelve Data backfill)` : ""}` : "recording started — candles build in real time";
+    const message = `${symbol} Spot · gold-api live 1s · ${hist}`;
     return { bars, status: "polling", message, delaySec };
   }
   const { bars, source, identity } = await quotesProvider.load(symbol, tf);

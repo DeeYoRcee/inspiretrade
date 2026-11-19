@@ -13,7 +13,7 @@
  * Responses are cached at the edge (s-maxage) to keep upstream request volume
  * low and stay inside Vercel Hobby function limits.
  */
-import { handle, requireUser, rtdb } from "./lib/firebase";
+import { handle, requireUser, requireAdmin, rtdb } from "./lib/firebase";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
@@ -333,6 +333,98 @@ export default handle(async (req, res) => {
       if (Object.keys(update).length) await ref.update(update);
     }
     return res.json({ ok: true, accepted });
+  }
+
+  // ---- Twelve Data spot backfill (Phase 16) -------------------------------
+  // The repo is PUBLIC, so the provider key must never be committed. It lives
+  // server-side only: RTDB `config/providerKeys/twelvedata` (written by an
+  // admin via set-provider-key) or the TWELVE_DATA_API_KEY env var. A caller
+  // may also pass the key for a single call (transit over HTTPS, not stored
+  // unless the caller is an admin and store=true).
+  if (action === "set-provider-key" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const key = String(raw?.key || "").trim();
+    if (!/^[a-f0-9]{32}$/i.test(key)) return res.status(400).json({ ok: false, error: "BAD_KEY" });
+    await rtdb().ref("config/providerKeys/twelvedata").set(key);
+    return res.json({ ok: true, stored: true });
+  }
+  if (action === "backfill-spot" && req.method === "POST") {
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const code = raw?.code === "XAG" ? "XAG" : "XAU";
+    const pages = Math.min(Math.max(Number(raw?.pages) || 8, 1), 8); // TD free tier: 8 req/min
+    // resolve the key: explicit (this call only) → stored config → env
+    let key = /^[a-f0-9]{32}$/i.test(String(raw?.key || "")) ? String(raw.key) : "";
+    if (!key) {
+      key = String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
+      if (!key) key = String(process.env.TWELVE_DATA_API_KEY || "");
+    }
+    if (!/^[a-f0-9]{32}$/i.test(key)) return res.json({ ok: false, reason: "no-key" });
+    // store only on an explicit admin request — never persist caller-supplied keys silently
+    if (raw?.store === true) {
+      try {
+        await requireAdmin(req);
+        if (/^[a-f0-9]{32}$/i.test(String(raw?.key || ""))) await rtdb().ref("config/providerKeys/twelvedata").set(String(raw.key));
+      } catch { /* non-admin: key is used for this call only */ }
+    }
+    // cooldown: one backfill per code per 2 min (protects the 8 req/min budget)
+    const gateRef = rtdb().ref(`config/backfillAt/${code}`);
+    const lastAt = Number((await gateRef.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 120000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((120000 - (nowMs - lastAt)) / 1000) });
+    await gateRef.set(nowMs);
+
+    const symbol = code === "XAG" ? "XAG/USD" : "XAU/USD";
+    const nowSec = Math.floor(Date.now() / 1000);
+    const minuteNow = Math.floor(nowSec / 60) * 60;
+    const oldestAllowed = nowSec - 60 * 86400; // 60 days of 1m is plenty for M1→D1
+    const [loPrice, hiPrice] = code === "XAG" ? [5, 500] : [100, 20000]; // price-band identity
+    // existing minutes with self-recorded ticks (s ≥ 1) WIN over provider bars
+    const recordedSnap = await rtdb().ref(`spotTicks/${code}`).once("value");
+    const recorded: Record<string, any> = recordedSnap.val() || {};
+    let written = 0;
+    let oldest: number | null = null;
+    let endDate = "";
+    for (let p = 0; p < pages; p++) {
+      const qs = new URLSearchParams({ symbol, interval: "1min", outputsize: "5000", timezone: "UTC", apikey: key });
+      if (endDate) qs.set("end_date", endDate);
+      let d: any = null;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        const r = await fetch(`https://api.twelvedata.com/time_series?${qs.toString()}`, { signal: controller.signal });
+        clearTimeout(timer);
+        d = await r.json();
+      } catch { break; }
+      const values: any[] = Array.isArray(d?.values) ? d.values : [];
+      if (!values.length) break;
+      const update: Record<string, { o: number; h: number; l: number; c: number; s: number }> = {};
+      for (const v of values) {
+        // datetime "YYYY-MM-DD HH:MM:SS" in UTC (timezone=UTC param)
+        const t = Math.floor(Date.parse(String(v?.datetime || "").replace(" ", "T") + "Z") / 1000);
+        const o = Number(v?.open), h = Number(v?.high), l = Number(v?.low), c = Number(v?.close);
+        if (!Number.isFinite(t) || t % 60 !== 0 || t > minuteNow || t < oldestAllowed) continue;
+        if (![o, h, l, c].every((x: number) => Number.isFinite(x) && x > 0)) continue;
+        if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
+        if (o < loPrice || o > hiPrice) continue;
+        const existing = recorded[String(t)];
+        if (existing && Number(existing.s || 0) >= 1) continue; // self-recorded wins
+        update[String(t)] = { o, h, l, c, s: 0 };
+        if (oldest == null || t < oldest) oldest = t;
+      }
+      if (Object.keys(update).length) {
+        const entries = Object.entries(update);
+        const ref = rtdb().ref(`spotTicks/${code}`);
+        for (let i = 0; i < entries.length; i += 2000) {
+          await ref.update(Object.fromEntries(entries.slice(i, i + 2000)));
+        }
+        written += entries.length;
+      }
+      if (values.length < 5000) break; // provider history exhausted
+      endDate = String(values[values.length - 1].datetime); // walk further back
+      await new Promise((r) => setTimeout(r, 250)); // stay inside 8 req/min
+    }
+    return res.json({ ok: true, code, written, oldest });
   }
 
   // ---- Batch quote mode: GET /api/quotes?symbols=EURUSD=X,GC=F ----------

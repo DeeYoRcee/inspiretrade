@@ -117,9 +117,13 @@ test("validSpotCandle rejects forged or malformed candles", () => {
   assert.equal(validSpotCandle(minute(now - 60, 100, 102, 101, 100.5), now), false);
   // not minute-aligned
   assert.equal(validSpotCandle(minute(now - 30, 100, 101, 99, 100.5), now), false);
+  // s = 0 is a PROVIDER-ORIGIN bar (Twelve Data backfill) — valid
+  assert.ok(validSpotCandle(minute(now - 60, 100, 101, 99, 100.5, 0), now));
   // impossible sample count
-  assert.equal(validSpotCandle(minute(now - 60, 100, 101, 99, 100.5, 0), now), false);
   assert.equal(validSpotCandle(minute(now - 60, 100, 101, 99, 100.5, 61), now), false);
+  // provider bars can be older than recorded ticks (30-day window via maxAgeSec)
+  assert.ok(validSpotCandle(minute(now - 20 * 86400, 100, 101, 99, 100.5, 0), now, 30 * 86400));
+  assert.equal(validSpotCandle(minute(now - 20 * 86400, 100, 101, 99, 100.5, 0), now), false);
 });
 
 test("aggregation chain M1→M5→M15→H1 is mathematically consistent (§7C)", () => {

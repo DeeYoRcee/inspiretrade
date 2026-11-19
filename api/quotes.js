@@ -74,6 +74,19 @@ async function requireUser(req) {
   if (!decoded?.uid) throw new HttpError(401, "INVALID_TOKEN", "Invalid token payload");
   return { uid: decoded.uid, email: decoded.email, name: decoded.name };
 }
+async function requireAdmin(req) {
+  const user = await requireUser(req);
+  const emails = String(process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+  let flagged = false;
+  try {
+    flagged = (await rtdb().ref(`admins/${user.uid}`).once("value")).val() === true;
+  } catch {
+  }
+  if (!emails.includes(String(user.email || "").toLowerCase()) && !flagged) {
+    throw new HttpError(403, "FORBIDDEN", "Owner access required");
+  }
+  return user;
+}
 function rtdb() {
   ensureApp();
   return admin.database();
@@ -412,6 +425,88 @@ var quotes_default = handle(async (req, res) => {
       if (Object.keys(update).length) await ref.update(update);
     }
     return res.json({ ok: true, accepted });
+  }
+  if (action === "set-provider-key" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const key = String(raw?.key || "").trim();
+    if (!/^[a-f0-9]{32}$/i.test(key)) return res.status(400).json({ ok: false, error: "BAD_KEY" });
+    await rtdb().ref("config/providerKeys/twelvedata").set(key);
+    return res.json({ ok: true, stored: true });
+  }
+  if (action === "backfill-spot" && req.method === "POST") {
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const code = raw?.code === "XAG" ? "XAG" : "XAU";
+    const pages = Math.min(Math.max(Number(raw?.pages) || 8, 1), 8);
+    let key = /^[a-f0-9]{32}$/i.test(String(raw?.key || "")) ? String(raw.key) : "";
+    if (!key) {
+      key = String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
+      if (!key) key = String(process.env.TWELVE_DATA_API_KEY || "");
+    }
+    if (!/^[a-f0-9]{32}$/i.test(key)) return res.json({ ok: false, reason: "no-key" });
+    if (raw?.store === true) {
+      try {
+        await requireAdmin(req);
+        if (/^[a-f0-9]{32}$/i.test(String(raw?.key || ""))) await rtdb().ref("config/providerKeys/twelvedata").set(String(raw.key));
+      } catch {
+      }
+    }
+    const gateRef = rtdb().ref(`config/backfillAt/${code}`);
+    const lastAt = Number((await gateRef.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 12e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((12e4 - (nowMs - lastAt)) / 1e3) });
+    await gateRef.set(nowMs);
+    const symbol = code === "XAG" ? "XAG/USD" : "XAU/USD";
+    const nowSec = Math.floor(Date.now() / 1e3);
+    const minuteNow = Math.floor(nowSec / 60) * 60;
+    const oldestAllowed = nowSec - 60 * 86400;
+    const [loPrice, hiPrice] = code === "XAG" ? [5, 500] : [100, 2e4];
+    const recordedSnap = await rtdb().ref(`spotTicks/${code}`).once("value");
+    const recorded = recordedSnap.val() || {};
+    let written = 0;
+    let oldest = null;
+    let endDate = "";
+    for (let p = 0; p < pages; p++) {
+      const qs = new URLSearchParams({ symbol, interval: "1min", outputsize: "5000", timezone: "UTC", apikey: key });
+      if (endDate) qs.set("end_date", endDate);
+      let d = null;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15e3);
+        const r = await fetch(`https://api.twelvedata.com/time_series?${qs.toString()}`, { signal: controller.signal });
+        clearTimeout(timer);
+        d = await r.json();
+      } catch {
+        break;
+      }
+      const values = Array.isArray(d?.values) ? d.values : [];
+      if (!values.length) break;
+      const update = {};
+      for (const v of values) {
+        const t = Math.floor(Date.parse(String(v?.datetime || "").replace(" ", "T") + "Z") / 1e3);
+        const o = Number(v?.open), h = Number(v?.high), l = Number(v?.low), c = Number(v?.close);
+        if (!Number.isFinite(t) || t % 60 !== 0 || t > minuteNow || t < oldestAllowed) continue;
+        if (![o, h, l, c].every((x) => Number.isFinite(x) && x > 0)) continue;
+        if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
+        if (o < loPrice || o > hiPrice) continue;
+        const existing = recorded[String(t)];
+        if (existing && Number(existing.s || 0) >= 1) continue;
+        update[String(t)] = { o, h, l, c, s: 0 };
+        if (oldest == null || t < oldest) oldest = t;
+      }
+      if (Object.keys(update).length) {
+        const entries = Object.entries(update);
+        const ref = rtdb().ref(`spotTicks/${code}`);
+        for (let i = 0; i < entries.length; i += 2e3) {
+          await ref.update(Object.fromEntries(entries.slice(i, i + 2e3)));
+        }
+        written += entries.length;
+      }
+      if (values.length < 5e3) break;
+      endDate = String(values[values.length - 1].datetime);
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return res.json({ ok: true, code, written, oldest });
   }
   if (batch) {
     const list = batch.split(",").map((s) => s.trim()).filter((s) => /^[A-Z0-9^.=\-]{1,20}$/i.test(s)).slice(0, 20);
