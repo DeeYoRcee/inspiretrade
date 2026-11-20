@@ -189,7 +189,7 @@ export default function TerminalPage() {
   // ---- backtest / analytics / calendar / news: full-area workspaces ---------
   if (mode === "backtest" || mode === "analytics" || mode === "calendar" || mode === "news") {
     return (
-      <div className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
+      <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
         <Toolbar
           mode={mode} onModeChange={setMode}
           symbol={symbol} onSymbolChange={setSymbol}

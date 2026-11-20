@@ -280,8 +280,10 @@ var DUKA_MAP = {
 };
 var JPY_QUOTE = /* @__PURE__ */ new Set(["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY"]);
 function dukaPoints(code) {
+  if (code === "XAUUSD" || code === "XAGUSD") return 1e3;
   return JPY_QUOTE.has(code) ? 1e3 : 1e5;
 }
+var DUKA_METALS = { XAUUSD: "XAUUSD", XAGUSD: "XAGUSD" };
 var DUKA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 async function fetchDukaDay(dukaSym, day) {
   const y = day.getUTCFullYear();
@@ -332,9 +334,466 @@ async function decodeDukaDay(buf, code, day) {
   return out;
 }
 
+// api/_src/lib/hist-sessions.ts
+function inMarketHours(tSec, assetClass) {
+  const d = new Date(tSec * 1e3);
+  const dow = d.getUTCDay();
+  const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+  if (assetClass === "crypto") return true;
+  if (assetClass === "index") return dow >= 1 && dow <= 5 && mins >= 810 && mins < 1200;
+  if (dow === 6) return false;
+  if (dow === 5) return mins < (assetClass === "forex" ? 22 * 60 - 5 : 21 * 60);
+  if (dow === 0) return mins >= 22 * 60;
+  return true;
+}
+function missingIntervals(bars, tfSec, fromSec, toSec, assetClass, maxReport = 12) {
+  if (tfSec <= 0) return { count: 0, sample: [], longestGapSec: 0 };
+  const have = new Set(bars.map((b) => b.time));
+  const sample = [];
+  let count = 0;
+  let gapStart = null;
+  let longestGapSec = 0;
+  for (let t = Math.ceil(fromSec / tfSec) * tfSec; t <= toSec; t += tfSec) {
+    if (!inMarketHours(t, assetClass)) {
+      if (gapStart != null) {
+        longestGapSec = Math.max(longestGapSec, t - gapStart);
+        gapStart = null;
+      }
+      continue;
+    }
+    if (!have.has(t)) {
+      count++;
+      if (gapStart == null) gapStart = t;
+      if (sample.length < maxReport) sample.push(t);
+    } else if (gapStart != null) {
+      longestGapSec = Math.max(longestGapSec, t - gapStart);
+      gapStart = null;
+    }
+  }
+  return { count, sample, longestGapSec };
+}
+var HIST_MONTHS_CAP = {
+  "1m": 6,
+  "5m": 12,
+  "15m": 24,
+  "30m": 24,
+  "1h": 24,
+  "2h": 24,
+  "4h": 24,
+  "1d": 240,
+  "1W": 240,
+  "1M": 240
+};
+
+// api/_src/lib/hist.ts
+var HIST_STOOQ = {
+  XAUUSD: "xauusd",
+  XAGUSD: "xagusd",
+  EURUSD: "eurusd",
+  GBPUSD: "gbpusd",
+  USDJPY: "usdjpy",
+  AUDUSD: "audusd",
+  NZDUSD: "nzdusd",
+  USDCAD: "usdcad",
+  USDCHF: "usdchf",
+  "^NDX": "^ndq",
+  "^DJI": "^dji",
+  "^GSPC": "^spx",
+  "^GDAXI": "^dax",
+  "^FTSE": "^ukx"
+};
+var HIST_TD = { XAUUSD: "XAU/USD", XAGUSD: "XAG/USD" };
+var HIST_STOOQ_INTERVAL = {
+  "5m": "5",
+  "15m": "15",
+  "30m": "30",
+  "1h": "60",
+  "1d": "d"
+};
+var HIST_TD_DAILY_BUDGET = 150;
+var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var dayKey = (tSec) => new Date(tSec * 1e3).toISOString().slice(0, 10);
+function groupByDay(bars) {
+  const days = /* @__PURE__ */ new Map();
+  for (const b of bars) {
+    const k = dayKey(b.time);
+    let arr = days.get(k);
+    if (!arr) {
+      arr = [];
+      days.set(k, arr);
+    }
+    arr.push([b.time, b.open, b.high, b.low, b.close, b.volume ?? 0]);
+  }
+  return days;
+}
+async function writeShards(symbol, tf, raw, provider, opts) {
+  const checked = validateBars(raw);
+  const { bars } = alignAndDedupe(checked.bars, tf === "1d" ? 86400 : tf === "1W" ? 604800 : tf === "1M" ? 2592e3 : 60);
+  const rejected = checked.invalid + (raw.length - checked.bars.length);
+  const out = { written: 0, skipped: 0, days: [], rejected };
+  const metaRef = rtdb().ref(`histMeta/${symbol}/${tf}`);
+  const dataRef = rtdb().ref(`hist/${symbol}/${tf}`);
+  for (const [day, rows] of groupByDay(bars)) {
+    const t0 = rows[0][0];
+    if (opts?.before != null && t0 >= opts.before) {
+      out.skipped++;
+      continue;
+    }
+    if (opts?.after != null && t0 < opts.after) {
+      out.skipped++;
+      continue;
+    }
+    try {
+      const existingTag = (await metaRef.child(day).once("value")).val();
+      if (existingTag && !opts?.force) {
+        out.skipped++;
+        continue;
+      }
+      await dataRef.child(day).set(rows.map((r) => JSON.stringify(r)).join("|"));
+      await metaRef.child(day).set(provider);
+      out.written++;
+      out.days.push(day);
+    } catch (e) {
+      break;
+    }
+  }
+  return out;
+}
+async function readShards(symbol, tf, fromSec, toSec) {
+  const fromDay = dayKey(fromSec);
+  const toDay = dayKey(toSec);
+  const snap = await rtdb().ref(`hist/${symbol}/${tf}`).orderByKey().startAt(fromDay).endAt(toDay).once("value");
+  const obj = snap.val() || {};
+  const bars = [];
+  const providers = {};
+  const metaSnap = await rtdb().ref(`histMeta/${symbol}/${tf}`).orderByKey().startAt(fromDay).endAt(toDay).once("value");
+  const meta = metaSnap.val() || {};
+  for (const [day, blob] of Object.entries(obj)) {
+    const p = meta[day] || "unknown";
+    providers[p] = (providers[p] ?? 0) + 1;
+    if (typeof blob !== "string" || !blob) continue;
+    for (const row of blob.split("|")) {
+      const a = row.split(",");
+      const [t, o, h, l, c] = a.map(Number);
+      if ([t, o, h, l, c].every(Number.isFinite) && t > 0 && o > 0) {
+        bars.push({ time: t, open: o, high: h, low: l, close: c, volume: Number(a[5]) || 0 });
+      }
+    }
+  }
+  bars.sort((a, b) => a.time - b.time);
+  return { bars, providers };
+}
+async function fetchStooqBars(stooqSym, interval) {
+  const res = await fetch(`https://stooq.com/q/d/l/?s=${stooqSym}&i=${interval}`, { headers: { "User-Agent": UA } });
+  if (!res.ok) throw new Error(`STOOQ_${res.status}`);
+  const text = await res.text();
+  if (text.startsWith("<!DOCTYPE") || /access denied/i.test(text.slice(0, 200))) throw new Error("STOOQ_BLOCKED");
+  const tzOffsetMs = (dateStr) => {
+    try {
+      const noonUTC = Date.parse(`${dateStr}T12:00:00Z`);
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Europe/Berlin",
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }).formatToParts(new Date(noonUTC));
+      const get = (k) => Number(parts.find((p) => p.type === k)?.value ?? 0);
+      const asUTC = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+      return asUTC - noonUTC;
+    } catch {
+      return 36e5;
+    }
+  };
+  const bars = [];
+  const lines = text.trim().split(/\r?\n/);
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    if (cols.length < 5) continue;
+    const [d, t, o, h, l, c, v] = cols;
+    const open = Number(o), high = Number(h), low = Number(l), close = Number(c);
+    if (![open, high, low, close].every((x) => Number.isFinite(x) && x > 0)) continue;
+    let time;
+    if (t && /^\d{2}:\d{2}$/.test(t)) {
+      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - tzOffsetMs(d)) / 1e3);
+    } else {
+      time = Math.floor(Date.parse(`${d}T00:00:00Z`) / 1e3);
+    }
+    bars.push({ time, open, high, low, close, volume: Number(v) || 0 });
+  }
+  return bars;
+}
+var histTdDayRef = () => rtdb().ref(`config/histTDUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
+var histTdSpend = async (n = 1) => {
+  try {
+    await histTdDayRef().transaction((cur) => Number(cur || 0) + n);
+  } catch {
+  }
+};
+async function tdWalkM1(apiKey, tdSym, startSec, endSec, maxPages, spentToday) {
+  const bars = [];
+  let pages = 0;
+  let end = endSec;
+  let exhausted = false;
+  const budgetLeft = HIST_TD_DAILY_BUDGET - spentToday;
+  const pageCap = Math.min(maxPages, Math.max(0, budgetLeft));
+  while (pages < pageCap && end > startSec) {
+    const from = Math.max(startSec, end - 5e3 * 60);
+    const u = `https://api.twelvedata.com/time_series?apikey=${encodeURIComponent(apiKey)}&symbol=${encodeURIComponent(tdSym)}&interval=1min&outputsize=5000&timezone=UTC&start_date=${new Date(from * 1e3).toISOString().slice(0, 19)}&end_date=${new Date(end * 1e3).toISOString().slice(0, 19)}&format=JSON&order=ASC`;
+    let json;
+    try {
+      const res = await fetch(u);
+      json = await res.json();
+    } catch {
+      json = { status: "error" };
+    }
+    if (json?.status === "error" || !Array.isArray(json?.values)) {
+      exhausted = true;
+      break;
+    }
+    for (const v of json.values) {
+      const t = Math.floor(Date.parse(`${String(v.datetime).replace(" ", "T")}Z`) / 1e3);
+      const o = Number(v.open), h = Number(v.high), l = Number(v.low), c = Number(v.close);
+      if (![t, o, h, l, c].every(Number.isFinite) || t <= 0 || o <= 0) continue;
+      if (h < Math.max(o, c) || l > Math.min(o, c)) continue;
+      bars.push({ time: t, open: o, high: h, low: l, close: c, volume: Number(v.volume) || 0 });
+    }
+    pages++;
+    histTdSpend(1);
+    end = from - 1;
+    if (json.values.length < 5e3) {
+      exhausted = true;
+      break;
+    }
+  }
+  bars.sort((a, b) => a.time - b.time);
+  return { bars, pages, oldest: bars.length ? bars[0].time : null, exhausted };
+}
+async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed) {
+  const dukaSym = DUKA_MAP[code] ?? DUKA_METALS[code];
+  if (!dukaSym) throw new Error("NOT_ON_DUKA");
+  const bars = [];
+  let files = 0;
+  let oldest = null;
+  const days = [];
+  for (let day = Math.floor(toSec / 86400) * 86400; day >= fromSec && days.length < maxDays; day -= 86400) days.push(new Date(day * 1e3));
+  for (let i = 0; i < days.length && fileUsed + files < fileBudget; i += 5) {
+    const chunk = days.slice(i, i + 5);
+    const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
+    if (oldest == null && files === 0 && bufs.every((b) => b == null) && i >= 5) break;
+    for (let k = 0; k < chunk.length; k++) {
+      const buf = bufs[k];
+      if (!buf) continue;
+      files++;
+      const decoded = await decodeDukaDay(buf, code, chunk[k]);
+      for (const b of decoded) {
+        if (b.t < fromSec || b.t > toSec) continue;
+        bars.push({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v });
+        if (oldest == null || b.t < oldest) oldest = b.t;
+      }
+    }
+  }
+  bars.sort((a, b) => a.time - b.time);
+  return { bars, files, oldest };
+}
+var ASSET_CLASS = {
+  XAUUSD: "metal",
+  XAGUSD: "metal"
+};
+function assetClassOf(symbol) {
+  if (ASSET_CLASS[symbol]) return ASSET_CLASS[symbol];
+  if (symbol.startsWith("^")) return "index";
+  if (/USD[T]?$/i.test(symbol) && symbol.length >= 6) return "crypto";
+  if (symbol.endsWith("=X") || /^[A-Z]{6}$/.test(symbol)) return "forex";
+  return "index";
+}
+async function runBackfillStep(req) {
+  const { symbol, tf } = req;
+  const months = Math.min(req.months ?? HIST_MONTHS_CAP[tf] ?? 12, HIST_MONTHS_CAP[tf] ?? 12);
+  const now = Math.floor(Date.now() / 1e3);
+  const wantFrom = now - Math.round(months * 30.44 * 86400);
+  const stateRef = rtdb().ref(`histState/${symbol}/${tf}`);
+  const state = (await stateRef.once("value")).val() || {};
+  const covered = state.oldest ? Math.min(state.oldest, wantFrom) : wantFrom;
+  const base = { ok: true, symbol, tf, provider: "", written: 0, skipped: 0, rejected: 0, oldest: state.oldest ?? null, newest: state.newest ?? null, cursor: state.oldest ?? null, done: false };
+  try {
+    if (assetClassOf(symbol) === "crypto") {
+      return { ...base, provider: "binance", done: true, note: "crypto history is served natively by the Binance REST/WS engine (loadOlder pagination)" };
+    }
+    if (tf === "1m") {
+      if (DUKA_METALS[symbol] || DUKA_MAP[symbol]) {
+        const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
+        const used = Number((await usageRef.once("value")).val() || 0);
+        if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
+        const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
+        await usageRef.set(used + walk.files);
+        const newOldest = walk.oldest ?? state.oldest ?? null;
+        const done = newOldest != null && newOldest <= covered;
+        await stateRef.set({
+          provider: "dukascopy-bid",
+          oldest: newOldest,
+          newest: state.newest ?? now - 2 * 86400,
+          cursor: newOldest,
+          done,
+          files: (state.files ?? 0) + walk.files,
+          written: (state.written ?? 0) + sh2.written,
+          rejected: (state.rejected ?? 0) + sh2.rejected,
+          updatedAt: Date.now(),
+          error: null
+        });
+        if (sh2.written > 0 || done) {
+          return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, note: `${walk.files} day files` };
+        }
+      }
+      const tdSym = HIST_TD[symbol];
+      if (tdSym) {
+        const apiKey = String(process.env.TWELVE_DATA_API_KEY || "") || String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
+        if (!/^[a-f0-9]{32}$/i.test(apiKey)) return { ...base, ok: false, provider: "twelvedata", error: "no-key" };
+        const spent = Number((await histTdDayRef().once("value")).val() || 0);
+        const walk = await tdWalkM1(apiKey, tdSym, covered, now, req.maxPages ?? 10, spent);
+        const sh2 = await writeShards(symbol, tf, walk.bars, "twelvedata", { force: req.force });
+        const oldest2 = walk.oldest ?? sh2.days.length ? Math.min(...sh2.days.map((d) => Date.parse(`${d}T00:00:00Z`) / 1e3), walk.oldest ?? Infinity) : null;
+        const newOldest = walk.oldest ?? state.oldest ?? null;
+        await stateRef.set({
+          provider: "twelvedata",
+          oldest: newOldest,
+          newest: state.newest ?? now,
+          cursor: newOldest,
+          done: walk.exhausted || newOldest != null && newOldest <= covered,
+          pages: (state.pages ?? 0) + walk.pages,
+          written: (state.written ?? 0) + sh2.written,
+          rejected: (state.rejected ?? 0) + sh2.rejected,
+          updatedAt: Date.now(),
+          error: walk.exhausted && !newOldest ? "provider refused / no deeper data" : null
+        });
+        return { ...base, provider: "twelvedata", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, newest: now, cursor: newOldest, done: walk.exhausted, note: `${walk.pages} pages spent (${Math.max(0, HIST_TD_DAILY_BUDGET - spent - walk.pages)} credits left today)` };
+      }
+      if (DUKA_MAP[symbol]) {
+        const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
+        const used = Number((await usageRef.once("value")).val() || 0);
+        if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
+        const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
+        await usageRef.set(used + walk.files);
+        const newOldest = walk.oldest ?? state.oldest ?? null;
+        await stateRef.set({
+          provider: "dukascopy-bid",
+          oldest: newOldest,
+          newest: state.newest ?? now - 2 * 86400,
+          cursor: newOldest,
+          done: newOldest != null && newOldest <= covered,
+          files: (state.files ?? 0) + walk.files,
+          written: (state.written ?? 0) + sh2.written,
+          rejected: (state.rejected ?? 0) + sh2.rejected,
+          updatedAt: Date.now(),
+          error: null
+        });
+        return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done: newOldest != null && newOldest <= covered, note: `${walk.files} day files` };
+      }
+      return { ...base, ok: false, provider: "none", error: "NO_1M_SOURCE (stooq refuses 1m; metals are not on the Dukascopy feed; TwelveData key missing)" };
+    }
+    const stooqSym = HIST_STOOQ[symbol];
+    if (!stooqSym) return { ...base, ok: false, provider: "none", error: `no deep source for ${symbol} ${tf}` };
+    const iv = HIST_STOOQ_INTERVAL[tf];
+    if (!iv) {
+      const srcTf = tf === "2h" || tf === "4h" ? "1h" : tf === "1W" || tf === "1M" ? "1d" : null;
+      if (!srcTf) return { ...base, ok: false, provider: "none", error: `no source interval for ${tf}` };
+      const srcBars = await fetchStooqBars(stooqSym, HIST_STOOQ_INTERVAL[srcTf]);
+      const inWin2 = srcBars.filter((b) => b.time >= covered);
+      const agg = aggregateBars(inWin2, (tf === "1W" ? 604800 : tf === "1M" ? 2592e3 : Number(tf.slice(0, -1)) * 3600) / 60);
+      const sh2 = await writeShards(symbol, tf, agg, `stooq-${srcTf}-fold`, { force: req.force });
+      await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, done: true, written: (state.written ?? 0) + sh2.written, rejected: (state.rejected ?? 0) + sh2.rejected, updatedAt: Date.now(), error: null });
+      return { ...base, provider: `stooq-${srcTf}-fold`, written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: agg.length ? agg[0].time : null, newest: agg.length ? agg[agg.length - 1].time : null, done: true };
+    }
+    const raw = await fetchStooqBars(stooqSym, iv);
+    const inWin = raw.filter((b) => b.time >= covered && b.time <= now);
+    const sh = await writeShards(symbol, tf, inWin, "stooq-spot", { force: req.force });
+    const oldest = inWin.length ? inWin[0].time : state.oldest ?? null;
+    const newest = inWin.length ? inWin[inWin.length - 1].time : state.newest ?? null;
+    await stateRef.set({
+      provider: "stooq-spot",
+      oldest,
+      newest,
+      cursor: oldest,
+      done: true,
+      written: (state.written ?? 0) + sh.written,
+      rejected: (state.rejected ?? 0) + sh.rejected,
+      updatedAt: Date.now(),
+      error: null
+    });
+    return { ...base, provider: "stooq-spot", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest, newest, cursor: oldest, done: true, note: `${raw.length} archive rows scanned` };
+  } catch (e) {
+    const msg = String(e?.message || e);
+    await stateRef.update({ error: msg, updatedAt: Date.now() }).catch(() => {
+    });
+    return { ...base, ok: false, error: msg };
+  }
+}
+async function readRange(symbol, tf, fromSec, toSec) {
+  const native = await readShards(symbol, tf, fromSec, toSec);
+  if (native.bars.length) return { ok: true, symbol, tf, bars: native.bars, providers: native.providers };
+  const chain = {
+    "2h": { src: "1h", factorMin: 120 },
+    "4h": { src: "1h", factorMin: 240 },
+    "1W": { src: "1d", factorMin: 10080 },
+    "1M": { src: "1d", factorMin: 43200 },
+    "3m": { src: "1m", factorMin: 3 }
+  };
+  const agg = chain[tf];
+  if (agg) {
+    const src = await readShards(symbol, agg.src, fromSec, toSec);
+    if (src.bars.length) {
+      const out = aggregateBars(src.bars, agg.factorMin);
+      const providers = {};
+      for (const [p, n] of Object.entries(src.providers)) providers[`${p}\u2192${tf}-fold`] = n;
+      return { ok: true, symbol, tf, bars: out, providers };
+    }
+  }
+  return { ok: true, symbol, tf, bars: [], providers: {}, note: "no stored history in this window" };
+}
+async function coverageReport(symbol, tfs) {
+  const ac = assetClassOf(symbol);
+  const rows = [];
+  const now = Math.floor(Date.now() / 1e3);
+  for (const tf of tfs) {
+    const state = (await rtdb().ref(`histState/${symbol}/${tf}`).once("value")).val() || null;
+    const snap = await rtdb().ref(`hist/${symbol}/${tf}`).once("value");
+    const obj = snap.val() || {};
+    let count = 0;
+    let earliest = null;
+    let latest = null;
+    const metaSnap = await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value");
+    const meta = metaSnap.val() || {};
+    const providers = {};
+    const bars = [];
+    for (const [day, blob] of Object.entries(obj)) {
+      const p = meta[day] || "unknown";
+      providers[p] = (providers[p] ?? 0) + 1;
+      if (typeof blob !== "string") continue;
+      const rows2 = blob ? blob.split("|") : [];
+      count += rows2.length;
+      for (const row of rows2) {
+        const a = row.split(",").map(Number);
+        if (!Number.isFinite(a[0])) continue;
+        if (earliest == null || a[0] < earliest) earliest = a[0];
+        if (latest == null || a[0] > latest) latest = a[0];
+        if (bars.length < 2e5) bars.push({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] });
+      }
+    }
+    const tfSec = tf === "1d" ? 86400 : tf === "1W" ? 604800 : tf === "1M" ? 2592e3 : tf === "1h" || tf === "2h" || tf === "4h" ? Number(tf.slice(0, -1)) * 3600 : Number(tf.slice(0, -1)) * 60;
+    const missing = earliest && latest ? missingIntervals(bars, tfSec, Math.max(earliest, now - 180 * 86400), Math.min(latest, now), ac) : { count: 0, sample: [], longestGapSec: 0 };
+    rows.push({ symbol, tf, earliest, latest, candleCount: count, providers, missing, state });
+  }
+  return rows;
+}
+
 // api/_src/lib/truefx.ts
 var TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
-var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 var CACHE_TTL_MS = 2e3;
 var cache = null;
 var inflight = null;
@@ -346,7 +805,7 @@ var truefxQuotes = async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     try {
-      const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA, Accept: "text/csv" }, signal: controller.signal });
+      const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA2, Accept: "text/csv" }, signal: controller.signal });
       if (!res.ok) return cache?.quotes ?? {};
       const text = await res.text();
       const out = {};
@@ -376,7 +835,7 @@ var truefxQuotes = async () => {
 };
 
 // api/_src/quotes.ts
-var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var UA3 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 var STOOQ_MAP = {
   "GC=F": "xauusd",
   "SI=F": "xagusd",
@@ -547,27 +1006,32 @@ async function fxLiveMinutes(code) {
 }
 async function recordFxLiveBids(bids) {
   const t = Math.floor(Date.now() / 1e3 / 60) * 60;
-  const update = {};
   const touched = [];
   try {
     for (const [code, bidRaw] of Object.entries(bids)) {
       const bid = Number(bidRaw);
       if (!DUKA_MAP[code] || !(bid > 0)) continue;
-      const minutes = await fxLiveMinutes(code);
-      const ex = minutes.get(t);
-      const merged = ex ? { o: ex.o, c: bid, h: Math.max(ex.h, bid), l: Math.min(ex.l, bid), s: ex.s + 1 } : { o: bid, c: bid, h: bid, l: bid, s: 1 };
-      minutes.set(t, merged);
-      update[`fxLive/${code}/${t}`] = merged;
-      touched.push(code);
-    }
-    if (Object.keys(update).length) {
-      await rtdb().ref().update(update);
-      if (Math.random() < 0.05) {
-        const cutoff = String(t - FXLIVE_MAX_AGE_SEC);
-        for (const code of touched) {
-          void rtdb().ref(`fxLive/${code}`).orderByKey().endAt(cutoff).limitToFirst(2e3).remove().catch(() => {
-          });
+      await rtdb().ref(`fxLive/${code}/${t}`).transaction((cur) => {
+        const o = Number(cur?.o), h = Number(cur?.h), l = Number(cur?.l), s = Number(cur?.s || 1);
+        if (cur && [o, h, l, Number(cur.c)].every(Number.isFinite) && o > 0) {
+          return { o, c: bid, h: Math.max(h, bid), l: Math.min(l, bid), s: s + 1 };
         }
+        return { o: bid, c: bid, h: bid, l: bid, s: 1 };
+      });
+      touched.push(code);
+      try {
+        const minutes = await fxLiveMinutes(code);
+        const ex = minutes.get(t);
+        const merged = ex ? { o: ex.o, c: bid, h: Math.max(ex.h, bid), l: Math.min(ex.l, bid), s: ex.s + 1 } : { o: bid, c: bid, h: bid, l: bid, s: 1 };
+        minutes.set(t, merged);
+      } catch {
+      }
+    }
+    if (touched.length && Math.random() < 0.05) {
+      const cutoff = String(t - FXLIVE_MAX_AGE_SEC);
+      for (const code of touched) {
+        void rtdb().ref(`fxLive/${code}`).orderByKey().endAt(cutoff).limitToFirst(2e3).remove().catch(() => {
+        });
       }
     }
   } catch {
@@ -642,7 +1106,7 @@ var quotes_default = handle(async (req, res) => {
     const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const obj = snap.val() || {};
     const now = Math.floor(Date.now() / 1e3);
-    const minT = now - 8 * 86400;
+    const minT = now - 30 * 86400;
     const candles = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT).sort((a, b) => a.t - b.t);
     return res.json({ ok: true, code, candles });
   }
@@ -859,6 +1323,40 @@ var quotes_default = handle(async (req, res) => {
     }
     return res.json({ ok: true, code, written, oldest, newest, files: filesFetched });
   }
+  if (action === "hist-backfill" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const symbol = String(raw?.symbol || "").toUpperCase().replace(/=X$/i, "");
+    const tf = String(raw?.tf || "");
+    if (!symbol || !tf) return res.json({ ok: false, error: "symbol+tf required" });
+    const step = await runBackfillStep({
+      symbol,
+      tf,
+      months: raw?.months != null ? Number(raw.months) : void 0,
+      maxPages: raw?.maxPages != null ? Number(raw.maxPages) : void 0,
+      force: !!raw?.force
+    });
+    return res.json(step);
+  }
+  if (action === "hist-range") {
+    const sym = (symbols || bareCode).toUpperCase().replace(/=X$/i, "");
+    const tf = (url.searchParams.get("tf") || "").trim();
+    const from = toSec(url.searchParams.get("from"));
+    const to = toSec(url.searchParams.get("to"));
+    if (!sym || !tf || from == null || to == null || to <= from) {
+      return res.json({ ok: false, error: "symbol, tf, from, to (epoch sec) required" });
+    }
+    const range2 = await readRange(sym, tf, from, Math.min(to, Math.floor(Date.now() / 1e3)));
+    return res.json(range2);
+  }
+  if (action === "hist-status") {
+    const sym = (symbols || bareCode).toUpperCase().replace(/=X$/i, "");
+    const tfs = (url.searchParams.get("tfs") || "1m,5m,15m,30m,1h,4h,1d").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!sym) return res.json({ ok: false, error: "symbol required" });
+    const rows = await coverageReport(sym, tfs);
+    return res.json({ ok: true, symbol: sym, rows });
+  }
   if (action === "import-fx" && req.method === "POST") {
     const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
     const code = String(raw?.code || "").toUpperCase();
@@ -910,7 +1408,7 @@ var quotes_default = handle(async (req, res) => {
             const timer = setTimeout(() => controller.abort(), 6e3);
             const yres = await fetch(
               `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1d`,
-              { headers: { "User-Agent": UA2, Accept: "application/json" }, signal: controller.signal }
+              { headers: { "User-Agent": UA3, Accept: "application/json" }, signal: controller.signal }
             );
             clearTimeout(timer);
             if (!yres.ok) throw new Error(String(yres.status));
@@ -930,7 +1428,7 @@ var quotes_default = handle(async (req, res) => {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 6e3);
             const sres = await fetch(`https://stooq.com/q/l/?s=${stooqSyms.join("+")}&f=sd2t2ohlcv&h&e=csv`, {
-              headers: { "User-Agent": UA2 },
+              headers: { "User-Agent": UA3 },
               signal: controller.signal
             });
             clearTimeout(timer);
@@ -967,7 +1465,7 @@ var quotes_default = handle(async (req, res) => {
   const yahooBarsFor = async (yahooSym, label) => {
     const res2 = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSym)}?${periodMode ? `period1=${period1}&period2=${period2}` : `range=${range}`}&interval=${interval}`,
-      { headers: { "User-Agent": UA2, Accept: "application/json" } }
+      { headers: { "User-Agent": UA3, Accept: "application/json" } }
     );
     if (!res2.ok) throw new Error(`YAHOO_HTTP_${res2.status}`);
     const data = await res2.json();
@@ -1007,7 +1505,7 @@ var quotes_default = handle(async (req, res) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const yres = await fetch(yurl, {
-      headers: { "User-Agent": UA2, Accept: "application/json" },
+      headers: { "User-Agent": UA3, Accept: "application/json" },
       signal: controller.signal
     });
     clearTimeout(timer);
@@ -1035,7 +1533,7 @@ var quotes_default = handle(async (req, res) => {
     }
     if (DUKA_MAP[bareCode] && interval === "1m" && bars.length > 20) {
       const flat = bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length;
-      if (flat / bars.length >= 0.9) {
+      if (flat / bars.length >= (interval === "1m" ? 0.25 : 0.9)) {
         throw new Error(`FLAT_FX_OHLC: ${Math.round(100 * flat / bars.length)}% of ${symbols} 1m bars are O=H=L=C \u2014 close-only series, not candles`);
       }
     }
@@ -1066,7 +1564,7 @@ var quotes_default = handle(async (req, res) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const sres = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sq)}&i=${si}`, {
-      headers: { "User-Agent": UA2 },
+      headers: { "User-Agent": UA3 },
       signal: controller.signal
     });
     clearTimeout(timer);
@@ -1263,7 +1761,7 @@ var quotes_default = handle(async (req, res) => {
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const fxIntraday = !!DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday && interval === "1m" ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr = null;
       let staleResult = null;
       for (const attempt of chain) {
@@ -1290,9 +1788,12 @@ var quotes_default = handle(async (req, res) => {
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
       try {
         const t = (await truefxQuotes())[bareCode];
-        if (t?.bid > 0 && mergeSpotBars(final.bars, t.bid, interval)) {
+        if (t?.bid > 0) {
           void recordFxLiveBids({ [bareCode]: t.bid });
-          final = { ...final, bars: final.bars, at: Date.now(), liveTail: "truefx" };
+          const bars2 = final.bars.slice();
+          if (mergeSpotBars(bars2, t.bid, interval)) {
+            final = { ...final, bars: bars2, at: Date.now(), liveTail: "truefx" };
+          }
         }
       } catch {
       }

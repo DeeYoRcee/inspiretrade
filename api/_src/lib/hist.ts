@@ -36,7 +36,10 @@
 import { rtdb } from "./firebase";
 import { validateBars, alignAndDedupe, type RawBar } from "../../../shared/feed-validation";
 import { aggregateBars } from "../../../shared/terminal";
-import { fetchDukaDay, decodeDukaDay, DUKA_MAP } from "./duka";
+import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
+import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, type AssetClass } from "./hist-sessions";
+
+export { inMarketHours, missingIntervals, HIST_MONTHS_CAP };
 
 // ---- symbol maps -----------------------------------------------------------
 
@@ -56,12 +59,6 @@ const HIST_TD: Record<string, string> = { XAUUSD: "XAU/USD", XAGUSD: "XAG/USD" }
 /** stooq interval id per timeframe (no 1m — stooq refuses it). */
 const HIST_STOOQ_INTERVAL: Record<string, string> = {
   "5m": "5", "15m": "15", "30m": "30", "1h": "60", "1d": "d",
-};
-
-/** Backfill caps per timeframe (months) — honest provider expectations. */
-export const HIST_MONTHS_CAP: Record<string, number> = {
-  "1m": 6, "5m": 12, "15m": 24, "30m": 24, "1h": 24, "2h": 24, "4h": 24,
-  "1d": 240, "1W": 240, "1M": 240,
 };
 
 /** TwelveData credits this engine may spend per UTC day (independent of the
@@ -157,55 +154,12 @@ export async function readShards(symbol: string, tf: string, fromSec: number, to
   return { bars, providers };
 }
 
-// ---- sessions (missing-interval detection) ---------------------------------
-
-/** Metals session: Sun 22:00 UTC → Fri 21:00 UTC. Forex: Sun 22:00 → Fri 21:55.
- * Crypto trades 24/7. Cash indices: ~Mon-Fri 13:30-20:00 UTC is the honest
- * approximation for the US names stooq serves (their CSV only contains traded
- * minutes anyway). Returns true when a candle at tSec SHOULD exist. */
-export function inMarketHours(tSec: number, assetClass: "metal" | "forex" | "index" | "crypto"): boolean {
-  const d = new Date(tSec * 1000);
-  const dow = d.getUTCDay();
-  const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
-  if (assetClass === "crypto") return true;
-  if (assetClass === "index") return dow >= 1 && dow <= 5 && mins >= 810 && mins < 1200;
-  // metals + forex share the 24/5 session shape
-  if (dow === 6) return false;
-  if (dow === 5) return mins < (assetClass === "forex" ? 22 * 60 - 5 : 21 * 60);
-  if (dow === 0) return mins >= 22 * 60;
-  return true;
-}
-
-/** Missing-interval scan: expected-but-absent buckets inside market hours
- * (closed market ≠ missing data — weekends never count). */
-export function missingIntervals(bars: RawBar[], tfSec: number, fromSec: number, toSec: number, assetClass: "metal" | "forex" | "index" | "crypto", maxReport = 12): { count: number; sample: number[]; longestGapSec: number } {
-  if (tfSec <= 0) return { count: 0, sample: [], longestGapSec: 0 };
-  const have = new Set(bars.map((b) => b.time));
-  const sample: number[] = [];
-  let count = 0;
-  let gapStart: number | null = null;
-  let longestGapSec = 0;
-  for (let t = Math.ceil(fromSec / tfSec) * tfSec; t <= toSec; t += tfSec) {
-    if (!inMarketHours(t, assetClass)) { if (gapStart != null) { longestGapSec = Math.max(longestGapSec, t - gapStart); gapStart = null; } continue; }
-    if (!have.has(t)) {
-      count++;
-      if (gapStart == null) gapStart = t;
-      if (sample.length < maxReport) sample.push(t);
-    } else if (gapStart != null) {
-      longestGapSec = Math.max(longestGapSec, t - gapStart);
-      gapStart = null;
-    }
-  }
-  return { count, sample, longestGapSec };
-}
-
 // ---- sources ---------------------------------------------------------------
 
 /** stooq CSV → bars (Europe/Berlin wall-time resolution per bar date — the
  * same rule quotes.ts uses; intraday archives are decades deep for daily). */
 export async function fetchStooqBars(stooqSym: string, interval: string): Promise<RawBar[]> {
-  const url = `https://stooq.com/q/d/l/?s=${stooqSym}&i=${interval}`;
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const res = await fetch(`https://stooq.com/q/d/l/?s=${stooqSym}&i=${interval}`, { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`STOOQ_${res.status}`);
   const text = await res.text();
   if (text.startsWith("<!DOCTYPE") || /access denied/i.test(text.slice(0, 200))) throw new Error("STOOQ_BLOCKED");
@@ -245,12 +199,9 @@ const histTdSpend = async (n = 1) => { try { await histTdDayRef().transaction((c
 
 export interface TDWalkResult { bars: RawBar[]; pages: number; oldest: number | null; exhausted: boolean }
 
-/**
- * TwelveData 1m walk-back (metals m1 — the ONLY keyless-free m1 source that
- * serves XAU/USD). Paginated: each page = 1 credit, ≤5000 rows, `end_date`
- * steps back until `startSec` or the budget/cap stops it. RESUMABLE: callers
- * persist `oldest` as the cursor and call again to continue deeper.
- */
+/** TwelveData 1m walk-back (metals m1 fallback). Paginated: each page = 1
+ * credit, ≤5000 rows, `end_date` steps back until `startSec` or the budget
+ * stops it. RESUMABLE: callers persist `oldest` as the cursor. */
 export async function tdWalkM1(apiKey: string, tdSym: string, startSec: number, endSec: number, maxPages: number, spentToday: number): Promise<TDWalkResult> {
   const bars: RawBar[] = [];
   let pages = 0;
@@ -268,9 +219,7 @@ export async function tdWalkM1(apiKey: string, tdSym: string, startSec: number, 
     } catch {
       json = { status: "error" };
     }
-    if (json?.status === "error" || !Array.isArray(json?.values)) {
-      exhausted = true; break; // provider refusal — stop, report, resume later
-    }
+    if (json?.status === "error" || !Array.isArray(json?.values)) { exhausted = true; break; }
     for (const v of json.values) {
       const t = Math.floor(Date.parse(`${String(v.datetime).replace(" ", "T")}Z`) / 1000);
       const o = Number(v.open), h = Number(v.high), l = Number(v.low), c = Number(v.close);
@@ -281,31 +230,37 @@ export async function tdWalkM1(apiKey: string, tdSym: string, startSec: number, 
     pages++;
     histTdSpend(1);
     end = from - 1;
-    if (json.values.length < 5000) { exhausted = true; break; } // reached the provider's own floor
+    if (json.values.length < 5000) { exhausted = true; break; } // provider's own floor
   }
   bars.sort((a, b) => a.time - b.time);
   return { bars, pages, oldest: bars.length ? bars[0].time : null, exhausted };
 }
 
-/** Dukascopy m1 walk-back for forex (official public datafeed, years deep).
- * `days` per run is bounded by the function wall-clock; the cursor resumes. */
+/** Dukascopy m1 walk-back (official public datafeed, years deep) — forex
+ * pairs AND, since the Phase 23 re-test, metals. Parallel batches of 5 stay
+ * inside the function wall-clock; the cursor resumes across runs. */
 export async function dukaWalkM1(code: string, fromSec: number, toSec: number, maxDays: number, fileBudget: number, fileUsed: number): Promise<{ bars: RawBar[]; files: number; oldest: number | null }> {
-  const dukaSym = DUKA_MAP[code];
+  const dukaSym = DUKA_MAP[code] ?? DUKA_METALS[code];
   if (!dukaSym) throw new Error("NOT_ON_DUKA");
   const bars: RawBar[] = [];
   let files = 0;
   let oldest: number | null = null;
-  let fetched = 0;
-  for (let day = Math.floor(toSec / 86400) * 86400; day >= fromSec && fetched < maxDays && fileUsed + files < fileBudget; day -= 86400) {
-    const d = new Date(day * 1000);
-    const buf = await fetchDukaDay(dukaSym, d);
-    if (!buf) { fetched++; continue; } // no file (weekend/lag) — still a day consumed
-    files++;
-    const decoded = await decodeDukaDay(buf, code, d);
-    for (const b of decoded) {
-      if (b.t < fromSec || b.t > toSec) continue;
-      bars.push({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v });
-      if (oldest == null || b.t < oldest) oldest = b.t;
+  const days: Date[] = [];
+  for (let day = Math.floor(toSec / 86400) * 86400; day >= fromSec && days.length < maxDays; day -= 86400) days.push(new Date(day * 1000));
+  for (let i = 0; i < days.length && fileUsed + files < fileBudget; i += 5) {
+    const chunk = days.slice(i, i + 5);
+    const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
+    if (oldest == null && files === 0 && bufs.every((b) => b == null) && i >= 5) break; // CDN unreachable
+    for (let k = 0; k < chunk.length; k++) {
+      const buf = bufs[k];
+      if (!buf) continue; // no file (weekend/publication lag) — honest gap
+      files++;
+      const decoded = await decodeDukaDay(buf, code, chunk[k]);
+      for (const b of decoded) {
+        if (b.t < fromSec || b.t > toSec) continue;
+        bars.push({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v });
+        if (oldest == null || b.t < oldest) oldest = b.t;
+      }
     }
   }
   bars.sort((a, b) => a.time - b.time);
@@ -332,11 +287,11 @@ export interface BackfillResult {
   note?: string; error?: string;
 }
 
-const ASSET_CLASS: Record<string, "metal" | "forex" | "index" | "crypto"> = {
+const ASSET_CLASS: Record<string, AssetClass> = {
   XAUUSD: "metal", XAGUSD: "metal",
 };
 
-function assetClassOf(symbol: string): "metal" | "forex" | "index" | "crypto" {
+function assetClassOf(symbol: string): AssetClass {
   if (ASSET_CLASS[symbol]) return ASSET_CLASS[symbol];
   if (symbol.startsWith("^")) return "index";
   if (/USD[T]?$/i.test(symbol) && symbol.length >= 6) return "crypto";
@@ -369,6 +324,30 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
 
     // ---- 1m: metals → TwelveData walk-back · forex → Dukascopy ----------
     if (tf === "1m") {
+      // Phase 23: metals m1 ALSO rides the Dukascopy datafeed since the
+      // 2026-11-20 re-test proved XAUUSD/XAGUSD serve genuine SPOT BID
+      // candles (years deep, keyless). Dukascopy is primary (deep, free);
+      // TwelveData stays as the keyed fallback for windows the feed skips.
+      if (DUKA_METALS[symbol] || DUKA_MAP[symbol]) {
+        const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
+        const used = Number((await usageRef.once("value")).val() || 0);
+        if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
+        const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
+        await usageRef.set(used + walk.files);
+        const newOldest = walk.oldest ?? state.oldest ?? null;
+        const done = newOldest != null && newOldest <= covered;
+        await stateRef.set({
+          provider: "dukascopy-bid", oldest: newOldest, newest: state.newest ?? now - 2 * 86400,
+          cursor: newOldest, done,
+          files: (state.files ?? 0) + walk.files, written: (state.written ?? 0) + sh.written,
+          rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null,
+        });
+        if (sh.written > 0 || done) {
+          return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, note: `${walk.files} day files` };
+        }
+        // feed skipped this window (or CDN down) → fall through to TwelveData
+      }
       const tdSym = HIST_TD[symbol];
       if (tdSym) {
         const apiKey = String(process.env.TWELVE_DATA_API_KEY || "") || String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
@@ -392,7 +371,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         // publication lag ≈ 1-2 days — walk from two days ago backwards
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 60, 600, used);
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;

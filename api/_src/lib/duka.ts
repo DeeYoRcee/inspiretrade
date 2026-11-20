@@ -33,8 +33,16 @@ const JPY_QUOTE = new Set(["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CA
 
 /** Dukascopy price→point factor for a catalog code. */
 export function dukaPoints(code: string): number {
+  // Phase 23: metals re-test — the datafeed DOES serve XAUUSD/XAGUSD again
+  // (verified live 2026-11-20: 2020-06-15 close 1710.758, 2026-11-17 close
+  // 3856.176 — genuine spot gold). Gold/silver quote 3 decimals.
+  if (code === "XAUUSD" || code === "XAGUSD") return 1e3;
   return JPY_QUOTE.has(code) ? 1e3 : 1e5;
 }
+
+/** Phase 23: metals on the Dukascopy datafeed (hist engine only — the live
+ * chains keep their explicit maps). Genuine SPOT BID candles, years deep. */
+export const DUKA_METALS: Record<string, string> = { XAUUSD: "XAUUSD", XAGUSD: "XAGUSD" };
 
 const DUKA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 

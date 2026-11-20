@@ -61,6 +61,7 @@ import {
 } from "@/components/terminal/chart/dialogs";
 import { Eye, EyeOff, X, Activity, Database } from "lucide-react";
 import { useIsAdmin } from "@/hooks/use-admin";
+import { useTheme } from "@/lib/theme-context";
 import { cn } from "@/lib/utils";
 
 export interface PriceMark {
@@ -82,6 +83,25 @@ const COLORS = {
 
 const SUB_PANE_HEIGHT = 110;
 const PANE_BG = "#0a101f";
+
+// Phase 23 BUG-2: chart-library colors must follow the SITE theme (the DOM
+// classes are remapped in index.css, but lightweight-charts paints its own
+// canvas and needs concrete values). Each theme gets chart surfaces that sit
+// inside its own palette; the default dark map is untouched.
+const CHART_THEME_COLORS: Record<string, { bg: string; text: string; grid: string; pane: string }> = {
+  dark: COLORS.bg ? { bg: "#0b1220", text: "#94a3b8", grid: "#16213a", pane: "#0a101f" } : { bg: COLORS.bg, text: COLORS.text, grid: COLORS.grid, pane: PANE_BG },
+  light: { bg: "#f8fafc", text: "#64748b", grid: "#dde5ee", pane: "#eef2f7" },
+  ocean: { bg: "#07131f", text: "#7fa6c0", grid: "#0e2130", pane: "#06101b" },
+  forest: { bg: "#0b1711", text: "#7fae92", grid: "#13271b", pane: "#0a140e" },
+  sunset: { bg: "#1a1020", text: "#a68cb8", grid: "#2a1a35", pane: "#170e1d" },
+  aurora: { bg: "#04141c", text: "#7ba7a0", grid: "#0a2430", pane: "#031118" },
+  neon: { bg: "#0d0618", text: "#9d7ab8", grid: "#1d1030", pane: "#0b0515" },
+  cosmos: { bg: "#05060f", text: "#8e93ad", grid: "#12142b", pane: "#04050d" },
+  knight: { bg: "#0b0e14", text: "#8892a5", grid: "#161b26", pane: "#090c11" },
+  money: { bg: "#04140d", text: "#77b593", grid: "#0a2517", pane: "#03110a" },
+  f1: { bg: "#120404", text: "#b08484", grid: "#2a0b0b", pane: "#0f0303" },
+};
+const chartThemeColors = (theme: string) => CHART_THEME_COLORS[theme] ?? CHART_THEME_COLORS.dark;
 
 // ---- main-series abstraction: candlestick / hollow / line / area -------------
 type MainKind = "candle" | "hollow" | "line" | "area";
@@ -613,6 +633,28 @@ export function PriceChart({
     // symbol/timeframe are handled by the feed effect — the chart instance persists
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Phase 23 BUG-2: the site theme reaches the chart canvas too — re-paint
+  // chart surfaces when the theme changes (chart instance persists, options
+  // are applied in place — no reload, no data loss)
+  const { theme: siteTheme } = useTheme();
+  useEffect(() => {
+    const c = chartThemeColors(siteTheme);
+    const opts: any = {
+      layout: { background: { type: ColorType.Solid, color: c.bg }, textColor: c.text, fontSize: 11, attributionLogo: false },
+      grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+    };
+    try { chartRef.current?.applyOptions(opts); } catch { /* chart gone */ }
+    for (const pane of paneRef.current.values()) {
+      try {
+        pane.chart.applyOptions({
+          ...opts,
+          layout: { background: { type: ColorType.Solid, color: c.pane }, textColor: c.text, fontSize: 10, attributionLogo: false },
+        });
+      } catch { /* pane gone */ }
+    }
+    canvasRef.current?.redraw();
+  }, [siteTheme]);
 
   // ---- converter (market coords ↔ pane pixels) --------------------------------
   const converterRef = useRef<ChartConverter | null>(null);

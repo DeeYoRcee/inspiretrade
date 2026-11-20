@@ -24,7 +24,10 @@ import RewardsPage from "@/pages/RewardsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import MarketPage from "@/pages/MarketPage";
 import InventoryPage from "@/pages/InventoryPage";
-import TerminalPage from "@/pages/TerminalPage";
+// Phase 23 BUG-2: lazy route — the terminal is the heaviest page (chart
+// engine + indicator suite); code-splitting it keeps every OTHER page's first
+// paint free of that download
+const TerminalPage = React.lazy(() => import("@/pages/TerminalPage"));
 import SettingsPage from "@/pages/SettingsPage";
 import WalletPage from "@/pages/WalletPage";
 import AdminPage from "@/pages/AdminPage";
@@ -278,7 +281,13 @@ function TerminalRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
   if (!user) return <AuthPage />;
-  return <AppLayout><TerminalPage /></AppLayout>;
+  return (
+    <AppLayout>
+      <React.Suspense fallback={<LoadingScreen />}>
+        <TerminalPage />
+      </React.Suspense>
+    </AppLayout>
+  );
 }
 
 function SettingsRoute() {

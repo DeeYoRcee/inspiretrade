@@ -57,6 +57,63 @@
     --background: 0 45% 5%; --foreground: 0 15% 95%; --card: 0 35% 9%; --card-foreground: 0 15% 95%; --popover: 0 35% 10%; --popover-foreground: 0 15% 95%; --primary: 0 78% 55%; --primary-foreground: 0 40% 6%; --secondary: 0 20% 15%; --secondary-foreground: 0 15% 95%; --muted: 0 18% 13%; --muted-foreground: 0 10% 66%; --accent: 0 24% 18%; --accent-foreground: 0 15% 95%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 0 22% 20%; --input: 0 22% 20%; --ring: 0 78% 55%;
   }
 
+  /* ---- Phase 23 BUG-2: the site theme now reaches the terminal ----------
+     The terminal's chart/panel surfaces were hardcoded slate-9xx regardless
+     of the chosen theme. Token overrides below remap the exact utility
+     classes the terminal uses, scoped to [data-term] (the terminal page
+     root), so the rest of the site is untouched. */
+  :root {
+    --term-bg: #0b1220; --term-pane: #0a101f; --term-panel: rgb(15 23 42 / 0.9);
+    --term-panel-95: rgb(15 23 42 / 0.95); --term-solid: #0f172a;
+    --term-border: rgb(51 65 85 / 0.6); --term-border2: rgb(30 41 59 / 0.6);
+    --term-text: #e2e8f0; --term-muted: #94a3b8; --term-faint: #64748b;
+    --term-chip: rgb(30 41 59 / 0.9);
+  }
+  :root[data-theme="light"] {
+    --term-bg: #f8fafc; --term-pane: #eef2f7; --term-panel: rgb(255 255 255 / 0.92);
+    --term-panel-95: rgb(255 255 255 / 0.97); --term-solid: #ffffff;
+    --term-border: rgb(203 213 225 / 0.9); --term-border2: rgb(226 232 240 / 0.9);
+    --term-text: #0f172a; --term-muted: #475569; --term-faint: #64748b;
+    --term-chip: rgb(241 245 249 / 0.95);
+  }
+  :root[data-theme="ocean"]   { --term-bg: #07131f; --term-pane: #06101b; --term-solid: #0c1a28; --term-panel: rgb(12 26 40 / 0.92); --term-panel-95: rgb(12 26 40 / 0.96); --term-border: rgb(56 89 119 / 0.5); --term-border2: rgb(30 58 83 / 0.6); }
+  :root[data-theme="forest"]  { --term-bg: #0b1711; --term-pane: #0a140e; --term-solid: #12241a; --term-panel: rgb(18 36 26 / 0.92); --term-panel-95: rgb(18 36 26 / 0.96); --term-border: rgb(52 90 66 / 0.5); --term-border2: rgb(24 46 33 / 0.6); }
+  :root[data-theme="sunset"]  { --term-bg: #1a1020; --term-pane: #170e1d; --term-solid: #241633; --term-panel: rgb(36 22 51 / 0.92); --term-panel-95: rgb(36 22 51 / 0.96); --term-border: rgb(107 74 141 / 0.5); --term-border2: rgb(56 38 76 / 0.6); }
+  :root[data-theme="aurora"]  { --term-bg: #04141c; --term-pane: #031118; --term-solid: #0a2029; --term-panel: rgb(10 32 41 / 0.92); --term-panel-95: rgb(10 32 41 / 0.96); --term-border: rgb(45 212 168 / 0.35); --term-border2: rgb(19 55 66 / 0.6); }
+  :root[data-theme="neon"]    { --term-bg: #0d0618; --term-pane: #0b0515; --term-solid: #180c2b; --term-panel: rgb(24 12 43 / 0.92); --term-panel-95: rgb(24 12 43 / 0.96); --term-border: rgb(232 121 249 / 0.35); --term-border2: rgb(50 26 84 / 0.6); }
+  :root[data-theme="cosmos"]  { --term-bg: #05060f; --term-pane: #04050d; --term-solid: #0b0d1e; --term-panel: rgb(11 13 30 / 0.92); --term-panel-95: rgb(11 13 30 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(30 33 66 / 0.6); }
+  :root[data-theme="knight"]  { --term-bg: #0b0e14; --term-pane: #090c11; --term-solid: #141824; --term-panel: rgb(20 24 36 / 0.92); --term-panel-95: rgb(20 24 36 / 0.96); --term-border: rgb(71 85 105 / 0.5); --term-border2: rgb(38 46 64 / 0.6); }
+  :root[data-theme="money"]   { --term-bg: #04140d; --term-pane: #03110a; --term-solid: #082418; --term-panel: rgb(8 36 24 / 0.92); --term-panel-95: rgb(8 36 24 / 0.96); --term-border: rgb(47 191 113 / 0.4); --term-border2: rgb(20 61 40 / 0.6); }
+  :root[data-theme="f1"]      { --term-bg: #120404; --term-pane: #0f0303; --term-solid: #220707; --term-panel: rgb(34 7 7 / 0.92); --term-panel-95: rgb(34 7 7 / 0.96); --term-border: rgb(220 38 38 / 0.45); --term-border2: rgb(74 20 20 / 0.6); }
+
+  [data-term] .bg-\[\#0b1220\] { background-color: var(--term-bg) !important; }
+  [data-term] .bg-\[\#0a101f\] { background-color: var(--term-pane) !important; }
+  [data-term] .bg-slate-950\/95,
+  [data-term] .bg-slate-950\/90,
+  [data-term] .bg-slate-950\/80 { background-color: var(--term-panel-95) !important; }
+  [data-term] .bg-slate-950 { background-color: var(--term-solid) !important; }
+  [data-term] .bg-slate-900\/95,
+  [data-term] .bg-slate-900\/90,
+  [data-term] .bg-slate-900\/80 { background-color: var(--term-panel) !important; }
+  [data-term] .bg-slate-900\/70,
+  [data-term] .bg-slate-900\/60,
+  [data-term] .bg-slate-900 { background-color: var(--term-panel) !important; }
+  [data-term] .bg-slate-800\/90,
+  [data-term] .bg-slate-800 { background-color: var(--term-chip) !important; }
+  [data-term] .border-slate-700\/60,
+  [data-term] .border-slate-700\/70,
+  [data-term] .border-slate-700\/50,
+  [data-term] .border-slate-700 { border-color: var(--term-border) !important; }
+  [data-term] .border-slate-800\/60,
+  [data-term] .border-slate-800,
+  [data-term] .border-slate-800\/80 { border-color: var(--term-border2) !important; }
+  [data-term] .text-slate-200 { color: var(--term-text) !important; }
+  [data-term] .text-slate-300 { color: var(--term-text) !important; }
+  [data-term] .text-slate-400 { color: var(--term-muted) !important; }
+  [data-term] .text-slate-500 { color: var(--term-faint) !important; }
+  :root[data-theme="light"] [data-term] .bg-slate-950,
+  :root[data-theme="light"] [data-term] .bg-slate-900\/95 { color-scheme: light; }
+
   *, *::before, *::after { box-sizing: border-box; }
   * { @apply border-border; scrollbar-color: hsl(var(--muted)) hsl(var(--background)); scrollbar-width: thin; }
   html { min-width: 320px; width: 100%; }
