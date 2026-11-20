@@ -337,3 +337,80 @@ export function flatShare(bars: { open: number; high: number; low: number; close
   }
   return flat / bars.length;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 28 — foreign-price wick repair (the EURUSD D1 root cause).
+//
+// REAL-WORLD FAILURE (verified 2026-11-21): EURUSD's daily candle rendered
+// with H=1.16023 while O/L/C all sat at the real ~1.0965 level. 1.16023 is a
+// mid-2025 EUR/USD price — a truncated TrueFX big-figure row ("1.1"+"6023"
+// string-concats to 1.16023) or a poisoned store bar inflated the live
+// bucket's high, and max() is MONOTONIC: once painted, the fake wick stays
+// forever. Every existing check passes such a bar (H ≥ max(O,C) holds — it
+// is internally valid OHLC), and dedupe's widest-range-wins PREFERS it over
+// the clean provider row.
+//
+// A corrupted extreme has a shape no real market produces: the WICK sits
+// multiple robust-volatility units beyond BOTH neighbours' extremes while
+// the BODY (open/close) agrees with the neighbourhood. A genuine crash day
+// fails the body-agreement test (its close is far from the neighbours too)
+// and is never touched. The repair narrows the impossible wick back to the
+// bar's own body — the same "make the rendered candle MORE truthful" policy
+// as the H/L envelope repair above, in the opposite direction: the wick
+// never happened in reality, so removing it removes fabrication, not data.
+// ---------------------------------------------------------------------------
+
+export interface OutlierRepairResult {
+  bars: RawBar[];
+  /** bars whose High was narrowed to the body (foreign wick removed) */
+  repairedHigh: number;
+  /** bars whose Low was raised to the body (foreign wick removed) */
+  repairedLow: number;
+}
+
+/**
+ * Remove impossible wicks from a merged candle series. Robust scale =
+ * median adjacent |Δclose| (a single wild bar cannot shift the median);
+ * threshold K = max(1.2%, 6×median). Only repairs when the bar's whole body
+ * sits inside the neighbourhood envelope — real volatility is never touched.
+ */
+export function repairOutlierExtremes(bars: RawBar[], minBars = 5): OutlierRepairResult {
+  const out = bars.map((b) => ({ ...b }));
+  let repairedHigh = 0;
+  let repairedLow = 0;
+  if (out.length < minBars) return { bars: out, repairedHigh, repairedLow };
+  const diffs: number[] = [];
+  for (let i = 1; i < out.length; i++) {
+    const a = out[i - 1].close;
+    const b = out[i].close;
+    if (a > 0 && b > 0) diffs.push(Math.abs(b / a - 1));
+  }
+  diffs.sort((x, y) => x - y);
+  const med = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 0;
+  const K = Math.max(0.012, med * 6);
+  const finitePos = (x: number | undefined): x is number =>
+    typeof x === "number" && Number.isFinite(x) && x > 0;
+  for (let i = 0; i < out.length; i++) {
+    const prev = out[i - 1];
+    const next = out[i + 1];
+    const hiRefs = [prev?.high, next?.high].filter(finitePos);
+    const loRefs = [prev?.low, next?.low].filter(finitePos);
+    if (!hiRefs.length || !loRefs.length) continue;
+    const refHi = Math.max(...hiRefs);
+    const refLo = Math.min(...loRefs);
+    const b = out[i];
+    const bodyHi = Math.max(b.open, b.close);
+    const bodyLo = Math.min(b.open, b.close);
+    const bodyInsideNeighbourhood = bodyHi <= refHi * (1 + K) && bodyLo >= refLo * (1 - K);
+    if (!bodyInsideNeighbourhood) continue;
+    if (b.high > refHi * (1 + K)) {
+      b.high = bodyHi;
+      repairedHigh++;
+    }
+    if (b.low < refLo * (1 - K)) {
+      b.low = bodyLo;
+      repairedLow++;
+    }
+  }
+  return { bars: out, repairedHigh, repairedLow };
+}

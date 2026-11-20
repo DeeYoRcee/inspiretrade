@@ -34,7 +34,7 @@
  * dropped.
  */
 import { rtdb } from "./firebase";
-import { validateBars, alignAndDedupe, type RawBar } from "../../../shared/feed-validation";
+import { validateBars, alignAndDedupe, repairOutlierExtremes, type RawBar } from "../../../shared/feed-validation";
 import { aggregateBars } from "../../../shared/terminal";
 import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
 import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, type AssetClass } from "./hist-sessions";
@@ -482,14 +482,20 @@ export interface RangeResult { ok: boolean; symbol: string; tf: string; bars: Ra
  */
 export async function readRange(symbol: string, tf: string, fromSec: number, toSec: number): Promise<RangeResult> {
   const native = await readShards(symbol, tf, fromSec, toSec);
-  if (native.bars.length) return { ok: true, symbol, tf, bars: native.bars, providers: native.providers };
+  if (native.bars.length) {
+    // Phase 28: a poisoned shard row (foreign-price wick) must not ride into
+    // the chart — the fold chain would carry it into every higher timeframe.
+    const repaired = repairOutlierExtremes(native.bars);
+    return { ok: true, symbol, tf, bars: repaired.bars, providers: native.providers };
+  }
   const chain = READ_AGG_CHAIN[tf];
   if (chain) {
     for (const agg of chain) {
       if (agg.src === "1m" && toSec - fromSec > MAX_1M_FOLD_WINDOW_SEC) continue;
       const src = await readShards(symbol, agg.src, fromSec, toSec);
       if (!src.bars.length) continue;
-      const out = aggregateBars(src.bars, agg.factorMin) as RawBar[];
+      const folded = aggregateBars(src.bars, agg.factorMin) as RawBar[];
+      const out = repairOutlierExtremes(folded).bars;
       const providers: Record<string, number> = {};
       for (const [p, n] of Object.entries(src.providers)) providers[`${p}→${tf}-fold`] = n;
       return { ok: true, symbol, tf, bars: out, providers };

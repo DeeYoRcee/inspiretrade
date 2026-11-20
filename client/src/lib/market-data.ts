@@ -64,7 +64,7 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
 // Binance (crypto — real live)
 // ---------------------------------------------------------------------------
 
-import { validateBars, dedupeBars, checkBar, minuteIslandFilter, flatShare, type RawBar } from "@shared/feed-validation";
+import { validateBars, dedupeBars, checkBar, minuteIslandFilter, flatShare, repairOutlierExtremes, bucketStart, type RawBar } from "@shared/feed-validation";
 import { upsertBar, wsBackoffDelay, nextEndpointIndex, aggregateToSeconds } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
@@ -524,6 +524,9 @@ class QuotesProvider {
     // chart must never trust the wire — repair/drop before aggregation
     const checked = validateBars(res.bars as RawBar[]);
     const deduped = dedupeBars(checked.bars);
+    // Phase 28: foreign-price wick repair (a poisoned max() wick is internally
+    // valid OHLC — only the neighbourhood proves it impossible)
+    const repaired = repairOutlierExtremes(deduped.bars);
     statsState.invalidBars += checked.invalid;
     statsState.repairedBars += checked.repaired;
     statsState.duplicateBars += deduped.dropped;
@@ -545,7 +548,7 @@ class QuotesProvider {
         authedFetch("/api/quotes?action=backfill-fx", { code: symbol, days: 35 }).catch(() => { /* cooldown/best-effort */ });
       }
     }
-    let bars: Bar[] = deduped.bars as Bar[];
+    let bars: Bar[] = repaired.bars as Bar[];
     // Phase 20 defense-in-depth: Yahoo's FX intraday 1m is CLOSE-ONLY
     // (O=H=L=C on every bar — verified 2026-11-19). The server rejects it
     // (FLAT_FX_OHLC), but the chart never trusts the wire: a flat FX
@@ -824,20 +827,56 @@ class QuotesProvider {
       this.loadedAt.set(key, Date.now());
       return [];
     }
-    // ---- Phase 23 §5: deep history merge (day-shard store) ------------------
+    // ---- Phase 23 §5 + Phase 28: layered deep history merge -----------------
     // Minute grain: hist m1 + recorded m1 in one stream (recorded wins on
-    // conflict), then aggregate as before. Hour+/daily: hist NATIVE shards
-    // (stooq 60m/d1 — genuine OHLC, never folded futures) + the recorded
-    // aggregate in front. Nothing fabricated; the island filter already ran
-    // on the recorded side and every shard was validated at write time.
-    // Phase 26: the minute window is 45 days now (was 10) — the recorded
-    // window is 30, so the two overlap and the seam is invisible; deeper
-    // history arrives via scroll-back prepends, not via a giant initial load.
+    // conflict). Hour+/daily: FOUR independent layers, later wins per bucket:
+    //   1. stooq SPOT daily (genuine daily history for 1d/1W/1M — always
+    //      available, kills the "history starts Oct 22" wall outright)
+    //   2. hist day shards (Dukascopy/stooq, validated at write time)
+    //   3. the recorded store server-folded to the target tf (Phase 28:
+    //      full store depth, no 30-day wall, ≤4000 bars per payload)
+    //   4. the client-quality recorded aggregate (island-filtered m1)
+    // Nothing fabricated; every layer passed validateBars on both sides.
     const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 45;
     let m1merged = m1;
     let deepBars: Bar[] = [];
+    const stooqDaily: Bar[] = [];
+    const serverAgg: Bar[] = [];
+    const loadServerAgg = async (): Promise<void> => {
+      try {
+        // weekly/monthly fold from genuine daily buckets server-side (1d)
+        const aggTfSec = sec >= 604800 ? 86400 : sec;
+        const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}&tf=${aggTfSec}`);
+        if (res?.ok && Array.isArray(res.bars)) {
+          const win = sec >= 86400 ? 400 : 130;
+          for (const b of res.bars as any[]) {
+            const t = Number(b?.time);
+            const o = Number(b?.open), h = Number(b?.high), l = Number(b?.low), c = Number(b?.close);
+            if (!Number.isFinite(t) || ![o, h, l, c].every(Number.isFinite) || t > now || t < now - win * 86400) continue;
+            serverAgg.push({ time: t, open: o, high: h, low: l, close: c, volume: Number(b?.volume || 0) });
+          }
+        }
+      } catch { /* best-effort depth layer */ }
+    };
+    const loadStooqDaily = async (): Promise<void> => {
+      if (sec < 86400 || !inst.yahoo) return;
+      try {
+        const res = await authedFetch<any>(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo)}&interval=1d&range=400d`);
+        if (res?.ok && Array.isArray(res.bars)) {
+          for (const b of res.bars as any[]) {
+            const t = Number(b?.time);
+            const o = Number(b?.open), h = Number(b?.high), l = Number(b?.low), c = Number(b?.close);
+            if (!Number.isFinite(t) || ![o, h, l, c].every(Number.isFinite) || t > now) continue;
+            stooqDaily.push({ time: t, open: o, high: h, low: l, close: c, volume: Number(b?.volume || 0) });
+          }
+        }
+      } catch { /* best-effort */ }
+    };
     if (sec >= 60) {
-      const hist = await fetchHistRange(symbol, sec >= 3600 ? tf : ("1m" as Timeframe), now - histWinDays * 86400, now);
+      const [, hist] = await Promise.all([
+        sec >= 3600 ? Promise.all([loadServerAgg(), loadStooqDaily()]) : Promise.resolve(),
+        fetchHistRange(symbol, sec >= 3600 ? tf : ("1m" as Timeframe), now - histWinDays * 86400, now),
+      ]);
       deepBars = hist.bars;
       if (deepBars.length) {
         if (sec < 3600) {
@@ -860,19 +899,50 @@ class QuotesProvider {
     if (deepFrom > deepThresh) maybeFireDeepHeal(symbol, sec >= 3600 ? tf : "1m");
     // seed the recorder's glitch anchor from the clean tail
     if (m1.length) spotAnchor.set(code, { close: m1[m1.length - 1].close, at: Date.now() });
+    const foldPair = (a: Bar, b: Bar, t: number): Bar => ({
+      time: t,
+      open: a.open,
+      close: b.close,
+      high: Math.max(a.high, b.high),
+      low: Math.min(a.low, b.low),
+      volume: (a.volume ?? 0) + (b.volume ?? 0),
+    });
     const bars = dedupSort(
       sec < 3600
         ? (sec === 60 ? m1merged.slice() : aggregateBars(m1merged, sec / 60))
         : (() => {
             const recAgg = aggregateBars(m1, sec / 60) as Bar[];
-            if (!deepBars.length) return recAgg;
+            if (sec >= 604800) {
+              // weekly/monthly: fold every daily layer with bucketStart
+              // anchors (Monday UTC for 1W — aggregateBars' plain floor would
+              // anchor weeks to Thursday, epoch 0 being a Thursday)
+              const target = new Map<number, Bar>();
+              for (const b of deepBars) target.set(b.time, b); // hist tf shards: already target-bucketed
+              const dailyByTime = new Map<number, Bar>();
+              for (const b of [...stooqDaily, ...serverAgg, ...recAgg]) {
+                const t = bucketStart(b.time, 86400);
+                const ex = dailyByTime.get(t);
+                dailyByTime.set(t, ex ? foldPair(ex, b, t) : { ...b, time: t });
+              }
+              const dailyMerged = repairOutlierExtremes([...dailyByTime.values()].sort((a, b) => a.time - b.time)).bars;
+              for (const b of dailyMerged) {
+                const t = bucketStart(b.time, sec);
+                const ex = target.get(t);
+                target.set(t, ex ? foldPair(ex, b, t) : { ...b, time: t });
+              }
+              return [...target.values()].sort((a, b) => a.time - b.time);
+            }
+            // hourly class: hist shards → server-folded store → recorded
+            // aggregate (later wins; stooq has no genuine metals intraday)
             const byTime = new Map<number, Bar>();
             for (const b of deepBars) byTime.set(b.time, b);
+            for (const b of serverAgg) byTime.set(b.time, b);
             for (const b of recAgg) byTime.set(b.time, b); // recorded wins
             return [...byTime.values()].sort((a, b) => a.time - b.time);
           })(),
     );
-    this.source.set(key, deepBars.length ? `spot+deep-history(${lastHistNote.get(key) || "provider"})` : (tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`));
+    const deepLayers = [stooqDaily.length ? "stooq-d1" : null, deepBars.length ? `shards(${lastHistNote.get(key) || "provider"})` : null, serverAgg.length ? "store-fold" : null].filter(Boolean).join("+");
+    this.source.set(key, deepLayers ? `spot+deep(${deepLayers})` : (tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`));
     this.identity.set(key, "spot");
     const merged = this.mergeExtended(key, bars);
     this.history.set(key, merged);

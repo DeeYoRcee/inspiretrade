@@ -226,6 +226,45 @@ function flatShare(bars) {
   }
   return flat / bars.length;
 }
+function repairOutlierExtremes(bars, minBars = 5) {
+  const out = bars.map((b) => ({ ...b }));
+  let repairedHigh = 0;
+  let repairedLow = 0;
+  if (out.length < minBars) return { bars: out, repairedHigh, repairedLow };
+  const diffs = [];
+  for (let i = 1; i < out.length; i++) {
+    const a = out[i - 1].close;
+    const b = out[i].close;
+    if (a > 0 && b > 0) diffs.push(Math.abs(b / a - 1));
+  }
+  diffs.sort((x, y) => x - y);
+  const med = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 0;
+  const K = Math.max(0.012, med * 6);
+  const finitePos = (x) => typeof x === "number" && Number.isFinite(x) && x > 0;
+  for (let i = 0; i < out.length; i++) {
+    const prev = out[i - 1];
+    const next = out[i + 1];
+    const hiRefs = [prev?.high, next?.high].filter(finitePos);
+    const loRefs = [prev?.low, next?.low].filter(finitePos);
+    if (!hiRefs.length || !loRefs.length) continue;
+    const refHi = Math.max(...hiRefs);
+    const refLo = Math.min(...loRefs);
+    const b = out[i];
+    const bodyHi = Math.max(b.open, b.close);
+    const bodyLo = Math.min(b.open, b.close);
+    const bodyInsideNeighbourhood = bodyHi <= refHi * (1 + K) && bodyLo >= refLo * (1 - K);
+    if (!bodyInsideNeighbourhood) continue;
+    if (b.high > refHi * (1 + K)) {
+      b.high = bodyHi;
+      repairedHigh++;
+    }
+    if (b.low < refLo * (1 - K)) {
+      b.low = bodyLo;
+      repairedLow++;
+    }
+  }
+  return { bars: out, repairedHigh, repairedLow };
+}
 
 // shared/terminal.ts
 var INSTRUMENTS = [
@@ -841,14 +880,18 @@ async function runBackfillStep(req) {
 }
 async function readRange(symbol, tf, fromSec, toSec) {
   const native = await readShards(symbol, tf, fromSec, toSec);
-  if (native.bars.length) return { ok: true, symbol, tf, bars: native.bars, providers: native.providers };
+  if (native.bars.length) {
+    const repaired = repairOutlierExtremes(native.bars);
+    return { ok: true, symbol, tf, bars: repaired.bars, providers: native.providers };
+  }
   const chain = READ_AGG_CHAIN[tf];
   if (chain) {
     for (const agg of chain) {
       if (agg.src === "1m" && toSec - fromSec > MAX_1M_FOLD_WINDOW_SEC) continue;
       const src = await readShards(symbol, agg.src, fromSec, toSec);
       if (!src.bars.length) continue;
-      const out = aggregateBars(src.bars, agg.factorMin);
+      const folded = aggregateBars(src.bars, agg.factorMin);
+      const out = repairOutlierExtremes(folded).bars;
       const providers = {};
       for (const [p, n] of Object.entries(src.providers)) providers[`${p}\u2192${tf}-fold`] = n;
       return { ok: true, symbol, tf, bars: out, providers };
@@ -895,6 +938,26 @@ async function coverageReport(symbol, tfs) {
 // api/_src/lib/truefx.ts
 var TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
 var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var TRUEFX_BIG_FIGURE_RE = /^\d+\.(?:\d{2})?$/;
+function parseTrueFxRow(f, ctx) {
+  if (f.length < 8) return null;
+  const pair = f[0]?.trim();
+  if (!pair || !pair.includes("/")) return null;
+  const code = pair.replace("/", "");
+  if (!TRUEFX_BIG_FIGURE_RE.test(String(f[2])) || !TRUEFX_BIG_FIGURE_RE.test(String(f[4]))) return null;
+  const bid = Number.parseFloat(String(f[2]) + String(f[3]));
+  const ask = Number.parseFloat(String(f[4]) + String(f[5]));
+  if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) return null;
+  const last = ctx?.lastGood?.[code];
+  if (last && last > 0 && Math.abs(bid / last - 1) > 0.015) {
+    const nowMs = ctx?.nowMs ?? Date.now();
+    const acceptedAt = ctx?.lastGoodAt?.[code] ?? 0;
+    if (nowMs - acceptedAt < 3e5) return null;
+  }
+  const ts = Number(f[1]);
+  const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
+  return { code, quote: { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open } };
+}
 var CACHE_TTL_MS = 2e3;
 var cache = null;
 var inflight = null;
@@ -910,18 +973,18 @@ var truefxQuotes = async () => {
       if (!res.ok) return cache?.quotes ?? {};
       const text = await res.text();
       const out = {};
+      const lg = {};
+      const lga = {};
+      for (const [code, q] of Object.entries(cache?.quotes ?? {})) {
+        lg[code] = q.bid;
+        lga[code] = cache?.at ?? 0;
+      }
       for (const line of text.split("\n")) {
-        const f = line.split(",");
-        if (f.length < 8) continue;
-        const pair = f[0]?.trim();
-        if (!pair || !pair.includes("/")) continue;
-        const code = pair.replace("/", "");
-        const bid = Number.parseFloat(String(f[2]) + String(f[3]));
-        const ask = Number.parseFloat(String(f[4]) + String(f[5]));
-        const ts = Number(f[1]);
-        const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
-        if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
-        out[code] = { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
+        const parsed = parseTrueFxRow(line.split(","), { lastGood: lg, lastGoodAt: lga, nowMs: Date.now() });
+        if (!parsed) continue;
+        out[parsed.code] = parsed.quote;
+        lg[parsed.code] = parsed.quote.bid;
+        lga[parsed.code] = Date.now();
       }
       if (Object.keys(out).length) cache = { at: Date.now(), quotes: out };
       return out;
@@ -1207,9 +1270,17 @@ var quotes_default = handle(async (req, res) => {
     const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const obj = snap.val() || {};
     const now = Math.floor(Date.now() / 1e3);
-    const minT = now - 30 * 86400;
-    const candles = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT).sort((a, b) => a.t - b.t);
-    return res.json({ ok: true, code, candles });
+    const tfSec = Math.max(60, Math.min(2592e3, Math.floor(Number(url.searchParams.get("tf")) || 60)));
+    const minT = tfSec > 60 ? 0 : now - 65 * 86400;
+    const rawCandles = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT && c.t <= now).sort((a, b) => a.t - b.t);
+    const checked = validateBars(rawCandles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s })));
+    if (tfSec > 60) {
+      const agg = aggregateBars(checked.bars, tfSec / 60);
+      const bars = repairOutlierExtremes(agg.slice(-4e3)).bars;
+      return res.json({ ok: true, code, tf: tfSec, bars, count: bars.length });
+    }
+    const candles = checked.bars.map((b) => ({ t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, s: Number(b.volume || 0) }));
+    return res.json({ ok: true, code, tf: tfSec, candles });
   }
   if (action === "spot-record" && req.method === "POST") {
     const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
@@ -1866,7 +1937,8 @@ var quotes_default = handle(async (req, res) => {
     const island = minuteIslandFilter(raw);
     const checked = validateBars(island.bars);
     const deduped = alignAndDedupe(checked.bars, 60);
-    const m1 = deduped.bars;
+    const repairedM1 = repairOutlierExtremes(deduped.bars).bars;
+    const m1 = repairedM1;
     if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
     const newest = bars[bars.length - 1].time;

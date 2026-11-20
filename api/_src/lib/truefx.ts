@@ -29,6 +29,61 @@ export interface TrueFxQuote {
   open: number | null;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 28 — ingest guards (pure, testable). A malformed TrueFX row must
+// never reach the fxLive store, the chart paint or the execution mids.
+// ---------------------------------------------------------------------------
+
+/** TrueFX big figures have a fixed per-class shape: "1.09" (4-figure majors,
+ * 2 decimals) or "159." (JPY-style, 1 decimal + trailing dot). Anything else
+ * is a truncated/malformed row. */
+export const TRUEFX_BIG_FIGURE_RE = /^\d+\.(?:\d{2})?$/;
+
+export interface TrueFxParseCtx {
+  /** last accepted bid per pair — the jump-guard baseline */
+  lastGood?: Record<string, number>;
+  /** ms timestamp of each pair's last accepted quote (stale-base escape) */
+  lastGoodAt?: Record<string, number>;
+  nowMs?: number;
+}
+
+export interface TrueFxParsedRow {
+  code: string;
+  quote: TrueFxQuote;
+}
+
+/**
+ * Parse one CSV row with the Phase 28 guards:
+ *  - big-figure structure: "1.1"+"6023" string-concats to 1.16023 — a
+ *    mid-2025 EUR/USD price that (before this guard) poisoned the daily
+ *    candle's high on 2026-11-21 (max() is monotonic — the fake wick never
+ *    healed). Refuse the malformed row outright.
+ *  - per-pair jump guard: consecutive anonymous snapshots are ~1s apart and
+ *    FX majors never move 1.5% between them; a candidate beyond that is
+ *    refused unless the pair has gone 5 minutes without ANY accepted quote
+ *    (a genuine regime move must win eventually — honest staleness beats a
+ *    frozen feed).
+ */
+export function parseTrueFxRow(f: string[], ctx?: TrueFxParseCtx): TrueFxParsedRow | null {
+  if (f.length < 8) return null;
+  const pair = f[0]?.trim();
+  if (!pair || !pair.includes("/")) return null;
+  const code = pair.replace("/", "");
+  if (!TRUEFX_BIG_FIGURE_RE.test(String(f[2])) || !TRUEFX_BIG_FIGURE_RE.test(String(f[4]))) return null;
+  const bid = Number.parseFloat(String(f[2]) + String(f[3]));
+  const ask = Number.parseFloat(String(f[4]) + String(f[5]));
+  if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) return null;
+  const last = ctx?.lastGood?.[code];
+  if (last && last > 0 && Math.abs(bid / last - 1) > 0.015) {
+    const nowMs = ctx?.nowMs ?? Date.now();
+    const acceptedAt = ctx?.lastGoodAt?.[code] ?? 0;
+    if (nowMs - acceptedAt < 300000) return null;
+  }
+  const ts = Number(f[1]);
+  const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
+  return { code, quote: { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open } };
+}
+
 export const TRUEFX_UA = UA;
 
 // tiny module-level TTL cache: one anonymous request answers EVERY pair, and
@@ -50,18 +105,19 @@ export const truefxQuotes = async (): Promise<Record<string, TrueFxQuote>> => {
       if (!res.ok) return cache?.quotes ?? {};
       const text = await res.text();
       const out: Record<string, TrueFxQuote> = {};
+      // jump-guard baseline = the previously accepted quotes (the 2s TTL cache)
+      const lg: Record<string, number> = {};
+      const lga: Record<string, number> = {};
+      for (const [code, q] of Object.entries(cache?.quotes ?? {})) {
+        lg[code] = q.bid;
+        lga[code] = cache?.at ?? 0;
+      }
       for (const line of text.split("\n")) {
-        const f = line.split(",");
-        if (f.length < 8) continue;
-        const pair = f[0]?.trim();
-        if (!pair || !pair.includes("/")) continue;
-        const code = pair.replace("/", "");
-        const bid = Number.parseFloat(String(f[2]) + String(f[3]));
-        const ask = Number.parseFloat(String(f[4]) + String(f[5]));
-        const ts = Number(f[1]);
-        const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
-        if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
-        out[code] = { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
+        const parsed = parseTrueFxRow(line.split(","), { lastGood: lg, lastGoodAt: lga, nowMs: Date.now() });
+        if (!parsed) continue;
+        out[parsed.code] = parsed.quote;
+        lg[parsed.code] = parsed.quote.bid;
+        lga[parsed.code] = Date.now();
       }
       if (Object.keys(out).length) cache = { at: Date.now(), quotes: out };
       return out;

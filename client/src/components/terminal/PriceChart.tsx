@@ -1343,7 +1343,12 @@ export function PriceChart({
     // TradingView-style: the exact bar under the crosshair, with its own timestamp
     const ts2 = new Date(b.time * 1000);
     const hh = (n: number) => String(n).padStart(2, "0");
-    const stamp = `${hh(ts2.getDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getMonth()]} ${hh(ts2.getHours())}:${hh(ts2.getMinutes())}`;
+    // D1/W1/MN candles start at a day boundary — a HH:MM stamp is noise there
+    // (TradingView shows the date only for daily+ bars)
+    const tfSec2 = TF_SECONDS[timeframeRef.current] ?? 60;
+    const stamp = tfSec2 >= 86400
+      ? `${hh(ts2.getDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getMonth()]}${tfSec2 >= 2592000 ? ` ${ts2.getFullYear()}` : ""}`
+      : `${hh(ts2.getDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getMonth()]} ${hh(ts2.getHours())}:${hh(ts2.getMinutes())}`;
     const instL2 = getInstrument(symbolRef.current);
     let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> <span class="text-slate-400">— ${instL2?.name ?? ""}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span> <span class="text-slate-500 font-number">${stamp}</span>`;
     if (b.volume) html += ` <span class="text-slate-500">Vol</span> <span class="font-number text-slate-400">${compactNum(b.volume)}</span>`;

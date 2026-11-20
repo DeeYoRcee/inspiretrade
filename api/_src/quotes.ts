@@ -218,7 +218,7 @@ async function fetchSpot(code: string): Promise<number | null> {
 
 import {
   validateBars, alignAndDedupe, spotMergeGuard, bucketStart, minuteIslandFilter,
-  flatShare,
+  flatShare, repairOutlierExtremes,
   type RawBar,
 } from "../../shared/feed-validation";
 import { aggregateBars, SPOT_PRICE_BANDS } from "../../shared/terminal";
@@ -411,17 +411,30 @@ export default handle(async (req, res) => {
     const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const obj: Record<string, any> = snap.val() || {};
     const now = Math.floor(Date.now() / 1000);
-    // Phase 23: the old 8-day floor was the ROOT CAUSE of "history starts
-    // Nov 12" on top of the chart never requesting provider history — it hid
-    // even the deep TwelveData bars already stored here. 30 days serves the
-    // recorded window honestly (the deep history now comes from the hist
-    // engine's day shards, not this node).
-    const minT = now - 30 * 86400;
-    const candles = Object.entries(obj)
+    // Phase 23: the old 8-day floor hid even the deep TwelveData bars. The
+    // 30-day floor that replaced it became the NEW "history starts Oct 22"
+    // wall (Phase 28): now−30d landed exactly on the recording start and the
+    // client refused everything older. Phase 28 contract:
+    //   tf=60 (default, backward compatible) → minute grain, last 65 days
+    //     (the Twelve Data backfill depth — the honest store window);
+    //   tf>60 → server folds the FULL store (no floor: retention is the
+    //     store's own start) up to the requested bucket and serves ≤4000
+    //     bars — deep hourly/daily history in one small payload.
+    const tfSec = Math.max(60, Math.min(2592000, Math.floor(Number(url.searchParams.get("tf")) || 60)));
+    const minT = tfSec > 60 ? 0 : now - 65 * 86400;
+    const rawCandles = Object.entries(obj)
       .map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) }))
-      .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT)
+      .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT && c.t <= now)
       .sort((a, b) => a.t - b.t);
-    return res.json({ ok: true, code, candles });
+    const checked = validateBars(rawCandles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s })));
+    if (tfSec > 60) {
+      const agg = aggregateBars(checked.bars as any[], tfSec / 60) as any[];
+      const bars = repairOutlierExtremes(agg.slice(-4000) as RawBar[]).bars;
+      return res.json({ ok: true, code, tf: tfSec, bars, count: bars.length });
+    }
+    const candles = checked.bars
+      .map((b: any) => ({ t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, s: Number((b as any).volume || 0) }));
+    return res.json({ ok: true, code, tf: tfSec, candles });
   }
   if (action === "spot-record" && req.method === "POST") {
     const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
@@ -1217,7 +1230,12 @@ export default handle(async (req, res) => {
     const island = minuteIslandFilter(raw);
     const checked = validateBars(island.bars);
     const deduped = alignAndDedupe(checked.bars, 60);
-    const m1 = deduped.bars;
+    // Phase 28: the store's minutes carry the TrueFX ingest guards now, but
+    // minutes written BEFORE the guards keep their poisoned extremes — a
+    // foreign-price wick must not fold into higher timeframes (max() is
+    // monotonic: one bad high rides into H1/H4/D1 forever).
+    const repairedM1 = repairOutlierExtremes(deduped.bars).bars;
+    const m1 = repairedM1;
     if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
     const newest = bars[bars.length - 1].time;

@@ -1014,6 +1014,26 @@ function dayKey(ts = Date.now()) {
 // api/_src/lib/truefx.ts
 var TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var TRUEFX_BIG_FIGURE_RE = /^\d+\.(?:\d{2})?$/;
+function parseTrueFxRow(f, ctx) {
+  if (f.length < 8) return null;
+  const pair = f[0]?.trim();
+  if (!pair || !pair.includes("/")) return null;
+  const code = pair.replace("/", "");
+  if (!TRUEFX_BIG_FIGURE_RE.test(String(f[2])) || !TRUEFX_BIG_FIGURE_RE.test(String(f[4]))) return null;
+  const bid = Number.parseFloat(String(f[2]) + String(f[3]));
+  const ask = Number.parseFloat(String(f[4]) + String(f[5]));
+  if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) return null;
+  const last = ctx?.lastGood?.[code];
+  if (last && last > 0 && Math.abs(bid / last - 1) > 0.015) {
+    const nowMs = ctx?.nowMs ?? Date.now();
+    const acceptedAt = ctx?.lastGoodAt?.[code] ?? 0;
+    if (nowMs - acceptedAt < 3e5) return null;
+  }
+  const ts = Number(f[1]);
+  const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
+  return { code, quote: { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open } };
+}
 var CACHE_TTL_MS = 2e3;
 var cache2 = null;
 var inflight = null;
@@ -1029,18 +1049,18 @@ var truefxQuotes = async () => {
       if (!res.ok) return cache2?.quotes ?? {};
       const text = await res.text();
       const out = {};
+      const lg = {};
+      const lga = {};
+      for (const [code, q] of Object.entries(cache2?.quotes ?? {})) {
+        lg[code] = q.bid;
+        lga[code] = cache2?.at ?? 0;
+      }
       for (const line of text.split("\n")) {
-        const f = line.split(",");
-        if (f.length < 8) continue;
-        const pair = f[0]?.trim();
-        if (!pair || !pair.includes("/")) continue;
-        const code = pair.replace("/", "");
-        const bid = Number.parseFloat(String(f[2]) + String(f[3]));
-        const ask = Number.parseFloat(String(f[4]) + String(f[5]));
-        const ts = Number(f[1]);
-        const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
-        if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) continue;
-        out[code] = { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open };
+        const parsed = parseTrueFxRow(line.split(","), { lastGood: lg, lastGoodAt: lga, nowMs: Date.now() });
+        if (!parsed) continue;
+        out[parsed.code] = parsed.quote;
+        lg[parsed.code] = parsed.quote.bid;
+        lga[parsed.code] = Date.now();
       }
       if (Object.keys(out).length) cache2 = { at: Date.now(), quotes: out };
       return out;
