@@ -86,8 +86,10 @@
   :root[data-theme="money"]   { --term-bg: #04140d; --term-pane: #03110a; --term-solid: #082418; --term-panel: rgb(8 36 24 / 0.92); --term-panel-95: rgb(8 36 24 / 0.96); --term-border: rgb(47 191 113 / 0.4); --term-border2: rgb(20 61 40 / 0.6); }
   :root[data-theme="f1"]      { --term-bg: #120404; --term-pane: #0f0303; --term-solid: #220707; --term-panel: rgb(34 7 7 / 0.92); --term-panel-95: rgb(34 7 7 / 0.96); --term-border: rgb(220 38 38 / 0.45); --term-border2: rgb(74 20 20 / 0.6); }
 
-  [data-term] .bg-\[\#0b1220\] { background-color: var(--term-bg) !important; }
-  [data-term] .bg-\[\#0a101f\] { background-color: var(--term-pane) !important; }
+  /* the CHART CANVAS stays dark in every theme (Phase 24 feedback): the chart
+     root opts out via [data-chart-dark], its sub-pane hosts are inside it and
+     keep their own fixed backgrounds */
+  [data-term] .bg-\[\#0b1220\]:not([data-chart-dark]) { background-color: var(--term-bg) !important; }
   [data-term] .bg-slate-950\/95,
   [data-term] .bg-slate-950\/90,
   [data-term] .bg-slate-950\/80 { background-color: var(--term-panel-95) !important; }

@@ -97,7 +97,24 @@ class BinanceProvider {
     // short-lived fresh cache — instant timeframe switching / remounts
     const fresh = this.history.get(key);
     if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) return fresh;
-    const raw = await this.fetchRecent(symbol, tf, 1000);
+    // Phase 24 BUG-2: sub-minute TFs walk THREE 1s kline pages back-to-back
+    // (1000/page hard cap) — a single page held only ~16 minutes of 1s data,
+    // so 15s/30s charts opened with a handful of candles
+    let raw: Bar[];
+    if (BINANCE_AGGREGATE[tf]) {
+      const pages: Bar[] = [];
+      let end: number | undefined = undefined;
+      for (let page = 0; page < 3; page++) {
+        const chunk = await this.fetchRecent(symbol, tf, 1000, end);
+        if (!chunk.length) break;
+        pages.unshift(...chunk);
+        end = chunk[0].time * 1000 - 1;
+        if (chunk.length < 1000) break;
+      }
+      raw = pages;
+    } else {
+      raw = await this.fetchRecent(symbol, tf, 1000);
+    }
     // sub-minute TFs fetch the native 1s stream and aggregate honestly here
     const bars = BINANCE_AGGREGATE[tf] ? aggregateToSeconds(raw, TF_SECONDS[tf]) as Bar[] : raw;
     this.history.set(key, bars);
@@ -697,14 +714,28 @@ class QuotesProvider {
       } catch { /* backfill is best-effort */ }
     }
 
+    // ---- Phase 24 BUG: sub-minute timeframes are LIVE-ONLY ------------------
+    // Folding minute candles into second buckets put every minute in exactly
+    // ONE second bucket — a sparse string of flat dots that then BLOCKED the
+    // live seconds builder (history looked non-empty). No free source carries
+    // second-grain history for metals, so the honest answer is an empty
+    // initial series; subscribeFeed's seconds branch builds real candles from
+    // the first observed 1s gold-api quote onward (§7: nothing fabricated).
+    const key = `${symbol}:${tf}`;
+    const sec = TF_SECONDS[tf];
+    if (sec < 60) {
+      this.source.set(key, "spot-seconds-live");
+      this.identity.set(key, "spot");
+      this.history.set(key, []);
+      this.loadedAt.set(key, Date.now());
+      return [];
+    }
     // ---- Phase 23 §5: deep history merge (day-shard store) ------------------
     // Minute grain: hist m1 + recorded m1 in one stream (recorded wins on
     // conflict), then aggregate as before. Hour+/daily: hist NATIVE shards
     // (stooq 60m/d1 — genuine OHLC, never folded futures) + the recorded
     // aggregate in front. Nothing fabricated; the island filter already ran
     // on the recorded side and every shard was validated at write time.
-    const key = `${symbol}:${tf}`;
-    const sec = TF_SECONDS[tf];
     const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 10;
     let m1merged = m1;
     let deepBars: Bar[] = [];
@@ -1098,11 +1129,12 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const delaySec = getSpotState().providerDelaySec;
     const hist = m1 > 0 ? `m1 history: ${m1} min${td > 0 ? ` (${td} Twelve Data backfill)` : ""}` : "recording started — candles build in real time";
     const deep = lastHistNote.get(`${symbol}:${tf}`);
+    const secNote = TF_SECONDS[tf] < 60 ? "second candles build LIVE from 1s spot quotes (no second-grain history exists free)" : "";
     const glitch = lastSpotIslandRejected > 0 ? ` · ${lastSpotIslandRejected} glitch bars rejected` : "";
     // Phase 19 §6: name the underlier explicitly — Spot Gold/Silver (physical
     // spot, gold-api), never "Gold" which reads as the COMEX futures contract
     const metalName = symbol === "XAUUSD" ? "Spot Gold" : symbol === "XAGUSD" ? "Spot Silver" : `${symbol} Spot`;
-    const message = `${metalName} · gold-api live 1s · ${hist}${deep ? ` · deep history: ${deep}` : ""}${glitch}`;
+    const message = `${metalName} · gold-api live 1s · ${hist}${deep ? ` · deep history: ${deep}` : ""}${secNote ? ` · ${secNote}` : ""}${glitch}`;
     return { bars, status: "polling", message, delaySec };
   }
   const { bars, source, identity } = await quotesProvider.load(symbol, tf);
