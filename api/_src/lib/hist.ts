@@ -346,7 +346,12 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
+        // Phase 26 RESUME FIX: the walk must continue BELOW the oldest stored
+        // day, not from the newest again — the old `now - 2d` top made every
+        // step re-download the same recent ~90 day files (all skipped at write
+        // time) so repeated deep-fill runs never got past ~90 days of depth.
+        const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -367,7 +372,9 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const apiKey = String(process.env.TWELVE_DATA_API_KEY || "") || String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
         if (!/^[a-f0-9]{32}$/i.test(apiKey)) return { ...base, ok: false, provider: "twelvedata", error: "no-key" };
         const spent = Number((await histTdDayRef().once("value")).val() || 0);
-        const walk = await tdWalkM1(apiKey, tdSym, covered, now, req.maxPages ?? 10, spent);
+        // Phase 26 resume fix: paginate DOWN from the oldest stored bar, not
+        // from `now` — otherwise every run re-buys the same recent pages.
+        const walk = await tdWalkM1(apiKey, tdSym, covered, state.oldest ?? now, req.maxPages ?? 10, spent);
         const sh = await writeShards(symbol, tf, walk.bars, "twelvedata", { force: req.force });
         const oldest = walk.oldest ?? sh.days.length ? Math.min(...sh.days.map((d) => Date.parse(`${d}T00:00:00Z`) / 1000), walk.oldest ?? Infinity) : null;
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -384,8 +391,11 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        // publication lag ≈ 1-2 days — walk from two days ago backwards
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
+        // publication lag ≈ 1-2 days on a fresh store; Phase 26 resume fix:
+        // continue BELOW the oldest stored day on every subsequent run
+        const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
+        // walk from two days ago backwards
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;

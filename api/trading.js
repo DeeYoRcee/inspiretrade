@@ -15,6 +15,7 @@ var firebase_exports = {};
 __export(firebase_exports, {
   HttpError: () => HttpError,
   assertPost: () => assertPost,
+  decrementAmount: () => decrementAmount,
   decrementCounter: () => decrementCounter,
   firestore: () => firestore,
   handle: () => handle,
@@ -131,6 +132,19 @@ async function decrementCounter(ref, insufficientError) {
   const tx = await ref.transaction((c) => {
     const v = c || 0;
     return v >= 1 ? v - 1 : v;
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
+async function decrementAmount(ref, amount, insufficientError) {
+  if (!Number.isFinite(amount) || amount <= 0) throw insufficientError;
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c) => {
+    const v = c || 0;
+    return v >= amount ? v - amount : v;
   });
   const after = tx?.snapshot?.val?.() ?? 0;
   if (!tx?.committed || after >= before) {
@@ -375,6 +389,10 @@ var INSTRUMENTS = [
 function getInstrument(symbol) {
   return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
 }
+var SPOT_PRICE_BANDS = {
+  XAU: getInstrument("XAUUSD")?.priceBand ?? [1e3, 2e4],
+  XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
+};
 
 // shared/trading-engine.ts
 var SPREAD_PIPS = {

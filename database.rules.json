@@ -95,7 +95,9 @@
             "$other": { ".validate": false }
           }
         },
-        "ceo": { ".validate": "newData.isBoolean()" },
+        "ceo": {
+          ".validate": "newData.val() === data.val()"
+        },
         "background": { ".validate": "newData.isString() && newData.val().length <= 100" },
         "avatar": { ".validate": "newData.isString() && newData.val().length <= 200000" },
         "usernames": {

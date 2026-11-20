@@ -7441,6 +7441,10 @@ var INSTRUMENTS = [
 function getInstrument(symbol) {
   return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
 }
+var SPOT_PRICE_BANDS = {
+  XAU: getInstrument("XAUUSD")?.priceBand ?? [1e3, 2e4],
+  XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
+};
 
 // api/_src/news/index.ts
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";

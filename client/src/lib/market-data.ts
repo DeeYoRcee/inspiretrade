@@ -425,7 +425,33 @@ export async function quotesHistOlder(symbol: string, tf: Timeframe, beforeTime:
   const sec = TF_SECONDS[tf] || 60;
   const span = Math.min(targetBars * sec, 365 * 86400);
   const { bars } = await fetchHistRange(symbol, tf, Math.max(beforeTime - span, 0), beforeTime - 1);
-  return bars.filter((b) => b.time < beforeTime);
+  const out = bars.filter((b) => b.time < beforeTime);
+  // Phase 26: the user panned into a region the shared store has not filled
+  // yet — kick ONE resumable metals fill step (per-symbol cooldown) so the
+  // next pan finds real candles. Metals only: the forex 1m chain self-heals
+  // its own store via backfill-fx, and crypto is natively deep via Binance.
+  if (out.length < 200) maybeFireDeepHeal(symbol, tf);
+  return out;
+}
+
+// ---- Phase 26: metals deep-history self-heal --------------------------------
+// The day-shard store used to fill ONLY via the admin panel, so an ordinary
+// user's XAUUSD M1 chart ended at "today − 30 days" (the recorded window)
+// and every pan into the past found nothing — "XAUUSD shows nothing above
+// Oct 23". Dukascopy metals are keyless and free, so any signed-in session
+// can now advance the SHARED store: one resumable `backfill-metals` step
+// (~90 day files, wall-clock bounded server-side, 600 files/day global cap)
+// per symbol+tf cooldown. The store is global RTDB — once one device fills
+// it, every device's chart reads the deep candles.
+const deepHealAt = new Map<string, number>();
+
+export function maybeFireDeepHeal(symbol: string, tf: Timeframe): void {
+  const ck = `${symbol}:${tf}`;
+  if (Date.now() - (deepHealAt.get(ck) || 0) < 600000) return;
+  deepHealAt.set(ck, Date.now());
+  if (symbol === "XAUUSD" || symbol === "XAGUSD") {
+    authedFetch("/api/quotes?action=backfill-metals", { symbol, tf }).catch(() => { /* best-effort — resume cursor continues later */ });
+  }
 }
 
 class QuotesProvider {
@@ -804,7 +830,10 @@ class QuotesProvider {
     // (stooq 60m/d1 — genuine OHLC, never folded futures) + the recorded
     // aggregate in front. Nothing fabricated; the island filter already ran
     // on the recorded side and every shard was validated at write time.
-    const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 10;
+    // Phase 26: the minute window is 45 days now (was 10) — the recorded
+    // window is 30, so the two overlap and the seam is invisible; deeper
+    // history arrives via scroll-back prepends, not via a giant initial load.
+    const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 45;
     let m1merged = m1;
     let deepBars: Bar[] = [];
     if (sec >= 60) {
@@ -820,6 +849,15 @@ class QuotesProvider {
       }
     }
     lastSpotIslandRejected = islandRejected;
+    // ---- Phase 26: DEEP history self-heal (metals) --------------------------
+    // If the shared store's minute history is thinner than ~40 days (or the
+    // hour+/daily shard window is still empty), fire ONE resumable
+    // backfill-metals step per cooldown — every open terminal advances the
+    // global store ~90 days deeper, so the chart grows real Dukascopy candles
+    // past the recorded 30-day window without any admin action.
+    const deepFrom = deepBars.length ? deepBars[0].time : (m1.length ? m1[0].time : now);
+    const deepThresh = sec >= 3600 ? now - 85 * 86400 : now - 40 * 86400;
+    if (deepFrom > deepThresh) maybeFireDeepHeal(symbol, sec >= 3600 ? tf : "1m");
     // seed the recorder's glitch anchor from the clean tail
     if (m1.length) spotAnchor.set(code, { close: m1[m1.length - 1].close, at: Date.now() });
     const bars = dedupSort(
@@ -1317,7 +1355,7 @@ export interface QuoteRow {
   low: number | null;
   prevClose: number | null;
   at: number;
-  source: "binance" | "yahoo";
+  source: "binance" | "yahoo" | "stooq-spot";
 }
 
 export async function fetchQuotesSnapshot(): Promise<Record<string, QuoteRow>> {
@@ -1352,28 +1390,46 @@ export async function fetchQuotesSnapshot(): Promise<Record<string, QuoteRow>> {
   ];
 
   for (const i of quoted) {
+    const isMetal = !!i.spotCode;
     tasks.push(
-      authedFetch<any>(`/api/quotes?symbol=${encodeURIComponent(i.yahoo!)}&range=5d&interval=1d`)
-        .then((res) => {
-          const bars: Bar[] = res?.bars || [];
-          if (bars.length < 1) return;
-          const last = bars[bars.length - 1];
-          const prev = bars.length > 1 ? bars[bars.length - 2] : null;
-          if (!(last.close > 0)) return;
-          out[i.symbol] = {
-            symbol: i.symbol,
-            price: last.close,
-            changeAbs: prev && prev.close > 0 ? last.close - prev.close : null,
-            changePct: prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null,
-            open: Number(last.open) || null,
-            high: Number(last.high) || null,
-            low: Number(last.low) || null,
-            prevClose: prev && prev.close > 0 ? prev.close : null,
-            at: Number(res?.at) || now,
-            source: "yahoo",
-          };
-        })
-        .catch(() => { /* transient — next refresh retries */ }),
+      (async () => {
+        let bars: Bar[] = [];
+        let source: "yahoo" | "stooq-spot" = "yahoo";
+        if (isMetal) {
+          // Phase 26 §M5: metals day change must be SPOT-based — the Yahoo
+          // daily base was GC=F/SI=F COMEX futures (a different instrument)
+          // while the displayed price was gold-api spot. The hist 1d shards
+          // are genuine stooq SPOT daily OHLC; Yahoo futures stay only as a
+          // fallback until the store fills (one cheap stooq step).
+          const deep = await fetchHistRange(i.symbol, "1d" as Timeframe, now - 30 * 86400, now);
+          if (deep.bars.length >= 2) {
+            bars = deep.bars;
+            source = "stooq-spot";
+          } else {
+            maybeFireDeepHeal(i.symbol, "1d");
+          }
+        }
+        if (bars.length < 2) {
+          const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(i.yahoo!)}&range=5d&interval=1d`);
+          bars = res?.bars || [];
+        }
+        if (bars.length < 1) return;
+        const last = bars[bars.length - 1];
+        const prev = bars.length > 1 ? bars[bars.length - 2] : null;
+        if (!(last.close > 0)) return;
+        out[i.symbol] = {
+          symbol: i.symbol,
+          price: last.close,
+          changeAbs: prev && prev.close > 0 ? last.close - prev.close : null,
+          changePct: prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null,
+          open: Number(last.open) || null,
+          high: Number(last.high) || null,
+          low: Number(last.low) || null,
+          prevClose: prev && prev.close > 0 ? prev.close : null,
+          at: now,
+          source,
+        };
+      })().catch(() => { /* transient — next refresh retries */ }),
     );
   }
   await Promise.all(tasks);

@@ -228,6 +228,43 @@ function flatShare(bars) {
 }
 
 // shared/terminal.ts
+var INSTRUMENTS = [
+  // ---- Metals — SPOT prices only. Yahoo has no spot gold/silver symbol
+  // (XAUUSD=X 404s), so history comes from stooq's spot CSV (primary) with
+  // Yahoo's COMEX contract as a LAST-RESORT fallback that the badge labels
+  // explicitly as futures. The live tail is gold-api's keyless spot feed.
+  // PAXGUSDT / XAUTUSDT are tokenized assets (~0.4% below spot) and are
+  // deliberately NOT used — they are different financial instruments.
+  { symbol: "XAUUSD", name: "Gold Spot / U.S. Dollar", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F", spotCode: "XAU", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 0.01, priceBand: [1e3, 2e4], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
+  { symbol: "XAGUSD", name: "Silver Spot / U.S. Dollar", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5e3, quote: "USD", feed: "quotes", yahoo: "SI=F", spotCode: "XAG", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [5, 200], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
+  // ---- Forex majors — TrueFX prices the 10 majors LIVE (genuine bid/ask:
+  // the chart paints BID to match Dukascopy's BID-side history, execution
+  // quotes take the mid). Yahoo's FX identifiers are the genuine interbank
+  // spot market but delayed by Yahoo's distribution — they supply history
+  // and the execution fallback for pairs TrueFX does not carry (NZDUSD).
+  { symbol: "EURUSD", name: "Euro / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "EURUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.5, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "GBPUSD", name: "British Pound / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2.2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "USDJPY", name: "U.S. Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 1e5, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [80, 250], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "AUDUSD", name: "Australian Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.3], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "NZDUSD", name: "New Zealand Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "NZDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.2], feedLabel: "Yahoo FX spot (delayed)" },
+  { symbol: "USDCAD", name: "U.S. Dollar / Canadian Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CAD", feed: "quotes", yahoo: "USDCAD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  { symbol: "USDCHF", name: "U.S. Dollar / Swiss Franc", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CHF", feed: "quotes", yahoo: "USDCHF=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.6, 1.6], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+  // ---- Crypto — Binance is the industry-standard price venue. Binance
+  // quotes USDT pairs (BTC/USDT), the badge discloses that basis (USDT ≈ USD).
+  { symbol: "BTCUSD", name: "Bitcoin / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "BTCUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5e3, 5e5], feedLabel: "Binance \xB7 BTC/USDT (USDT \u2248 USD)" },
+  { symbol: "ETHUSD", name: "Ethereum / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "ETHUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [100, 2e4], feedLabel: "Binance \xB7 ETH/USDT (USDT \u2248 USD)" },
+  { symbol: "SOLUSD", name: "Solana / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "SOLUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5, 2e3], feedLabel: "Binance \xB7 SOL/USDT (USDT \u2248 USD)" },
+  { symbol: "XRPUSD", name: "XRP / U.S. Dollar", assetClass: "crypto", digits: 4, pipSize: 1e-4, contractSize: 1, quote: "USD", feed: "binance", binance: "XRPUSDT", underlier: "spot", session: "24/7", tickSize: 1e-4, priceBand: [0.05, 20], feedLabel: "Binance \xB7 XRP/USDT (USDT \u2248 USD)" },
+  // ---- Indices — CFD reference levels tracked from the underlying index.
+  { symbol: "NAS100", name: "US Tech 100 (NDX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^NDX", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 0.25, priceBand: [3e3, 4e4], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "US30", name: "Wall Street 30 (DJI)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^DJI", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 1, priceBand: [1e4, 8e4], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "SPX500", name: "US 500 (S&P 500)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^GSPC", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 0.25, priceBand: [1500, 15e3], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "GER40", name: "Germany 40 (DAX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "EUR", feed: "quotes", yahoo: "^GDAXI", underlier: "index", session: "Mon\u2013Fri 08:00\u201321:00 UTC (Xetra)", tickSize: 1, priceBand: [5e3, 5e4], feedLabel: "Yahoo index (delayed)" },
+  { symbol: "UK100", name: "UK 100 (FTSE 100)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "GBP", feed: "quotes", yahoo: "^FTSE", underlier: "index", session: "Mon\u2013Fri 08:00\u201316:30 UTC (LSE)", tickSize: 0.5, priceBand: [3e3, 2e4], feedLabel: "Yahoo index (delayed)" }
+];
+function getInstrument(symbol) {
+  return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
+}
 function aggregateBars(bars, factorMinutes) {
   const bucket = factorMinutes * 60;
   const out = [];
@@ -247,6 +284,10 @@ function aggregateBars(bars, factorMinutes) {
   if (cur) out.push(cur);
   return out;
 }
+var SPOT_PRICE_BANDS = {
+  XAU: getInstrument("XAUUSD")?.priceBand ?? [1e3, 2e4],
+  XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
+};
 
 // api/_src/lib/duka.ts
 import { decompress } from "lzma-native";
@@ -663,7 +704,8 @@ async function runBackfillStep(req) {
         const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
+        const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -690,7 +732,7 @@ async function runBackfillStep(req) {
         const apiKey = String(process.env.TWELVE_DATA_API_KEY || "") || String((await rtdb().ref("config/providerKeys/twelvedata").once("value")).val() || "");
         if (!/^[a-f0-9]{32}$/i.test(apiKey)) return { ...base, ok: false, provider: "twelvedata", error: "no-key" };
         const spent = Number((await histTdDayRef().once("value")).val() || 0);
-        const walk = await tdWalkM1(apiKey, tdSym, covered, now, req.maxPages ?? 10, spent);
+        const walk = await tdWalkM1(apiKey, tdSym, covered, state.oldest ?? now, req.maxPages ?? 10, spent);
         const sh2 = await writeShards(symbol, tf, walk.bars, "twelvedata", { force: req.force });
         const oldest2 = walk.oldest ?? sh2.days.length ? Math.min(...sh2.days.map((d) => Date.parse(`${d}T00:00:00Z`) / 1e3), walk.oldest ?? Infinity) : null;
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -713,7 +755,8 @@ async function runBackfillStep(req) {
         const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
+        const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -1177,10 +1220,12 @@ var quotes_default = handle(async (req, res) => {
     for (const rec of records) {
       const code = rec?.code === "XAG" ? "XAG" : rec?.code === "XAU" ? "XAU" : null;
       if (!code) continue;
+      const [loBand, hiBand] = SPOT_PRICE_BANDS[code];
       const incoming = (Array.isArray(rec?.candles) ? rec.candles.slice(0, 40) : []).map((c) => ({ t: Number(c?.t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 1) })).filter((c) => {
         if (!Number.isFinite(c.t) || c.t % 60 !== 0 || c.t > minuteNow || c.t < now - 8 * 86400) return false;
         if (![c.o, c.h, c.l, c.c].every((v) => Number.isFinite(v) && v > 0)) return false;
         if (c.h < Math.max(c.o, c.c) || c.l > Math.min(c.o, c.c) || c.h < c.l) return false;
+        if (c.o < loBand || c.o > hiBand || c.c < loBand || c.c > hiBand) return false;
         if (!Number.isFinite(c.s) || c.s < 1 || c.s > 60) return false;
         return true;
       });
@@ -1245,7 +1290,7 @@ var quotes_default = handle(async (req, res) => {
     const nowSec = Math.floor(Date.now() / 1e3);
     const minuteNow = Math.floor(nowSec / 60) * 60;
     const oldestAllowed = nowSec - 60 * 86400;
-    const [loPrice, hiPrice] = code === "XAG" ? [5, 500] : [100, 2e4];
+    const [loPrice, hiPrice] = SPOT_PRICE_BANDS[code] ?? [100, 2e4];
     const recordedSnap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const recorded = recordedSnap.val() || {};
     let lastRecordedMin = null;
@@ -1388,6 +1433,25 @@ var quotes_default = handle(async (req, res) => {
     }
     return res.json({ ok: true, code, written, oldest, newest, files: filesFetched, note: hitDeadline ? "wall-clock budget reached \u2014 repeat after the 90s cooldown to continue" : void 0 });
   }
+  if (action === "backfill-metals" && req.method === "POST") {
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const symbol = String(raw?.symbol || "").toUpperCase();
+    if (symbol !== "XAUUSD" && symbol !== "XAGUSD") return res.json({ ok: false, reason: "not-a-metal" });
+    const tf = String(raw?.tf || "1m");
+    const gateRef = rtdb().ref(`config/metalsBackfillAt/${symbol}/${tf}`);
+    const lastAt = Number((await gateRef.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 9e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((9e4 - (nowMs - lastAt)) / 1e3) });
+    await gateRef.set(nowMs);
+    const step = await runBackfillStep({
+      symbol,
+      tf,
+      months: raw?.months != null ? Number(raw.months) : 240,
+      // full genuine Dukascopy depth
+      maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 90
+    });
+    return res.json(step);
+  }
   if (action === "hist-backfill" && req.method === "POST") {
     const adminUser = await requireAdmin(req);
     if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
@@ -1423,6 +1487,8 @@ var quotes_default = handle(async (req, res) => {
     return res.json({ ok: true, symbol: sym, rows });
   }
   if (action === "import-fx" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, reason: "admin-only" });
     const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
     const code = String(raw?.code || "").toUpperCase();
     if (!DUKA_MAP[code]) return res.json({ ok: false, reason: "not-on-duka" });

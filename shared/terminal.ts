@@ -241,3 +241,13 @@ export function aggregateBars(bars: Bar[], factorMinutes: number): Bar[] {
   if (cur) out.push(cur);
   return out;
 }
+
+/** Phase 26 §S4 — ingest identity bands for the SPOT metals stores (the
+ * recorded spotTicks write path AND the TwelveData provider backfill).
+ * Derived from the same per-instrument priceBand the chart refuses to render
+ * outside: a store write whose prices fall outside the band is another
+ * instrument's data and must never poison the shared chart history. */
+export const SPOT_PRICE_BANDS: Record<string, [number, number]> = {
+  XAU: getInstrument("XAUUSD")?.priceBand ?? [1000, 20000],
+  XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200],
+};

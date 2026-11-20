@@ -95,11 +95,12 @@ function handle(fn) {
 function assertPost(req) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
-async function decrementCounter(ref, insufficientError) {
+async function decrementAmount(ref, amount, insufficientError) {
+  if (!Number.isFinite(amount) || amount <= 0) throw insufficientError;
   const before = (await ref.get()).val() || 0;
   const tx = await ref.transaction((c) => {
     const v = c || 0;
-    return v >= 1 ? v - 1 : v;
+    return v >= amount ? v - amount : v;
   });
   const after = tx?.snapshot?.val?.() ?? 0;
   if (!tx?.committed || after >= before) {
@@ -139,7 +140,7 @@ var withdraw_default = handle(async (req, res) => {
     throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
   }
   const coinsRef = rtdb().ref(`economy/${user.uid}/coins`);
-  await decrementCounter(coinsRef, new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance"));
+  await decrementAmount(coinsRef, amount, new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance"));
   const requestRef = rtdb().ref(`withdrawals/${user.uid}`).push();
   const request = {
     id: requestRef.key,

@@ -909,6 +909,10 @@ var INSTRUMENTS = [
 function getInstrument(symbol) {
   return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
 }
+var SPOT_PRICE_BANDS = {
+  XAU: getInstrument("XAUUSD")?.priceBand ?? [1e3, 2e4],
+  XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
+};
 
 // shared/trading-engine.ts
 var SPREAD_PIPS = {

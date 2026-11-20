@@ -179,6 +179,31 @@ export async function decrementCounter(
   return after;
 }
 
+/**
+ * Atomically decrements a numeric counter by an EXACT amount, or fails with
+ * `insufficientError`. Same never-undefined pattern as decrementCounter.
+ * Phase 26 §S1 (CRITICAL): a withdrawal must reserve the REQUESTED amount —
+ * the old by-1 reserve let any user request 100,000 INSP with 5 coins and
+ * receive the full amount back through the owner's reject-refund path.
+ */
+export async function decrementAmount(
+  ref: any,
+  amount: number,
+  insufficientError: HttpError,
+): Promise<number> {
+  if (!Number.isFinite(amount) || amount <= 0) throw insufficientError;
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c: any) => {
+    const v = c || 0;
+    return v >= amount ? v - amount : v; // never undefined
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
+
 /** Returns the calendar date (YYYY-MM-DD) in a fixed UTC offset, default UTC+5 (Tashkent). */
 export function localDate(offsetHours = 5, d = new Date()): string {
   return new Date(d.getTime() + offsetHours * 3600 * 1000).toISOString().slice(0, 10);

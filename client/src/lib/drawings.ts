@@ -152,6 +152,18 @@ export function levelsFor(d: Drawing): FibLevel[] {
   return defaults ? defaults.map((ratio) => ({ ratio, show: true })) : [];
 }
 
+/** Market-price formatter for drawing labels — Phase 26 D1: measurement
+ * labels used to print CANVAS PIXEL deltas (`pts[].y`) as if they were
+ * prices. Anchors are market coordinates, so the real values come from
+ * d.points[].price; this renders them with sensible precision and no
+ * trailing zeros. */
+export function fmtDrawingPrice(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  const digits = a >= 1000 ? 1 : a >= 10 ? 2 : 4;
+  return v.toFixed(digits).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+}
+
 /**
  * Timeframe visibility — undefined/empty list = every timeframe. Hiding a
  * drawing on one timeframe NEVER deletes it: the anchors stay in market
@@ -744,15 +756,18 @@ export function renderDrawing(
       const [p0, p1] = pts;
       const x1 = Math.min(p0.x, p1.x);
       const x2 = Math.max(p0.x, p1.x);
-      for (const lvl of FIB_RETRACEMENT_LEVELS) {
-        const y = p0.y + (p1.y - p0.y) * lvl;
+      // Phase 26 D2: the props bar always offered per-level toggles/colors —
+      // render them (visibleLevels falls back to the tool defaults).
+      for (const lvl of visibleLevels(d)) {
+        const y = p0.y + (p1.y - p0.y) * lvl.ratio;
         ctx.save();
-        ctx.globalAlpha = lvl === 0 || lvl === 1 ? 0.9 : 0.7;
+        if (lvl.color) ctx.strokeStyle = lvl.color;
+        ctx.globalAlpha = lvl.ratio === 0 || lvl.ratio === 1 ? 0.9 : 0.7;
         drawSegment(ctx, { x: x1, y }, { x: x2, y });
         ctx.setLineDash([]);
         ctx.globalAlpha = 0.9;
         ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
-        ctx.fillText(`${(lvl * 100).toFixed(1)}%`, x1 + 4, y - 3);
+        ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%`, x1 + 4, y - 3);
         ctx.restore();
       }
       break;
@@ -766,15 +781,16 @@ export function renderDrawing(
       drawSegment(ctx, p1, p2);
       ctx.restore();
       const x2 = Math.max(p0.x, p1.x, p2.x);
-      for (const lvl of FIB_EXTENSION_LEVELS) {
-        const y = p2.y + (p1.y - p0.y) * lvl;
+      for (const lvl of visibleLevels(d)) {
+        const y = p2.y + (p1.y - p0.y) * lvl.ratio;
         ctx.save();
+        if (lvl.color) ctx.strokeStyle = lvl.color;
         ctx.globalAlpha = 0.7;
         drawSegment(ctx, { x: Math.min(p2.x, x2 - 40), y }, { x: x2, y });
         ctx.setLineDash([]);
         ctx.globalAlpha = 0.9;
         ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
-        ctx.fillText(`${(lvl * 100).toFixed(1)}%`, x2 - 58, y - 3);
+        ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%`, x2 - 58, y - 3);
         ctx.restore();
       }
       break;
@@ -827,9 +843,12 @@ export function renderDrawing(
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
       ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
-      const dprice = pts[1].y - pts[0].y;
+      // Phase 26 D1: market-space Δprice (the pixel delta rendered a useless
+      // canvas-coordinate number); the slope angle stays pixel-based (it IS a
+      // visual property).
+      const dprice = d.points.length >= 2 ? d.points[1].price - d.points[0].price : pts[0].y - pts[1].y;
       const angle = (Math.atan2(-(pts[1].y - pts[0].y), Math.abs(pts[1].x - pts[0].x) || 1) * 180) / Math.PI;
-      ctx.fillText(`${dprice <= 0 ? "" : "+"}${(-dprice).toFixed(0)} · ${angle.toFixed(1)}°`, pts[1].x + 6, pts[1].y - 5);
+      ctx.fillText(`${dprice >= 0 ? "+" : ""}${fmtDrawingPrice(dprice)} · ${angle.toFixed(1)}°`, pts[1].x + 6, pts[1].y - 5);
       ctx.restore();
       break;
     }
@@ -1157,7 +1176,7 @@ export function renderDrawing(
       break;
     }
     case "price-label": {
-      const txt = d.text || pts[0].y.toFixed(0);
+      const txt = d.text || (d.points[0] ? fmtDrawingPrice(d.points[0].price) : "");
       ctx.save();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -1261,7 +1280,9 @@ export function renderDrawing(
       ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
       ctx.fillStyle = d.style.color;
       const mid = (y1 + y2) / 2;
-      ctx.fillText(`${(pts[1].y - pts[0].y).toFixed(0)}`, x + w2 + 6, mid + 4);
+      // Phase 26 D1: the real price delta between the anchors (was pixels)
+      const dprice = d.points.length >= 2 ? d.points[1].price - d.points[0].price : pts[0].y - pts[1].y;
+      ctx.fillText(`${dprice >= 0 ? "+" : ""}${fmtDrawingPrice(dprice)}`, x + w2 + 6, mid + 4);
       ctx.restore();
       break;
     }
@@ -1298,7 +1319,9 @@ export function renderDrawing(
       ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
       ctx.fillStyle = d.style.color;
       const secs = d.points.length === 2 ? Math.abs(d.points[1].time - d.points[0].time) : 0;
-      ctx.fillText(`${(pts[1].y - pts[0].y).toFixed(0)} · ${(secs / 86400).toFixed(1)}d`, x + 6, y + d.style.fontSize + 4);
+      // Phase 26 D1: market-space Δprice (was pixels) + the day span
+      const dprice = d.points.length >= 2 ? d.points[1].price - d.points[0].price : pts[0].y - pts[1].y;
+      ctx.fillText(`${dprice >= 0 ? "+" : ""}${fmtDrawingPrice(dprice)} · ${(secs / 86400).toFixed(1)}d`, x + 6, y + d.style.fontSize + 4);
       ctx.restore();
       break;
     }
@@ -1325,9 +1348,10 @@ export function renderDrawing(
       drawSegment(ctx, { x, y: entry.y }, { x: x + w2, y: entry.y });
       ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
       ctx.fillStyle = "#ef4444";
-      ctx.fillText(`Stop ${stop.y.toFixed(0)}`, x + 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
+      // Phase 26 D1: Stop/Target show the anchors' MARKET prices (was pixels)
+      ctx.fillText(`Stop ${fmtDrawingPrice(d.points[1]?.price ?? NaN)}`, x + 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
       ctx.fillStyle = "#22c55e";
-      ctx.fillText(`Target ${target.y.toFixed(0)}`, x + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
+      ctx.fillText(`Target ${fmtDrawingPrice(d.points[2]?.price ?? NaN)}`, x + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
       ctx.fillStyle = d.style.color;
       const { rr } = riskReward(entry.y, stop.y, target.y);
       // canvas Y is inverted: entry.y between them — invert deltas for the ratio

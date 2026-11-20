@@ -5,7 +5,7 @@
  * withdrawal request. The owner processes it manually and marks it paid or
  * rejected (rejected = coins refunded) via /api/admin?action=withdrawals.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementAmount } from "../lib/firebase";
 
 const MIN_WITHDRAW = 5; // INSP
 
@@ -33,10 +33,11 @@ export default handle(async (req, res) => {
     throw new HttpError(400, "MISSING_DETAILS", "Provide payout details (address / contact)");
   }
 
-  // Atomically reserve the coins (see decrementCounter for why the transaction
-  // update fn must never return undefined — insufficient balance = no-op + throw).
+  // Atomically reserve the REQUESTED amount (Phase 26 §S1 — the old by-1
+  // reserve let a 5-coin balance request 100k INSP and get it minted back by
+  // the reject-refund; see decrementAmount). Insufficient balance = no-op + throw.
   const coinsRef = rtdb().ref(`economy/${user.uid}/coins`);
-  await decrementCounter(coinsRef, new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance"));
+  await decrementAmount(coinsRef, amount, new HttpError(400, "INSUFFICIENT_BALANCE", "Not enough INSP on the balance"));
 
   const requestRef = rtdb().ref(`withdrawals/${user.uid}`).push();
   const request = {

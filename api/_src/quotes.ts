@@ -221,7 +221,7 @@ import {
   flatShare,
   type RawBar,
 } from "../../shared/feed-validation";
-import { aggregateBars } from "../../shared/terminal";
+import { aggregateBars, SPOT_PRICE_BANDS } from "../../shared/terminal";
 import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
 import { runBackfillStep, readRange, coverageReport, writeShards } from "./lib/hist";
 import type { BackfillResult, RangeResult, CoverageRow } from "./lib/hist";
@@ -432,6 +432,9 @@ export default handle(async (req, res) => {
     for (const rec of records) {
       const code = rec?.code === "XAG" ? "XAG" : rec?.code === "XAU" ? "XAU" : null;
       if (!code) continue;
+      // Phase 26 §S4: identity price-band — the recorded-store write path was
+      // the only ingest without one (a $0.01 "gold" candle poisoned the chart).
+      const [loBand, hiBand] = SPOT_PRICE_BANDS[code];
       const incoming = (Array.isArray(rec?.candles) ? rec.candles.slice(0, 40) : [])
         .map((c: any) => ({ t: Number(c?.t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 1) }))
         .filter((c: any) => {
@@ -440,6 +443,7 @@ export default handle(async (req, res) => {
           if (!Number.isFinite(c.t) || c.t % 60 !== 0 || c.t > minuteNow || c.t < now - 8 * 86400) return false;
           if (![c.o, c.h, c.l, c.c].every((v: number) => Number.isFinite(v) && v > 0)) return false;
           if (c.h < Math.max(c.o, c.c) || c.l > Math.min(c.o, c.c) || c.h < c.l) return false;
+          if (c.o < loBand || c.o > hiBand || c.c < loBand || c.c > hiBand) return false;
           if (!Number.isFinite(c.s) || c.s < 1 || c.s > 60) return false;
           return true;
         });
@@ -519,7 +523,7 @@ export default handle(async (req, res) => {
     const nowSec = Math.floor(Date.now() / 1000);
     const minuteNow = Math.floor(nowSec / 60) * 60;
     const oldestAllowed = nowSec - 60 * 86400; // 60 days of 1m is plenty for M1→D1
-    const [loPrice, hiPrice] = code === "XAG" ? [5, 500] : [100, 20000]; // price-band identity
+    const [loPrice, hiPrice] = SPOT_PRICE_BANDS[code] ?? [100, 20000]; // price-band identity
     // existing minutes with self-recorded ticks (s ≥ 1) WIN over provider bars
     const recordedSnap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const recorded: Record<string, any> = recordedSnap.val() || {};
@@ -702,6 +706,34 @@ export default handle(async (req, res) => {
     return res.json({ ok: true, code, written, oldest, newest, files: filesFetched, note: hitDeadline ? "wall-clock budget reached — repeat after the 90s cooldown to continue" : undefined });
   }
 
+  // ---- Phase 26: user-level deep-history fill for METALS -------------------
+  // The metals charts read the hist day-shard store, but only an admin could
+  // fill it — ordinary users were stuck at the 30-day recorded window and
+  // their XAUUSD chart showed nothing above ~Oct 23. Dukascopy metals are
+  // keyless and free; the SAME abuse guards as the forex self-heal apply
+  // (90s per-symbol cooldown + wall-clock deadline + 90-day window + the 600
+  // files/day global cap), so each call simply walks ~90 more days deeper and
+  // the resume cursor (histState) continues on the next call. forex keeps its
+  // own backfill-fx; crypto needs none (Binance is natively deep).
+  if (action === "backfill-metals" && req.method === "POST") {
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const symbol = String(raw?.symbol || "").toUpperCase();
+    if (symbol !== "XAUUSD" && symbol !== "XAGUSD") return res.json({ ok: false, reason: "not-a-metal" });
+    const tf = String(raw?.tf || "1m");
+    const gateRef = rtdb().ref(`config/metalsBackfillAt/${symbol}/${tf}`);
+    const lastAt = Number((await gateRef.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 90000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((90000 - (nowMs - lastAt)) / 1000) });
+    await gateRef.set(nowMs);
+    const step = await runBackfillStep({
+      symbol,
+      tf,
+      months: raw?.months != null ? Number(raw.months) : 240, // full genuine Dukascopy depth
+      maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 90,
+    });
+    return res.json(step as BackfillResult);
+  }
+
   // ---- Bulk forex-store ingest (Phase 17) ----------------------------------
   // The Dukascopy CDN is flaky per network: when an environment CAN reach it,
   // it decodes day files locally and pushes the decoded bars here instead of
@@ -748,6 +780,12 @@ export default handle(async (req, res) => {
   }
 
   if (action === "import-fx" && req.method === "POST") {
+    // Phase 26 §S4: this writes SHARED chart history from client-supplied
+    // bars (50k per call) — it must never be an anonymous-user write path.
+    // backfill-fx/backfill-metals stay open (server-fetched Dukascopy data),
+    // but arbitrary bar ingest is admin-only now.
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, reason: "admin-only" });
     const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
     const code = String(raw?.code || "").toUpperCase();
     if (!DUKA_MAP[code]) return res.json({ ok: false, reason: "not-on-duka" });
