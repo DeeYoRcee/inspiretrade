@@ -38,6 +38,7 @@ import { validateBars, alignAndDedupe, type RawBar } from "../../../shared/feed-
 import { aggregateBars } from "../../../shared/terminal";
 import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
 import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, type AssetClass } from "./hist-sessions";
+import { bucketStart } from "../../../shared/feed-validation";
 
 export { inMarketHours, missingIntervals, HIST_MONTHS_CAP };
 
@@ -398,7 +399,30 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
       if (!srcTf) return { ...base, ok: false, provider: "none", error: `no source interval for ${tf}` };
       const srcBars = await fetchStooqBars(stooqSym, HIST_STOOQ_INTERVAL[srcTf]);
       const inWin = srcBars.filter((b) => b.time >= covered);
-      const agg = aggregateBars(inWin, (tf === "1W" ? 604800 : tf === "1M" ? 2592000 : Number(tf.slice(0, -1)) * 3600) / 60) as RawBar[];
+      // Phase 24 D5: weeks anchor MONDAY and months use calendar buckets via
+      // bucketStart — the naive floor fold produced Thursday-anchored weeks
+      // and floating 30-day "months", offset from the live engine and Binance
+      let agg: RawBar[];
+      if (tf === "1W" || tf === "1M") {
+        const sec = tf === "1W" ? 604800 : 2592000;
+        const byBucket = new Map<number, RawBar[]>();
+        for (const b of inWin) {
+          const k = bucketStart(b.time, sec);
+          let arr = byBucket.get(k);
+          if (!arr) { arr = []; byBucket.set(k, arr); }
+          arr.push(b);
+        }
+        agg = [...byBucket.entries()].sort((a, b) => a[0] - b[0]).map(([t, arr]) => ({
+          time: t,
+          open: arr[0].open,
+          high: Math.max(...arr.map((b) => b.high)),
+          low: Math.min(...arr.map((b) => b.low)),
+          close: arr[arr.length - 1].close,
+          volume: arr.reduce((s, b) => s + (b.volume ?? 0), 0),
+        }));
+      } else {
+        agg = aggregateBars(inWin, Number(tf.slice(0, -1)) * 60) as RawBar[];
+      }
       const sh = await writeShards(symbol, tf, agg, `stooq-${srcTf}-fold`, { force: req.force });
       await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, done: true, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null });
       return { ...base, provider: `stooq-${srcTf}-fold`, written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: agg.length ? agg[0].time : null, newest: agg.length ? agg[agg.length - 1].time : null, done: true };

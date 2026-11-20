@@ -704,7 +704,30 @@ async function runBackfillStep(req) {
       if (!srcTf) return { ...base, ok: false, provider: "none", error: `no source interval for ${tf}` };
       const srcBars = await fetchStooqBars(stooqSym, HIST_STOOQ_INTERVAL[srcTf]);
       const inWin2 = srcBars.filter((b) => b.time >= covered);
-      const agg = aggregateBars(inWin2, (tf === "1W" ? 604800 : tf === "1M" ? 2592e3 : Number(tf.slice(0, -1)) * 3600) / 60);
+      let agg;
+      if (tf === "1W" || tf === "1M") {
+        const sec = tf === "1W" ? 604800 : 2592e3;
+        const byBucket = /* @__PURE__ */ new Map();
+        for (const b of inWin2) {
+          const k = bucketStart(b.time, sec);
+          let arr = byBucket.get(k);
+          if (!arr) {
+            arr = [];
+            byBucket.set(k, arr);
+          }
+          arr.push(b);
+        }
+        agg = [...byBucket.entries()].sort((a, b) => a[0] - b[0]).map(([t, arr]) => ({
+          time: t,
+          open: arr[0].open,
+          high: Math.max(...arr.map((b) => b.high)),
+          low: Math.min(...arr.map((b) => b.low)),
+          close: arr[arr.length - 1].close,
+          volume: arr.reduce((s, b) => s + (b.volume ?? 0), 0)
+        }));
+      } else {
+        agg = aggregateBars(inWin2, Number(tf.slice(0, -1)) * 60);
+      }
       const sh2 = await writeShards(symbol, tf, agg, `stooq-${srcTf}-fold`, { force: req.force });
       await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, done: true, written: (state.written ?? 0) + sh2.written, rejected: (state.rejected ?? 0) + sh2.rejected, updatedAt: Date.now(), error: null });
       return { ...base, provider: `stooq-${srcTf}-fold`, written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: agg.length ? agg[0].time : null, newest: agg.length ? agg[agg.length - 1].time : null, done: true };
@@ -1788,12 +1811,15 @@ var quotes_default = handle(async (req, res) => {
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
       try {
         const t = (await truefxQuotes())[bareCode];
-        if (t?.bid > 0) {
+        const bidConsistent = typeof final.source === "string" && final.source.startsWith("fx-store");
+        if (t?.bid > 0 && bidConsistent) {
           void recordFxLiveBids({ [bareCode]: t.bid });
           const bars2 = final.bars.slice();
           if (mergeSpotBars(bars2, t.bid, interval)) {
             final = { ...final, bars: bars2, at: Date.now(), liveTail: "truefx" };
           }
+        } else if (t?.bid > 0) {
+          void recordFxLiveBids({ [bareCode]: t.bid });
         }
       } catch {
       }

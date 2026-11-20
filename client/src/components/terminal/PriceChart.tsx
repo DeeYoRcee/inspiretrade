@@ -28,7 +28,7 @@ import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/ter
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
-import { spotMeasuredUpdateSec, quotesHistOlder } from "@/lib/market-data";
+import { spotMeasuredUpdateSec, quotesHistOlder, quotesPrependHistory } from "@/lib/market-data";
 import { authedFetch } from "@/lib/api";
 import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
@@ -560,6 +560,12 @@ export function PriceChart({
           for (const b of older) map.set(b.time, b);
           for (const b of data) map.set(b.time, b);
           barsRef.current = [...map.values()].sort((a, b) => a.time - b.time);
+          // Phase 24 D3: persist the extension at the PROVIDER level — the
+          // next live delivery must carry the same extended series, or the
+          // freshly loaded history is wiped 1-2s later and every scroll
+          // re-fetches in a loop
+          if (instNow.feed === "binance") binanceProvider.prependHistory(symNow, tfNow, older);
+          else quotesPrependHistory(symNow, tfNow, older);
           applyBarsToSeries("set");
           const newFrom = barsRef.current[0].time as UTCTimestamp;
           const oldTo = data[data.length - 1].time as UTCTimestamp;
@@ -847,6 +853,20 @@ export function PriceChart({
             bars[prev.length - 1].time === prev[prev.length - 1].time;
           if (pureAppend) {
             barsRef.current = bars;
+            // Phase 24 D4: the previous last bar's FINAL ticks (high/low/close
+            // revisions in the same delivery) must repaint too — the loop used
+            // to touch only indices ≥ prev.length, so the rendered
+            // second-to-last candle kept stale values until the next
+            // structural change (visible as frozen candle bodies on minute roll)
+            const prevLast = prev[prev.length - 1];
+            const newLast = bars[prev.length - 1];
+            if (prevLast && newLast &&
+              (prevLast.open !== newLast.open || prevLast.high !== newLast.high ||
+               prevLast.low !== newLast.low || prevLast.close !== newLast.close ||
+               prevLast.volume !== newLast.volume)) {
+              updateMain(candleRef.current!, mainKindRef.current, newLast);
+              if (volumeVisibleRef.current) volumeRef.current?.update(toVolume(newLast));
+            }
             for (let i = prev.length; i < bars.length; i++) {
               updateMain(candleRef.current!, mainKindRef.current, bars[i]);
               if (volumeVisibleRef.current) volumeRef.current?.update(toVolume(bars[i]));

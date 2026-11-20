@@ -201,6 +201,22 @@ class BinanceProvider {
     return { time: t, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume };
   }
 
+  /**
+   * Phase 24 D3: merge scroll-back candles into the provider's OWN history —
+   * the chart used to hold them only in its local ref, so the next WS frame
+   * (which carries the provider's shorter series) wiped them 1-2s later and
+   * every scroll re-fetched in a loop. Existing bars win on conflict.
+   */
+  prependHistory(symbol: string, tf: Timeframe, older: Bar[]): void {
+    const key = `${symbol}:${tf}`;
+    if (!older.length) return;
+    const map = new Map<number, Bar>();
+    for (const b of this.history.get(key) || []) map.set(b.time, b);
+    for (const b of older) { if (!map.has(b.time)) map.set(b.time, b); }
+    const merged = [...map.values()].sort((a, b) => a.time - b.time);
+    this.history.set(key, merged);
+  }
+
   /** REST with mirror failover: api.binance.com blocked → data-api.binance.vision. */
   private async restGet(path: string): Promise<any> {
     let lastErr: unknown;
@@ -217,24 +233,27 @@ class BinanceProvider {
     throw lastErr ?? new Error("binance REST unreachable");
   }
 
-  /** Fetch the last 2 klines and upsert them into the series (gap-fill). */
+  /** Fetch the last 2 klines and upsert them into the series (gap-fill).
+   * Phase 24 D1: aggBar only folds for sub-minute TFs and returns null for
+   * every standard timeframe — the old `if (folded)` gate made this entire
+   * safety poll a NO-OP for 1m..1M, so a WS outage froze the chart and every
+   * missed candle became a permanent gap. The raw bar is now used directly
+   * when no aggregation applies. Phase 24 D2: bars fold SEQUENTIALLY against
+   * the evolving series (the old two-at-once fold overwrote the first bar's
+   * volume/H/L when both landed in the same sub-minute bucket). */
   private async resync(key: string, isRealtime = true) {
     const m = this.meta.get(key);
     if (!m || !this.listeners.get(key)?.size) return;
     const recentRaw = await this.fetchRecent(m.symbol, m.tf, 2);
     if (!recentRaw.length) return;
-    const recent: Bar[] = [];
-    for (const b of recentRaw) {
-      const folded = this.aggBar(key, b);
-      if (folded) recent.push(folded);
-    }
-    if (!recent.length) return;
     let bars = this.history.get(key) || [];
     let changed = false;
-    for (const b of recent) {
+    for (const raw of recentRaw) {
+      const b = this.aggBar(key, raw) ?? raw; // sub-minute → fold · standard → as-is
       const prev = bars.find((x) => x.time === b.time);
       if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
       bars = upsert(bars, b);
+      if (this.aggBar(key, raw)) this.history.set(key, bars); // aggBar reads the live series — keep it current between folds
     }
     if (!changed) return;
     this.history.set(key, bars);
@@ -419,6 +438,39 @@ class QuotesProvider {
   private spotOffs = new Map<string, () => void>(); // per-key unsubscribe from the shared spot ticker
   private spotProviderBars = new Map<string, number>(); // code → Twelve Data backfill bars
   private identity = new Map<string, string>(); // "spot" | "futures" — what the response actually represented
+  // Phase 24 D3: scroll-back extensions kept SEPARATELY and re-merged into
+  // every loadNetwork result — the poll replaces this.history from the wire,
+  // so a naive prepend there would be wiped on the next 2s tick
+  private extended = new Map<string, Bar[]>();
+
+  prependHistory(symbol: string, tf: Timeframe, older: Bar[]): void {
+    const key = `${symbol}:${tf}`;
+    if (!older.length) return;
+    const map = new Map<number, Bar>();
+    for (const b of this.extended.get(key) || []) map.set(b.time, b);
+    for (const b of this.history.get(key) || []) map.set(b.time, b); // live series wins on overlap
+    for (const b of older) { if (!map.has(b.time)) map.set(b.time, b); }
+    const merged = [...map.values()].sort((a, b) => a.time - b.time);
+    this.extended.set(key, merged);
+    // extended also seeds history directly so reads between polls see it
+    this.history.set(key, merged);
+  }
+
+  /** Fold the stored extension back into a fresh server response (server wins
+   * on overlapping times — its bars are the newest observation). */
+  private mergeExtended(key: string, bars: Bar[]): Bar[] {
+    const ext = this.extended.get(key);
+    if (!ext?.length) return bars;
+    const firstWire = bars.length ? bars[0].time : Infinity;
+    const older = ext.filter((b) => b.time < firstWire);
+    if (!older.length) return bars;
+    return [...older, ...bars];
+  }
+
+  /** Drop the extension when the key is fully unsubscribed (memory bound). */
+  forgetExtended(key: string): void {
+    if (!this.listeners.get(key)?.size) this.extended.delete(key);
+  }
 
   // network fetch + aggregation, always bypasses the fresh cache (poll path)
   private async loadNetwork(symbol: string, tf: Timeframe): Promise<Bar[]> {
@@ -436,13 +488,6 @@ class QuotesProvider {
     const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo!)}&range=${useCfg.range}&interval=${useCfg.interval}`);
     if (!res?.ok) throw new Error(res?.detail || "FEED_UNAVAILABLE");
     if (res.source) this.source.set(key, res.source);
-    // Phase 17: Dukascopy deep 1m store — one free key-less backfill per
-    // session per pair; the store then serves replay windows and acts as the
-    // last-resort chart source when Yahoo/TD/stooq all fail
-    if (inst.assetClass === "forex" && tf === "1m" && !fxBackfillTried.has(symbol)) {
-      fxBackfillTried.add(symbol);
-      authedFetch("/api/quotes?action=backfill-fx", { code: symbol, days: 30 }).catch(() => {});
-    }
     if (res.identity) this.identity.set(key, res.identity);
     if (res.delaySec != null) { statsState.delaySec = res.delaySec; statsState.delayBy[key] = res.delaySec; }
     // client-side defense-in-depth: the server already validates, but the
@@ -452,6 +497,24 @@ class QuotesProvider {
     statsState.invalidBars += checked.invalid;
     statsState.repairedBars += checked.repaired;
     statsState.duplicateBars += deduped.dropped;
+    // Phase 17 → Phase 24 §3: SELF-HEALING Dukascopy store. The one-shot
+    // session trigger left the FIRST chart load on Yahoo's close-only dots
+    // and never retried when the store stayed thin. Now: fires on first
+    // touch AND whenever the served 1m is flat-dominated (Yahoo fallback
+    // won the chain) or thin (<200 bars) — with a 10-min per-pair cooldown.
+    // The store fills in ~20s and the 2s poll then converges the chart to
+    // genuine Dukascopy OHLC in the same session, no reload needed.
+    if (inst.assetClass === "forex" && tf === "1m") {
+      const served = deduped.bars as Bar[];
+      const flatN = served.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length;
+      const needsHeal = served.length < 200 || (served.length > 0 && flatN / served.length > 0.2);
+      const firstTouch = !fxBackfillTried.has(symbol);
+      if ((needsHeal || firstTouch) && Date.now() - (fxSelfHealAt.get(symbol) ?? 0) > 600000) {
+        fxBackfillTried.add(symbol);
+        fxSelfHealAt.set(symbol, Date.now());
+        authedFetch("/api/quotes?action=backfill-fx", { code: symbol, days: 35 }).catch(() => { /* cooldown/best-effort */ });
+      }
+    }
     let bars: Bar[] = deduped.bars as Bar[];
     // Phase 20 defense-in-depth: Yahoo's FX intraday 1m is CLOSE-ONLY
     // (O=H=L=C on every bar — verified 2026-11-19). The server rejects it
@@ -468,9 +531,10 @@ class QuotesProvider {
     // 4-MINUTE buckets → the 2h and 4h charts actually rendered 1h candles.
     if (agg) bars = aggregateBars(bars, TF_SECONDS[tf] / 60);
     bars = dedupSort(bars);
-    this.history.set(key, bars);
+    const merged = this.mergeExtended(key, bars); // Phase 24 D3: scroll-back survives the 2s poll
+    this.history.set(key, merged);
     this.loadedAt.set(key, Date.now());
-    return bars;
+    return merged;
   }
 
   async load(symbol: string, tf: Timeframe): Promise<{ bars: Bar[]; source?: string; identity?: string }> {
@@ -768,9 +832,10 @@ class QuotesProvider {
     );
     this.source.set(key, deepBars.length ? `spot+deep-history(${lastHistNote.get(key) || "provider"})` : (tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`));
     this.identity.set(key, "spot");
-    this.history.set(key, bars);
+    const merged = this.mergeExtended(key, bars);
+    this.history.set(key, merged);
     this.loadedAt.set(key, Date.now());
-    return bars;
+    return merged;
   }
 
   /** Twelve Data backfill bars merged into the recorded set (for the badge). */
@@ -883,6 +948,7 @@ const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCand
 const spotBackfillAt = new Map<string, number>();
 const SPOT_BACKFILL_TTL_MS = 45 * 60000;
 const fxBackfillTried = new Set<string>();
+const fxSelfHealAt = new Map<string, number>(); // per-pair self-heal cooldown
 /** glitch-island bars rejected from the recorded spot history (last load) —
  *  surfaced in the feed badge so the data rejection is visible, not silent */
 let lastSpotIslandRejected = 0;
@@ -993,6 +1059,12 @@ export function subscribeSpot(cb: () => void): () => void {
 
 export const binanceProvider = new BinanceProvider();
 export const quotesProvider = new QuotesProvider();
+
+/** Phase 24 D3: chart scroll-back persists at the provider level (see
+ * QuotesProvider.prependHistory) — exposed without leaking the instance. */
+export function quotesPrependHistory(symbol: string, tf: Timeframe, older: Bar[]): void {
+  quotesProvider.prependHistory(symbol, tf, older);
+}
 
 // ---------------------------------------------------------------------------
 // Connection state store — honest feed status for the chart badge.

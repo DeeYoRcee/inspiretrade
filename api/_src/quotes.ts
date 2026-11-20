@@ -1267,7 +1267,13 @@ export default handle(async (req, res) => {
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
       try {
         const t = (await truefxQuotes())[bareCode];
-        if (t?.bid > 0) {
+        // Phase 24 D6: paint the TrueFX BID tail ONLY onto BID-consistent
+        // history (the Dukascopy store). Painting BID onto Yahoo/TwelveData
+        // MID history created a ~0.5-1 pip price-side seam at the live
+        // junction with no disclosure — the tail now leaves MID series as
+        // MID (its tail just refreshes on the next cache generation).
+        const bidConsistent = typeof final.source === "string" && final.source.startsWith("fx-store");
+        if (t?.bid > 0 && bidConsistent) {
           void recordFxLiveBids({ [bareCode]: t.bid });
           // copy-on-write: mergeSpotBars mutates its input — never mutate the
           // cached array the next cache generation will read from
@@ -1275,6 +1281,10 @@ export default handle(async (req, res) => {
           if (mergeSpotBars(bars2, t.bid, interval)) {
             final = { ...final, bars: bars2, at: Date.now(), liveTail: "truefx" };
           }
+        } else if (t?.bid > 0) {
+          // the observation still feeds the live-minute recorder (fromFxStore
+          // unions it back in) — only the direct series paint is skipped
+          void recordFxLiveBids({ [bareCode]: t.bid });
         }
       } catch { /* TrueFX hiccup — serve the cached payload as-is */ }
     }
