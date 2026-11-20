@@ -35,6 +35,8 @@ import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading
 import { useAuth } from "@/hooks/use-auth";
 import {
   atr, bollinger, ema, macd as macdCalc, rsi as rsiCalc, sma, stochastic, vwap as vwapCalc,
+  wma, hma, supertrend, donchian, keltner, psar, ichimoku, adx, williamsR, cci, stochRsi,
+  mfi, obv, trix, awesomeOscillator, roc,
   type Point,
 } from "@/lib/indicators";
 import {
@@ -689,6 +691,47 @@ export function PriceChart({
         break;
       }
       case "atr": out.set("atr", atr(bars, p("period"))); break;
+      // ---- Phase 27: the TradingView-standard set --------------------------
+      case "wma": out.set("wma", wma(closes, p("period"))); break;
+      case "hma": out.set("hma", hma(closes, p("period"))); break;
+      case "supertrend": {
+        const r = supertrend(bars, p("period"), p("mult"));
+        out.set("up", r.up); out.set("down", r.down);
+        break;
+      }
+      case "donchian": {
+        const r = donchian(bars, p("period"));
+        out.set("upper", r.upper); out.set("basis", r.basis); out.set("lower", r.lower);
+        break;
+      }
+      case "keltner": {
+        const r = keltner(bars, p("period"), p("mult"));
+        out.set("basis", r.basis); out.set("upper", r.upper); out.set("lower", r.lower);
+        break;
+      }
+      case "psar": out.set("sar", psar(bars, p("step"), p("max"))); break;
+      case "ichimoku": {
+        const r = ichimoku(bars, p("conv"), p("base"), p("span"));
+        out.set("tenkan", r.tenkan); out.set("kijun", r.kijun); out.set("spanA", r.spanA); out.set("spanB", r.spanB);
+        break;
+      }
+      case "adx": {
+        const r = adx(bars, p("period"));
+        out.set("adx", r.adx); out.set("plusDI", r.plusDI); out.set("minusDI", r.minusDI);
+        break;
+      }
+      case "willr": out.set("willr", williamsR(bars, p("period"))); break;
+      case "cci": out.set("cci", cci(bars, p("period"))); break;
+      case "stochrsi": {
+        const r = stochRsi(closes, p("rsiPeriod"), p("stochPeriod"), p("kSmooth"), p("dSmooth"));
+        out.set("k", r.k); out.set("d", r.d);
+        break;
+      }
+      case "mfi": out.set("mfi", mfi(bars, p("period"))); break;
+      case "obv": out.set("obv", obv(bars)); break;
+      case "trix": out.set("trix", trix(closes, p("period"))); break;
+      case "ao": out.set("ao", awesomeOscillator(bars, p("fast"), p("slow"))); break;
+      case "roc": out.set("roc", roc(closes, p("period"))); break;
       default: void meta; break;
     }
     return out;
@@ -722,14 +765,21 @@ export function PriceChart({
       indValuesRef.current.set(cfg.id, values);
       const color = String(cfg.params.color || INDICATOR_CATALOG[cfg.type].colors[0] || COLORS.accent);
       if (INDICATOR_CATALOG[cfg.type].pane === "main" && cfg.type !== "volume") {
+        const metaC = INDICATOR_CATALOG[cfg.type];
         const seriesMap = overlayRef.current;
         const keys = [...values.keys()];
-        // ensure series exist for each key
+        // ensure series exist for each key — Phase 27: per-key colors/styles
+        // (SuperTrend up/down, Ichimoku lines, dotted PSAR, band midpoints)
         for (const key of keys) {
           const id = `${cfg.id}:${key}`;
           if (!seriesMap.has(id)) {
+            const style = metaC.keyStyle?.[key];
             const s = chartRef.current!.addLineSeries({
-              color, lineWidth: 1, priceLineVisible: false, lastValueVisible: key !== "upper" && key !== "lower",
+              color: metaC.keyColors?.[key] || color,
+              lineWidth: style?.lineWidth ?? 1,
+              lineStyle: (style?.lineStyle ?? LineStyle.Solid) as LineStyle,
+              priceLineVisible: false,
+              lastValueVisible: key !== "upper" && key !== "lower",
               crosshairMarkerVisible: false,
             });
             seriesMap.set(id, s);
@@ -994,6 +1044,20 @@ export function PriceChart({
       }
       if (cfg.type === "stoch") { addLine("k", "#38bdf8", 1); addLine("d", "#f59e0b", 1); }
       if (cfg.type === "atr") addLine("atr", "#e879f9", 2);
+      // ---- Phase 27 sub-panes -------------------------------------------------
+      if (cfg.type === "adx") { addLine("adx", "#e879f9", 2); addLine("plusDI", "#22c55e", 1); addLine("minusDI", "#ef4444", 1); }
+      if (cfg.type === "willr") addLine("willr", "#38bdf8", 2);
+      if (cfg.type === "cci") addLine("cci", "#f59e0b", 2);
+      if (cfg.type === "stochrsi") { addLine("k", "#38bdf8", 1); addLine("d", "#f59e0b", 1); }
+      if (cfg.type === "mfi") addLine("mfi", "#22c55e", 2);
+      if (cfg.type === "obv") addLine("obv", "#38bdf8", 2);
+      if (cfg.type === "trix") addLine("trix", "#e879f9", 2);
+      if (cfg.type === "ao") {
+        const hist = chart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, color: "#f59e0b" });
+        (hist as any).__key = "ao";
+        series.push(hist);
+      }
+      if (cfg.type === "roc") addLine("roc", "#94a3b8", 2);
 
       // time-scale sync: pane follows main; main follows pane (guarded)
       const syncHandler = (range: { from: number; to: number } | null) => {
@@ -1299,7 +1363,10 @@ export function PriceChart({
         if (cfg.type === "volume") continue;
         const v = arr[idx];
         if (v == null) continue;
-        const short = key === "basis" ? "BB" : key === "upper" ? "BB↑" : key === "lower" ? "BB↓" : key.toUpperCase();
+        const keyLabelMap: Record<string, string> = { plusDI: "+DI", minusDI: "−DI", up: "ST↑", down: "ST↓", spanA: "SpanA", spanB: "SpanB" };
+        const short = cfg.type === "bb"
+          ? (key === "basis" ? "BB" : key === "upper" ? "BB↑" : key === "lower" ? "BB↓" : key.toUpperCase())
+          : (keyLabelMap[key] || key.toUpperCase());
         html += ` <span style="color:${color}">${short} ${fmt(v)}</span>`;
       }
     }
