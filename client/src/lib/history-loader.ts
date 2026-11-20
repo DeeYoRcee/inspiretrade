@@ -42,7 +42,9 @@ export function historyAvailability(symbol: string, tf: Timeframe): Availability
   // Yahoo provider — for metals that underlier is a COMEX futures contract,
   // never presented as spot
   const suffix = inst.assetClass === "metal" ? " · COMEX futures underlier (not spot)" : "";
-  const interval = YAHOO_INTERVAL[tf].interval;
+  // sub-minute TFs have no delayed-provider source at all
+  if (!YAHOO_INTERVAL[tf]) return { maxDaysBack: 0, note: "Sub-minute candles are live-built only (no historical source)" };
+  const interval = YAHOO_INTERVAL[tf]!.interval;
   switch (interval) {
     case "1m": return { maxDaysBack: 30, note: `The delayed provider keeps ~30 days of 1-minute history${suffix}` };
     case "5m": case "15m": case "30m": return { maxDaysBack: 60, note: `The delayed provider keeps ~60 days of this granularity${suffix}` };
@@ -93,7 +95,9 @@ async function loadProxyRange(
   onProgress?: (done: number, total: number) => void,
 ): Promise<HistoryLoadResult> {
   const inst = getInstrument(symbol)!;
-  const { interval } = YAHOO_INTERVAL[tf];
+  const yCfg = YAHOO_INTERVAL[tf];
+  if (!yCfg) throw new Error("NO_SOURCE_INTERVAL"); // sub-minute TFs are live-built only
+  const interval = yCfg.interval;
   const agg = TF_SECONDS[tf] / 60; // bucket minutes for client-side aggregation
   // chunk length so each Yahoo request stays within its per-interval cap
   const chunkDays = interval === "1m" ? 5 : interval === "5m" || interval === "15m" || interval === "30m" ? 30 : 240;

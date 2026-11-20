@@ -16,7 +16,7 @@
 import { authedFetch } from "@/lib/api";
 import { getAllPrices } from "@/lib/price-store";
 import {
-  getInstrument, INSTRUMENTS, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS, type InstrumentSpec,
+  getInstrument, INSTRUMENTS, BINANCE_INTERVAL, BINANCE_AGGREGATE, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS, type InstrumentSpec,
   aggregateBars, type Bar, type Timeframe,
 } from "@shared/terminal";
 
@@ -65,7 +65,7 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
 // ---------------------------------------------------------------------------
 
 import { validateBars, dedupeBars, checkBar, minuteIslandFilter, type RawBar } from "@shared/feed-validation";
-import { upsertBar, wsBackoffDelay, nextEndpointIndex } from "@shared/candle-core";
+import { upsertBar, wsBackoffDelay, nextEndpointIndex, aggregateToSeconds } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
 // second REST host are Binance's official PUBLIC MARKET-DATA mirrors on a
@@ -97,7 +97,9 @@ class BinanceProvider {
     // short-lived fresh cache — instant timeframe switching / remounts
     const fresh = this.history.get(key);
     if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) return fresh;
-    const bars = await this.fetchRecent(symbol, tf, 1000);
+    const raw = await this.fetchRecent(symbol, tf, 1000);
+    // sub-minute TFs fetch the native 1s stream and aggregate honestly here
+    const bars = BINANCE_AGGREGATE[tf] ? aggregateToSeconds(raw, TF_SECONDS[tf]) as Bar[] : raw;
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
     return bars;
@@ -154,7 +156,32 @@ class BinanceProvider {
    */
   async loadOlder(symbol: string, tf: Timeframe, beforeTime: number, limit = 1000): Promise<Bar[]> {
     const raw = await this.fetchRecent(symbol, tf, limit, beforeTime * 1000 - 1);
-    return raw.filter((b) => b.time < beforeTime);
+    const filtered = raw.filter((b) => b.time < beforeTime);
+    return BINANCE_AGGREGATE[tf] ? aggregateToSeconds(filtered, TF_SECONDS[tf]) as Bar[] : filtered;
+  }
+
+  /**
+   * Phase 22 — fold one native-1s bar into its target sub-minute bucket.
+   * Real OHLC semantics: running high/low, latest close, summed volume; a
+   * late 1s frame folds into its OWN stored bucket instead of corrupting the
+   * tail. Returns null when the tf needs no aggregation.
+   */
+  private aggBar(key: string, bar: Bar): Bar | null {
+    const m = this.meta.get(key);
+    if (!m || !BINANCE_AGGREGATE[m.tf]) return null;
+    const sec = TF_SECONDS[m.tf];
+    const t = Math.floor(bar.time / sec) * sec;
+    const bars = this.history.get(key) || [];
+    const cur = bars.length ? bars[bars.length - 1] : null;
+    if (cur && cur.time === t) {
+      return { time: t, open: cur.open, high: Math.max(cur.high, bar.high), low: Math.min(cur.low, bar.low), close: bar.close, volume: (cur.volume ?? 0) + (bar.volume ?? 0) };
+    }
+    const existing = bars.find((b) => b.time === t);
+    if (existing) {
+      // late frame for an older bucket — fold, never overwrite the history
+      return { ...existing, high: Math.max(existing.high, bar.high), low: Math.min(existing.low, bar.low), close: bar.close, volume: (existing.volume ?? 0) + (bar.volume ?? 0) };
+    }
+    return { time: t, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume };
   }
 
   /** REST with mirror failover: api.binance.com blocked → data-api.binance.vision. */
@@ -177,7 +204,13 @@ class BinanceProvider {
   private async resync(key: string, isRealtime = true) {
     const m = this.meta.get(key);
     if (!m || !this.listeners.get(key)?.size) return;
-    const recent = await this.fetchRecent(m.symbol, m.tf, 2);
+    const recentRaw = await this.fetchRecent(m.symbol, m.tf, 2);
+    if (!recentRaw.length) return;
+    const recent: Bar[] = [];
+    for (const b of recentRaw) {
+      const folded = this.aggBar(key, b);
+      if (folded) recent.push(folded);
+    }
     if (!recent.length) return;
     let bars = this.history.get(key) || [];
     let changed = false;
@@ -294,7 +327,8 @@ class BinanceProvider {
         const chk = checkBar(bar);
         if (!chk.ok) { statsState.invalidBars++; return; } // corrupted frame — never reach the chart
         if (chk.repaired) { statsState.repairedBars++; bar.high = Math.max(bar.high, bar.open, bar.close); bar.low = Math.min(bar.low, bar.open, bar.close); }
-        const bars = upsert(this.history.get(key) || [], bar);
+        const folded = this.aggBar(key, bar) ?? bar;
+        const bars = upsert(this.history.get(key) || [], folded);
         this.history.set(key, bars);
         this.loadedAt.set(key, Date.now());
         markTick();
@@ -328,6 +362,7 @@ class QuotesProvider {
   private loadedAt = new Map<string, number>();
   private inflight = new Set<string>();
   private source = new Map<string, string>(); // "yahoo" | "stooq" — surfaced in the feed message
+  private spotOffs = new Map<string, () => void>(); // per-key unsubscribe from the shared spot ticker
   private spotProviderBars = new Map<string, number>(); // code → Twelve Data backfill bars
   private identity = new Map<string, string>(); // "spot" | "futures" — what the response actually represented
 
@@ -336,12 +371,14 @@ class QuotesProvider {
     const inst = getInstrument(symbol)!;
     const key = `${symbol}:${tf}`;
     const cfg = YAHOO_INTERVAL[tf];
+    if (!cfg) throw new Error("NO_SOURCE_INTERVAL"); // sub-minute TFs never take this path (see availableTimeframes)
     const agg = YAHOO_AGGREGATE[tf];
     // prefer the target tf's own config when its interval equals the base
     // interval (4h: "1y/60m" gives ~4x deeper history than the 1h base's 3mo)
     const useCfg = agg
-      ? (cfg.interval === YAHOO_INTERVAL[agg].interval ? cfg : YAHOO_INTERVAL[agg])
+      ? (cfg.interval === YAHOO_INTERVAL[agg]?.interval ? cfg : YAHOO_INTERVAL[agg])
       : cfg;
+    if (!useCfg) throw new Error("NO_SOURCE_INTERVAL");
     const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(inst.yahoo!)}&range=${useCfg.range}&interval=${useCfg.interval}`);
     if (!res?.ok) throw new Error(res?.detail || "FEED_UNAVAILABLE");
     if (res.source) this.source.set(key, res.source);
@@ -425,9 +462,11 @@ class QuotesProvider {
       // first tick right away — but skip it when the history was just fetched
       // (fresh cache), so mounting the chart never duplicates the load request
       if (Date.now() - (this.loadedAt.get(key) ?? 0) > 10000) void tick();
-      // REST polling — 10s; Yahoo data is delayed anyway, this keeps the last
-      // candle moving without hammering the proxy.
-      const timer = setInterval(tick, 10000);
+      // REST polling — forex majors poll every 2s: the server folds the LIVE
+      // TrueFX bid into the tail per request (genuine interbank tick cadence,
+      // ~0s fresh measured), so the poll WAS the visible bottleneck. Indices
+      // keep 10s — Yahoo reference data is delayed regardless.
+      const timer = setInterval(tick, inst?.assetClass === "forex" ? 2000 : 10000);
       this.timers.set(key, timer);
     }
 
@@ -435,75 +474,68 @@ class QuotesProvider {
     // gold-api.com serves the genuine spot price with CORS * and a fresh
     // updatedAt stamp — poll it DIRECTLY from the browser every second, paint
     // the live bucket, and RECORD the price into the self-built candle set.
-    let spotTimer: ReturnType<typeof setInterval> | null = null;
     let spotResync: ReturnType<typeof setInterval> | null = null;
-    let spotInflight = false;
     if (spotCode) {
       ensureSpotFlusher();
       setSpotState({ state: "connecting", lastTickAt: 0, providerDelaySec: null });
       // Phase 18 tick-feed investigation: gold-api serves REST only — there is
       // NO WebSocket/tick stream, and its price stamp (updatedAt) advances
-      // roughly every 5–15s (verified live 2026-11-19). 1s polling therefore
-      // captures every DISTINCT provider price; the minute candle folds all
-      // observed prices into the OHLC envelope (recordSpotTick), so no
-      // intra-sample extreme can be recovered beyond what the provider
-      // publishes — the honest limit of the free feed.
-      const spotTick = async () => {
-        if (spotInflight) return;
-        spotInflight = true;
-        try {
-          const controller = new AbortController();
-          const abortTimer = setTimeout(() => controller.abort(), 3500);
-          const res = await fetch(`https://api.gold-api.com/price/${spotCode}`, { signal: controller.signal });
-          clearTimeout(abortTimer);
-          if (!res.ok) throw new Error(`gold-api ${res.status}`);
-          const data: any = await res.json();
-          const price = Number(data?.price);
-          // the provider stamps its own price — that stamp is the honest
-          // latency number the badge reports (not our poll round-trip)
-          const providerAt = Date.parse(data?.updatedAt || "") || 0;
-          if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
-          const providerDelaySec = providerAt ? Math.max(0, Math.round((Date.now() - providerAt) / 1000)) : null;
-          if (providerDelaySec != null && providerDelaySec > 600) throw new Error("STALE_SPOT"); // market closed
-          // record the observed price into the self-built candle set (every
-          // timeframe benefits — the recorder is timeframe-independent)
-          recordSpot(spotCode, price);
-          const bars = this.history.get(key);
-          if (!bars?.length) {
+      // roughly every 5–15s (verified live). Phase 22: ONE shared 1s poll per
+      // spot code now feeds EVERY open subscription (a second chart at another
+      // timeframe used to run its own poller — duplicate connections); each
+      // subscriber merges the tick into its own series below.
+      // Sub-minute timeframes build LIVE candles from the actual received
+      // quotes (first observed price = open, running high/low, latest close,
+      // sample-count volume) — nothing fabricated, empty seconds stay empty.
+      const sec = TF_SECONDS[tf];
+      const offSpot = spotTickerOn(spotCode, key, (price) => {
+        const bars = this.history.get(key);
+        if (!bars?.length) {
+          if (sec >= 60) {
             // the very first recorded minute just opened — pull it into the
             // chart immediately instead of waiting for the 3 min resync
-            await this.loadRecordedSpot(symbol, tf);
-            const fresh = this.history.get(key);
-            if (fresh?.length) {
-              this.listeners.get(key)?.forEach((c) => cb({ bars: fresh, lastBar: fresh[fresh.length - 1], isRealtime: false }));
-            }
+            void this.loadRecordedSpot(symbol, tf).then((fresh) => {
+              if (fresh?.length) {
+                this.listeners.get(key)?.forEach((c) => cb({ bars: fresh, lastBar: fresh[fresh.length - 1], isRealtime: false }));
+              }
+            }).catch(() => { /* transient — the next tick retries */ });
             return;
           }
-          if (tf !== "1d") {
-            const sec = TF_SECONDS[tf];
-            // bridging fill-forward is capped at 5 buckets for recorded data:
-            // beyond that the missing minutes stay an honest gap on the axis
-            const merged = mergeSpotTail(bars, price, sec, 5);
-            if (merged) {
-              this.history.set(key, merged);
-              statsState.delaySec = providerDelaySec;
-              markTick();
-              this.listeners.get(key)?.forEach((c) => cb({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: true }));
-            }
-          }
-          spotFails = 0;
-          setSpotState({ state: "live", lastTickAt: Date.now(), providerDelaySec });
-        } catch {
-          spotFails += 1;
-          if (spotFails >= 5) setSpotState({ state: "disconnected", lastTickAt: getSpotState().lastTickAt, providerDelaySec: null });
-        } finally {
-          spotInflight = false;
+          // seconds candles start live from the first REAL observed quote
+          const t = Math.floor(Date.now() / 1000 / sec) * sec;
+          const first: Bar = { time: t, open: price, high: price, low: price, close: price, volume: 1 };
+          this.history.set(key, [first]);
+          markTick();
+          this.listeners.get(key)?.forEach((c) => cb({ bars: [first], lastBar: first, isRealtime: true }));
+          return;
         }
-      };
-      let spotFails = 0;
-      void spotTick();
-      spotTimer = setInterval(spotTick, 1000);
-      this.timers.set(`${key}:spot`, spotTimer);
+        if (tf !== "1d") {
+          if (sec < 60) {
+            const t = Math.floor(Date.now() / 1000 / sec) * sec;
+            const last = bars[bars.length - 1];
+            if (t < last.time) return; // stale sample — never rewrite history
+            const cur: Bar = last.time === t
+              ? { time: t, open: last.open, high: Math.max(last.high, price), low: Math.min(last.low, price), close: price, volume: (last.volume ?? 0) + 1 }
+              : { time: t, open: price, high: price, low: price, close: price, volume: 1 };
+            const next = last.time === t ? [...bars.slice(0, -1), cur] : [...bars, cur].slice(-3600);
+            this.history.set(key, next);
+            markTick();
+            statsState.delaySec = getSpotState().providerDelaySec;
+            this.listeners.get(key)?.forEach((c) => cb({ bars: next, lastBar: cur, isRealtime: true }));
+            return;
+          }
+          // bridging fill-forward is capped at 5 buckets for recorded data:
+          // beyond that the missing minutes stay an honest gap on the axis
+          const merged = mergeSpotTail(bars, price, sec, 5);
+          if (merged) {
+            this.history.set(key, merged);
+            statsState.delaySec = getSpotState().providerDelaySec;
+            markTick();
+            this.listeners.get(key)?.forEach((c) => cb({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: true }));
+          }
+        }
+      });
+      this.spotOffs.set(key, offSpot);
 
       // slow resync of the recorded history (other devices' observations merge
       // in; 3 min cadence keeps RTDB reads negligible)
@@ -524,7 +556,8 @@ class QuotesProvider {
       const timer = this.timers.get(key);
       if (timer) clearInterval(timer);
       this.timers.delete(key);
-      if (spotTimer) { clearInterval(spotTimer); this.timers.delete(`${key}:spot`); }
+      this.spotOffs.get(key)?.();
+      this.spotOffs.delete(key);
       if (spotResync) { clearInterval(spotResync); this.timers.delete(`${key}:rec`); }
       this.listeners.get(key)?.delete(cb);
     };
@@ -539,6 +572,17 @@ class QuotesProvider {
   async loadRecordedSpot(symbol: string, tf: Timeframe): Promise<Bar[]> {
     const inst = getInstrument(symbol)!;
     const code = inst.spotCode!;
+    // sub-minute TFs have NO recorded history source (the recorder is
+    // minute-grained by design) — seconds candles build LIVE from the actual
+    // 1s quotes; this returns an empty series that the live tick fills.
+    if (TF_SECONDS[tf] < 60) {
+      const keyS = `${symbol}:${tf}`;
+      if (!this.history.get(keyS)) this.history.set(keyS, []);
+      this.source.set(keyS, "spot-live(seconds)");
+      this.identity.set(keyS, "spot");
+      this.loadedAt.set(keyS, Date.now());
+      return this.history.get(keyS)!;
+    }
     const now = Math.floor(Date.now() / 1000);
     const loadServerCandles = async (): Promise<SpotCandle[]> => {
       try {
@@ -635,6 +679,89 @@ class QuotesProvider {
 // ---------------------------------------------------------------------------
 import { mergeSpotTail, recordSpotTick, mergeSpotSeries, validSpotCandle, type SpotCandle } from "@/lib/spot-tail";
 export { mergeSpotTail };
+
+// ---- Phase 22: shared spot ticker (one 1s poll per code, N subscribers) ----
+// One gold-api connection per metal no matter how many charts/timeframes are
+// open, and MEASURED provider cadence: the interval between DISTINCT
+// published prices — the honest "how often does this feed actually move"
+// number (polling frequency ≠ provider frequency ≠ render frequency).
+type SpotHandler = (price: number, providerAt: number) => void;
+const spotTicker = new Map<string, {
+  handlers: Map<string, SpotHandler>;
+  timer: ReturnType<typeof setInterval> | null;
+  inflight: boolean;
+  fails: number;
+  lastPrice: number;
+  lastChangeAt: number;
+  intervals: number[];
+}>();
+
+function spotTickerOn(code: string, key: string, handler: SpotHandler): () => void {
+  let e = spotTicker.get(code);
+  if (!e) {
+    e = { handlers: new Map(), timer: null, inflight: false, fails: 0, lastPrice: 0, lastChangeAt: 0, intervals: [] };
+    spotTicker.set(code, e);
+  }
+  e.handlers.set(key, handler);
+  if (!e.timer) {
+    void spotPoll(code); // immediate first observation
+    e.timer = setInterval(() => void spotPoll(code), 1000);
+  }
+  return () => {
+    const cur = spotTicker.get(code);
+    if (!cur) return;
+    cur.handlers.delete(key);
+    if (!cur.handlers.size && cur.timer) { clearInterval(cur.timer); cur.timer = null; }
+    if (!cur.handlers.size) spotTicker.delete(code);
+  };
+}
+
+async function spotPoll(code: string): Promise<void> {
+  const e = spotTicker.get(code);
+  if (!e || e.inflight) return;
+  e.inflight = true;
+  try {
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(`https://api.gold-api.com/price/${code}`, { signal: controller.signal });
+    clearTimeout(abortTimer);
+    if (!res.ok) throw new Error(`gold-api ${res.status}`);
+    const data: any = await res.json();
+    const price = Number(data?.price);
+    // the provider stamps its own price — that stamp is the honest latency
+    // number the badge reports (not our poll round-trip)
+    const providerAt = Date.parse(data?.updatedAt || "") || 0;
+    if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
+    const providerDelaySec = providerAt ? Math.max(0, Math.round((Date.now() - providerAt) / 1000)) : null;
+    if (providerDelaySec != null && providerDelaySec > 600) throw new Error("STALE_SPOT"); // market closed
+    const now = Date.now();
+    if (e.lastPrice && price !== e.lastPrice && e.lastChangeAt) {
+      e.intervals.push(now - e.lastChangeAt);
+      if (e.intervals.length > 24) e.intervals.shift();
+    }
+    if (price !== e.lastPrice) { e.lastPrice = price; e.lastChangeAt = now; }
+    // record the observed price into the self-built candle set (every
+    // timeframe benefits — the recorder is timeframe-independent)
+    recordSpot(code, price);
+    e.fails = 0;
+    setSpotState({ state: "live", lastTickAt: now, providerDelaySec });
+    for (const h of e.handlers.values()) h(price, providerAt);
+  } catch {
+    e.fails += 1;
+    if (e.fails >= 5) setSpotState({ state: "disconnected", lastTickAt: getSpotState().lastTickAt, providerDelaySec: null });
+  } finally {
+    e.inflight = false;
+  }
+}
+
+/** Measured mean interval (s) between DISTINCT provider prices — null until
+ *  at least two different prices were observed this session. */
+export function spotMeasuredUpdateSec(code: string): number | null {
+  const e = spotTicker.get(code);
+  if (!e || e.intervals.length === 0) return null;
+  const mean = e.intervals.reduce((s, x) => s + x, 0) / e.intervals.length;
+  return Math.round((mean / 1000) * 10) / 10;
+}
 
 // ---- Phase 16: self-recorded spot candles (XAU / XAG) ----------------------
 // Every 1s gold-api observation is folded into a real minute candle. Finished

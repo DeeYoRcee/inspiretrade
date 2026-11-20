@@ -10,7 +10,7 @@
  * Data & Connectivity and Shortcuts are honest read-only surfaces.
  */
 import { useEffect, useMemo, useState } from "react";
-import { INSTRUMENTS, TIMEFRAMES, getInstrument } from "@shared/terminal";
+import { INSTRUMENTS, TIMEFRAMES, getInstrument, availableTimeframes } from "@shared/terminal";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_TERMINAL_SETTINGS, useTerminalSettings, updateTerminalSettings,
@@ -248,7 +248,7 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                 </Show>
                 <Show label="Default timeframe">
                   <Select label="Default timeframe" value={ts.general.defaultTf}
-                    options={TIMEFRAMES.map((tf) => ({ value: tf, label: tf.toUpperCase() }))}
+                    options={TIMEFRAMES.filter((tf) => !["1s", "5s", "15s", "30s"].includes(tf)).map((tf) => ({ value: tf, label: tf.toUpperCase() }))}
                     onChange={(v) => updateTerminalSettings({ general: { defaultTf: v as typeof ts.general.defaultTf } })} />
                 </Show>
                 <Show label="Timezone" hint="IANA name (e.g. Asia/Tashkent) — empty = browser zone">
@@ -445,9 +445,9 @@ function InstrumentSection({ instrSymbol, setInstrSymbol, matches, onReset }: {
               options={[{ value: "", label: "Global default" }, { value: "candles", label: "Candles" }, { value: "hollow", label: "Hollow" }, { value: "line", label: "Line" }, { value: "area", label: "Area" }, { value: "heikin", label: "Heikin Ashi" }, { value: "renko", label: "Renko" }]}
               onChange={(v) => set({ chartType: (v || undefined) as InstrumentSettings["chartType"] })} />
           </Show>
-          <Show label="Default timeframe" hint="Applied whenever this instrument's chart opens">
+          <Show label="Default timeframe" hint="Applied whenever this instrument's chart opens — only genuinely supported TFs are listed">
             <Select label="Timeframe" value={per.timeframe || ""}
-              options={[{ value: "", label: "Global default" }, ...TIMEFRAMES.map((tf) => ({ value: tf, label: tf.toUpperCase() }))]}
+              options={[{ value: "", label: "Global default" }, ...availableTimeframes(instrSymbol).map((tf) => ({ value: tf, label: tf.toUpperCase() }))]}
               onChange={(v) => set({ timeframe: (v || undefined) as InstrumentSettings["timeframe"] })} />
           </Show>
           <Show label="Up candle color">

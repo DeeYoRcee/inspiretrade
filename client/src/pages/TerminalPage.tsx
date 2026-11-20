@@ -52,7 +52,7 @@ import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDi
 import { getTerminalSettings } from "@/lib/terminal-settings";
 import { getInstrumentSettings } from "@/lib/instrument-settings";
 import { touchRecent } from "@/lib/watchlists";
-import { getInstrument } from "@shared/terminal";
+import { getInstrument, availableTimeframes } from "@shared/terminal";
 
 const SYMBOL_KEY = "it_terminal_symbol";
 const TF_KEY = "it_terminal_tf";
@@ -100,19 +100,29 @@ export default function TerminalPage() {
   const [timeframe, setTimeframeRaw] = useState<Timeframe>(() => {
     const sym = localStorage.getItem(SYMBOL_KEY) || getTerminalSettings().general.defaultSymbol;
     // the instrument's own default timeframe wins, then the last session's
-    // choice, then the global default (Phase 21 per-instrument settings)
-    return (getInstrumentSettings(sym).timeframe as Timeframe | undefined)
-      || (localStorage.getItem(TF_KEY) as Timeframe | undefined)
-      || getTerminalSettings().general.defaultTf;
+    // choice, then the global default (Phase 21 per-instrument settings) —
+    // anything the instrument genuinely cannot serve falls back to 5m
+    const pick = (tf: Timeframe | undefined | null) => tf && availableTimeframes(sym).includes(tf) ? tf : null;
+    return pick(getInstrumentSettings(sym).timeframe as Timeframe | undefined)
+      || pick(localStorage.getItem(TF_KEY) as Timeframe | undefined)
+      || pick(getTerminalSettings().general.defaultTf)
+      || "5m";
   });
   // switching instruments applies THAT instrument's own timeframe default
   const setSymbol = (s: string) => {
     setSymbolRaw(s);
     touchRecent(s);
     const per = getInstrumentSettings(s).timeframe as Timeframe | undefined;
-    if (per) setTimeframeRaw(per);
+    if (per && availableTimeframes(s).includes(per)) setTimeframeRaw(per);
+    else if (!availableTimeframes(s).includes(timeframe)) {
+      // the current TF may be unsupported on the new instrument (e.g. 1s on FX)
+      const tfs = availableTimeframes(s);
+      setTimeframeRaw(tfs[Math.min(4, tfs.length - 1)]); // fall back to 1m/5m range
+    }
   };
   const setTimeframe = (tf: Timeframe) => setTimeframeRaw(tf);
+  const symbolRef = useRef(symbol);
+  symbolRef.current = symbol;
 
   useEffect(() => { localStorage.setItem(SYMBOL_KEY, symbol); }, [symbol]);
   useEffect(() => { localStorage.setItem(TF_KEY, timeframe); }, [timeframe]);
@@ -127,8 +137,8 @@ export default function TerminalPage() {
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target as HTMLElement | null)?.isContentEditable) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const idx = "1234567890".indexOf(e.key);
-      if (idx < 0 || idx >= TIMEFRAMES.length - 1) return;
-      setTimeframeRaw(TIMEFRAMES[idx]);
+      const tfs = availableTimeframes(symbolRef.current); if (idx < 0 || idx >= tfs.length) return;
+      setTimeframeRaw(tfs[idx]);
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -369,7 +379,7 @@ function Toolbar({
           </div>
 
           <div className={cn("flex items-center gap-0.5 rounded-md border border-slate-700/70 p-0.5", mode === "replay" && "pointer-events-none opacity-60")}>
-            {TIMEFRAMES.map((tf) => (
+            {availableTimeframes(symbol).map((tf) => (
               <button
                 key={tf}
                 onClick={() => onTimeframeChange(tf)}

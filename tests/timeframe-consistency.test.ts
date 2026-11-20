@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { aggregateBars, TF_SECONDS, TIMEFRAMES, BINANCE_INTERVAL, YAHOO_INTERVAL } from "../shared/terminal.ts";
+import { aggregateBars, TF_SECONDS, TIMEFRAMES, BINANCE_INTERVAL, BINANCE_AGGREGATE, YAHOO_INTERVAL, type Timeframe } from "../shared/terminal.ts";
 import { bucketStart } from "../shared/feed-validation.ts";
 
 // synthetic 1m bars: minute 0..119, price pattern known per minute
@@ -22,18 +22,31 @@ function m1Series(minutes: number): { time: number; open: number; high: number; 
   return out;
 }
 
-test("TIMEFRAMES covers M1…MN1 with consistent TF_SECONDS", () => {
-  assert.deepEqual(TIMEFRAMES, ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "1W", "1M"]);
+test("TIMEFRAMES covers S1…MN1 with consistent TF_SECONDS", () => {
+  // Phase 22: sub-minute timeframes prepend the ladder (1s/5s/15s/30s)
+  assert.deepEqual(TIMEFRAMES, ["1s", "5s", "15s", "30s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "1W", "1M"]);
   for (const tf of TIMEFRAMES) assert.ok(TF_SECONDS[tf] > 0, `${tf} missing seconds`);
+  assert.equal(TF_SECONDS["1s"], 1);
+  assert.equal(TF_SECONDS["5s"], 5);
   assert.equal(TF_SECONDS["1h"], 3600);
   assert.equal(TF_SECONDS["4h"], 4 * TF_SECONDS["1h"]);
   assert.equal(TF_SECONDS["2h"], 2 * TF_SECONDS["1h"]);
 });
 
-test("BINANCE_INTERVAL / YAHOO_INTERVAL cover every timeframe", () => {
+test("BINANCE_INTERVAL covers every timeframe; YAHOO only minute+ (honest)", () => {
   for (const tf of TIMEFRAMES) {
     assert.ok(BINANCE_INTERVAL[tf], `binance interval missing for ${tf}`);
-    assert.ok(YAHOO_INTERVAL[tf]?.range && YAHOO_INTERVAL[tf]?.interval, `yahoo interval missing for ${tf}`);
+    // sub-minute TFs stream/aggregate the native 1s feed
+    if (TF_SECONDS[tf] < 60) assert.equal(BINANCE_INTERVAL[tf], "1s", `${tf} must ride the 1s stream`);
+  }
+  assert.deepEqual(BINANCE_AGGREGATE, { "5s": "1s", "15s": "1s", "30s": "1s" });
+  // the delayed Yahoo provider has NO sub-minute source — the absence is the
+  // honest representation (availableTimeframes() gates the UI instead)
+  for (const tf of ["1s", "5s", "15s", "30s"] as Timeframe[]) {
+    assert.equal(YAHOO_INTERVAL[tf], undefined, `yahoo must not claim sub-minute ${tf}`);
+  }
+  for (const tf of ["1m", "5m", "1h", "1d"] as Timeframe[]) {
+    assert.ok(YAHOO_INTERVAL[tf]?.interval, `yahoo interval missing for ${tf}`);
   }
 });
 

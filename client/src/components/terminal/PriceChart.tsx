@@ -28,6 +28,7 @@ import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/ter
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
+import { spotMeasuredUpdateSec } from "@/lib/market-data";
 import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
 import { useAuth } from "@/hooks/use-auth";
@@ -491,7 +492,7 @@ export function PriceChart({
       // timezone (TradingView behavior) — bar timestamps stay UNIX UTC under
       // the hood, only the presentation is local
       timeScale: {
-        borderVisible: false, timeVisible: true, secondsVisible: false, visible: true, rightOffset: 8,
+        borderVisible: false, timeVisible: true, secondsVisible: TF_SECONDS[timeframe] < 60, visible: true, rightOffset: 8,
         tickMarkFormatter: (t: number, kind: number) => {
           const d = new Date(t * 1000);
           const hm = () => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -922,7 +923,7 @@ export function PriceChart({
         grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
         crosshair: { mode: CrosshairMode.Normal },
         rightPriceScale: { borderVisible: false },
-        timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, visible: cfg.id === subList[subList.length - 1]?.id },
+        timeScale: { borderVisible: false, timeVisible: true, secondsVisible: TF_SECONDS[timeframe] < 60, visible: cfg.id === subList[subList.length - 1]?.id },
       });
       const series: ISeriesApi<"Line" | "Histogram">[] = [];
       const addLine = (key: string, color: string, lineWidth: 1 | 2, opts: Record<string, unknown> = {}) => {
@@ -1125,9 +1126,29 @@ export function PriceChart({
   }, []);
 
   // ---- drawings persistence -------------------------------------------------------
+  /** timestamp of the last local drawing save — echo/merge arbitration */
+  const lastDrawingsSaveAtRef = useRef(0);
   useEffect(() => {
     if (!uid || !symbol) return;
-    const offD = subscribeDrawings(uid, symbol, (list) => setDrawings(list));
+    // instrument switch: the undo/redo stacks belong to the OLD instrument —
+    // replaying them here would save another symbol's drawings onto this one
+    historyRef.current = [];
+    futureRef.current = [];
+    setHistLens({ u: 0, r: 0 });
+    setSelectedDrawingId(null);
+    setSelectedIds([]);
+    setEditingDrawing(null);
+    lastDrawingsSaveAtRef.current = 0;
+    const offD = subscribeDrawings(uid, symbol, (list) => {
+      // echo/merge arbitration: a local edit from the last 15s wins over the
+      // (possibly stale) remote snapshot — offline deletions can no longer
+      // resurrect when RTDB answers after the fact, and we re-assert local.
+      if (Date.now() - lastDrawingsSaveAtRef.current < 15000) {
+        saveDrawings(uid, symbolRef.current, drawingsRef.current);
+        return;
+      }
+      setDrawings(list);
+    });
     const offI = subscribeIndicators(uid, symbol, (list) => setIndicators(list));
     return () => { offD(); offI(); };
   }, [uid, symbol]);
@@ -1139,6 +1160,7 @@ export function PriceChart({
     setDrawings(next);
     drawingsRef.current = next;
     if (uid) saveDrawings(uid, symbolRef.current, next);
+    lastDrawingsSaveAtRef.current = Date.now();
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
   }, [uid]);
 
@@ -1149,6 +1171,7 @@ export function PriceChart({
     setDrawings(prev);
     drawingsRef.current = prev;
     if (uid) saveDrawings(uid, symbolRef.current, prev);
+    lastDrawingsSaveAtRef.current = Date.now();
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
   }, [uid]);
 
@@ -1159,6 +1182,7 @@ export function PriceChart({
     setDrawings(next);
     drawingsRef.current = next;
     if (uid) saveDrawings(uid, symbolRef.current, next);
+    lastDrawingsSaveAtRef.current = Date.now();
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
   }, [uid]);
 
@@ -1361,7 +1385,7 @@ export function PriceChart({
   // metals reflect the browser-direct gold-api spot poll (Phase 15), other
   // quotes feeds are labelled delayed with the provider source — never "LIVE"
   const isCryptoFeed = getInstrument(symbol)?.feed === "binance";
-  const spotInst = getInstrument(symbol)?.spotCode ? true : false;
+  const spotInst = getInstrument(symbol)?.spotCode ? getInstrument(symbol) : null;
   const spot = useSyncExternalStore(subscribeSpot, getSpotState);
   const statusChip = loaded.status !== "error" && (() => {
     const c = conn.binance;
@@ -1378,8 +1402,12 @@ export function PriceChart({
       // Yahoo/stooq history is named honestly next to it
       if (spot.state === "live") {
         const d = spot.providerDelaySec;
-        dot = "bg-emerald-400";
-        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""} · self-recorded candles`;
+        const measured = spotInst.spotCode ? spotMeasuredUpdateSec(spotInst.spotCode) : null;
+        // honest trio: provider stamp lag (latency) + MEASURED how often the
+        // feed actually publishes a NEW price (gold-api advances its stamp
+        // only every ~5-15s — a 1s poll cannot speed that up) + what builds
+        // the candles
+        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""}${measured != null ? ` · upd ~${measured}s` : ""}${TF_SECONDS[timeframe] < 60 ? " · live seconds" : " · self-recorded candles"}`;
       } else if (spot.state === "connecting") {
         dot = "bg-sky-400 animate-pulse";
         label = "Spot connecting…";
@@ -1498,7 +1526,7 @@ export function PriceChart({
             fontSize: settingsRef.current.drawFontSize,
           }}
           selectedId={selectedDrawingId}
-          onSelect={setSelectedDrawingId}
+          onSelect={(id) => { setSelectedDrawingId(id); if (id != null) setSelectedIds([]); }}
           onDelete={(id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id))}
           onEdit={(id) => setEditingDrawing(drawingsRef.current.find((d) => d.id === id) ?? null)}
           onContextMenu={(clientX, clientY, hitId) => {
@@ -1782,7 +1810,11 @@ export function PriceChart({
       <DrawingPropsDialog
         drawing={editingDrawing}
         onClose={() => setEditingDrawing(null)}
-        onSave={(id, patch) => commitDrawings(drawingsRef.current.map((d) => (d.id === id ? { ...d, ...patch } : d)))}
+        onSave={(id, patch) => commitDrawings(drawingsRef.current.map((d) => {
+          if (d.id !== id) return d;
+          // deep-merge style so a partial patch keeps untouched style fields
+          return { ...d, ...patch, style: patch.style ? { ...d.style, ...patch.style } : d.style };
+        }))}
       />
       <ChartContextMenu
         state={contextMenu}

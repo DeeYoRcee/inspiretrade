@@ -1261,8 +1261,8 @@ var quotes_default = handle(async (req, res) => {
   try {
     const cacheKey = periodMode ? `${symbols}|p:${Math.floor(period1 / 600)}-${Math.floor(period2 / 600)}|${interval}` : `${symbols}|${range}|${interval}`;
     const METALS_FIRST = symbols in SPOT_API_MAP;
+    const fxIntraday = !!DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const fxIntraday = DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
       const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr = null;
       let staleResult = null;
@@ -1286,8 +1286,19 @@ var quotes_default = handle(async (req, res) => {
       if (staleResult) return staleResult;
       throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
+    let final = payload;
+    if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
+      try {
+        const t = (await truefxQuotes())[bareCode];
+        if (t?.bid > 0 && mergeSpotBars(final.bars, t.bid, interval)) {
+          void recordFxLiveBids({ [bareCode]: t.bid });
+          final = { ...final, bars: final.bars, at: Date.now(), liveTail: "truefx" };
+        }
+      } catch {
+      }
+    }
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");
-    return res.status(200).json(payload);
+    return res.status(200).json(final);
   } catch (err) {
     return res.status(200).json({ ok: false, error: "FEED_UNAVAILABLE", detail: String(err?.message || err) });
   }

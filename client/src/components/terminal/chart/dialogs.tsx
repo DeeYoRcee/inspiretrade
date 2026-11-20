@@ -350,7 +350,22 @@ export function DrawingPropsDialog({
       <div className="mt-3">
         <DialogFooter
           onCancel={onClose}
-          onOk={() => { onSave(drawing.id, { style: { ...drawing.style, color, width, dash }, hidden: !visible, ...(drawing.type === "text" ? { text: text.slice(0, 200) } : {}) }); onClose(); }}
+          onOk={() => {
+            // send ONLY the fields the user actually touched — the patch
+            // deep-merges into the live drawing, so concurrent edits (e.g. a
+            // move while the dialog is open) are never reverted by a stale
+            // snapshot spread
+            const style: Partial<Drawing["style"]> = {};
+            if (color !== drawing.style.color) style.color = color;
+            if (width !== drawing.style.width) style.width = width;
+            if (dash !== drawing.style.dash) style.dash = dash;
+            const patch: Parameters<typeof onSave>[1] = {};
+            if (Object.keys(style).length) patch.style = style as Drawing["style"];
+            if (!visible !== (drawing.hidden ?? false)) patch.hidden = !visible;
+            if (drawing.type === "text" && text !== (drawing.text ?? "")) patch.text = text.slice(0, 200);
+            onSave(drawing.id, patch);
+            onClose();
+          }}
           okLabel="Save"
         />
       </div>

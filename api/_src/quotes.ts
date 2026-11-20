@@ -1150,6 +1150,9 @@ export default handle(async (req, res) => {
     // futures only as a clearly-labelled last resort (identity: "futures").
     // For FX and indices the yahoo symbol is already the genuine underlying.
     const METALS_FIRST = symbols in SPOT_API_MAP;
+    // Phase 22 — computed OUTSIDE the cached builder: the live-tail repaint
+    // below runs per REQUEST (bypassing the 12s bars cache for the tail only)
+    const fxIntraday = !!DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
       // Phase 20 FX intraday order: Yahoo first (real OHLC on 5m+ and the
       // live-tail paint on every interval — and it feeds the fxLive recorder
@@ -1157,7 +1160,6 @@ export default handle(async (req, res) => {
       // months deep, zero credits), THEN budget-limited Twelve Data. The old
       // order put TD second: Yahoo's 1m FX is close-only, so every M1 poll
       // drained the 260/day budget and the chart died by midday.
-      const fxIntraday = DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
       const chain = METALS_FIRST
         ? [fromStooq, fromYahoo]
         : fxIntraday
@@ -1191,8 +1193,25 @@ export default handle(async (req, res) => {
       if (staleResult) return staleResult;
       throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
+    // Phase 22 — live-tail repaint per REQUEST: the bars cache serves 12s-fresh
+    // history, but TrueFX ticks are ~0s fresh (measured, phase19 matrix). For
+    // FX intraday the CURRENT TrueFX BID is folded onto the tail on every
+    // request — a 2s client poll now moves the last candle at genuine tick
+    // cadence instead of the cache cadence. Same guards as the builder's own
+    // paint (stale-gap + outlier refusal in mergeSpotBars; never in period
+    // mode, never for futures-labeled payloads).
+    let final: any = payload;
+    if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
+      try {
+        const t = (await truefxQuotes())[bareCode];
+        if (t?.bid > 0 && mergeSpotBars(final.bars, t.bid, interval)) {
+          void recordFxLiveBids({ [bareCode]: t.bid });
+          final = { ...final, bars: final.bars, at: Date.now(), liveTail: "truefx" };
+        }
+      } catch { /* TrueFX hiccup — serve the cached payload as-is */ }
+    }
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=45");
-    return res.status(200).json(payload);
+    return res.status(200).json(final);
   } catch (err: any) {
     return res.status(200).json({ ok: false, error: "FEED_UNAVAILABLE", detail: String(err?.message || err) });
   }

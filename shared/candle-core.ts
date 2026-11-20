@@ -80,6 +80,37 @@ export function wsBackoffDelay(previousMs: number, maxMs = 15000): number {
 }
 
 /**
+ * Aggregate any bar list into fixed-second buckets (Phase 22 sub-minute
+ * timeframes). Pure: 1s candles → 5s/15s/30s buckets with honest OHLC folds
+ * (first open, running high/low, latest close, summed volume). Bars must be
+ * sorted ascending; out-of-order input is rejected (callers sort first).
+ */
+export function aggregateToSeconds(bars: CoreBar[], sec: number, maxBars = 6000): CoreBar[] {
+  if (!Number.isFinite(sec) || sec <= 0 || sec === 1) return bars.slice(-maxBars);
+  const out: CoreBar[] = [];
+  let cur: CoreBar | null = null;
+  let bucket = -1;
+  for (const b of bars) {
+    const t = Math.floor(Number(b.time) / sec) * sec;
+    if (t !== bucket) {
+      if (cur) out.push(cur);
+      bucket = t;
+      cur = { time: t, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
+      if (cur.volume != null) cur.volume = cur.volume;
+    } else if (cur) {
+      cur.high = Math.max(cur.high, b.high);
+      cur.low = Math.min(cur.low, b.low);
+      cur.close = b.close;
+      if (b.volume != null && cur.volume != null) cur.volume += b.volume;
+      else if (b.volume != null) cur.volume = b.volume;
+    }
+    if (out.length > maxBars) out.splice(0, out.length - maxBars);
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/**
  * Build the next WS endpoint index: an endpoint that never delivered a frame
  * is effectively blocked → rotate to the next mirror; a working endpoint
  * stays (transient disconnects must not flip hosts).

@@ -121,6 +121,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   hiddenAllRef.current = hiddenAll;
   const cursorFallbackRef = useRef(cursorFallback);
   cursorFallbackRef.current = cursorFallback;
+  // Callback props live in a ref: the capture-phase listeners below attach
+  // ONCE at mount and would otherwise freeze the FIRST render's closures —
+  // the classic stale-callback bug (a uid resolving after mount kept every
+  // pointer-driven commit uid-less, silently skipping persistence).
+  const cbRef = useRef({ onChange, onSelect, onSelectIds, onToolCommitted, onDelete, onDeleteMany, onEdit, onContextMenu, onTradeLineMove });
+  cbRef.current = { onChange, onSelect, onSelectIds, onToolCommitted, onDelete, onDeleteMany, onEdit, onContextMenu, onTradeLineMove };
   const multiIdsRef = useRef<string[]>(selectedIds ?? []);
   multiIdsRef.current = selectedIds?.length ? selectedIds : (selectedId ? [selectedId] : []);
   /** group-move snapshots (id → original points) captured at drag start */
@@ -332,6 +338,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       if (time == null || price == null) return;
       e.stopPropagation();
       e.preventDefault();
+      // capture the pointer for the whole gesture — releasing outside the
+      // chart wrapper (over the toolbar/rail) must still deliver pointerup,
+      // otherwise the stroke stayed armed and "kept drawing" on re-entry
+      captureSafe(target, e.pointerId);
       const drag = dragRef.current;
       const drawing = drag?.mode === "draw" && drag.drawing
         ? drag.drawing
@@ -352,16 +362,16 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         // annotation tools ask for their content immediately after the last click
         if (TEXT_TOOLS.has(tool)) {
           const text = window.prompt("Text", drawing.text || "") ?? "";
-          if (!text.trim()) { dragRef.current = null; redraw(); return; }
+          if (!text.trim()) { dragRef.current = null; cbRef.current.onToolCommitted(); redraw(); return; }
           drawing.text = text.trim().slice(0, 200);
         }
         if (tool === "measure") {
           drawing.text = measureLabel(drawing.points[0], drawing.points[1]);
         }
-        onChange([...drawingsRef.current, drawing]);
+        cbRef.current.onChange([...drawingsRef.current, drawing]);
         dragRef.current = null;
-        onToolCommitted();
-        onSelect(drawing.id);
+        cbRef.current.onToolCommitted();
+        cbRef.current.onSelect(drawing.id);
       } else {
         dragRef.current = { mode: "draw", drawing };
       }
@@ -380,14 +390,17 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         if (cur.has(d.id)) cur.delete(d.id);
         else cur.add(d.id);
         const next = [...cur];
-        onSelectIds(next);
-        onSelect(next[next.length - 1] ?? null);
+        cbRef.current.onSelectIds?.(next);
+        cbRef.current.onSelect(next[next.length - 1] ?? null);
         e.stopPropagation();
         e.preventDefault();
         redraw();
         return;
       }
-      onSelect(d.id);
+      cbRef.current.onSelect(d.id);
+      // plain click = single selection — collapse a stale Ctrl-multi-selection
+      // so the handles and Delete target the object the user sees selected
+      if (multiIdsRef.current.length > 1 && !multiIdsRef.current.includes(d.id)) cbRef.current.onSelectIds?.([]);
       // plain-click on an already-multi-selected object moves the WHOLE group
       const groupMove = multiIdsRef.current.length > 1 && multiIdsRef.current.includes(d.id);
       groupOrigRef.current = groupMove
@@ -413,8 +426,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
 
     // 4) empty space — deselect (do NOT block chart pan)
-    if (selectedRef.current) onSelect(null);
-    if (onSelectIds && multiIdsRef.current.length > 1) onSelectIds([]);
+    if (selectedRef.current) cbRef.current.onSelect(null);
+    if (onSelectIds && multiIdsRef.current.length > 1) cbRef.current.onSelectIds?.([]);
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -517,11 +530,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
             }
           }
         }
-        onChange(next);
+        cbRef.current.onChange(next);
       }
       groupOrigRef.current = null;
     } else if (drag.mode === "trade" && drag.trade) {
-      onTradeLineMove(drag.trade.positionId, drag.trade.kind, drag.trade.price);
+      cbRef.current.onTradeLineMove(drag.trade.positionId, drag.trade.kind, drag.trade.price);
     }
     dragRef.current = null;
     redraw();
@@ -535,10 +548,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const d = drag.drawing;
       dragRef.current = null;
       if (d.points.length >= 2) {
-        onChange([...drawingsRef.current, d]);
-        onSelect(d.id);
+        cbRef.current.onChange([...drawingsRef.current, d]);
+        cbRef.current.onSelect(d.id);
       }
-      onToolCommitted();
+      cbRef.current.onToolCommitted();
       redraw();
       return;
     }
@@ -572,9 +585,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
               }
               e.stopPropagation();
               dragRef.current = null;
-              onChange([...drawingsRef.current, drawing]);
-              onToolCommitted();
-              onSelect(drawing.id);
+              cbRef.current.onChange([...drawingsRef.current, drawing]);
+              cbRef.current.onToolCommitted();
+              cbRef.current.onSelect(drawing.id);
               redraw();
               return;
             }
@@ -589,6 +602,28 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
   };
 
+  // touch gestures / browser cancellations: never leave a stuck draw or drag
+  const onPointerCancelCapture = (e: PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    e.stopPropagation();
+    if (drag.mode === "draw" && drag.drawing && toolRef.current && TOOL_POINT_COUNT[toolRef.current] === -1) {
+      // freehand stroke cancelled near its end → commit what was drawn
+      const d = drag.drawing;
+      dragRef.current = null;
+      if (d.points.length >= 2) {
+        cbRef.current.onChange([...drawingsRef.current, d]);
+        cbRef.current.onSelect(d.id);
+      }
+      cbRef.current.onToolCommitted();
+    } else if (drag.mode !== "draw") {
+      finishDrag(); // move/handle/trade keep their committed result
+    }
+    // multi-point strokes in progress are discarded on cancel
+    dragRef.current = null;
+    redraw();
+  };
+
   const onDoubleClickCapture = (e: MouseEvent) => {
     // finishing a click-collected multi-point drawing wins over everything
     const drag = dragRef.current;
@@ -598,10 +633,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       e.stopPropagation();
       e.preventDefault();
       if (d.points.length >= 2) {
-        onChange([...drawingsRef.current, d]);
-        onSelect(d.id);
+        cbRef.current.onChange([...drawingsRef.current, d]);
+        cbRef.current.onSelect(d.id);
       }
-      onToolCommitted();
+      cbRef.current.onToolCommitted();
       redraw();
       return;
     }
@@ -612,8 +647,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
     if (hit) {
       e.stopPropagation();
-      onSelect(drawingsRef.current[hit.index].id);
-      onEdit(drawingsRef.current[hit.index].id);
+      cbRef.current.onSelect(drawingsRef.current[hit.index].id);
+      cbRef.current.onEdit(drawingsRef.current[hit.index].id);
     }
   };
 
@@ -626,7 +661,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (p.x > conv.paneW || p.y > conv.paneH) return;
     const hit = (lockedRef.current || hiddenAllRef.current) ? null
       : hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
-    onContextMenu(e.clientX, e.clientY, hit ? drawingsRef.current[hit.index].id : null);
+    cbRef.current.onContextMenu(e.clientX, e.clientY, hit ? drawingsRef.current[hit.index].id : null);
   };
 
   // hover cursor updates without storms — one rAF per burst
@@ -645,22 +680,26 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       if (e.key === "Delete" || e.key === "Backspace") {
         const target = e.target as HTMLElement | null;
         if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+        if (lockedRef.current) return; // LOCK: objects are frozen (matches the disabled object-tree buttons)
         const multi = multiIdsRef.current;
         if (multi.length > 1 && onDeleteMany) {
           e.preventDefault();
-          onDeleteMany(multi);
-          onSelect(null);
-          if (onSelectIds) onSelectIds([]);
+          cbRef.current.onDeleteMany?.(multi);
+          cbRef.current.onSelect(null);
+          if (onSelectIds) cbRef.current.onSelectIds?.([]);
         } else if (selectedRef.current) {
           e.preventDefault();
-          onDelete(selectedRef.current);
-          onSelect(null);
+          cbRef.current.onDelete(selectedRef.current);
+          cbRef.current.onSelect(null);
         }
       }
       if (e.key === "Escape") {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
         dragRef.current = null;
         toolRef.current = null;
-        onSelect(null);
+        cbRef.current.onSelect(null);
+        cbRef.current.onSelectIds?.([]);
         redraw();
       }
       // Enter finishes a click-collected multi-point drawing (path/polyline)
@@ -671,17 +710,19 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
           const d = drag.drawing;
           dragRef.current = null;
           if (d.points.length >= 2) {
-            onChange([...drawingsRef.current, d]);
-            onSelect(d.id);
+            cbRef.current.onChange([...drawingsRef.current, d]);
+            cbRef.current.onSelect(d.id);
           }
-          onToolCommitted();
+          cbRef.current.onToolCommitted();
           redraw();
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onDelete, onDeleteMany, onSelect, onSelectIds]);
+    // handlers read through cbRef — stable for the mount lifetime
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- attach capture-phase listeners to the chart-area wrapper --------------
   // The wrapper is an ancestor of the chart: events seen here FIRST, and only
@@ -692,12 +733,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     host.addEventListener("pointerdown", onPointerDown as EventListener, true);
     host.addEventListener("pointermove", onPointerMove as EventListener, true);
     host.addEventListener("pointerup", onPointerUpCapture as EventListener, true);
+    host.addEventListener("pointercancel", onPointerCancelCapture as EventListener, true);
     host.addEventListener("dblclick", onDoubleClickCapture as EventListener, true);
     host.addEventListener("contextmenu", onContextMenuCapture as EventListener, true);
     return () => {
       host.removeEventListener("pointerdown", onPointerDown as EventListener, true);
       host.removeEventListener("pointermove", onPointerMove as EventListener, true);
       host.removeEventListener("pointerup", onPointerUpCapture as EventListener, true);
+      host.removeEventListener("pointercancel", onPointerCancelCapture as EventListener, true);
       host.removeEventListener("dblclick", onDoubleClickCapture as EventListener, true);
       host.removeEventListener("contextmenu", onContextMenuCapture as EventListener, true);
     };
