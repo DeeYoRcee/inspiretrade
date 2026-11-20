@@ -324,3 +324,16 @@ export function minuteIslandFilter(
   out.push(...sorted.slice(keepFrom));
   return { bars: out, rejected, ranges };
 }
+
+/** Phase 25 §4 — share of close-only bars (O=H=L=C) in a series, 0..1.
+ * Yahoo's FX 1m feed is close-only; a high share means the payload carries
+ * observations, not genuine candles. Pure + framework-free so the server
+ * chain, the client loader and the tests all share one definition. */
+export function flatShare(bars: { open: number; high: number; low: number; close: number }[]): number {
+  if (!bars.length) return 0;
+  let flat = 0;
+  for (const b of bars) {
+    if (b.open === b.high && b.high === b.low && b.low === b.close) flat++;
+  }
+  return flat / bars.length;
+}

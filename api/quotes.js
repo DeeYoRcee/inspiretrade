@@ -218,6 +218,14 @@ function minuteIslandFilter(bars, jumpPct = 0.02, maxIslandSec = 6 * 3600) {
   out.push(...sorted.slice(keepFrom));
   return { bars: out, rejected, ranges };
 }
+function flatShare(bars) {
+  if (!bars.length) return 0;
+  let flat = 0;
+  for (const b of bars) {
+    if (b.open === b.high && b.high === b.low && b.low === b.close) flat++;
+  }
+  return flat / bars.length;
+}
 
 // shared/terminal.ts
 function aggregateBars(bars, factorMinutes) {
@@ -321,9 +329,9 @@ async function decodeDukaDay(buf, code, day) {
   for (let off = 0; off + 24 <= raw.length; off += 24) {
     const t = dayStart + raw.readInt32BE(off);
     const o = raw.readInt32BE(off + 4) / div;
-    const h = raw.readInt32BE(off + 8) / div;
+    const c = raw.readInt32BE(off + 8) / div;
     const l = raw.readInt32BE(off + 12) / div;
-    const c = raw.readInt32BE(off + 16) / div;
+    const h = raw.readInt32BE(off + 16) / div;
     const v = raw.readFloatBE(off + 20);
     if (![o, h, l, c].every(Number.isFinite) || !Number.isFinite(v)) continue;
     if (h < Math.max(o, c) || l > Math.min(o, c) || h < l || o <= 0) continue;
@@ -373,17 +381,38 @@ function missingIntervals(bars, tfSec, fromSec, toSec, assetClass, maxReport = 1
   return { count, sample, longestGapSec };
 }
 var HIST_MONTHS_CAP = {
-  "1m": 6,
-  "5m": 12,
-  "15m": 24,
-  "30m": 24,
-  "1h": 24,
-  "2h": 24,
-  "4h": 24,
+  "1m": 240,
+  "5m": 240,
+  "15m": 240,
+  "30m": 240,
+  "1h": 240,
+  "2h": 240,
+  "4h": 240,
   "1d": 240,
   "1W": 240,
   "1M": 240
 };
+function clampBackfillMonths(requested, tf) {
+  const cap = HIST_MONTHS_CAP[tf] ?? 12;
+  const n = Number(requested);
+  if (!Number.isFinite(n) || n <= 0) return cap;
+  return Math.min(Math.floor(n), cap);
+}
+function backfillWindowFrom(months, nowSec) {
+  return nowSec - Math.round(months * 30.44 * 86400);
+}
+var READ_AGG_CHAIN = {
+  "3m": [{ src: "1m", factorMin: 3 }],
+  "5m": [{ src: "1m", factorMin: 5 }],
+  "15m": [{ src: "1m", factorMin: 15 }],
+  "30m": [{ src: "1m", factorMin: 30 }],
+  "1h": [{ src: "1m", factorMin: 60 }],
+  "2h": [{ src: "1h", factorMin: 120 }, { src: "1m", factorMin: 120 }],
+  "4h": [{ src: "1h", factorMin: 240 }, { src: "1m", factorMin: 240 }],
+  "1W": [{ src: "1d", factorMin: 10080 }],
+  "1M": [{ src: "1d", factorMin: 43200 }]
+};
+var MAX_1M_FOLD_WINDOW_SEC = 90 * 86400;
 
 // api/_src/lib/hist.ts
 var HIST_STOOQ = {
@@ -572,15 +601,21 @@ async function tdWalkM1(apiKey, tdSym, startSec, endSec, maxPages, spentToday) {
   bars.sort((a, b) => a.time - b.time);
   return { bars, pages, oldest: bars.length ? bars[0].time : null, exhausted };
 }
-async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed) {
+async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed, deadlineMs = 45e3) {
   const dukaSym = DUKA_MAP[code] ?? DUKA_METALS[code];
   if (!dukaSym) throw new Error("NOT_ON_DUKA");
+  const startedAt = Date.now();
   const bars = [];
   let files = 0;
   let oldest = null;
+  let timedOut = false;
   const days = [];
   for (let day = Math.floor(toSec / 86400) * 86400; day >= fromSec && days.length < maxDays; day -= 86400) days.push(new Date(day * 1e3));
   for (let i = 0; i < days.length && fileUsed + files < fileBudget; i += 5) {
+    if (Date.now() - startedAt > deadlineMs) {
+      timedOut = true;
+      break;
+    }
     const chunk = days.slice(i, i + 5);
     const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
     if (oldest == null && files === 0 && bufs.every((b) => b == null) && i >= 5) break;
@@ -597,7 +632,7 @@ async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed) {
     }
   }
   bars.sort((a, b) => a.time - b.time);
-  return { bars, files, oldest };
+  return { bars, files, oldest, timedOut };
 }
 var ASSET_CLASS = {
   XAUUSD: "metal",
@@ -612,13 +647,13 @@ function assetClassOf(symbol) {
 }
 async function runBackfillStep(req) {
   const { symbol, tf } = req;
-  const months = Math.min(req.months ?? HIST_MONTHS_CAP[tf] ?? 12, HIST_MONTHS_CAP[tf] ?? 12);
+  const months = clampBackfillMonths(req.months, tf);
   const now = Math.floor(Date.now() / 1e3);
-  const wantFrom = now - Math.round(months * 30.44 * 86400);
+  const wantFrom = backfillWindowFrom(months, now);
   const stateRef = rtdb().ref(`histState/${symbol}/${tf}`);
   const state = (await stateRef.once("value")).val() || {};
   const covered = state.oldest ? Math.min(state.oldest, wantFrom) : wantFrom;
-  const base = { ok: true, symbol, tf, provider: "", written: 0, skipped: 0, rejected: 0, oldest: state.oldest ?? null, newest: state.newest ?? null, cursor: state.oldest ?? null, done: false };
+  const base = { ok: true, symbol, tf, provider: "", written: 0, skipped: 0, rejected: 0, oldest: state.oldest ?? null, newest: state.newest ?? null, cursor: state.oldest ?? null, targetFrom: wantFrom, done: false };
   try {
     if (assetClassOf(symbol) === "crypto") {
       return { ...base, provider: "binance", done: true, note: "crypto history is served natively by the Binance REST/WS engine (loadOlder pagination)" };
@@ -628,7 +663,7 @@ async function runBackfillStep(req) {
         const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -638,6 +673,7 @@ async function runBackfillStep(req) {
           oldest: newOldest,
           newest: state.newest ?? now - 2 * 86400,
           cursor: newOldest,
+          targetFrom: wantFrom,
           done,
           files: (state.files ?? 0) + walk.files,
           written: (state.written ?? 0) + sh2.written,
@@ -646,7 +682,7 @@ async function runBackfillStep(req) {
           error: null
         });
         if (sh2.written > 0 || done) {
-          return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, note: `${walk.files} day files` };
+          return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}` };
         }
       }
       const tdSym = HIST_TD[symbol];
@@ -663,6 +699,7 @@ async function runBackfillStep(req) {
           oldest: newOldest,
           newest: state.newest ?? now,
           cursor: newOldest,
+          targetFrom: wantFrom,
           done: walk.exhausted || newOldest != null && newOldest <= covered,
           pages: (state.pages ?? 0) + walk.pages,
           written: (state.written ?? 0) + sh2.written,
@@ -676,23 +713,25 @@ async function runBackfillStep(req) {
         const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
+        const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
           provider: "dukascopy-bid",
           oldest: newOldest,
           newest: state.newest ?? now - 2 * 86400,
           cursor: newOldest,
-          done: newOldest != null && newOldest <= covered,
+          targetFrom: wantFrom,
+          done,
           files: (state.files ?? 0) + walk.files,
           written: (state.written ?? 0) + sh2.written,
           rejected: (state.rejected ?? 0) + sh2.rejected,
           updatedAt: Date.now(),
           error: null
         });
-        return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done: newOldest != null && newOldest <= covered, note: `${walk.files} day files` };
+        return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}` };
       }
       return { ...base, ok: false, provider: "none", error: "NO_1M_SOURCE (stooq refuses 1m; metals are not on the Dukascopy feed; TwelveData key missing)" };
     }
@@ -729,7 +768,7 @@ async function runBackfillStep(req) {
         agg = aggregateBars(inWin2, Number(tf.slice(0, -1)) * 60);
       }
       const sh2 = await writeShards(symbol, tf, agg, `stooq-${srcTf}-fold`, { force: req.force });
-      await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, done: true, written: (state.written ?? 0) + sh2.written, rejected: (state.rejected ?? 0) + sh2.rejected, updatedAt: Date.now(), error: null });
+      await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, targetFrom: wantFrom, done: true, written: (state.written ?? 0) + sh2.written, rejected: (state.rejected ?? 0) + sh2.rejected, updatedAt: Date.now(), error: null });
       return { ...base, provider: `stooq-${srcTf}-fold`, written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: agg.length ? agg[0].time : null, newest: agg.length ? agg[agg.length - 1].time : null, done: true };
     }
     const raw = await fetchStooqBars(stooqSym, iv);
@@ -742,6 +781,7 @@ async function runBackfillStep(req) {
       oldest,
       newest,
       cursor: oldest,
+      targetFrom: wantFrom,
       done: true,
       written: (state.written ?? 0) + sh.written,
       rejected: (state.rejected ?? 0) + sh.rejected,
@@ -759,17 +799,12 @@ async function runBackfillStep(req) {
 async function readRange(symbol, tf, fromSec, toSec) {
   const native = await readShards(symbol, tf, fromSec, toSec);
   if (native.bars.length) return { ok: true, symbol, tf, bars: native.bars, providers: native.providers };
-  const chain = {
-    "2h": { src: "1h", factorMin: 120 },
-    "4h": { src: "1h", factorMin: 240 },
-    "1W": { src: "1d", factorMin: 10080 },
-    "1M": { src: "1d", factorMin: 43200 },
-    "3m": { src: "1m", factorMin: 3 }
-  };
-  const agg = chain[tf];
-  if (agg) {
-    const src = await readShards(symbol, agg.src, fromSec, toSec);
-    if (src.bars.length) {
+  const chain = READ_AGG_CHAIN[tf];
+  if (chain) {
+    for (const agg of chain) {
+      if (agg.src === "1m" && toSec - fromSec > MAX_1M_FOLD_WINDOW_SEC) continue;
+      const src = await readShards(symbol, agg.src, fromSec, toSec);
+      if (!src.bars.length) continue;
       const out = aggregateBars(src.bars, agg.factorMin);
       const providers = {};
       for (const [p, n] of Object.entries(src.providers)) providers[`${p}\u2192${tf}-fold`] = n;
@@ -1295,7 +1330,7 @@ var quotes_default = handle(async (req, res) => {
     const code = String(raw?.code || "").toUpperCase();
     const dukaSym = DUKA_MAP[code];
     if (!dukaSym) return res.json({ ok: false, reason: "not-on-duka" });
-    const days = Math.min(Math.max(Number(raw?.days) || 30, 1), 35);
+    const days = Math.min(Math.max(Number(raw?.days) || 30, 1), 400);
     const gate = rtdb().ref(`config/dukaBackfillAt/${code}`);
     const lastAt = Number((await gate.once("value")).val() || 0);
     const nowMs = Date.now();
@@ -1304,6 +1339,8 @@ var quotes_default = handle(async (req, res) => {
     const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
     let filesUsed = Number((await usageRef.once("value")).val() || 0);
     if (filesUsed >= 600) return res.json({ ok: false, reason: "daily-cap" });
+    const startedAt = Date.now();
+    const WALK_DEADLINE_MS = 45e3;
     const today = /* @__PURE__ */ new Date();
     const wanted = [];
     for (let i = 2; i < days + 2 && wanted.length < days; i++) wanted.push(new Date(today.getTime() - i * 864e5));
@@ -1311,7 +1348,12 @@ var quotes_default = handle(async (req, res) => {
     let filesFetched = 0;
     let oldest = null;
     let newest = null;
+    let hitDeadline = false;
     for (let i = 0; i < wanted.length; i += 5) {
+      if (Date.now() - startedAt > WALK_DEADLINE_MS) {
+        hitDeadline = true;
+        break;
+      }
       const chunk = wanted.slice(i, i + 5);
       const files = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
       filesUsed += files.filter(Boolean).length;
@@ -1344,7 +1386,7 @@ var quotes_default = handle(async (req, res) => {
         updatedAt: nowMs
       });
     }
-    return res.json({ ok: true, code, written, oldest, newest, files: filesFetched });
+    return res.json({ ok: true, code, written, oldest, newest, files: filesFetched, note: hitDeadline ? "wall-clock budget reached \u2014 repeat after the 90s cooldown to continue" : void 0 });
   }
   if (action === "hist-backfill" && req.method === "POST") {
     const adminUser = await requireAdmin(req);
@@ -1787,6 +1829,18 @@ var quotes_default = handle(async (req, res) => {
       const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday && interval === "1m" ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr = null;
       let staleResult = null;
+      const annotateCloseOnly = (r) => {
+        if (!fxIntraday || interval !== "1m" || !Array.isArray(r?.bars) || !r.bars.length) return r;
+        if (String(r.source || "").startsWith("fx-store")) return r;
+        const share = flatShare(r.bars);
+        if (share < 0.05) return r;
+        return {
+          ...r,
+          closeOnlyShare: Math.round(share * 1e3) / 10,
+          // percent, 1 decimal
+          note: `close-only share ${Math.round(share * 100)}% (Yahoo 1m fallback) \u2014 genuine Dukascopy OHLC replaces this as the store heals`
+        };
+      };
       for (const attempt of chain) {
         try {
           const result = { ok: true, ...await attempt() };
@@ -1795,7 +1849,7 @@ var quotes_default = handle(async (req, res) => {
             if (!staleResult || Number(result.delaySec ?? 0) < Number(staleResult.delaySec ?? 1e9)) staleResult = result;
             continue;
           }
-          return result;
+          return annotateCloseOnly(result);
         } catch (e) {
           if (attempt === fromStooq && String(e?.message).includes("STOOQ_NO_1M")) {
             if (!firstErr) firstErr = e;
@@ -1804,7 +1858,7 @@ var quotes_default = handle(async (req, res) => {
           if (!firstErr) firstErr = e;
         }
       }
-      if (staleResult) return staleResult;
+      if (staleResult) return annotateCloseOnly(staleResult);
       throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
     let final = payload;

@@ -37,10 +37,10 @@ import { rtdb } from "./firebase";
 import { validateBars, alignAndDedupe, type RawBar } from "../../../shared/feed-validation";
 import { aggregateBars } from "../../../shared/terminal";
 import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
-import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, type AssetClass } from "./hist-sessions";
+import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, type AssetClass } from "./hist-sessions";
 import { bucketStart } from "../../../shared/feed-validation";
 
-export { inMarketHours, missingIntervals, HIST_MONTHS_CAP };
+export { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC };
 
 // ---- symbol maps -----------------------------------------------------------
 
@@ -239,16 +239,23 @@ export async function tdWalkM1(apiKey: string, tdSym: string, startSec: number, 
 
 /** Dukascopy m1 walk-back (official public datafeed, years deep) — forex
  * pairs AND, since the Phase 23 re-test, metals. Parallel batches of 5 stay
- * inside the function wall-clock; the cursor resumes across runs. */
-export async function dukaWalkM1(code: string, fromSec: number, toSec: number, maxDays: number, fileBudget: number, fileUsed: number): Promise<{ bars: RawBar[]; files: number; oldest: number | null }> {
+ * inside the function wall-clock; the cursor resumes across runs. Phase 25:
+ * a wall-clock DEADLINE (default 45s) bounds the worst case — the CDN's
+ * 20s×2 retry timeouts on flaky days previously allowed a single call to
+ * run for many minutes and risk the serverless execution limit; a deadline
+ * overrun simply ends the step early and the cursor resumes next call. */
+export async function dukaWalkM1(code: string, fromSec: number, toSec: number, maxDays: number, fileBudget: number, fileUsed: number, deadlineMs = 45000): Promise<{ bars: RawBar[]; files: number; oldest: number | null; timedOut: boolean }> {
   const dukaSym = DUKA_MAP[code] ?? DUKA_METALS[code];
   if (!dukaSym) throw new Error("NOT_ON_DUKA");
+  const startedAt = Date.now();
   const bars: RawBar[] = [];
   let files = 0;
   let oldest: number | null = null;
+  let timedOut = false;
   const days: Date[] = [];
   for (let day = Math.floor(toSec / 86400) * 86400; day >= fromSec && days.length < maxDays; day -= 86400) days.push(new Date(day * 1000));
   for (let i = 0; i < days.length && fileUsed + files < fileBudget; i += 5) {
+    if (Date.now() - startedAt > deadlineMs) { timedOut = true; break; }
     const chunk = days.slice(i, i + 5);
     const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
     if (oldest == null && files === 0 && bufs.every((b) => b == null) && i >= 5) break; // CDN unreachable
@@ -265,7 +272,7 @@ export async function dukaWalkM1(code: string, fromSec: number, toSec: number, m
     }
   }
   bars.sort((a, b) => a.time - b.time);
-  return { bars, files, oldest };
+  return { bars, files, oldest, timedOut };
 }
 
 // ---- backfill orchestration ------------------------------------------------
@@ -273,9 +280,10 @@ export async function dukaWalkM1(code: string, fromSec: number, toSec: number, m
 export interface BackfillRequest {
   symbol: string;          // terminal code: XAUUSD, EURUSD, ^NDX…
   tf: string;              // client timeframe key: 1m, 5m, 15m, 30m, 1h, 4h, 1d…
-  months?: number;         // how deep to go (capped by HIST_MONTHS_CAP)
+  months?: number;         // how deep to go (clamped by HIST_MONTHS_CAP — now the full genuine depth)
   maxPages?: number;       // TD pages this run may spend (default 10)
-  maxDays?: number;        // Dukascopy day files this run may fetch (default 60)
+  maxDays?: number;        // Dukascopy day files this run may fetch (default 90)
+  deadlineMs?: number;     // Dukascopy wall-clock budget per call (default 45000)
   force?: boolean;         // rewrite existing day shards
 }
 
@@ -284,7 +292,9 @@ export interface BackfillResult {
   written: number; skipped: number; rejected: number;
   oldest: number | null; newest: number | null;
   cursor: number | null;   // oldest time reached — pass back to resume deeper
+  targetFrom: number | null; // epoch sec the current depth request reaches (progress denominator)
   done: boolean;           // true when the requested window is covered
+  timedOut?: boolean;      // the wall-clock budget ended this step early (resume to continue)
   note?: string; error?: string;
 }
 
@@ -307,15 +317,18 @@ function assetClassOf(symbol: string): AssetClass {
  */
 export async function runBackfillStep(req: BackfillRequest): Promise<BackfillResult> {
   const { symbol, tf } = req;
-  const months = Math.min(req.months ?? HIST_MONTHS_CAP[tf] ?? 12, HIST_MONTHS_CAP[tf] ?? 12);
+  // Phase 25 §3: clampBackfillMonths guards against absurd values only —
+  // the cap itself now holds the FULL genuinely-available depth (240 months),
+  // and per-call budgets + the resume cursor keep every request small.
+  const months = clampBackfillMonths(req.months, tf);
   const now = Math.floor(Date.now() / 1000);
-  const wantFrom = now - Math.round(months * 30.44 * 86400);
+  const wantFrom = backfillWindowFrom(months, now);
   const stateRef = rtdb().ref(`histState/${symbol}/${tf}`);
   const state = (await stateRef.once("value")).val() || {};
   // resume: start the walk from the OLDEST bar already stored, never re-download
   const covered = state.oldest ? Math.min(state.oldest, wantFrom) : wantFrom;
 
-  const base: BackfillResult = { ok: true, symbol, tf, provider: "", written: 0, skipped: 0, rejected: 0, oldest: state.oldest ?? null, newest: state.newest ?? null, cursor: state.oldest ?? null, done: false };
+  const base: BackfillResult = { ok: true, symbol, tf, provider: "", written: 0, skipped: 0, rejected: 0, oldest: state.oldest ?? null, newest: state.newest ?? null, cursor: state.oldest ?? null, targetFrom: wantFrom, done: false };
 
   try {
     // ---- crypto: Binance REST klines go back years — no engine needed ----
@@ -333,19 +346,19 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
         const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
           provider: "dukascopy-bid", oldest: newOldest, newest: state.newest ?? now - 2 * 86400,
-          cursor: newOldest, done,
+          cursor: newOldest, targetFrom: wantFrom, done,
           files: (state.files ?? 0) + walk.files, written: (state.written ?? 0) + sh.written,
           rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null,
         });
         if (sh.written > 0 || done) {
-          return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, note: `${walk.files} day files` };
+          return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " · wall-clock budget reached — resume to continue" : ""}` };
         }
         // feed skipped this window (or CDN down) → fall through to TwelveData
       }
@@ -360,7 +373,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const newOldest = walk.oldest ?? state.oldest ?? null;
         await stateRef.set({
           provider: "twelvedata", oldest: newOldest, newest: state.newest ?? now,
-          cursor: newOldest, done: walk.exhausted || (newOldest != null && newOldest <= covered),
+          cursor: newOldest, targetFrom: wantFrom, done: walk.exhausted || (newOldest != null && newOldest <= covered),
           pages: (state.pages ?? 0) + walk.pages, written: (state.written ?? 0) + sh.written,
           rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(),
           error: walk.exhausted && !newOldest ? "provider refused / no deeper data" : null,
@@ -372,17 +385,18 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         // publication lag ≈ 1-2 days — walk from two days ago backwards
-        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used);
+        const walk = await dukaWalkM1(symbol, covered, now - 2 * 86400, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
+        const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
           provider: "dukascopy-bid", oldest: newOldest, newest: state.newest ?? now - 2 * 86400,
-          cursor: newOldest, done: newOldest != null && newOldest <= covered,
+          cursor: newOldest, targetFrom: wantFrom, done,
           files: (state.files ?? 0) + walk.files, written: (state.written ?? 0) + sh.written,
           rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null,
         });
-        return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done: newOldest != null && newOldest <= covered, note: `${walk.files} day files` };
+        return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " · wall-clock budget reached — resume to continue" : ""}` };
       }
       // metals with no TD key: honest refusal — stooq has no 1m
       return { ...base, ok: false, provider: "none", error: "NO_1M_SOURCE (stooq refuses 1m; metals are not on the Dukascopy feed; TwelveData key missing)" };
@@ -424,7 +438,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         agg = aggregateBars(inWin, Number(tf.slice(0, -1)) * 60) as RawBar[];
       }
       const sh = await writeShards(symbol, tf, agg, `stooq-${srcTf}-fold`, { force: req.force });
-      await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, done: true, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null });
+      await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, targetFrom: wantFrom, done: true, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null });
       return { ...base, provider: `stooq-${srcTf}-fold`, written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: agg.length ? agg[0].time : null, newest: agg.length ? agg[agg.length - 1].time : null, done: true };
     }
     const raw = await fetchStooqBars(stooqSym, iv);
@@ -434,7 +448,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
     const newest = inWin.length ? inWin[inWin.length - 1].time : state.newest ?? null;
     await stateRef.set({
       provider: "stooq-spot", oldest, newest, cursor: oldest,
-      done: true, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected,
+      targetFrom: wantFrom, done: true, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected,
       updatedAt: Date.now(), error: null,
     });
     return { ...base, provider: "stooq-spot", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest, newest, cursor: oldest, done: true, note: `${raw.length} archive rows scanned` };
@@ -449,26 +463,22 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
 
 export interface RangeResult { ok: boolean; symbol: string; tf: string; bars: RawBar[]; providers: Record<string, number>; note?: string }
 
+// READ_AGG_CHAIN / MAX_1M_FOLD_WINDOW_SEC live in hist-sessions.ts (pure, testable)
+
 /**
- * Serve a historical window: native shards first; 2h/4h/W/MN aggregate up
- * from their native base when no shard exists for the requested tf (§7 —
+ * Serve a historical window: native shards first; then aggregate up from
+ * their native base when no shard exists for the requested tf (§7 —
  * higher timeframes aggregate correctly from compatible lower data).
  */
 export async function readRange(symbol: string, tf: string, fromSec: number, toSec: number): Promise<RangeResult> {
   const native = await readShards(symbol, tf, fromSec, toSec);
   if (native.bars.length) return { ok: true, symbol, tf, bars: native.bars, providers: native.providers };
-  // aggregation fallback chain (native sources only — no cross-provider seams)
-  const chain: Record<string, { src: string; factorMin: number }> = {
-    "2h": { src: "1h", factorMin: 120 },
-    "4h": { src: "1h", factorMin: 240 },
-    "1W": { src: "1d", factorMin: 10080 },
-    "1M": { src: "1d", factorMin: 43200 },
-    "3m": { src: "1m", factorMin: 3 },
-  };
-  const agg = chain[tf];
-  if (agg) {
-    const src = await readShards(symbol, agg.src, fromSec, toSec);
-    if (src.bars.length) {
+  const chain = READ_AGG_CHAIN[tf];
+  if (chain) {
+    for (const agg of chain) {
+      if (agg.src === "1m" && toSec - fromSec > MAX_1M_FOLD_WINDOW_SEC) continue;
+      const src = await readShards(symbol, agg.src, fromSec, toSec);
+      if (!src.bars.length) continue;
       const out = aggregateBars(src.bars, agg.factorMin) as RawBar[];
       const providers: Record<string, number> = {};
       for (const [p, n] of Object.entries(src.providers)) providers[`${p}→${tf}-fold`] = n;

@@ -67,13 +67,16 @@ test("missingIntervals: closed market ≠ missing data (full weekend in window)"
   assert.equal(res.count, expected);
 });
 
-test("HIST_MONTHS_CAP: honest provider expectations per timeframe", () => {
-  assert.equal(HIST_MONTHS_CAP["1m"], 6, "m1 ≤ 6 months (TD/Duka reality)");
-  assert.equal(HIST_MONTHS_CAP["5m"], 12);
+test("HIST_MONTHS_CAP: Phase 25 — full genuine depth, budgets provide the safety", () => {
+  // Phase 25 §3: intraday caps no longer limit history depth — Dukascopy
+  // serves forex/metals 1m BID candles back to 2010 (~202 months). Safety
+  // moved to per-call budgets (≤90 day files, 45s deadline, 600 files/day,
+  // TD pages) + the resumable cursor, so every single request stays small.
+  assert.ok(HIST_MONTHS_CAP["1m"] >= 240, "m1 reaches the full genuine depth");
+  assert.ok(HIST_MONTHS_CAP["5m"] >= 240);
+  assert.ok(HIST_MONTHS_CAP["15m"] >= 240);
+  assert.ok(HIST_MONTHS_CAP["1h"] >= 240);
   assert.ok(HIST_MONTHS_CAP["1d"] >= 240, "daily archives go back decades");
-  // caps are non-increasing as granularity decreases
-  assert.ok(HIST_MONTHS_CAP["1m"] <= HIST_MONTHS_CAP["5m"]);
-  assert.ok(HIST_MONTHS_CAP["1h"] <= HIST_MONTHS_CAP["1d"]);
 });
 
 test("§7 fold correctness: 2h/4h aggregate exactly from 1h bars (no OHLC drift)", () => {

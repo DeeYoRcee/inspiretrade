@@ -2002,6 +2002,9 @@ function FeedDiagnostics({ symbol, conn, getBars }: { symbol: string; conn: stri
         ["Last tick", `${fmt(s.lastTickAt)} (${s.tps10s} in 10s)`],
         ["Last chart update", fmt(s.lastChartUpdateAt)],
         ["Measured delay", s.delaySec != null ? `${s.delaySec}s` : "n/a (stream)"],
+        // Phase 25 §4: honest disclosure when a close-only fallback (Yahoo FX
+        // 1m) served the series instead of genuine Dukascopy OHLC
+        ["Close-only share", s.closeOnlyShare != null ? `${s.closeOnlyShare}% (fallback served)` : "genuine OHLC"],
         ["Latest candle", last ? `O ${last.open} H ${last.high} L ${last.low} C ${last.close}` : "—"],
         ["Candle time (UTC)", last ? `${new Date(last.time * 1000).toISOString().slice(0, 19).replace("T", " ")} (${lastAge}s old)` : "—"],
         ["Invalid bars", String(s.invalidBars)],
@@ -2057,6 +2060,38 @@ function HistoryPanel({ symbol }: { symbol: string }) {
       void load();
     }
   };
+  // Phase 25 §8: run budgeted backfill steps IN A LOOP until the requested
+  // depth is covered. Every server call stays small (≤90 Dukascopy day files,
+  // 45s wall-clock deadline, 600 files/day) — the loop simply resumes the
+  // cursor until done=true, surfacing live progress. Guarded against
+  // no-progress spins (CDN down) and a hard step cap.
+  const [deepRunning, setDeepRunning] = useState<string>("");
+  const deepFill = async (tf: string) => {
+    setDeepRunning(tf);
+    setNote("");
+    try {
+      let steps = 0, written = 0, noProgress = 0, prevCursor: number | null = null;
+      for (; steps < 300; steps++) {
+        const res = await authedFetch<any>("/api/quotes?action=hist-backfill", {
+          symbol, tf, months: months[tf] ?? undefined,
+        });
+        if (!res?.ok) { setNote(`${tf}: step ${steps + 1} failed: ${res?.error || "failed"} — progress saved, resume later`); break; }
+        written += res.written || 0;
+        setNote(`${tf}: step ${steps + 1} — +${res.written} bars (${res.provider || "?"}) · oldest ${fmtDate(res.oldest)}${res.timedOut ? " · budget reached" : ""}${res.done ? " · DONE" : " · continuing"}`);
+        if (res.done) { setNote(`${tf}: DONE — ${written} bars over ${steps + 1} steps · oldest ${fmtDate(res.oldest)}`); break; }
+        noProgress = res.cursor != null && res.cursor === prevCursor && !res.written ? noProgress + 1 : 0;
+        prevCursor = res.cursor;
+        if (noProgress >= 3) { setNote(`${tf}: no progress for 3 steps (provider unreachable?) — saved cursor: ${fmtDate(res.cursor)}`); break; }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      if (steps >= 300) setNote(`${tf}: paused after 300 steps — resume later to continue deeper`);
+    } catch (e: any) {
+      setNote(`${tf}: ${String(e?.message || e)}`);
+    } finally {
+      setDeepRunning("");
+      void load();
+    }
+  };
   const fmtDate = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : "—");
   return (
     <div className="absolute left-2 top-32 z-30 max-h-[26rem] w-96 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
@@ -2085,14 +2120,24 @@ function HistoryPanel({ symbol }: { symbol: string }) {
                 {r.missing?.count ?? 0}
               </td>
               <td>
-                <button
-                  disabled={busy === r.tf}
-                  onClick={() => void backfill(r.tf)}
-                  className={cn("rounded border border-slate-700 px-1.5 py-0.5 text-[10px]", r.state?.done ? "text-slate-400 hover:text-slate-200" : "text-amber-300 hover:bg-slate-800")}
-                  title={r.state?.error ? `last error: ${r.state.error}` : r.state?.done ? "re-scan (existing shards are skipped)" : "start / resume deep backfill"}
-                >
-                  {busy === r.tf ? "…" : r.state?.done ? "re-scan" : "start/resume"}
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    disabled={busy === r.tf || deepRunning === r.tf}
+                    onClick={() => void backfill(r.tf)}
+                    className={cn("rounded border border-slate-700 px-1.5 py-0.5 text-[10px]", r.state?.done ? "text-slate-400 hover:text-slate-200" : "text-amber-300 hover:bg-slate-800")}
+                    title={r.state?.error ? `last error: ${r.state.error}` : r.state?.done ? "re-scan (existing shards are skipped)" : "one budgeted step (≤90 Dukascopy day files / ≤10 TD pages)"}
+                  >
+                    {busy === r.tf ? "…" : r.state?.done ? "re-scan" : "step"}
+                  </button>
+                  <button
+                    disabled={busy === r.tf || deepRunning === r.tf || r.state?.done}
+                    onClick={() => void deepFill(r.tf)}
+                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-emerald-300 hover:bg-slate-800 disabled:text-slate-500"
+                    title={`deep fill: loop budgeted steps until the requested depth is covered${r.state?.targetFrom ? ` (target ${fmtDate(r.state.targetFrom)})` : ""}`}
+                  >
+                    {deepRunning === r.tf ? "filling…" : "deep fill"}
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
@@ -2106,6 +2151,12 @@ function HistoryPanel({ symbol }: { symbol: string }) {
             onChange={(e) => setMonths((m) => ({ ...m, [r.tf]: Number(e.target.value) || 0 }))}
             className="w-14 rounded border border-slate-700 bg-slate-950 px-1 py-0.5 font-number" />
         ))}
+        {/* Phase 25 §8: depth progress — oldest stored vs the requested target */}
+        {rows[0]?.state?.targetFrom && (
+          <span className="ml-1 text-slate-500">
+            depth {fmtDate(rows[0]?.state?.oldest)} → target {fmtDate(rows[0].state.targetFrom)}
+          </span>
+        )}
       </div>
       {note && <p className="mt-1 text-[10px] text-amber-300/90">{note}</p>}
       {rows.some((r) => r.state?.error) && (

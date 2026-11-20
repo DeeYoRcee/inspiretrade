@@ -64,7 +64,7 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
 // Binance (crypto — real live)
 // ---------------------------------------------------------------------------
 
-import { validateBars, dedupeBars, checkBar, minuteIslandFilter, type RawBar } from "@shared/feed-validation";
+import { validateBars, dedupeBars, checkBar, minuteIslandFilter, flatShare, type RawBar } from "@shared/feed-validation";
 import { upsertBar, wsBackoffDelay, nextEndpointIndex, aggregateToSeconds } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
@@ -490,6 +490,10 @@ class QuotesProvider {
     if (res.source) this.source.set(key, res.source);
     if (res.identity) this.identity.set(key, res.identity);
     if (res.delaySec != null) { statsState.delaySec = res.delaySec; statsState.delayBy[key] = res.delaySec; }
+    // Phase 25 §4: the server discloses the close-only share when a
+    // close-only fallback (Yahoo FX 1m) won the chain — surface it in the
+    // feed diagnostics; null = a genuine-OHLC source answered
+    statsState.closeOnlyShare = typeof res.closeOnlyShare === "number" ? res.closeOnlyShare : null;
     // client-side defense-in-depth: the server already validates, but the
     // chart must never trust the wire — repair/drop before aggregation
     const checked = validateBars(res.bars as RawBar[]);
@@ -506,8 +510,8 @@ class QuotesProvider {
     // genuine Dukascopy OHLC in the same session, no reload needed.
     if (inst.assetClass === "forex" && tf === "1m") {
       const served = deduped.bars as Bar[];
-      const flatN = served.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length;
-      const needsHeal = served.length < 200 || (served.length > 0 && flatN / served.length > 0.2);
+      const share = flatShare(served);
+      const needsHeal = served.length < 200 || share > 0.2;
       const firstTouch = !fxBackfillTried.has(symbol);
       if ((needsHeal || firstTouch) && Date.now() - (fxSelfHealAt.get(symbol) ?? 0) > 600000) {
         fxBackfillTried.add(symbol);
@@ -522,7 +526,7 @@ class QuotesProvider {
     // intraday series here means the whole server chain failed — refuse it
     // rather than render the dot-candle defect.
     if (inst.assetClass === "forex" && TF_SECONDS[tf] < 86400 && bars.length > 20
-      && bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length / bars.length >= 0.9) {
+      && flatShare(bars) >= 0.9) {
       throw new Error("FLAT_FX_OHLC: provider returned close-only bars — refusing dot candles");
     }
     // bucket length = the TARGET timeframe in minutes (3m→3, 2h→120, 4h→240).
@@ -1106,12 +1110,17 @@ export interface FeedStats {
   delaySec: number | null;
   /** per symbol:tf delay map — badges must never show another pair's delay */
   delayBy: Record<string, number | null>;
+  /** Phase 25 §4: close-only (O=H=L=C) share in percent of the last served
+   * intraday series — the honest disclosure when Yahoo's 1m fallback wins
+   * while the genuine Dukascopy store is thin (null = genuine OHLC served) */
+  closeOnlyShare: number | null;
 }
 
 const statsState: FeedStats = {
   invalidBars: 0, repairedBars: 0, duplicateBars: 0, outOfOrderTicks: 0, spotGlitchTicks: 0,
   lastTickAt: 0, lastChartUpdateAt: 0, tps10s: 0, delaySec: null,
   delayBy: {} as Record<string, number | null>, // per symbol:tf — one pair's delay must never label another's badge
+  closeOnlyShare: null,
 };
 const tickTimes: number[] = [];
 

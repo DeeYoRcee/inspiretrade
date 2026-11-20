@@ -1,17 +1,23 @@
 /**
  * Dukascopy free historical datafeed (Phase 17) — pure JS access to their
- * public bi5 candle files. No key, no credits, months-deep 1-minute forex
- * history (verified 2026-11-19: EURUSD 1.09910 and USDJPY 159.228 decode to
- * real prices; metals and index symbols are NOT served by the free feed —
- * XAUUSD/USATECHIDXUSD connections drop, so the map is forex-only).
+ * public bi5 candle files. No key, no credits, years-deep 1-minute forex AND
+ * metals history (Phase 25 verification: XAUUSD serves genuine SPOT BID
+ * candles back to at least 2010; 2020-06-15 decodes to O 1732.628 → C 1733.068,
+ * the real June-2020 spot price).
  *
  * File layout (UTC, publication lag ≈ 1–2 days):
  *   https://datafeed.dukascopy.com/datafeed/{SYM}/{YYYY}/{MM-1:02d}/{DD:02d}/BID_candles_min_1.bi5
- * Each file LZMA-compresses 1440 records of 24 bytes, big-endian:
- *   int32 sec-offset from UTC midnight, int32 o, h, l, c (price × point
- *   factor), float32 volume in lots.
+ * Each file LZMA-compresses up to 1440 records of 24 bytes, big-endian:
+ *   int32 sec-offset from UTC midnight, int32 O, int32 C, int32 L, int32 H
+ *   (price × point factor), float32 volume in lots.
+ * Phase 25 CRITICAL FIX: the field order is (O, C, L, H) — verified against
+ * a clean 2020-06-15 XAUUSD file where only that order satisfies the
+ * envelope (rec0: O=1732628 C=1733058 L=1732248 H=1733068; the previously
+ * assumed (O,H,L,C) made H<C on ~94% of bars, so validateBars rejected
+ * everything and the Dukascopy stores stayed thin — the real root cause of
+ * the EURUSD "dot candle" era and the thin-fx-store symptoms).
  * Point factors verified: JPY-quote pairs 1e3 (3 decimals), all other forex
- * 1e5 (5 decimals).
+ * 1e5 (5 decimals), metals 1e3.
  */
 import { decompress } from "lzma-native";
 
@@ -77,8 +83,9 @@ export async function fetchDukaDay(dukaSym: string, day: Date): Promise<Buffer |
 export interface DukaBar { t: number; o: number; h: number; l: number; c: number; v: number }
 
 /** Decompress + parse one day file. Prices are scaled to real values, the
- * minute timestamps are absolute UTC epochs. Flat zero-volume filler minutes
- * (no ticks traded) are dropped — honest gaps stay gaps. */
+ * minute timestamps are absolute UTC epochs. Record layout (Phase 25 fix,
+ * verified against clean real files): [t, O, C, L, H, vol]. Flat zero-volume
+ * filler minutes (no ticks traded) are dropped — honest gaps stay gaps. */
 export async function decodeDukaDay(buf: Buffer, code: string, day: Date): Promise<DukaBar[]> {
   const raw = await new Promise<Buffer>((resolve) => {
     decompress(buf, (result) => {
@@ -93,9 +100,9 @@ export async function decodeDukaDay(buf: Buffer, code: string, day: Date): Promi
   for (let off = 0; off + 24 <= raw.length; off += 24) {
     const t = dayStart + raw.readInt32BE(off);
     const o = raw.readInt32BE(off + 4) / div;
-    const h = raw.readInt32BE(off + 8) / div;
+    const c = raw.readInt32BE(off + 8) / div;
     const l = raw.readInt32BE(off + 12) / div;
-    const c = raw.readInt32BE(off + 16) / div;
+    const h = raw.readInt32BE(off + 16) / div;
     const v = raw.readFloatBE(off + 20);
     if (![o, h, l, c].every(Number.isFinite) || !Number.isFinite(v)) continue;
     if (h < Math.max(o, c) || l > Math.min(o, c) || h < l || o <= 0) continue;

@@ -41,8 +41,11 @@ test("duka: point factors — JPY-quote pairs 1e3, the rest 1e5", () => {
 test("duka: decodeDukaDay parses prices, scales and drops fillers", async () => {
   const day = new Date(Date.UTC(2026, 10, 17)); // Nov 17 2026
   const dayStart = Math.floor(day.getTime() / 1000);
+  // Phase 25: the REAL bi5 record layout is [t, O, C, L, H, vol] — verified
+  // against a clean 2020-06-15 XAUUSD file (O=1732628 C=1733058 L=1732248
+  // H=1733068). The helper keeps (o,h,l,c) semantics for readability.
   const rec = (sec: number, o: number, h: number, l: number, c: number, v: number): [number, number, number, number, number, number] =>
-    [sec, o, h, l, c, v];
+    [sec, o, c, l, h, v];
   const buf = await bi5([
     rec(0, 109970, 110000, 109950, 109980, 125.5), // EURUSD 1.09970 @ 00:00
     rec(60, 109980, 110020, 109960, 110010, 0), // real minute, flat price but traded
@@ -53,6 +56,8 @@ test("duka: decodeDukaDay parses prices, scales and drops fillers", async () => 
   assert.equal(bars.length, 3);
   assert.equal(bars[0].t, dayStart);
   assert.ok(Math.abs(bars[0].o - 1.0997) < 1e-9);
+  assert.ok(Math.abs(bars[0].h - 1.1) < 1e-9, "high decodes from the H field (offset 16)");
+  assert.ok(Math.abs(bars[0].c - 1.0998) < 1e-9, "close decodes from the C field (offset 8)");
   assert.ok(Math.abs(bars[1].c - 1.1001) < 1e-9);
   assert.equal(bars[1].t, dayStart + 60);
   assert.ok(Math.abs(bars[2].v - 88.25) < 0.01);
@@ -60,10 +65,11 @@ test("duka: decodeDukaDay parses prices, scales and drops fillers", async () => 
 
 test("duka: JPY-quote prices scale by 1e3", async () => {
   const day = new Date(Date.UTC(2026, 10, 17));
-  const buf = await bi5([[0, 159525, 159540, 159500, 159530, 817.7]]);
+  const buf = await bi5([[0, 159525, 159530, 159500, 159540, 817.7]]); // [t,O,C,L,H,vol]
   const bars = await decodeDukaDay(buf, "USDJPY", day);
   assert.equal(bars.length, 1);
   assert.ok(Math.abs(bars[0].o - 159.525) < 1e-9);
+  assert.ok(Math.abs(bars[0].h - 159.54) < 1e-9);
 });
 
 test("duka: corrupt input yields an empty array, never a throw", async () => {

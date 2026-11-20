@@ -218,6 +218,7 @@ async function fetchSpot(code: string): Promise<number | null> {
 
 import {
   validateBars, alignAndDedupe, spotMergeGuard, bucketStart, minuteIslandFilter,
+  flatShare,
   type RawBar,
 } from "../../shared/feed-validation";
 import { aggregateBars } from "../../shared/terminal";
@@ -636,7 +637,11 @@ export default handle(async (req, res) => {
     const code = String(raw?.code || "").toUpperCase();
     const dukaSym = DUKA_MAP[code];
     if (!dukaSym) return res.json({ ok: false, reason: "not-on-duka" });
-    const days = Math.min(Math.max(Number(raw?.days) || 30, 1), 35);
+    // Phase 25: days cap raised 35 → 400 (the import band identity limit) so
+    // ONE admin call can repair/refill the whole stored window. Safety comes
+    // from the wall-clock deadline below + the 90s cooldown + the 600-file
+    // daily cap — a deep run simply stops mid-way and repeats after cooldown.
+    const days = Math.min(Math.max(Number(raw?.days) || 30, 1), 400);
     const gate = rtdb().ref(`config/dukaBackfillAt/${code}`);
     const lastAt = Number((await gate.once("value")).val() || 0);
     const nowMs = Date.now();
@@ -648,6 +653,8 @@ export default handle(async (req, res) => {
 
     // walk back day by day, starting 2 days ago (publication lag), parallel
     // batches of 5 to stay well inside the function time budget
+    const startedAt = Date.now();
+    const WALK_DEADLINE_MS = 45000; // Phase 25: bound the function wall-clock; resumes via cooldown/repeat
     const today = new Date();
     const wanted: Date[] = [];
     for (let i = 2; i < days + 2 && wanted.length < days; i++) wanted.push(new Date(today.getTime() - i * 86400000));
@@ -655,7 +662,9 @@ export default handle(async (req, res) => {
     let filesFetched = 0;
     let oldest: number | null = null;
     let newest: number | null = null;
+    let hitDeadline = false;
     for (let i = 0; i < wanted.length; i += 5) {
+      if (Date.now() - startedAt > WALK_DEADLINE_MS) { hitDeadline = true; break; }
       const chunk = wanted.slice(i, i + 5);
       const files = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
       filesUsed += files.filter(Boolean).length;
@@ -690,7 +699,7 @@ export default handle(async (req, res) => {
         updatedAt: nowMs,
       });
     }
-    return res.json({ ok: true, code, written, oldest, newest, files: filesFetched });
+    return res.json({ ok: true, code, written, oldest, newest, files: filesFetched, note: hitDeadline ? "wall-clock budget reached — repeat after the 90s cooldown to continue" : undefined });
   }
 
   // ---- Bulk forex-store ingest (Phase 17) ----------------------------------
@@ -1234,6 +1243,23 @@ export default handle(async (req, res) => {
       // datacenter IPs). For intraday live loads, remember the stale answer
       // and let later sources try to beat it; serve the freshest available.
       let staleResult: any = null;
+      // Phase 25 §4 — close-only honesty. Yahoo's FX 1m feed ships O=H=L=C
+      // rows (verified: 6712/6712 bars). When a genuine-OHLC source (the
+      // Dukascopy store) fails and Yahoo answers, the payload is still
+      // SERVED — the chart needs observations — but it is ANNOTATED with the
+      // close-only share so the frontend can disclose exactly what it paints
+      // instead of presenting observations as candles.
+      const annotateCloseOnly = (r: any): any => {
+        if (!fxIntraday || interval !== "1m" || !Array.isArray(r?.bars) || !r.bars.length) return r;
+        if (String(r.source || "").startsWith("fx-store")) return r; // genuine full-tick OHLC
+        const share = flatShare(r.bars);
+        if (share < 0.05) return r;
+        return {
+          ...r,
+          closeOnlyShare: Math.round(share * 1000) / 10, // percent, 1 decimal
+          note: `close-only share ${Math.round(share * 100)}% (Yahoo 1m fallback) — genuine Dukascopy OHLC replaces this as the store heals`,
+        };
+      };
       for (const attempt of chain) {
         try {
           const result = { ok: true, ...(await attempt()) };
@@ -1242,7 +1268,7 @@ export default handle(async (req, res) => {
             if (!staleResult || Number(result.delaySec ?? 0) < Number(staleResult.delaySec ?? 1e9)) staleResult = result;
             continue;
           }
-          return result;
+          return annotateCloseOnly(result);
         } catch (e: any) {
           // stooq has no 1m CSV at all — skip it silently for 1m and let the
           // next source answer instead of burying the real error
@@ -1253,7 +1279,7 @@ export default handle(async (req, res) => {
           if (!firstErr) firstErr = e;
         }
       }
-      if (staleResult) return staleResult;
+      if (staleResult) return annotateCloseOnly(staleResult);
       throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
     });
     // Phase 22 — live-tail repaint per REQUEST: the bars cache serves 12s-fresh

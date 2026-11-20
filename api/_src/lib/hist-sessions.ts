@@ -45,9 +45,55 @@ export function missingIntervals(bars: { time: number }[], tfSec: number, fromSe
   return { count, sample, longestGapSec };
 }
 
-/** Backfill caps per timeframe (months) — honest provider expectations. */
+/**
+ * Backfill caps per timeframe (months). Phase 25 §3: the intraday caps no
+ * longer limit HISTORY DEPTH — Dukascopy serves forex/metals 1m BID candles
+ * back to 2010 (~202 months, verified by live probes) and stooq's intraday
+ * archives are comparably deep. 240 months (20 years) covers every genuine
+ * provider depth. Safety now comes from per-call budgets instead: Dukascopy
+ * ≤90 day files per call + a wall-clock deadline, TwelveData ≤10 pages/call,
+ * a 600 files/day global cap, and the resumable cursor in histState — so a
+ * single request stays small while repeated runs reach the full range.
+ */
 export const HIST_MONTHS_CAP: Record<string, number> = {
-  "1m": 6, "5m": 12, "15m": 24, "30m": 24, "1h": 24, "2h": 24, "4h": 24,
+  "1m": 240, "5m": 240, "15m": 240, "30m": 240, "1h": 240, "2h": 240, "4h": 240,
   "1d": 240, "1W": 240, "1M": 240,
 };
+
+/** Clamp a requested backfill depth to the timeframe cap (Phase 25 §3 — the
+ * clamp is a safety net against absurd values, NOT the history limit it used
+ * to be). Unknown timeframes default to 12 months. */
+export function clampBackfillMonths(requested: number | undefined, tf: string): number {
+  const cap = HIST_MONTHS_CAP[tf] ?? 12;
+  const n = Number(requested);
+  if (!Number.isFinite(n) || n <= 0) return cap;
+  return Math.min(Math.floor(n), cap);
+}
+
+/** Depth (months) → epoch-seconds lower bound for a backfill walk. */
+export function backfillWindowFrom(months: number, nowSec: number): number {
+  return nowSec - Math.round(months * 30.44 * 86400);
+}
+
+/** Aggregation fallback chain per timeframe (Phase 23 + Phase 25): native
+ * shards first, then fold from the deepest compatible NATIVE store. Phase 25
+ * §6: intraday folds from 1m shards mean one deep Dukascopy 1m backfill
+ * powers every higher intraday timeframe — genuine OHLC folds, no fabricated
+ * candles, no cross-provider seams (all shards of one symbol share identity).
+ * Pure data (no I/O) so tests can verify the fold factors directly. */
+export const READ_AGG_CHAIN: Record<string, Array<{ src: string; factorMin: number }>> = {
+  "3m": [{ src: "1m", factorMin: 3 }],
+  "5m": [{ src: "1m", factorMin: 5 }],
+  "15m": [{ src: "1m", factorMin: 15 }],
+  "30m": [{ src: "1m", factorMin: 30 }],
+  "1h": [{ src: "1m", factorMin: 60 }],
+  "2h": [{ src: "1h", factorMin: 120 }, { src: "1m", factorMin: 120 }],
+  "4h": [{ src: "1h", factorMin: 240 }, { src: "1m", factorMin: 240 }],
+  "1W": [{ src: "1d", factorMin: 10080 }],
+  "1M": [{ src: "1d", factorMin: 43200 }],
+};
+
+/** Guard: folding 1m shards is O(window) — bound the request window so a
+ * scroll-back chunk stays cheap (the chart asks for days, never years). */
+export const MAX_1M_FOLD_WINDOW_SEC = 90 * 86400;
 
