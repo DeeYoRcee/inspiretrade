@@ -355,6 +355,43 @@ class BinanceProvider {
 // Quotes proxy (forex / metals / indices — real but delayed)
 // ---------------------------------------------------------------------------
 
+// ---- Phase 23 §5: deep history reads (server day-shard store) --------------
+// The hist engine (api/_src/lib/hist.ts) holds years of genuine candles
+// (stooq spot / Dukascopy / TwelveData) in per-day shards. Recorded live
+// observations always WIN on conflicting timestamps — provider shards fill
+// everything before them. Empty-window results are cached for 10 min so a
+// not-yet-backfilled instrument never hammers the endpoint.
+const histEmptyAt = new Map<string, number>();
+const lastHistNote = new Map<string, string>();
+
+async function fetchHistRange(symbol: string, tf: Timeframe, fromSec: number, toSec: number): Promise<{ bars: Bar[]; note: string }> {
+  const cacheKey = `${symbol}:${tf}`;
+  if (TF_SECONDS[tf] < 60) return { bars: [], note: "" }; // sub-minute: no stored history exists (live-built only)
+  if (Date.now() - (histEmptyAt.get(cacheKey) || 0) < 600000) return { bars: [], note: "" };
+  try {
+    const res = await authedFetch<any>(`/api/quotes?action=hist-range&symbol=${encodeURIComponent(symbol)}&tf=${tf}&from=${Math.floor(fromSec)}&to=${Math.floor(toSec)}`);
+    if (res?.ok && Array.isArray(res.bars) && res.bars.length) {
+      // client-side defense-in-depth: never trust the wire (§8)
+      const checked = validateBars(res.bars as RawBar[]);
+      const note = Object.keys(res.providers || {})[0] || "provider";
+      lastHistNote.set(cacheKey, note);
+      return { bars: checked.bars as Bar[], note };
+    }
+  } catch { /* engine not deployed yet / RTDB hiccup — the recorded path stands */ }
+  histEmptyAt.set(cacheKey, Date.now());
+  return { bars: [], note: "" };
+}
+
+/** Chart scroll-back loader: genuine stored history OLDER than the chart's
+ * first bar — prepended by PriceChart's range handler without a reload. */
+export async function quotesHistOlder(symbol: string, tf: Timeframe, beforeTime: number, targetBars = 3000): Promise<Bar[]> {
+  if (beforeTime <= 0 || TF_SECONDS[tf] < 60) return [];
+  const sec = TF_SECONDS[tf] || 60;
+  const span = Math.min(targetBars * sec, 365 * 86400);
+  const { bars } = await fetchHistRange(symbol, tf, Math.max(beforeTime - span, 0), beforeTime - 1);
+  return bars.filter((b) => b.time < beforeTime);
+}
+
 class QuotesProvider {
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private listeners = new Map<string, Set<UpdateCb>>();
@@ -390,7 +427,7 @@ class QuotesProvider {
       authedFetch("/api/quotes?action=backfill-fx", { code: symbol, days: 30 }).catch(() => {});
     }
     if (res.identity) this.identity.set(key, res.identity);
-    if (res.delaySec != null) statsState.delaySec = res.delaySec;
+    if (res.delaySec != null) { statsState.delaySec = res.delaySec; statsState.delayBy[key] = res.delaySec; }
     // client-side defense-in-depth: the server already validates, but the
     // chart must never trust the wire — repair/drop before aggregation
     const checked = validateBars(res.bars as RawBar[]);
@@ -466,8 +503,10 @@ class QuotesProvider {
       // TrueFX bid into the tail per request (genuine interbank tick cadence,
       // ~0s fresh measured), so the poll WAS the visible bottleneck. Indices
       // keep 10s — Yahoo reference data is delayed regardless.
-      const timer = setInterval(tick, inst?.assetClass === "forex" ? 2000 : 10000);
-      this.timers.set(key, timer);
+      if (!this.timers.has(key)) { // StrictMode double-subscribe: keep the FIRST handle, don't leak it
+        const timer = setInterval(tick, inst?.assetClass === "forex" ? 2000 : 10000);
+        this.timers.set(key, timer);
+      }
     }
 
     // ---- real-time spot tail + recorder (metals) ----------------------------
@@ -521,6 +560,7 @@ class QuotesProvider {
             this.history.set(key, next);
             markTick();
             statsState.delaySec = getSpotState().providerDelaySec;
+            statsState.delayBy[key] = getSpotState().providerDelaySec;
             this.listeners.get(key)?.forEach((c) => cb({ bars: next, lastBar: cur, isRealtime: true }));
             return;
           }
@@ -530,6 +570,7 @@ class QuotesProvider {
           if (merged) {
             this.history.set(key, merged);
             statsState.delaySec = getSpotState().providerDelaySec;
+            statsState.delayBy[key] = getSpotState().providerDelaySec;
             markTick();
             this.listeners.get(key)?.forEach((c) => cb({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: true }));
           }
@@ -550,7 +591,8 @@ class QuotesProvider {
           this.inflight.delete(key);
         }
       }, 180000);
-      this.timers.set(`${key}:rec`, spotResync);
+      if (!this.timers.has(`${key}:rec`)) this.timers.set(`${key}:rec`, spotResync);
+      else clearInterval(spotResync); // duplicate subscribe — drop the extra handle
     }
     return () => {
       const timer = this.timers.get(key);
@@ -655,13 +697,45 @@ class QuotesProvider {
       } catch { /* backfill is best-effort */ }
     }
 
+    // ---- Phase 23 §5: deep history merge (day-shard store) ------------------
+    // Minute grain: hist m1 + recorded m1 in one stream (recorded wins on
+    // conflict), then aggregate as before. Hour+/daily: hist NATIVE shards
+    // (stooq 60m/d1 — genuine OHLC, never folded futures) + the recorded
+    // aggregate in front. Nothing fabricated; the island filter already ran
+    // on the recorded side and every shard was validated at write time.
+    const key = `${symbol}:${tf}`;
+    const sec = TF_SECONDS[tf];
+    const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 10;
+    let m1merged = m1;
+    let deepBars: Bar[] = [];
+    if (sec >= 60) {
+      const hist = await fetchHistRange(symbol, sec >= 3600 ? tf : ("1m" as Timeframe), now - histWinDays * 86400, now);
+      deepBars = hist.bars;
+      if (deepBars.length) {
+        if (sec < 3600) {
+          const byTime = new Map<number, Bar>();
+          for (const b of deepBars) byTime.set(b.time, b);
+          for (const b of m1) byTime.set(b.time, b); // recorded wins
+          m1merged = [...byTime.values()].sort((a, b) => a.time - b.time);
+        }
+      }
+    }
     lastSpotIslandRejected = islandRejected;
     // seed the recorder's glitch anchor from the clean tail
     if (m1.length) spotAnchor.set(code, { close: m1[m1.length - 1].close, at: Date.now() });
-    const key = `${symbol}:${tf}`;
-    const sec = TF_SECONDS[tf];
-    const bars = dedupSort(tf === "1m" ? m1.slice() : aggregateBars(m1, sec / 60));
-    this.source.set(key, tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`);
+    const bars = dedupSort(
+      sec < 3600
+        ? (sec === 60 ? m1merged.slice() : aggregateBars(m1merged, sec / 60))
+        : (() => {
+            const recAgg = aggregateBars(m1, sec / 60) as Bar[];
+            if (!deepBars.length) return recAgg;
+            const byTime = new Map<number, Bar>();
+            for (const b of deepBars) byTime.set(b.time, b);
+            for (const b of recAgg) byTime.set(b.time, b); // recorded wins
+            return [...byTime.values()].sort((a, b) => a.time - b.time);
+          })(),
+    );
+    this.source.set(key, deepBars.length ? `spot+deep-history(${lastHistNote.get(key) || "provider"})` : (tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`));
     this.identity.set(key, "spot");
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
@@ -927,11 +1001,14 @@ export interface FeedStats {
   tps10s: number;
   /** measured provider delay in seconds when the provider reports it */
   delaySec: number | null;
+  /** per symbol:tf delay map — badges must never show another pair's delay */
+  delayBy: Record<string, number | null>;
 }
 
 const statsState: FeedStats = {
   invalidBars: 0, repairedBars: 0, duplicateBars: 0, outOfOrderTicks: 0, spotGlitchTicks: 0,
   lastTickAt: 0, lastChartUpdateAt: 0, tps10s: 0, delaySec: null,
+  delayBy: {} as Record<string, number | null>, // per symbol:tf — one pair's delay must never label another's badge
 };
 const tickTimes: number[] = [];
 
@@ -966,8 +1043,9 @@ export function bumpStat(kind: "invalidBars" | "duplicateBars" | "outOfOrderTick
   statsState[kind]++;
 }
 
-export function setMeasuredDelay(sec: number | null) {
+export function setMeasuredDelay(sec: number | null, key?: string) {
   statsState.delaySec = sec;
+  if (key) statsState.delayBy[key] = sec;
 }
 
 export function getFeedStats(): FeedStats {
@@ -1019,18 +1097,21 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const td = quotesProvider.providerBarCount(inst.spotCode);
     const delaySec = getSpotState().providerDelaySec;
     const hist = m1 > 0 ? `m1 history: ${m1} min${td > 0 ? ` (${td} Twelve Data backfill)` : ""}` : "recording started — candles build in real time";
+    const deep = lastHistNote.get(`${symbol}:${tf}`);
     const glitch = lastSpotIslandRejected > 0 ? ` · ${lastSpotIslandRejected} glitch bars rejected` : "";
     // Phase 19 §6: name the underlier explicitly — Spot Gold/Silver (physical
     // spot, gold-api), never "Gold" which reads as the COMEX futures contract
     const metalName = symbol === "XAUUSD" ? "Spot Gold" : symbol === "XAGUSD" ? "Spot Silver" : `${symbol} Spot`;
-    const message = `${metalName} · gold-api live 1s · ${hist}${glitch}`;
+    const message = `${metalName} · gold-api live 1s · ${hist}${deep ? ` · deep history: ${deep}` : ""}${glitch}`;
     return { bars, status: "polling", message, delaySec };
   }
   const { bars, source, identity } = await quotesProvider.load(symbol, tf);
   assertPriceIdentity(inst, bars);
   // honest labelling — FX/indices keep their real (delayed) providers and the
-  // badge names the ACTUAL underlier of every bar
-  const delaySec = statsState.delaySec;
+  // badge names the ACTUAL underlier of every bar. Per-key delay: the module
+  // global carried the LAST LOADED symbol's number onto every other badge.
+  const keyNow = `${symbol}:${tf}`;
+  const delaySec = statsState.delayBy[keyNow] ?? statsState.delayBy[symbol] ?? null;
   const delayNote = delaySec != null && delaySec >= 60 ? ` · ~${Math.max(1, Math.round(delaySec / 60))} min` : delaySec != null && delaySec > 5 ? ` · ~${delaySec}s` : "";
   let message: string;
   if (source?.startsWith("spot+stooq") || source === "stooq") {

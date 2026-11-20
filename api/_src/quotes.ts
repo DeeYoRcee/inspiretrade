@@ -222,6 +222,8 @@ import {
 } from "../../shared/feed-validation";
 import { aggregateBars } from "../../shared/terminal";
 import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
+import { runBackfillStep, readRange, coverageReport, writeShards } from "./lib/hist";
+import type { BackfillResult, RangeResult, CoverageRow } from "./lib/hist";
 
 /**
  * TrueFX free real-time feed (Phase 17, moved to lib/truefx.ts in Phase 18) —
@@ -273,29 +275,37 @@ async function fxLiveMinutes(code: string): Promise<Map<number, FxLiveMinute>> {
  * a recording failure must never block the market-data response). */
 async function recordFxLiveBids(bids: Record<string, number | undefined>): Promise<void> {
   const t = Math.floor(Date.now() / 1000 / 60) * 60;
-  const update: Record<string, FxLiveMinute> = {};
   const touched: string[] = [];
   try {
     for (const [code, bidRaw] of Object.entries(bids)) {
       const bid = Number(bidRaw);
       if (!DUKA_MAP[code] || !(bid > 0)) continue;
-      const minutes = await fxLiveMinutes(code);
-      const ex = minutes.get(t);
-      const merged: FxLiveMinute = ex
-        ? { o: ex.o, c: bid, h: Math.max(ex.h, bid), l: Math.min(ex.l, bid), s: ex.s + 1 }
-        : { o: bid, c: bid, h: bid, l: bid, s: 1 };
-      minutes.set(t, merged);
-      update[`fxLive/${code}/${t}`] = merged;
-      touched.push(code);
-    }
-    if (Object.keys(update).length) {
-      await rtdb().ref().update(update);
-      // occasional lazy prune — the recorder only ever reads the last 3 days
-      if (Math.random() < 0.05) {
-        const cutoff = String(t - FXLIVE_MAX_AGE_SEC);
-        for (const code of touched) {
-          void rtdb().ref(`fxLive/${code}`).orderByKey().endAt(cutoff).limitToFirst(2000).remove().catch(() => {});
+      // Phase 23 BUG-3: merge against the REMOTE minute via a transaction —
+      // concurrent instances all fold their extremes in, nobody's write can
+      // erase another's high/low.
+      await rtdb().ref(`fxLive/${code}/${t}`).transaction((cur: any) => {
+        const o = Number(cur?.o), h = Number(cur?.h), l = Number(cur?.l), s = Number(cur?.s || 1);
+        if (cur && [o, h, l, Number(cur.c)].every(Number.isFinite) && o > 0) {
+          return { o, c: bid, h: Math.max(h, bid), l: Math.min(l, bid), s: s + 1 };
         }
+        return { o: bid, c: bid, h: bid, l: bid, s: 1 };
+      });
+      touched.push(code);
+      // best-effort local-cache sync so reads within the 60s TTL see it too
+      try {
+        const minutes = await fxLiveMinutes(code);
+        const ex = minutes.get(t);
+        const merged: FxLiveMinute = ex
+          ? { o: ex.o, c: bid, h: Math.max(ex.h, bid), l: Math.min(ex.l, bid), s: ex.s + 1 }
+          : { o: bid, c: bid, h: bid, l: bid, s: 1 };
+        minutes.set(t, merged);
+      } catch { /* cache is best-effort */ }
+    }
+    // occasional lazy prune — the recorder only ever reads the last 3 days
+    if (touched.length && Math.random() < 0.05) {
+      const cutoff = String(t - FXLIVE_MAX_AGE_SEC);
+      for (const code of touched) {
+        void rtdb().ref(`fxLive/${code}`).orderByKey().endAt(cutoff).limitToFirst(2000).remove().catch(() => {});
       }
     }
   } catch { /* recording is best-effort */ }
@@ -400,7 +410,12 @@ export default handle(async (req, res) => {
     const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
     const obj: Record<string, any> = snap.val() || {};
     const now = Math.floor(Date.now() / 1000);
-    const minT = now - 8 * 86400;
+    // Phase 23: the old 8-day floor was the ROOT CAUSE of "history starts
+    // Nov 12" on top of the chart never requesting provider history — it hid
+    // even the deep TwelveData bars already stored here. 30 days serves the
+    // recorded window honestly (the deep history now comes from the hist
+    // engine's day shards, not this node).
+    const minT = now - 30 * 86400;
     const candles = Object.entries(obj)
       .map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) }))
       .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT)
@@ -683,6 +698,46 @@ export default handle(async (req, res) => {
   // it decodes day files locally and pushes the decoded bars here instead of
   // letting every function call hammer the CDN. Same validation contract as
   // backfill-fx; capped at 50k bars per call.
+  // ---- Phase 23: deep historical data engine -------------------------------
+  // §2 backfill (admin, resumable, budgeted) · §4 day-shard store with
+  // provenance · §5 frontend history reads (chart scroll-back) · §9 panel
+  // data. Every write is validated (§8); rejections are counted, never
+  // silently dropped.
+  if (action === "hist-backfill" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const symbol = String(raw?.symbol || "").toUpperCase().replace(/=X$/i, "");
+    const tf = String(raw?.tf || "");
+    if (!symbol || !tf) return res.json({ ok: false, error: "symbol+tf required" });
+    const step = await runBackfillStep({
+      symbol,
+      tf,
+      months: raw?.months != null ? Number(raw.months) : undefined,
+      maxPages: raw?.maxPages != null ? Number(raw.maxPages) : undefined,
+      force: !!raw?.force,
+    });
+    return res.json(step as BackfillResult);
+  }
+  if (action === "hist-range") {
+    const sym = (symbols || bareCode).toUpperCase().replace(/=X$/i, "");
+    const tf = (url.searchParams.get("tf") || "").trim();
+    const from = toSec(url.searchParams.get("from"));
+    const to = toSec(url.searchParams.get("to"));
+    if (!sym || !tf || from == null || to == null || to <= from) {
+      return res.json({ ok: false, error: "symbol, tf, from, to (epoch sec) required" });
+    }
+    const range = await readRange(sym, tf, from, Math.min(to, Math.floor(Date.now() / 1000)));
+    return res.json(range as RangeResult);
+  }
+  if (action === "hist-status") {
+    const sym = (symbols || bareCode).toUpperCase().replace(/=X$/i, "");
+    const tfs = (url.searchParams.get("tfs") || "1m,5m,15m,30m,1h,4h,1d").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!sym) return res.json({ ok: false, error: "symbol required" });
+    const rows = await coverageReport(sym, tfs);
+    return res.json({ ok: true, symbol: sym, rows } as { ok: boolean; symbol: string; rows: CoverageRow[] });
+  }
+
   if (action === "import-fx" && req.method === "POST") {
     const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
     const code = String(raw?.code || "").toUpperCase();
@@ -904,7 +959,7 @@ export default handle(async (req, res) => {
     // real OHLC (5m 11% flat = quiet minutes, 15m+ <1%) and stay.
     if (DUKA_MAP[bareCode] && interval === "1m" && bars.length > 20) {
       const flat = bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length;
-      if (flat / bars.length >= 0.9) {
+      if (flat / bars.length >= (interval === "1m" ? 0.25 : 0.9)) {
         throw new Error(`FLAT_FX_OHLC: ${Math.round((100 * flat) / bars.length)}% of ${symbols} 1m bars are O=H=L=C — close-only series, not candles`);
       }
     }
@@ -1160,11 +1215,19 @@ export default handle(async (req, res) => {
       // months deep, zero credits), THEN budget-limited Twelve Data. The old
       // order put TD second: Yahoo's 1m FX is close-only, so every M1 poll
       // drained the 260/day budget and the chart died by midday.
+      // Phase 23 BUG-3: Yahoo FX 1m bars arrive close-only (O=H=L=C dots) in
+      // whole segments — a 10-89%-flat payload passed the old 90% gate and
+      // WON the chain, leaving the genuine Dukascopy/TrueFX store unused.
+      // The store (genuine full-tick OHLC ∪ the live TrueFX recorder the 2s
+      // poll feeds) is now the PRIMARY source for FX 1m; Yahoo only answers
+      // when the store is thin/stale (quiet pair, dead session).
       const chain = METALS_FIRST
         ? [fromStooq, fromYahoo]
-        : fxIntraday
-          ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq]
-          : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
+        : fxIntraday && interval === "1m"
+          ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq]
+          : fxIntraday
+            ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq]
+            : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr: unknown = null;
       // staleness-aware chain (Phase 18): a source can SUCCEED while serving
       // day-old bars (Yahoo's cash-index feed does exactly that for ^NDX from
@@ -1204,9 +1267,14 @@ export default handle(async (req, res) => {
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
       try {
         const t = (await truefxQuotes())[bareCode];
-        if (t?.bid > 0 && mergeSpotBars(final.bars, t.bid, interval)) {
+        if (t?.bid > 0) {
           void recordFxLiveBids({ [bareCode]: t.bid });
-          final = { ...final, bars: final.bars, at: Date.now(), liveTail: "truefx" };
+          // copy-on-write: mergeSpotBars mutates its input — never mutate the
+          // cached array the next cache generation will read from
+          const bars2 = final.bars.slice();
+          if (mergeSpotBars(bars2, t.bid, interval)) {
+            final = { ...final, bars: bars2, at: Date.now(), liveTail: "truefx" };
+          }
         }
       } catch { /* TrueFX hiccup — serve the cached payload as-is */ }
     }

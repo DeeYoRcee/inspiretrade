@@ -28,7 +28,8 @@ import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/ter
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
-import { spotMeasuredUpdateSec } from "@/lib/market-data";
+import { spotMeasuredUpdateSec, quotesHistOlder } from "@/lib/market-data";
+import { authedFetch } from "@/lib/api";
 import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
 import { useAuth } from "@/hooks/use-auth";
@@ -58,7 +59,7 @@ import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, type ContextMenuState,
 } from "@/components/terminal/chart/dialogs";
-import { Eye, EyeOff, X, Activity } from "lucide-react";
+import { Eye, EyeOff, X, Activity, Database } from "lucide-react";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { cn } from "@/lib/utils";
 
@@ -256,6 +257,7 @@ export function PriceChart({
   const [objectsOpen, setObjectsOpen] = useState(false);
   const isAdmin = useIsAdmin();
   const [diagOpen, setDiagOpen] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
   // drawing undo/redo (past/future snapshots of the committed list)
   const historyRef = useRef<Drawing[][]>([]);
   const futureRef = useRef<Drawing[][]>([]);
@@ -266,6 +268,7 @@ export function PriceChart({
   });
   const [templates, setTemplates] = useState<DrawingTemplate[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [olderLoading, setOlderLoading] = useState(false);
   const copyRef = useRef<Drawing[]>([]);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const drawingsRef = useRef(drawings);
@@ -543,26 +546,35 @@ export function PriceChart({
       const range = ts.getVisibleLogicalRange();
       if (!range) return;
       const data = barsRef.current;
-      const instNow = getInstrument(symbol);
-      if (
-        range.from < 60 && data.length && instNow?.feed === "binance" &&
-        !olderLoadingRef.current && tfSecRef.current > 0
-      ) {
+      // refs, NOT the mount-time props: this handler is attached once at chart
+      // creation and must always act on the CURRENT instrument/timeframe
+      const symNow = symbolRef.current;
+      const tfNow = tfRef.current;
+      const instNow = getInstrument(symNow);
+      if (range.from < 60 && data.length && !olderLoadingRef.current && tfSecRef.current > 0 && instNow) {
+        // shared prepend: merge older bars, rebuild the series, keep the
+        // viewport anchored — no chart jump, no full reload (§5)
+        const prependOlder = (older: Bar[]) => {
+          if (!older.length) return;
+          const map = new Map<number, Bar>();
+          for (const b of older) map.set(b.time, b);
+          for (const b of data) map.set(b.time, b);
+          barsRef.current = [...map.values()].sort((a, b) => a.time - b.time);
+          applyBarsToSeries("set");
+          const newFrom = barsRef.current[0].time as UTCTimestamp;
+          const oldTo = data[data.length - 1].time as UTCTimestamp;
+          try { ts.setVisibleRange({ from: newFrom, to: oldTo }); } catch { /* race — ignore */ }
+        };
         olderLoadingRef.current = true;
+        setOlderLoading(true);
         const oldest = data[0].time;
-        binanceProvider.loadOlder(symbol, timeframe, oldest, 1000)
-          .then((older) => {
-            if (!older.length) return;
-            const map = new Map<number, Bar>();
-            for (const b of older) map.set(b.time, b);
-            for (const b of data) map.set(b.time, b);
-            barsRef.current = [...map.values()].sort((a, b) => a.time - b.time);
-            applyBarsToSeries("set");
-            const newFrom = barsRef.current[0].time as UTCTimestamp;
-            const oldTo = data[data.length - 1].time as UTCTimestamp;
-            try { ts.setVisibleRange({ from: newFrom, to: oldTo }); } catch { /* race — ignore */ }          })
+        const job = instNow.feed === "binance"
+          ? binanceProvider.loadOlder(symNow, tfNow, oldest, 1000)      // native kline pagination
+          : quotesHistOlder(symNow, tfNow, oldest, 3000);               // Phase 23 day-shard store (stooq/Dukascopy/TD)
+        job
+          .then(prependOlder)
           .catch(() => { /* transient — the next scroll tries again */ })
-          .finally(() => { olderLoadingRef.current = false; });
+          .finally(() => { olderLoadingRef.current = false; setOlderLoading(false); });
       }
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange);
@@ -737,6 +749,8 @@ export function PriceChart({
   indicatorsRef.current = indicators;
   const symbolRef = useRef(symbol);
   symbolRef.current = symbol;
+  const tfRef = useRef(timeframe);
+  tfRef.current = timeframe;
 
   // ---- feed load + live subscribe ---------------------------------------------
   useEffect(() => {
@@ -745,6 +759,15 @@ export function PriceChart({
     setLoaded({ status: "connecting" });
     tfSecRef.current = TF_SECONDS[timeframe];
     barsRef.current = [];
+    // blank the rendered series IMMEDIATELY: the chart instance persists
+    // across switches, so the previous symbol's candles otherwise stay visible
+    // under the new title (and keep shining through the error overlay when
+    // the new feed fails to load)
+    try {
+      candleRef.current?.setData([]);
+      volumeRef.current?.setData([]);
+      candleRef.current?.setMarkers([]);
+    } catch { /* series not created yet (first mount) */ }
     // instrument switch: the previous symbol's mid must NEVER leak into the
     // new instrument's bid/ask lines or the price bus (§3 identity guard)
     lastMidRef.current = null;
@@ -1139,6 +1162,10 @@ export function PriceChart({
     setSelectedIds([]);
     setEditingDrawing(null);
     lastDrawingsSaveAtRef.current = 0;
+    // the previous instrument's objects must not render on the new chart for
+    // even a moment — clear synchronously, RTDB delivers the real list after
+    setDrawings([]);
+    setIndicators([]);
     const offD = subscribeDrawings(uid, symbol, (list) => {
       // echo/merge arbitration: a local edit from the last 15s wins over the
       // (possibly stale) remote snapshot — offline deletions can no longer
@@ -1430,6 +1457,12 @@ export function PriceChart({
 
   return (
     <div ref={wrapperRef} className={cn("relative flex h-full w-full min-h-0 flex-col bg-[#0b1220]", className)} style={height ? { height } : undefined}>
+      {olderLoading && (
+        <div className="absolute left-2 top-16 z-10 flex items-center gap-2 rounded-md border border-sky-700/50 bg-sky-950/70 px-2 py-1 text-[11px] text-sky-300 backdrop-blur">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-sky-400" />
+          Loading older candles…
+        </div>
+      )}
       <ChartToolbar
         symbol={symbol}
         indicators={indicators}
@@ -1606,6 +1639,19 @@ export function PriceChart({
           </button>
         )}
         {isAdmin && diagOpen && <FeedDiagnostics symbol={symbol} conn={conn.binance} getBars={() => barsRef.current} />}
+        {isAdmin && (
+          <button
+            onClick={() => setHistOpen((v) => !v)}
+            title="Historical data management (admin)"
+            className={cn(
+              "absolute left-2 top-[6.5rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
+              histOpen ? "text-amber-300" : "text-slate-500 hover:text-slate-300",
+            )}
+          >
+            <Database className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {isAdmin && histOpen && <HistoryPanel symbol={symbol} />}
 
         {/* object tree — drawings & indicators (real objects, real actions) */}
         {objectsOpen && (
@@ -1944,6 +1990,100 @@ function FeedDiagnostics({ symbol, conn, getBars }: { symbol: string; conn: stri
     <div className="absolute left-2 top-[6.6rem] z-30 w-72 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
       <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Feed diagnostics</p>
       <div ref={ref} />
+    </div>
+  );
+}
+
+/**
+ * Phase 23 §9 — admin historical-data management panel. Coverage per
+ * timeframe (earliest/latest/count/provider/missing intervals/backfill
+ * state) + controlled Start/Resume backfill actions. Backfills mutate, so
+ * they are admin-gated server-side (requireAdmin) AND this panel only mounts
+ * for admins (useIsAdmin).
+ */
+function HistoryPanel({ symbol }: { symbol: string }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [busy, setBusy] = useState<string>("");
+  const [note, setNote] = useState<string>("");
+  const [months, setMonths] = useState<Record<string, number>>({});
+  const load = useCallback(async () => {
+    try {
+      const res = await authedFetch<any>(`/api/quotes?action=hist-status&symbol=${encodeURIComponent(symbol)}`);
+      setRows(res?.rows ?? []);
+    } catch (e: any) {
+      setNote(`status error: ${String(e?.message || e)}`);
+    }
+  }, [symbol]);
+  useEffect(() => { void load(); }, [load]);
+  const backfill = async (tf: string) => {
+    setBusy(tf);
+    setNote("");
+    try {
+      const res = await authedFetch<any>("/api/quotes?action=hist-backfill", {
+        symbol, tf, months: months[tf] ?? undefined,
+      });
+      setNote(res?.ok ? `${tf}: +${res.written} bars via ${res.provider || "?"}${res.note ? ` · ${res.note}` : ""}${res.done ? " · DONE" : " · cursor saved — resume to go deeper"}` : `${tf}: ${res?.error || "failed"}`);
+    } catch (e: any) {
+      setNote(`${tf}: ${String(e?.message || e)}`);
+    } finally {
+      setBusy("");
+      void load();
+    }
+  };
+  const fmtDate = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : "—");
+  return (
+    <div className="absolute left-2 top-32 z-30 max-h-[26rem] w-96 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
+      <p className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        <span>Historical store · {symbol}</span>
+        <button onClick={() => void load()} className="text-slate-400 hover:text-slate-200" title="Refresh coverage">↻</button>
+      </p>
+      <table className="w-full">
+        <thead>
+          <tr className="text-left text-[10px] text-slate-500">
+            <th className="font-medium">TF</th><th className="font-medium">From</th><th className="font-medium">To</th>
+            <th className="font-medium">Bars</th><th className="font-medium">Provider</th><th className="font-medium">Missing</th><th className="font-medium">Backfill</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.tf} className="border-t border-slate-800/60">
+              <td className="py-0.5 font-number text-slate-200">{r.tf}</td>
+              <td className="font-number text-slate-300">{fmtDate(r.earliest)}</td>
+              <td className="font-number text-slate-300">{fmtDate(r.latest)}</td>
+              <td className="font-number text-slate-300">{compactNum(r.candleCount)}</td>
+              <td className="text-slate-400" title={Object.entries(r.providers || {}).map(([k, v]) => `${k}×${v}`).join(", ") || r.state?.provider || "—"}>
+                {Object.keys(r.providers || {})[0] || r.state?.provider || "—"}
+              </td>
+              <td className="font-number text-slate-400" title={r.missing?.longestGapSec ? `longest gap ${(r.missing.longestGapSec / 3600).toFixed(1)}h (market hours only)` : ""}>
+                {r.missing?.count ?? 0}
+              </td>
+              <td>
+                <button
+                  disabled={busy === r.tf}
+                  onClick={() => void backfill(r.tf)}
+                  className={cn("rounded border border-slate-700 px-1.5 py-0.5 text-[10px]", r.state?.done ? "text-slate-400 hover:text-slate-200" : "text-amber-300 hover:bg-slate-800")}
+                  title={r.state?.error ? `last error: ${r.state.error}` : r.state?.done ? "re-scan (existing shards are skipped)" : "start / resume deep backfill"}
+                >
+                  {busy === r.tf ? "…" : r.state?.done ? "re-scan" : "start/resume"}
+                </button>
+              </td>
+            </tr>
+          ))}
+          {!rows.length && <tr><td colSpan={7} className="py-1 text-slate-500">no stored history yet — run a backfill below the chart loads it automatically</td></tr>}
+        </tbody>
+      </table>
+      <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-400">
+        <span>months:</span>
+        {rows.slice(0, 1).map((r) => (
+          <input key={r.tf} type="number" min={1} max={240} value={months[r.tf] ?? ""} placeholder="cap"
+            onChange={(e) => setMonths((m) => ({ ...m, [r.tf]: Number(e.target.value) || 0 }))}
+            className="w-14 rounded border border-slate-700 bg-slate-950 px-1 py-0.5 font-number" />
+        ))}
+      </div>
+      {note && <p className="mt-1 text-[10px] text-amber-300/90">{note}</p>}
+      {rows.some((r) => r.state?.error) && (
+        <p className="mt-1 text-[10px] text-red-400/90">last error: {rows.find((r) => r.state?.error)?.state?.error}</p>
+      )}
     </div>
   );
 }

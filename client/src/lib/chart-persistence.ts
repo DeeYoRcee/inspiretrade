@@ -156,10 +156,11 @@ export function subscribeIndicators(
     rtdb(`chart/${uid}/indicators/${symbol}`),
     (snap) => {
       const remote = snap.val() as Record<string, IndicatorConfig> | null;
-      if (remote) {
-        cb(Object.values(remote));
-        localSet(uid, "indicators", symbol, remote);
-      }
+      // null must CLEAR too (like subscribeDrawings): switching to an
+      // instrument with no stored indicators otherwise keeps the previous
+      // instrument's configs active over the new bars
+      cb(remote ? Object.values(remote) : []);
+      if (remote) localSet(uid, "indicators", symbol, remote);
     },
     () => { /* rules/offline — LS only */ },
   );
