@@ -133,7 +133,9 @@ export const FIB_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
 
 /** Default Fibonacci level sets per tool (multiples of the measured span). */
 export const FIB_DEFAULT_LEVELS: Partial<Record<DrawingType, number[]>> = {
-  "fib-retracement": [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1],
+  // Phase 27 §5: the full standard level set — the props bar lets users
+  // toggle individual levels off, so showing the complete list is safe
+  "fib-retracement": [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618, 2.618],
   "fib-extension": [0, 0.618, 1, 1.618, 2.618],
   "fib-trend-ext": [0, 0.618, 1, 1.618, 2.618],
   "fib-channel": [0.382, 0.5, 0.618, 1, 1.618],
