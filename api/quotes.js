@@ -805,6 +805,28 @@ function foldWeekComplete(dayKeys, weekStartSec, nowSec) {
   }
   return true;
 }
+var ASSET_CLASS = {
+  XAUUSD: "metal",
+  XAGUSD: "metal",
+  EURUSD: "forex",
+  GBPUSD: "forex",
+  USDJPY: "forex",
+  AUDUSD: "forex",
+  NZDUSD: "forex",
+  USDCAD: "forex",
+  USDCHF: "forex",
+  BTCUSD: "crypto",
+  ETHUSD: "crypto",
+  SOLUSD: "crypto",
+  XRPUSD: "crypto"
+};
+function assetClassOf(symbol) {
+  if (ASSET_CLASS[symbol]) return ASSET_CLASS[symbol];
+  if (symbol.startsWith("^")) return "index";
+  if (/USDT$/i.test(symbol)) return "crypto";
+  if (symbol.endsWith("=X") || /^[A-Z]{6}$/.test(symbol)) return "forex";
+  return "index";
+}
 
 // api/_src/lib/hist.ts
 var HIST_STOOQ = {
@@ -1048,17 +1070,6 @@ async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed, d
   }
   bars.sort((a, b) => a.time - b.time);
   return { bars, files, oldest, timedOut };
-}
-var ASSET_CLASS = {
-  XAUUSD: "metal",
-  XAGUSD: "metal"
-};
-function assetClassOf(symbol) {
-  if (ASSET_CLASS[symbol]) return ASSET_CLASS[symbol];
-  if (symbol.startsWith("^")) return "index";
-  if (/USD[T]?$/i.test(symbol) && symbol.length >= 6) return "crypto";
-  if (symbol.endsWith("=X") || /^[A-Z]{6}$/.test(symbol)) return "forex";
-  return "index";
 }
 async function runBackfillStep(req) {
   const { symbol, tf } = req;

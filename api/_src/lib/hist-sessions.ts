@@ -151,3 +151,25 @@ export function foldWeekComplete(dayKeys: Set<string>, weekStartSec: number, now
   }
   return true;
 }
+
+// ---- Phase 31: authoritative symbol classifier ------------------------------
+// This map is AUTHORITATIVE for every catalog symbol. The old heuristic
+// (/USD[T]$/ tested BEFORE the forex check) classified EURUSD and GBPUSD as
+// "crypto" — live-verified: backfill-deep EURUSD answered with the Binance
+// note and wrote nothing, so the deep forex store stayed empty while every
+// forex 1m step "succeeded". Lives in this pure file so node --test can pin
+// it (hist.ts is Firebase-bound and cannot be imported in tests).
+const ASSET_CLASS: Record<string, AssetClass> = {
+  XAUUSD: "metal", XAGUSD: "metal",
+  EURUSD: "forex", GBPUSD: "forex", USDJPY: "forex", AUDUSD: "forex",
+  NZDUSD: "forex", USDCAD: "forex", USDCHF: "forex",
+  BTCUSD: "crypto", ETHUSD: "crypto", SOLUSD: "crypto", XRPUSD: "crypto",
+};
+
+export function assetClassOf(symbol: string): AssetClass {
+  if (ASSET_CLASS[symbol]) return ASSET_CLASS[symbol];
+  if (symbol.startsWith("^")) return "index";
+  if (/USDT$/i.test(symbol)) return "crypto";
+  if (symbol.endsWith("=X") || /^[A-Z]{6}$/.test(symbol)) return "forex";
+  return "index";
+}

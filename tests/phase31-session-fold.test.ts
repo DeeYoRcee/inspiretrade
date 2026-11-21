@@ -16,7 +16,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marketHours, closedIntervals, filterClosedCandles } from "../shared/market-hours.ts";
-import { isIntradayTf, dropClosedAnchors, foldWeekComplete, INTRADAY_TFS } from "../api/_src/lib/hist-sessions.ts";
+import { isIntradayTf, dropClosedAnchors, foldWeekComplete, INTRADAY_TFS, assetClassOf } from "../api/_src/lib/hist-sessions.ts";
+
 
 const T = (iso: string) => Math.floor(new Date(iso).getTime() / 1000); // epoch SECONDS (closedIntervals / candle times)
 const Tms = (iso: string) => new Date(iso).getTime(); // epoch MS (marketHours)
@@ -128,4 +129,16 @@ test("P31 · weekend poison shape: static Sat rows are detectable and droppable"
   const g = dropClosedAnchors([...satRows, ...openRows], ivs);
   assert.equal(g.dropped, 1440);
   assert.deepEqual(g.bars.map((b) => b.time), openRows.map((b) => b.time));
+});
+
+test("P31 · assetClassOf: EURUSD/GBPUSD are FOREX, not crypto (the binance-note bug)", () => {
+  // Live-verified pre-fix: backfill-deep EURUSD answered provider=binance —
+  // the /USD[T]?$/ heuristic tested before the forex check. The catalog map
+  // is now authoritative; the walk writes Dukascopy shards, never Binance.
+  assert.equal(assetClassOf("EURUSD"), "forex");
+  assert.equal(assetClassOf("GBPUSD"), "forex");
+  assert.equal(assetClassOf("XAUUSD"), "metal");
+  assert.equal(assetClassOf("BTCUSD"), "crypto");
+  assert.equal(assetClassOf("BTCUSDT"), "crypto");
+  assert.equal(assetClassOf("^NDX"), "index");
 });

@@ -37,7 +37,7 @@ import { rtdb } from "./firebase";
 import { validateBars, alignAndDedupe, repairOutlierExtremes, parseShardRow, type RawBar } from "../../../shared/feed-validation";
 import { aggregateBars } from "../../../shared/terminal";
 import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
-import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, isIntradayTf, dropClosedAnchors, foldWeekComplete, type AssetClass } from "./hist-sessions";
+import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, isIntradayTf, dropClosedAnchors, foldWeekComplete, assetClassOf, type AssetClass } from "./hist-sessions";
 import { bucketStart } from "../../../shared/feed-validation";
 import { normalizeDailyAnchors } from "../../../shared/terminal";
 import { closedIntervals } from "../../../shared/market-hours";
@@ -351,17 +351,9 @@ export interface BackfillResult {
   note?: string; error?: string;
 }
 
-const ASSET_CLASS: Record<string, AssetClass> = {
-  XAUUSD: "metal", XAGUSD: "metal",
-};
-
-function assetClassOf(symbol: string): AssetClass {
-  if (ASSET_CLASS[symbol]) return ASSET_CLASS[symbol];
-  if (symbol.startsWith("^")) return "index";
-  if (/USD[T]?$/i.test(symbol) && symbol.length >= 6) return "crypto";
-  if (symbol.endsWith("=X") || /^[A-Z]{6}$/.test(symbol)) return "forex";
-  return "index";
-}
+// assetClassOf lives in hist-sessions.ts (pure + testable) — Phase 31 moved
+// it there after the EURUSD→crypto misclassification (see that file).
+export { assetClassOf } from "./hist-sessions";
 
 /**
  * Run ONE backfill step for symbol+tf. Every step is idempotent (shard
