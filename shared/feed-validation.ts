@@ -20,6 +20,32 @@
  * rendered candle MORE truthful, not less.
  */
 
+/**
+ * Phase 30b — parse one hist day-shard row. writeShards serializes rows as
+ * JSON arrays (JSON.stringify([t,o,h,l,c,v])), but the readers still split
+ * plain CSV — every shard row read back as NaN and the chart deep layers
+ * stayed EMPTY (live evidence: hist-status count=91197 with earliest=null).
+ * Handles JSON-array rows AND legacy CSV rows; null for malformed input.
+ */
+export function parseShardRow(row: string): [number, number, number, number, number, number] | null {
+  if (!row) return null;
+  let a: unknown[];
+  if (row.charCodeAt(0) === 91 /* [ */) {
+    try {
+      const v = JSON.parse(row);
+      if (!Array.isArray(v)) return null;
+      a = v as unknown[];
+    } catch { return null; }
+  } else {
+    const c = row.split(",");
+    a = [c[0], c[1], c[2], c[3], c[4], c[5]];
+  }
+  const t = Number(a[0]), o = Number(a[1]), h = Number(a[2]), l = Number(a[3]), c2 = Number(a[4]);
+  if (![t, o, h, l, c2].every(Number.isFinite)) return null;
+  if (t <= 0 || o <= 0 || h < Math.max(o, c2) || l > Math.min(o, c2)) return null;
+  return [t, o, h, l, c2, Number(a[5]) || 0];
+}
+
 export interface RawBar {
   time: number;
   open: number;

@@ -107,6 +107,26 @@ function handle(fn) {
 }
 
 // shared/feed-validation.ts
+function parseShardRow(row) {
+  if (!row) return null;
+  let a;
+  if (row.charCodeAt(0) === 91) {
+    try {
+      const v = JSON.parse(row);
+      if (!Array.isArray(v)) return null;
+      a = v;
+    } catch {
+      return null;
+    }
+  } else {
+    const c = row.split(",");
+    a = [c[0], c[1], c[2], c[3], c[4], c[5]];
+  }
+  const t = Number(a[0]), o = Number(a[1]), h = Number(a[2]), l = Number(a[3]), c2 = Number(a[4]);
+  if (![t, o, h, l, c2].every(Number.isFinite)) return null;
+  if (t <= 0 || o <= 0 || h < Math.max(o, c2) || l > Math.min(o, c2)) return null;
+  return [t, o, h, l, c2, Number(a[5]) || 0];
+}
 var finitePositive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
 function checkBar(b) {
   const { open: o, high: h, low: l, close: c } = b;
@@ -834,11 +854,8 @@ async function readShards(symbol, tf, fromSec, toSec) {
     providers[p] = (providers[p] ?? 0) + 1;
     if (typeof blob !== "string" || !blob) continue;
     for (const row of blob.split("|")) {
-      const a = row.split(",");
-      const [t, o, h, l, c] = a.map(Number);
-      if ([t, o, h, l, c].every(Number.isFinite) && t > 0 && o > 0) {
-        bars.push({ time: t, open: o, high: h, low: l, close: c, volume: Number(a[5]) || 0 });
-      }
+      const a = parseShardRow(row);
+      if (a) bars.push({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] });
     }
   }
   if (tf === "1d") return { bars: normalizeDailyAnchors(bars), providers };
@@ -1200,8 +1217,8 @@ async function coverageReport(symbol, tfs) {
       const rows2 = blob ? blob.split("|") : [];
       count += rows2.length;
       for (const row of rows2) {
-        const a = row.split(",").map(Number);
-        if (!Number.isFinite(a[0])) continue;
+        const a = parseShardRow(row);
+        if (!a) continue;
         if (earliest == null || a[0] < earliest) earliest = a[0];
         if (latest == null || a[0] > latest) latest = a[0];
         if (bars.length < 2e5) bars.push({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] });

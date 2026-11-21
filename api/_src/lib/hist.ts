@@ -34,7 +34,7 @@
  * dropped.
  */
 import { rtdb } from "./firebase";
-import { validateBars, alignAndDedupe, repairOutlierExtremes, type RawBar } from "../../../shared/feed-validation";
+import { validateBars, alignAndDedupe, repairOutlierExtremes, parseShardRow, type RawBar } from "../../../shared/feed-validation";
 import { aggregateBars } from "../../../shared/terminal";
 import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
 import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, type AssetClass } from "./hist-sessions";
@@ -145,11 +145,11 @@ export async function readShards(symbol: string, tf: string, fromSec: number, to
     providers[p] = (providers[p] ?? 0) + 1;
     if (typeof blob !== "string" || !blob) continue;
     for (const row of blob.split("|")) {
-      const a = row.split(",");
-      const [t, o, h, l, c] = a.map(Number);
-      if ([t, o, h, l, c].every(Number.isFinite) && t > 0 && o > 0) {
-        bars.push({ time: t, open: o, high: h, low: l, close: c, volume: Number(a[5]) || 0 });
-      }
+      // Phase 30b: parseShardRow reads BOTH the JSON-array rows writeShards
+      // emits and legacy CSV rows — the old inline CSV split rejected every
+      // row (NaN), so hist-range returned nothing from the deep store.
+      const a = parseShardRow(row);
+      if (a) bars.push({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] });
     }
   }
   // Phase 29 Issue 2: daily shards written by the older stooq ingest carry
@@ -593,8 +593,8 @@ export async function coverageReport(symbol: string, tfs: string[]): Promise<Cov
       const rows2 = blob ? blob.split("|") : [];
       count += rows2.length;
       for (const row of rows2) {
-        const a = row.split(",").map(Number);
-        if (!Number.isFinite(a[0])) continue;
+        const a = parseShardRow(row);
+        if (!a) continue;
         if (earliest == null || a[0] < earliest) earliest = a[0];
         if (latest == null || a[0] > latest) latest = a[0];
         if (bars.length < 200000) bars.push({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] });
