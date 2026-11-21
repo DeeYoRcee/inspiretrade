@@ -226,5 +226,5 @@ test("P27 magnet: anchor snaps to the nearest OHLC within the pixel radius", () 
 test("P27 magnet: anchor time snaps to the containing bar's open time", () => {
   assert.equal(magnetSnapTime(1763688034, 60), 1763688000, "34s into a minute → bar open time");
   assert.equal(magnetSnapTime(1763688034, null), 1763688034, "no tf → untouched");
-  assert.equal(magnetSnapTime(1763241600 + 3 * 86400 + 1800, 604800), 1763241600, "mid-week stamp → Monday bucket");
+  assert.equal(magnetSnapTime(1794787200 + 3 * 86400 + 1800, 604800), 1794787200, "mid-week stamp → Monday bucket");
 });
