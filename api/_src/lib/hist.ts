@@ -356,13 +356,16 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         // wall). Same abuse-guard total, separate counters per purpose.
         const usageRef = rtdb().ref(`config/dukaUsage/${DUKA_METALS[symbol] ? "metals" : "fx"}/${new Date().toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
-        if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
+        if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         // Phase 26 RESUME FIX: the walk must continue BELOW the oldest stored
         // day, not from the newest again — the old `now - 2d` top made every
         // step re-download the same recent ~90 day files (all skipped at write
         // time) so repeated deep-fill runs never got past ~90 days of depth.
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 50000);
+        // Phase 30b: deadline 22s — the old 50s walk + shard/fold writes blew
+        // past the serverless wall clock (FUNCTION_INVOCATION_TIMEOUT, hkg1),
+        // so the step died BEFORE its state write and progress never stuck.
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         // Phase 30: fold the step's own minute bars into 1h/1d shards NOW —
@@ -394,7 +397,13 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
           // honest surfacing: depth will not grow while the CDN is unreachable
           return { ...base, ok: false, provider: "dukascopy-bid", error: "CDN_UNREACHABLE", note: "Dukascopy returned 0 day files (429/503 rate-limit or network block) — depth resumes when the CDN answers; TwelveData fallback needs a stored key" };
         }
-        // feed skipped this window (or CDN down) → fall through to TwelveData
+        // Phase 30b FALL-THROUGH FIX: files>0 but written==0 (the fetched
+        // window is already stored / produced no new days) must NOT fall
+        // through to TwelveData — that branch overwrote histState with
+        // provider:"twelvedata" + done:true (observed live: oldest pinned at
+        // 2026-10-11, done:true while targetFrom is 2006), which made every
+        // later step report "already done" and the walk never resumed.
+        return { ...base, provider: "dukascopy-bid", written: 0, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files fetched, ${sh.skipped} already stored — no new days in this window (resume walks deeper)${foldedNote}` };
       }
       const tdSym = HIST_TD[symbol];
       if (tdSym) {
@@ -419,12 +428,15 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
       if (DUKA_MAP[symbol]) {
         const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
-        if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
+        if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         // publication lag ≈ 1-2 days on a fresh store; Phase 26 resume fix:
         // continue BELOW the oldest stored day on every subsequent run
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
         // walk from two days ago backwards
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 50000);
+        // Phase 30b: deadline 22s — the old 50s walk + shard/fold writes blew
+        // past the serverless wall clock (FUNCTION_INVOCATION_TIMEOUT, hkg1),
+        // so the step died BEFORE its state write and progress never stuck.
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         // Phase 30: fold the step's own minute bars into 1h/1d shards NOW —

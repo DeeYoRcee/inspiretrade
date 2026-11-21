@@ -995,9 +995,9 @@ async function runBackfillStep(req) {
       if (DUKA_METALS[symbol] || DUKA_MAP[symbol]) {
         const usageRef = rtdb().ref(`config/dukaUsage/${DUKA_METALS[symbol] ? "metals" : "fx"}/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
-        if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
+        if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 5e4);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         let foldedNote = "";
@@ -1032,6 +1032,7 @@ async function runBackfillStep(req) {
         if (walk.files === 0) {
           return { ...base, ok: false, provider: "dukascopy-bid", error: "CDN_UNREACHABLE", note: "Dukascopy returned 0 day files (429/503 rate-limit or network block) \u2014 depth resumes when the CDN answers; TwelveData fallback needs a stored key" };
         }
+        return { ...base, provider: "dukascopy-bid", written: 0, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files fetched, ${sh2.skipped} already stored \u2014 no new days in this window (resume walks deeper)${foldedNote}` };
       }
       const tdSym = HIST_TD[symbol];
       if (tdSym) {
@@ -1060,9 +1061,9 @@ async function runBackfillStep(req) {
       if (DUKA_MAP[symbol]) {
         const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
-        if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
+        if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 5e4);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         let foldedNote = "";
