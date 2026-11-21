@@ -42,5 +42,5 @@ test("shard row: malformed input returns null, never NaN", () => {
 test("shard row: inverted OHLC rejected", () => {
   assert.equal(parseShardRow("[1795267200,2690,2680,2668,2675.5,0]"), null); // h < max(o,c)
   assert.equal(parseShardRow("[1795267200,2671,2680,2690,2675.5,0]"), null); // l > min(o,c)
-  assert.equal(parseShardRow("[1795267200,2671,2680,2650,2675.5,0]"), null); // h < l
+  assert.equal(parseShardRow("[1795267200,2671,2650,2680,2675.5,0]"), null); // h(2650) < l(2680)
 });
