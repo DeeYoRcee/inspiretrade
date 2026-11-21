@@ -29,8 +29,6 @@ export interface ChartSettings {
   drawWidth: number;
   drawDash: "solid" | "dashed" | "dotted";
   drawFontSize: number;
-  /** one-shot: after a drawing commits, snap back to the cursor (TradingView) */
-  oneShot: boolean;
 }
 
 // TradingView-reference palette: light bullish / gray bearish candles on the
@@ -40,7 +38,7 @@ export interface ChartSettings {
 export const DEFAULT_SETTINGS: ChartSettings = {
   grid: true, countdown: true, legend: true, magnet: true, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
-  drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12, oneShot: true,
+  drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
 };
 
 export function SettingsDialog({
@@ -80,15 +78,7 @@ export function SettingsDialog({
         </div>
         {/* drawing defaults — new objects take these */}
         <p className="pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Drawing</p>
-        <label className="flex cursor-pointer items-center justify-between">
-          <span className="text-slate-300">One-shot drawing (back to cursor after each object)</span>
-          <input
-            type="checkbox"
-            checked={draft.oneShot}
-            onChange={(e) => setDraft({ ...draft, oneShot: e.target.checked })}
-            className="h-4 w-4 accent-sky-500"
-          />
-        </label>
+        <p className="text-[10px] text-slate-500">A finished drawing returns the cursor automatically — hold Shift while placing the last point to chain another object with the same tool. Delete removes the selection.</p>
         <div className="grid grid-cols-2 gap-2">
           <label><span className="mb-0.5 block text-[10px] text-slate-400">Default color</span>
             <input type="color" value={draft.drawColor} onChange={(e) => setDraft({ ...draft, drawColor: e.target.value })} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>

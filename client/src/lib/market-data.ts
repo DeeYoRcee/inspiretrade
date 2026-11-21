@@ -1283,6 +1283,7 @@ const statsState: FeedStats = {
   delayBy: {} as Record<string, number | null>, // per symbol:tf — one pair's delay must never label another's badge
   closeOnlyShare: null,
 };
+
 const tickTimes: number[] = [];
 
 function setConn(patch: Partial<ConnectionState>) {

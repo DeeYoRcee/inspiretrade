@@ -22,7 +22,8 @@ import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
-import { createDefaultPublicProfileSettings } from "@/lib/public-profile";
+import { createPublicProfileSnapshot, createDefaultPublicProfileSettings } from "@/lib/public-profile";
+import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
 
 const USERNAME_TEST = /^[a-zA-Z0-9_]{3,20}$/;
 import { getProfileBackground, PROFILE_BACKGROUNDS } from "@/lib/profile-backgrounds";
@@ -151,6 +152,42 @@ export default function ProfilePage() {
 
   const displayName = user?.displayName || profile?.displayName || profile?.username || user?.email?.split("@")[0] || "Trader";
   const username = profile?.username || null;
+
+  // Phase 31: the profile page mirrors the published public profile — one
+  // live snapshot built with the SAME builder the public page gets written
+  // with, so "what I see here" == "what everyone sees at /@handle".
+  const publicSnapshot = useMemo(() => {
+    if (!settings?.enabled || !username || !user) return null;
+    return createPublicProfileSnapshot({
+      uid: user.uid,
+      username,
+      displayName,
+      trades: trades ?? [],
+      settings,
+      avatar: profile?.avatar ?? null,
+      profile: {
+        ceo: profile?.ceo,
+        vip: !!(profile?.isPremium || profile?.premiumPlan),
+        usernames: profile?.usernames,
+        social: profile?.social,
+        profileVideo: profile?.profileVideo,
+        avatarVideo: profile?.avatarVideo,
+      },
+    });
+  }, [settings, username, user, displayName, trades, profile]);
+
+  // visibility chips — flip one flag and REPUBLISH (the public snapshot and
+  // this mirror must move together; the save flow handles redirect stubs)
+  const [pubBusy, setPubBusy] = useState(false);
+  const toggleVisibility = (flag: "statistics" | "winRate" | "history" | "notes") => {
+    if (!settings || !username || pubBusy) return;
+    const next = { ...settings, visibility: { ...settings.visibility, [flag]: !settings.visibility[flag] } };
+    setPubBusy(true);
+    savePublicProfile
+      .mutateAsync({ username, displayName, trades: trades ?? [], settings: next })
+      .catch(() => { /* the toast lives inside the save flow */ })
+      .finally(() => setPubBusy(false));
+  };
   const gradient = useMemo(() => gradientFor(user?.uid || displayName), [user?.uid, displayName]);
   const initials = useMemo(() => initialsOf(displayName), [displayName]);
   const avatarSrc = profile?.avatar || user?.photoURL || null;
@@ -614,6 +651,46 @@ export default function ProfilePage() {
         <StatCell label={t("netPnl")} value={pnlText} tone={pnlTone} />
         <StatCell label={t("profileMemberSince")} value={memberSince} />
       </motion.div>
+
+      {/* Phase 31: Telegram-style public-profile mirror — when the public
+          profile is published, the profile page renders the EXACT same
+          presentation everyone else sees, driven by the same visibility
+          toggles (statistics / winRate / history / notes). Profit & loss
+          details stay hideable: turning Statistics or History off here
+          removes them from BOTH this view and the public page. */}
+      {settings?.enabled && username && (
+        <motion.section
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.08 }}
+          className="space-y-2"
+        >
+          <div className="flex items-center justify-between px-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              {t("profilePublicPreview")}
+            </p>
+            <div className="flex items-center gap-1">
+              {([["statistics", t("publicProfileStatistics")], ["winRate", t("publicProfileWinRate")], ["history", t("publicProfileHistory")], ["notes", t("publicProfileNotes")]] as const).map(([flag, lbl]) => (
+                <button
+                  key={flag}
+                  disabled={pubBusy}
+                  title={t("publicProfileVisibility")}
+                  onClick={() => toggleVisibility(flag)}
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50",
+                    settings.visibility[flag]
+                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
+                      : "border-border/60 bg-black/25 text-muted-foreground",
+                  )}
+                >
+                  {lbl.replace(/Description$/, "")}
+                </button>
+              ))}
+            </div>
+          </div>
+          <ProfilePresentation profile={publicSnapshot!} />
+        </motion.section>
+      )}
 
       {/* Telegram-style info card */}
       <motion.div

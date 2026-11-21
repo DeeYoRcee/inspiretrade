@@ -194,6 +194,7 @@ const translations: Record<Language, Record<string, string>> = {
     publicProfileTitle: "Your public trading profile",
     publicProfileDescription: "Choose which parts of your trading journal you want to share. Nothing is published until you turn it on and save.",
     publicProfileVisibility: "Choose what to show",
+    profilePublicPreview: "Public profile — exactly what everyone sees",
     publicProfilePreview: "Public profile preview",
     publicProfilePreviewHint: "Only the sections you choose will appear publicly.",
     publicProfileLocalPreview: "Preview updates as you edit",

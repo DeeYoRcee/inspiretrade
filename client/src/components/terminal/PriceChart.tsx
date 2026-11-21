@@ -29,6 +29,7 @@ import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
 import { spotMeasuredUpdateSec, quotesHistOlder, quotesPrependHistory } from "@/lib/market-data";
+import { marketStatus } from "@/lib/market-status";
 import { authedFetch } from "@/lib/api";
 import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
@@ -1451,10 +1452,34 @@ export function PriceChart({
   }, []);
 
   // ---- keyboard tool shortcuts --------------------------------------------------------
+  // Phase 31: Shift-held tracker — chaining drawings (Shift+commit keeps the
+  // tool armed, TradingView-style) without a per-user setting to forget.
+  const shiftHeldRef = useRef(false);
+  useEffect(() => {
+    const dn = (e: KeyboardEvent) => { if (e.key === "Shift") shiftHeldRef.current = true; };
+    const up = (e: KeyboardEvent) => { if (e.key === "Shift") shiftHeldRef.current = false; };
+    const blur = () => { shiftHeldRef.current = false; };
+    window.addEventListener("keydown", dn);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    return () => { window.removeEventListener("keydown", dn); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      // Phase 31: Delete / Backspace removes the selected drawing(s)
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const ids = selectedIds.length ? selectedIds : (selectedDrawingId ? [selectedDrawingId] : []);
+        if (ids.length) {
+          e.preventDefault();
+          const drop = new Set(ids);
+          commitDrawings(drawingsRef.current.filter((d) => !drop.has(d.id)));
+          setSelectedIds([]);
+          setSelectedDrawingId(null);
+        }
+        return;
+      }
       // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — drawing undo & redo
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         const k = e.key.toLowerCase();
@@ -1558,7 +1583,10 @@ export function PriceChart({
         // feed actually publishes a NEW price (gold-api advances its stamp
         // only every ~5-15s — a 1s poll cannot speed that up) + what builds
         // the candles
-        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""}${measured != null ? ` · upd ~${measured}s` : ""}${TF_SECONDS[timeframe] < 60 ? " · live seconds" : " · self-recorded candles"}`;
+        // Phase 31: honesty rule — never create the illusion of fresh data
+        // when the provider is frozen: metals outside spot hours say so
+        const closed = marketStatus(symbolRef.current) === "closed" ? " · MARKET CLOSED (no new prices)" : "";
+        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""}${measured != null ? ` · upd ~${measured}s` : ""}${TF_SECONDS[timeframe] < 60 ? " · live seconds" : " · self-recorded candles"}${closed}`;
       } else if (spot.state === "connecting") {
         dot = "bg-sky-400 animate-pulse";
         label = "Spot connecting…";
@@ -1675,7 +1703,10 @@ export function PriceChart({
             setSelectedIds([]);
           }}
           activeTool={activeTool === "cursor" ? null : activeTool}
-          onToolCommitted={() => { if (settingsRef.current.oneShot) setActiveTool("cursor"); }}
+          // Phase 31: TradingView behaviour — after a drawing commits the
+          // tool ALWAYS returns to the cursor; hold Shift while committing to
+          // chain another object with the same tool. Esc also disarms.
+          onToolCommitted={() => { if (!shiftHeldRef.current) setActiveTool("cursor"); }}
           magnet={settings.magnet}
           toolDefaults={{
             color: settingsRef.current.drawColor,
@@ -2110,6 +2141,12 @@ function FeedDiagnostics({ symbol, conn, getBars }: { symbol: string; conn: stri
         ["Repaired bars (H/L)", String(s.repairedBars)],
         ["Duplicate deliveries", String(s.duplicateBars)],
         ["Out-of-order ticks", String(s.outOfOrderTicks)],
+        // Phase 31 §6: series shape — total depth + flat (zero-range) share,
+        // the direct measurement behind the "thin lines" complaint
+        ["Candle count (loaded)", String(bars?.length ?? 0)],
+        ["Oldest candle", bars?.length ? fmt(bars[0].time * 1000) : "—"],
+        ["Newest candle", last ? fmt(last.time * 1000) : "—"],
+        ["Flat candles", (() => { if (!bars?.length) return "—"; const flat = bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length; return `${flat} (${((flat / bars.length) * 100).toFixed(0)}%)`; })()],
       ];
       el.innerHTML = rows.map(([k, v]) => `<div class="flex justify-between gap-3 border-b border-slate-800/60 py-0.5"><span class="text-slate-500">${k}</span><span class="text-right font-number text-slate-200">${v}</span></div>`).join("");
     }, 1000);
