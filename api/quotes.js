@@ -393,6 +393,179 @@ var SPOT_PRICE_BANDS = {
   XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
 };
 
+// shared/sessions.ts
+var SESSIONS = [
+  { id: "sydney", city: "Sydney", tz: "Australia/Sydney", flag: "\u{1F1E6}\u{1F1FA}", openMin: 7 * 60, closeMin: 16 * 60 },
+  { id: "tokyo", city: "Tokyo", tz: "Asia/Tokyo", flag: "\u{1F1EF}\u{1F1F5}", openMin: 9 * 60, closeMin: 18 * 60 },
+  { id: "london", city: "London", tz: "Europe/London", flag: "\u{1F1EC}\u{1F1E7}", openMin: 8 * 60, closeMin: 17 * 60 },
+  { id: "newyork", city: "New York", tz: "America/New_York", flag: "\u{1F1FA}\u{1F1F8}", openMin: 8 * 60, closeMin: 17 * 60 }
+];
+var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function tzWallClock(tz, instant) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short"
+  });
+  const parts = dtf.formatToParts(new Date(instant));
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  const h = Number(get("hour")) % 24;
+  return {
+    y: Number(get("year")),
+    mo: Number(get("month")),
+    d: Number(get("day")),
+    h,
+    mi: Number(get("minute")),
+    s: Number(get("second")),
+    weekday: Math.max(0, WEEKDAYS.indexOf(get("weekday")))
+  };
+}
+function tzOffsetMs(tz, instant) {
+  const w = tzWallClock(tz, instant);
+  return Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi, w.s) - instant;
+}
+
+// shared/market-hours.ts
+var HOLIDAYS = {};
+var NY = "America/New_York";
+var FX_OPEN_DOW = 0;
+var FX_OPEN_MIN = 17 * 60;
+var FX_CLOSE_DOW = 5;
+var FX_CLOSE_MIN = 17 * 60;
+var METAL_OPEN_MIN = 18 * 60;
+var METAL_BREAK_FROM = 17 * 60;
+var METAL_BREAK_TO = 18 * 60;
+var INDEX_SESSIONS = {
+  NAS100: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  US30: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  SPX500: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  GER40: { tz: "Europe/Berlin", fromMin: 9 * 60, toMin: 17 * 60 + 30 },
+  UK100: { tz: "Europe/London", fromMin: 8 * 60, toMin: 16 * 60 + 30 }
+};
+function isHoliday(symbol, at) {
+  const days = HOLIDAYS[symbol];
+  if (!days || !days.length) return false;
+  const d = tzWallClock("UTC", at);
+  const iso = `${String(d.y).padStart(4, "0")}-${String(d.mo).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+  return days.includes(iso);
+}
+function fxWindow(inst, at) {
+  const w = tzWallClock(NY, at);
+  const mins = w.h * 60 + w.mi;
+  const metal = inst.assetClass === "metal";
+  if (w.weekday === 6) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_CLOSE_DOW && mins >= FX_CLOSE_MIN) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_OPEN_DOW && mins < (metal ? METAL_OPEN_MIN : FX_OPEN_MIN)) {
+    return { open: false, reason: "weekend" };
+  }
+  if (metal && w.weekday >= 1 && w.weekday <= 4 && mins >= METAL_BREAK_FROM && mins < METAL_BREAK_TO) {
+    return { open: false, reason: "daily-break" };
+  }
+  return { open: true, reason: "open" };
+}
+function windowAt(symbol, inst, at) {
+  if (!inst) return { open: false, reason: "unknown" };
+  if (inst.assetClass === "crypto") return { open: true, reason: "open" };
+  if (isHoliday(symbol, at)) return { open: false, reason: "holiday" };
+  if (inst.assetClass === "index") {
+    const s = INDEX_SESSIONS[symbol];
+    if (!s) return { open: true, reason: "open" };
+    const w = tzWallClock(s.tz, at);
+    const mins = w.h * 60 + w.mi;
+    const open = w.weekday >= 1 && w.weekday <= 5 && mins >= s.fromMin && mins < s.toMin;
+    return { open, reason: open ? "open" : "weekend" };
+  }
+  if (inst.assetClass === "forex" || inst.assetClass === "metal") return fxWindow(inst, at);
+  return { open: true, reason: "open" };
+}
+function marketHours(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  const w = windowAt(symbol, inst, at);
+  return { ...w, nextOpenMs: w.open ? null : nextOpen(symbol, at) };
+}
+function nextOpen(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  if (windowAt(symbol, inst, at).open) return null;
+  const step = 15 * 6e4;
+  for (let t = Math.ceil(at / step) * step, n = 0; n < 9 * 96; n++, t += step) {
+    if (windowAt(symbol, inst, t).open) return t;
+  }
+  return null;
+}
+function wallInstantSec(daySec, minutes, tz) {
+  const dayMs = daySec * 1e3;
+  const guessMs = dayMs + minutes * 6e4;
+  const off = tzOffsetMs(tz, guessMs);
+  let t = guessMs - off;
+  const off2 = tzOffsetMs(tz, t);
+  if (off2 !== off) t = guessMs - off2;
+  return Math.floor(t / 1e3);
+}
+function closedIntervals(symbol, fromSec, toSec) {
+  const inst = getInstrument(symbol);
+  if (!inst) return [];
+  const cls = inst.assetClass;
+  if (cls === "crypto" || cls !== "forex" && cls !== "metal" && cls !== "index") return [];
+  const out = [];
+  const fromDay = Math.floor(fromSec / 86400);
+  const toDay = Math.floor(toSec / 86400);
+  const metal = cls === "metal";
+  for (let day = fromDay; day <= toDay; day++) {
+    const dayStart = day * 86400;
+    const dayEnd = dayStart + 86400;
+    const noonMs = dayStart * 1e3 + 12 * 3600 * 1e3;
+    if (isHoliday(symbol, noonMs)) {
+      out.push({ from: dayStart, to: dayEnd });
+      continue;
+    }
+    if (cls === "index") {
+      const s = INDEX_SESSIONS[symbol];
+      if (!s) continue;
+      const w2 = tzWallClock(s.tz, noonMs);
+      if (w2.weekday === 0 || w2.weekday === 6) {
+        out.push({ from: dayStart, to: dayEnd });
+        continue;
+      }
+      out.push({ from: dayStart, to: wallInstantSec(dayStart, s.fromMin, s.tz) });
+      out.push({ from: wallInstantSec(dayStart, s.toMin, s.tz), to: dayEnd });
+      continue;
+    }
+    const w = tzWallClock(NY, noonMs);
+    const openMin = metal && w.weekday === 0 ? METAL_OPEN_MIN : FX_OPEN_MIN;
+    if (w.weekday === 6) {
+      out.push({ from: dayStart, to: dayEnd });
+      continue;
+    }
+    if (w.weekday === 0) out.push({ from: dayStart, to: wallInstantSec(dayStart, openMin, NY) });
+    if (w.weekday === 5) out.push({ from: wallInstantSec(dayStart, FX_CLOSE_MIN, NY), to: dayEnd });
+    if (metal && w.weekday >= 1 && w.weekday <= 4) {
+      out.push({ from: wallInstantSec(dayStart, METAL_BREAK_FROM, NY), to: wallInstantSec(dayStart, METAL_BREAK_TO, NY) });
+    }
+  }
+  return out.sort((a, b) => a.from - b.from);
+}
+function filterClosedCandles(symbol, candles) {
+  if (!candles.length) return candles;
+  const times = candles.map((c) => c.time);
+  const intervals = closedIntervals(symbol, Math.min(...times) - 60, Math.max(...times) + 60);
+  if (!intervals.length) return candles;
+  const sorted = [...candles].sort((a, b) => a.time - b.time);
+  const out = [];
+  let k = 0;
+  for (const c of sorted) {
+    while (k < intervals.length && intervals[k].to <= c.time) k++;
+    if (k < intervals.length && c.time >= intervals[k].from && c.time < intervals[k].to) continue;
+    out.push(c);
+  }
+  return out;
+}
+
 // api/_src/lib/duka.ts
 import { decompress } from "lzma-native";
 var DUKA_MAP = {
@@ -662,7 +835,7 @@ async function fetchStooqBars(stooqSym, interval) {
   if (!res.ok) throw new Error(`STOOQ_${res.status}`);
   const text = await res.text();
   if (text.startsWith("<!DOCTYPE") || /access denied/i.test(text.slice(0, 200))) throw new Error("STOOQ_BLOCKED");
-  const tzOffsetMs = (dateStr) => {
+  const tzOffsetMs2 = (dateStr) => {
     try {
       const noonUTC = Date.parse(`${dateStr}T12:00:00Z`);
       const parts = new Intl.DateTimeFormat("en-US", {
@@ -692,7 +865,7 @@ async function fetchStooqBars(stooqSym, interval) {
     if (![open, high, low, close].every((x) => Number.isFinite(x) && x > 0)) continue;
     let time;
     if (t && /^\d{2}:\d{2}$/.test(t)) {
-      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - tzOffsetMs(d)) / 1e3);
+      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - tzOffsetMs2(d)) / 1e3);
     } else {
       time = Math.floor(Date.parse(`${d}T00:00:00Z`) / 1e3);
     }
@@ -1105,7 +1278,7 @@ function csvToQuotes(csv) {
 function stooqCsvToBars(csv) {
   const bars = [];
   const lines = csv.trim().split(/\r?\n/);
-  const tzOffsetMs = (dateStr) => {
+  const tzOffsetMs2 = (dateStr) => {
     try {
       const noonUTC = Date.parse(`${dateStr}T12:00:00Z`);
       const parts = new Intl.DateTimeFormat("en-US", {
@@ -1133,7 +1306,7 @@ function stooqCsvToBars(csv) {
     if (![open, high, low, close].every((x) => Number.isFinite(x) && x > 0)) continue;
     let time;
     if (t && /^\d{2}:\d{2}$/.test(t)) {
-      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - tzOffsetMs(d)) / 1e3);
+      time = Math.floor((Date.parse(`${d}T${t}:00Z`) - tzOffsetMs2(d)) / 1e3);
     } else {
       time = Math.floor(Date.parse(`${d}T00:00:00Z`) / 1e3);
     }
@@ -1337,7 +1510,8 @@ var quotes_default = handle(async (req, res) => {
     const now = Math.floor(Date.now() / 1e3);
     const tfSec = Math.max(60, Math.min(2592e3, Math.floor(Number(url.searchParams.get("tf")) || 60)));
     const minT = tfSec > 60 ? 0 : now - 65 * 86400;
-    const rawCandles = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT && c.t <= now).sort((a, b) => a.t - b.t);
+    let rawCandles = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0), time: Number(t) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT && c.t <= now).sort((a, b) => a.t - b.t);
+    rawCandles = filterClosedCandles(code === "XAU" ? "XAUUSD" : "XAGUSD", rawCandles);
     const checked = validateBars(rawCandles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s })));
     if (tfSec > 60) {
       const agg = aggregateBars(checked.bars, tfSec / 60);
@@ -1357,8 +1531,22 @@ var quotes_default = handle(async (req, res) => {
       const code = rec?.code === "XAG" ? "XAG" : rec?.code === "XAU" ? "XAU" : null;
       if (!code) continue;
       const [loBand, hiBand] = SPOT_PRICE_BANDS[code];
+      const recSymbol = code === "XAU" ? "XAUUSD" : "XAGUSD";
+      const recIntervals = closedIntervals(recSymbol, now - 8 * 86400, minuteNow);
+      const closedAtRec = (t) => {
+        let lo = 0, hi = recIntervals.length - 1;
+        while (lo <= hi) {
+          const mid = lo + hi >> 1;
+          const iv = recIntervals[mid];
+          if (t < iv.from) hi = mid - 1;
+          else if (t >= iv.to) lo = mid + 1;
+          else return true;
+        }
+        return false;
+      };
       const incoming = (Array.isArray(rec?.candles) ? rec.candles.slice(0, 40) : []).map((c) => ({ t: Number(c?.t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 1) })).filter((c) => {
         if (!Number.isFinite(c.t) || c.t % 60 !== 0 || c.t > minuteNow || c.t < now - 8 * 86400) return false;
+        if (closedAtRec(c.t)) return false;
         if (![c.o, c.h, c.l, c.c].every((v) => Number.isFinite(v) && v > 0)) return false;
         if (c.h < Math.max(c.o, c.c) || c.l > Math.min(c.o, c.c) || c.h < c.l) return false;
         if (c.o < loBand || c.o > hiBand || c.c < loBand || c.c > hiBand) return false;
@@ -1623,6 +1811,43 @@ var quotes_default = handle(async (req, res) => {
     const rows = await coverageReport(sym, tfs);
     return res.json({ ok: true, symbol: sym, rows });
   }
+  if (action === "purge-weekend" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const wanted = Array.isArray(raw?.symbols) && raw.symbols.length ? raw.symbols : ["XAUUSD", "XAGUSD"];
+    const now = Math.floor(Date.now() / 1e3);
+    const from = now - 70 * 86400;
+    const report = {};
+    for (const symRaw of wanted) {
+      const symbol = String(symRaw).toUpperCase();
+      const code = symbol === "XAUUSD" ? "XAU" : symbol === "XAGUSD" ? "XAG" : null;
+      if (!code) continue;
+      const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
+      const obj = snap.val() || {};
+      const entries = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= from && c.t <= now);
+      const intervals = closedIntervals(symbol, from, now);
+      const toDelete = [];
+      for (const c of entries) {
+        let inside = false;
+        for (const iv of intervals) {
+          if (c.t >= iv.from && c.t < iv.to) {
+            inside = true;
+            break;
+          }
+        }
+        if (inside) toDelete.push(String(c.t));
+      }
+      for (let i = 0; i < toDelete.length; i += 500) {
+        const chunk = {};
+        for (const k of toDelete.slice(i, i + 500)) chunk[k] = null;
+        await rtdb().ref(`spotTicks/${code}`).update(chunk);
+      }
+      const removed = toDelete.length;
+      report[symbol] = { removed, kept: entries.length - removed };
+    }
+    return res.json({ ok: true, report, at: Date.now() });
+  }
   if (action === "import-fx" && req.method === "POST") {
     const adminUser = await requireAdmin(req);
     if (!adminUser) return res.status(403).json({ ok: false, reason: "admin-only" });
@@ -1796,8 +2021,8 @@ var quotes_default = handle(async (req, res) => {
     let live = false;
     if (DUKA_MAP[bareCode] && !periodMode) {
       const t = (await truefxQuotes())[bareCode];
-      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
-      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
+      if (t && marketHours(bareCode).open) void recordFxLiveBids({ [bareCode]: t.bid });
+      if (t && marketHours(bareCode).open && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     if (DUKA_MAP[bareCode] && interval === "1m" && bars.length > 20) {
       const flat = bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length;
@@ -1846,7 +2071,7 @@ var quotes_default = handle(async (req, res) => {
     const last = capped[capped.length - 1];
     let live = false;
     const spotCode2 = SPOT_API_MAP[symbols];
-    if (spotCode2 && !periodMode && last) {
+    if (spotCode2 && !periodMode && last && marketHours(symbols).open) {
       const spot = await fetchSpot(spotCode2);
       if (spot != null && mergeSpotBars(capped, spot, si === "d" ? "1d" : interval === "5m" ? "5m" : interval)) live = true;
     }
@@ -1952,8 +2177,8 @@ var quotes_default = handle(async (req, res) => {
     let live = false;
     if (!periodMode) {
       const t = (await truefxQuotes())[bareCode];
-      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
-      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
+      if (t && marketHours(bareCode).open) void recordFxLiveBids({ [bareCode]: t.bid });
+      if (t && marketHours(bareCode).open && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     const last = bars[bars.length - 1];
     return {
@@ -2067,16 +2292,17 @@ var quotes_default = handle(async (req, res) => {
     });
     let final = payload;
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
+      const marketLive = marketHours(bareCode).open;
       try {
         const t = (await truefxQuotes())[bareCode];
         const bidConsistent = typeof final.source === "string" && final.source.startsWith("fx-store");
-        if (t?.bid > 0 && bidConsistent) {
+        if (t?.bid > 0 && bidConsistent && marketLive) {
           void recordFxLiveBids({ [bareCode]: t.bid });
           const bars2 = final.bars.slice();
           if (mergeSpotBars(bars2, t.bid, interval)) {
             final = { ...final, bars: bars2, at: Date.now(), liveTail: "truefx" };
           }
-        } else if (t?.bid > 0) {
+        } else if (t?.bid > 0 && marketLive) {
           void recordFxLiveBids({ [bareCode]: t.bid });
         }
       } catch {

@@ -20,7 +20,7 @@
  * reserved for future verified schedules. Regular weekend closures are
  * always distinguishable from holiday closures via the `reason` field.
  */
-import { tzWallClock } from "./sessions.ts";
+import { tzWallClock, tzOffsetMs } from "./sessions.ts";
 import { getInstrument } from "./terminal.ts";
 
 export type MarketClosedReason = "open" | "weekend" | "daily-break" | "holiday" | "unknown";
@@ -123,6 +123,91 @@ export function nextOpen(symbol: string, at: number = Date.now()): number | null
     if (windowAt(symbol, inst, t).open) return t;
   }
   return null;
+}
+
+/** Epoch seconds of "wall clock minutes-from-midnight" on UTC day `daySec`
+ *  in tz — one refinement pass converges across DST jumps (17:00/18:00 NY
+ *  never falls inside the 02:00 transition gap). */
+function wallInstantSec(daySec: number, minutes: number, tz: string): number {
+  const dayMs = daySec * 1000;
+  const guessMs = dayMs + minutes * 60000;
+  const off = tzOffsetMs(tz, guessMs);
+  let t = guessMs - off;
+  const off2 = tzOffsetMs(tz, t);
+  if (off2 !== off) t = guessMs - off2;
+  return Math.floor(t / 1000);
+}
+
+export interface ClosedInterval { from: number; to: number } // [from, to) epoch SECONDS
+
+/**
+ * Closed-session intervals for `symbol` between fromSec..toSec (epoch sec).
+ * Built per UTC day from the NY wall clock — 2 Intl calls per day, cheap
+ * enough to filter whole stores (spot-history serves up to ~90k minutes).
+ * Empty for crypto (never closed) and unknown instruments (no invented data).
+ */
+export function closedIntervals(symbol: string, fromSec: number, toSec: number): ClosedInterval[] {
+  const inst = getInstrument(symbol);
+  if (!inst) return [];
+  const cls = inst.assetClass;
+  if (cls === "crypto" || (cls !== "forex" && cls !== "metal" && cls !== "index")) return [];
+  const out: ClosedInterval[] = [];
+  const fromDay = Math.floor(fromSec / 86400);
+  const toDay = Math.floor(toSec / 86400);
+  const metal = cls === "metal";
+  for (let day = fromDay; day <= toDay; day++) {
+    const dayStart = day * 86400;
+    const dayEnd = dayStart + 86400;
+    const noonMs = dayStart * 1000 + 12 * 3600 * 1000;
+    if (isHoliday(symbol, noonMs)) { out.push({ from: dayStart, to: dayEnd }); continue; }
+    if (cls === "index") {
+      const s = INDEX_SESSIONS[symbol];
+      if (!s) continue; // no invented restriction
+      const w = tzWallClock(s.tz, noonMs);
+      if (w.weekday === 0 || w.weekday === 6) { out.push({ from: dayStart, to: dayEnd }); continue; }
+      out.push({ from: dayStart, to: wallInstantSec(dayStart, s.fromMin, s.tz) });
+      out.push({ from: wallInstantSec(dayStart, s.toMin, s.tz), to: dayEnd });
+      continue;
+    }
+    const w = tzWallClock(NY, noonMs);
+    const openMin = metal && w.weekday === 0 ? METAL_OPEN_MIN : FX_OPEN_MIN;
+    if (w.weekday === 6) { out.push({ from: dayStart, to: dayEnd }); continue; } // Saturday
+    if (w.weekday === 0) out.push({ from: dayStart, to: wallInstantSec(dayStart, openMin, NY) });
+    if (w.weekday === 5) out.push({ from: wallInstantSec(dayStart, FX_CLOSE_MIN, NY), to: dayEnd });
+    if (metal && w.weekday >= 1 && w.weekday <= 4) {
+      out.push({ from: wallInstantSec(dayStart, METAL_BREAK_FROM, NY), to: wallInstantSec(dayStart, METAL_BREAK_TO, NY) });
+    }
+  }
+  return out.sort((a, b) => a.from - b.from);
+}
+
+/**
+ * Phase 28 §3 — drop every candle whose OPEN timestamp falls inside a closed
+ * session. These candles are provably false (a closed market cannot print a
+ * price): weekend recorder dots, frozen-provider buckets, duplicated stale
+ * ticks. Genuine candles are never touched; open-session corrections pass.
+ * Generic over the candle shape (works on {time} arrays in epoch seconds).
+ */
+export function filterClosedCandles<T extends { time: number }>(symbol: string, candles: T[]): T[] {
+  if (!candles.length) return candles;
+  const times = candles.map((c) => c.time);
+  const intervals = closedIntervals(symbol, Math.min(...times) - 60, Math.max(...times) + 60);
+  if (!intervals.length) return candles;
+  const sorted = [...candles].sort((a, b) => a.time - b.time);
+  const out: T[] = [];
+  let k = 0;
+  for (const c of sorted) {
+    while (k < intervals.length && intervals[k].to <= c.time) k++;
+    if (k < intervals.length && c.time >= intervals[k].from && c.time < intervals[k].to) continue;
+    out.push(c);
+  }
+  return out;
+}
+
+/** Single-instant check in epoch SECONDS (sparse use — per-candle loops
+ *  should use closedIntervals/filterClosedCandles instead). */
+export function isClosedAt(symbol: string, atSec: number): boolean {
+  return !marketHours(symbol, atSec * 1000).open;
 }
 
 /** Backend guard: throws the Phase 27 §2 contract error when closed. */

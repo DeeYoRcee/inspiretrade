@@ -467,7 +467,7 @@ function fxWindow(inst, at) {
   return { open: true, reason: "open" };
 }
 function windowAt(symbol, inst, at) {
-  if (!inst) return { open: true, reason: "open" };
+  if (!inst) return { open: false, reason: "unknown" };
   if (inst.assetClass === "crypto") return { open: true, reason: "open" };
   if (isHoliday(symbol, at)) return { open: false, reason: "holiday" };
   if (inst.assetClass === "index") {

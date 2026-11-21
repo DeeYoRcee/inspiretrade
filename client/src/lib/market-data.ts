@@ -451,7 +451,30 @@ export function maybeFireDeepHeal(symbol: string, tf: Timeframe): void {
   deepHealAt.set(ck, Date.now());
   if (symbol === "XAUUSD" || symbol === "XAGUSD") {
     authedFetch("/api/quotes?action=backfill-metals", { symbol, tf }).catch(() => { /* best-effort — resume cursor continues later */ });
+    maybePurgeWeekendCandles();
   }
+}
+
+// Phase 28 §9: once per 6h per device, an admin session purges the
+// provably-false closed-session (weekend) candles from the shared spotTicks
+// store. Non-admin sessions get a silent 403 and stop retrying for a day —
+// deletion only ever runs with the admin gate, and only removes candles
+// whose timestamps fall inside closed sessions (never genuine ones).
+function maybePurgeWeekendCandles(): void {
+  try {
+    const key = "purge-weekend-at";
+    const stamp = Number(localStorage.getItem(key) || 0);
+    const backoff = getSpotState().state === "live" && stamp ? 6 * 3600 * 1000 : 24 * 3600 * 1000;
+    if (Date.now() - stamp < backoff) return;
+    localStorage.setItem(key, String(Date.now()));
+    authedFetch("/api/quotes?action=purge-weekend", { symbols: ["XAUUSD", "XAGUSD"] })
+      .then((res: any) => {
+        if (res && res.ok === false && String(res.error || "").includes("admin-only")) {
+          localStorage.setItem(key, String(Date.now() + 18 * 3600 * 1000)); // non-admin — sleep 24h total
+        }
+      })
+      .catch(() => { /* best-effort */ });
+  } catch { /* localStorage unavailable */ }
 }
 
 class QuotesProvider {
@@ -642,6 +665,15 @@ class QuotesProvider {
       // sample-count volume) — nothing fabricated, empty seconds stay empty.
       const sec = TF_SECONDS[tf];
       const offSpot = spotTickerOn(spotCode, key, (price) => {
+        // Phase 28 §1/§3: THIS handler was the exact source of the weekend
+        // candles — it merged the frozen gold-api price into the tail
+        // (mergeSpotTail fill-forward) and minted seconds candles from
+        // repeated identical samples while the market was CLOSED. gold-api's
+        // updatedAt stamp keeps advancing on weekends, so the stale-stamp
+        // branch never fires; the market-session gate is the honest stop:
+        // when closed, no candle is created, finalized or moved here — the
+        // last legitimate candle stays exactly as the market left it.
+        if (!marketHours(symbol).open) return;
         const bars = this.history.get(key);
         if (!bars?.length) {
           if (sec >= 60) {
@@ -960,7 +992,7 @@ class QuotesProvider {
 // Live spot tail — see client/src/lib/spot-tail.ts (pure, unit-tested module).
 // ---------------------------------------------------------------------------
 import { mergeSpotTail, recordSpotTick, mergeSpotSeries, validSpotCandle, type SpotCandle } from "@/lib/spot-tail";
-import { marketHours } from "@shared/market-hours";
+import { marketHours, filterClosedCandles } from "@shared/market-hours";
 export { mergeSpotTail };
 
 // ---- Phase 22: shared spot ticker (one 1s poll per code, N subscribers) ----
@@ -1076,7 +1108,10 @@ async function spotPoll(code: string): Promise<void> {
       // but this is NOT a market update: nothing is recorded, no candle and
       // no handler sees the frozen price again.
       e.fails = 0;
-      setSpotState({ state: "live", lastTickAt: Date.now(), providerDelaySec });
+      // keep lastTickAt UNCHANGED: the price did not update — the badge must
+      // keep displaying the last genuine observation ("Upd HH:MM:SS · Ns ago"
+      // honestly grows) instead of re-stamping a frozen quote every second
+      setSpotState({ state: "live", lastTickAt: getSpotState().lastTickAt, providerDelaySec });
       return;
     }
     const now = Date.now();
@@ -1131,7 +1166,20 @@ let lastSpotIslandRejected = 0;
 function loadLocalSpot(code: string): SpotCandle[] {
   try {
     const arr = JSON.parse(localStorage.getItem(SPOT_REC_KEY(code)) || "[]");
-    return Array.isArray(arr) ? arr.filter((c: any) => c && Number.isFinite(c.t)) : [];
+    if (!Array.isArray(arr)) return [];
+    // Phase 28 §3/§9: closed-session (weekend FX/metals) candles recorded by
+    // pre-fix builds are provably false — drop them from every read AND
+    // rewrite the store so they never come back. Crypto has no closed
+    // sessions (empty interval list) and passes through untouched.
+    const sym = SPOT_SYMBOL_OF[code];
+    const clean: SpotCandle[] = sym
+      ? filterClosedCandles(sym, arr.filter((c: any) => c && Number.isFinite(c.t)).map((c: SpotCandle) => ({ ...c, time: c.t })))
+        .map(({ time, ...rest }: SpotCandle & { time: number }) => rest)
+      : arr.filter((c: any) => c && Number.isFinite(c.t));
+    if (sym && clean.length !== arr.length) {
+      try { localStorage.setItem(SPOT_REC_KEY(code), JSON.stringify(clean)); } catch { /* best-effort */ }
+    }
+    return clean;
   } catch { return []; }
 }
 

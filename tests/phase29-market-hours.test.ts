@@ -8,7 +8,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { marketHours, nextOpen, marketOpenOrThrow } from "../shared/market-hours.ts";
+import { marketHours, nextOpen, marketOpenOrThrow, closedIntervals, filterClosedCandles, isClosedAt } from "../shared/market-hours.ts";
 
 const T = (isoUtc: string) => Date.parse(isoUtc);
 
@@ -113,4 +113,88 @@ test("indices keep their real exchange windows; unknown classes never blocked", 
   // unknown instrument → closed (phase 21 contract; the backend rejects
   // unknown symbols with BAD_SYMBOL long before this guard matters)
   assert.equal(marketHours("NOT_A_SYMBOL", SAT_NOON).open, false);
+});
+
+// ---- Phase 28 — weekend candle-generation pipeline --------------------------
+// The recorder/merger gates all run through these pure helpers, so the
+// simulated-clock scenario matrix below covers the whole pipeline: a candle
+// whose OPEN time falls in a closed session is provably false (a closed
+// market cannot print a price) and must be rejected at every door — client
+// recorder, server spot-record, server serving fold, purge.
+
+// candles are stored in epoch SECONDS (T() gives ms) — divide once here
+const SC: (t: number) => any = (t: number) => ({ time: t / 1000, t: t / 1000, o: 3539, h: 3539, l: 3539, c: 3539, s: 1 });
+
+test("§8 Fri before close: M1 candle accepted (open session)", () => {
+  // Fri Nov 20 2026, 15:00 NY = 20:00 UTC — genuine session
+  const kept = filterClosedCandles("XAUUSD", [SC(T("2026-11-20T20:00:00Z"))]);
+  assert.equal(kept.length, 1);
+  assert.equal(isClosedAt("XAUUSD", T("2026-11-20T20:00:00Z") / 1000), false);
+});
+
+test("§8 Fri after close: candle rejected at every door", () => {
+  assert.equal(isClosedAt("XAUUSD", T("2026-11-20T22:30:00Z") / 1000), true);
+  assert.equal(filterClosedCandles("XAUUSD", [SC(T("2026-11-20T22:30:00Z"))]).length, 0);
+});
+
+test("§8 Saturday morning AND evening: no candles can exist", () => {
+  const sat = [T("2026-11-21T08:00:00Z"), T("2026-11-21T15:00:00Z"), T("2026-11-21T21:59:00Z")];
+  for (const t of sat) {
+    assert.equal(isClosedAt("XAUUSD", t / 1000), true, `Sat ${t}`);
+    assert.equal(isClosedAt("EURUSD", t / 1000), true);
+    assert.equal(filterClosedCandles("XAUUSD", [SC(t)]).length, 0);
+  }
+  // crypto: same Saturday instants are a valid open session — untouched
+  const btc = filterClosedCandles("BTCUSD", sat.map(SC));
+  assert.equal(btc.length, 3); // empty closed-interval list for crypto
+});
+
+test("§8 Sunday before reopening: rejected; after reopening: accepted", () => {
+  // FX reopens Sun 17:00 EST = 22:00 UTC; metals one hour later (23:00 UTC)
+  assert.equal(filterClosedCandles("EURUSD", [SC(T("2026-11-22T18:00:00Z"))]).length, 0);
+  assert.equal(filterClosedCandles("XAUUSD", [SC(T("2026-11-22T22:00:00Z"))]).length, 0);
+  assert.equal(filterClosedCandles("EURUSD", [SC(T("2026-11-22T23:00:00Z"))]).length, 1);
+  assert.equal(filterClosedCandles("XAUUSD", [SC(T("2026-11-22T23:00:00Z"))]).length, 1);
+});
+
+test("§8 DST transition days produce the correct closed windows", () => {
+  // spring forward Sun 2026-03-08: FX closed until 21:00 UTC (17:00 EDT)
+  const fx = closedIntervals("EURUSD", T("2026-03-08T00:00:00Z") / 1000, T("2026-03-09T00:00:00Z") / 1000);
+  assert.deepEqual(fx, [{ from: T("2026-03-08T00:00:00Z") / 1000, to: T("2026-03-08T21:00:00Z") / 1000 }]);
+  // metals reopen at 22:00 UTC EDT
+  const gold = closedIntervals("XAUUSD", T("2026-03-08T00:00:00Z") / 1000, T("2026-03-09T00:00:00Z") / 1000);
+  assert.equal(gold[0].to, T("2026-03-08T22:00:00Z") / 1000);
+  // fall back Sun 2026-11-01: FX closed until 22:00 UTC (17:00 EST)
+  const fx2 = closedIntervals("EURUSD", T("2026-11-01T00:00:00Z") / 1000, T("2026-11-02T00:00:00Z") / 1000);
+  assert.equal(fx2[0].to, T("2026-11-01T22:00:00Z") / 1000);
+});
+
+test("§8 metals daily-break minute is provably false on Wednesday", () => {
+  // Wed Nov 18 2026, 17:30 NY = 22:30 UTC — CME metals pause
+  assert.equal(filterClosedCandles("XAUUSD", [SC(T("2026-11-18T22:30:00Z"))]).length, 0);
+  assert.equal(filterClosedCandles("EURUSD", [SC(T("2026-11-18T22:30:00Z"))]).length, 1);
+});
+
+test("§6 higher timeframes cannot inherit a false weekend sample", () => {
+  // the store contains Fri-close + weekend + Sun-reopen candles; the serving
+  // filter must keep ONLY the genuine ones, so any H1/H4/D1 fold built from
+  // this array is clean by construction
+  const store = [
+    T("2026-11-20T21:59:00Z"), // Fri 16:59 NY — last genuine minute
+    T("2026-11-20T22:05:00Z"), // Fri 17:05 NY — false
+    T("2026-11-21T09:30:00Z"), // Sat — false
+    T("2026-11-22T15:00:00Z"), // Sun 10:00 NY — false
+    T("2026-11-22T23:30:00Z"), // Sun 18:30 NY — genuine reopen
+  ].map(SC);
+  const kept = filterClosedCandles("XAUUSD", store);
+  assert.deepEqual(kept.map((c) => c.time), [store[0].time, store[4].time]); // seconds
+});
+
+test("§9 genuine open-session corrections are never dropped", () => {
+  // Friday bucket boundaries and the reopen minute all pass unharmed
+  const edge = [
+    T("2026-11-20T04:00:00Z"), // Fri 00:00 NY — session live
+    T("2026-11-22T23:00:00Z"), // metals Sunday reopen minute (18:00 NY)
+  ].map(SC);
+  assert.equal(filterClosedCandles("XAUUSD", edge).length, 2);
 });

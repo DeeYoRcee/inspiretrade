@@ -222,6 +222,7 @@ import {
   type RawBar,
 } from "../../shared/feed-validation";
 import { aggregateBars, SPOT_PRICE_BANDS } from "../../shared/terminal";
+import { marketHours, filterClosedCandles, closedIntervals } from "../../shared/market-hours";
 import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
 import { runBackfillStep, readRange, coverageReport, writeShards } from "./lib/hist";
 import type { BackfillResult, RangeResult, CoverageRow } from "./lib/hist";
@@ -422,10 +423,15 @@ export default handle(async (req, res) => {
     //     bars — deep hourly/daily history in one small payload.
     const tfSec = Math.max(60, Math.min(2592000, Math.floor(Number(url.searchParams.get("tf")) || 60)));
     const minT = tfSec > 60 ? 0 : now - 65 * 86400;
-    const rawCandles = Object.entries(obj)
-      .map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) }))
+    let rawCandles = Object.entries(obj)
+      .map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0), time: Number(t) }))
       .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT && c.t <= now)
       .sort((a, b) => a.t - b.t);
+    // Phase 28 §3/§6: closed-session (weekend) candles are provably false —
+    // drop them BEFORE validation/aggregation so no timeframe fold can
+    // inherit a false weekend sample. Historical corrections to genuine
+    // open-session candles are unaffected.
+    rawCandles = filterClosedCandles(code === "XAU" ? "XAUUSD" : "XAGUSD", rawCandles);
     const checked = validateBars(rawCandles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.s })));
     if (tfSec > 60) {
       const agg = aggregateBars(checked.bars as any[], tfSec / 60) as any[];
@@ -448,12 +454,30 @@ export default handle(async (req, res) => {
       // Phase 26 §S4: identity price-band — the recorded-store write path was
       // the only ingest without one (a $0.01 "gold" candle poisoned the chart).
       const [loBand, hiBand] = SPOT_PRICE_BANDS[code];
+      // Phase 28 §3: session gate at the WRITE door — a candle whose open
+      // timestamp falls in a closed FX/metals session (weekend) is provably
+      // false and is never merged into spotTicks, no matter which client
+      // version sends it. Crypto is exempt via its empty closed-interval list.
+      const recSymbol = code === "XAU" ? "XAUUSD" : "XAGUSD";
+      const recIntervals = closedIntervals(recSymbol, now - 8 * 86400, minuteNow);
+      const closedAtRec = (t: number): boolean => {
+        let lo = 0, hi = recIntervals.length - 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          const iv = recIntervals[mid];
+          if (t < iv.from) hi = mid - 1;
+          else if (t >= iv.to) lo = mid + 1;
+          else return true;
+        }
+        return false;
+      };
       const incoming = (Array.isArray(rec?.candles) ? rec.candles.slice(0, 40) : [])
         .map((c: any) => ({ t: Number(c?.t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 1) }))
         .filter((c: any) => {
           // same validity rules as the client (shared/spot-tail logic, inlined
           // for the bundled function): aligned, sane envelope, ≤ 8 days old
           if (!Number.isFinite(c.t) || c.t % 60 !== 0 || c.t > minuteNow || c.t < now - 8 * 86400) return false;
+          if (closedAtRec(c.t)) return false; // Phase 28 §3: closed session — reject
           if (![c.o, c.h, c.l, c.c].every((v: number) => Number.isFinite(v) && v > 0)) return false;
           if (c.h < Math.max(c.o, c.c) || c.l > Math.min(c.o, c.c) || c.h < c.l) return false;
           if (c.o < loBand || c.o > hiBand || c.c < loBand || c.c > hiBand) return false;
@@ -792,6 +816,48 @@ export default handle(async (req, res) => {
     return res.json({ ok: true, symbol: sym, rows } as { ok: boolean; symbol: string; rows: CoverageRow[] });
   }
 
+  // ---- Phase 28 §9: purge provably-false closed-session candles ----------
+  // Weekend recorder dots (pre-fix clients folded frozen gold-api prices
+  // into spotTicks) are deleted — never rewritten, never replaced. Genuine
+  // open-session candles are untouched by construction (closedIntervals).
+  if (action === "purge-weekend" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const wanted = Array.isArray(raw?.symbols) && raw.symbols.length ? raw.symbols : ["XAUUSD", "XAGUSD"];
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - 70 * 86400; // recorder validity 8d · serve window 65d → 70d covers every poisonable key
+    const report: Record<string, { removed: number; kept: number }> = {};
+    for (const symRaw of wanted) {
+      const symbol = String(symRaw).toUpperCase();
+      const code = symbol === "XAUUSD" ? "XAU" : symbol === "XAGUSD" ? "XAG" : null;
+      if (!code) continue;
+      const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
+      const obj: Record<string, any> = snap.val() || {};
+      const entries = Object.entries(obj)
+        .map(([t, c]) => ({ t: Number(t), o: Number(c?.o) }))
+        .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= from && c.t <= now);
+      // interval-walk filter: keep genuine open-session candles, list the rest
+      const intervals = closedIntervals(symbol, from, now);
+      const toDelete: string[] = [];
+      for (const c of entries) {
+        let inside = false;
+        for (const iv of intervals) {
+          if (c.t >= iv.from && c.t < iv.to) { inside = true; break; }
+        }
+        if (inside) toDelete.push(String(c.t));
+      }
+      for (let i = 0; i < toDelete.length; i += 500) {
+        const chunk: Record<string, null> = {};
+        for (const k of toDelete.slice(i, i + 500)) chunk[k] = null;
+        await rtdb().ref(`spotTicks/${code}`).update(chunk);
+      }
+      const removed = toDelete.length;
+      report[symbol] = { removed, kept: entries.length - removed };
+    }
+    return res.json({ ok: true, report, at: Date.now() });
+  }
+
   if (action === "import-fx" && req.method === "POST") {
     // Phase 26 §S4: this writes SHARED chart history from client-supplied
     // bars (50k per call) — it must never be an anonymous-user write path.
@@ -1007,8 +1073,10 @@ export default handle(async (req, res) => {
       // Phase 20: record the observed BID BEFORE any rejection below — every
       // request must feed the live-minute recorder or a cold session would
       // never accumulate today's real OHLC
-      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
-      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
+      // Phase 28 §3: a closed-market bid is a frozen quote, not a tick — no
+      // recorder feed and no live paint while the session is shut
+      if (t && marketHours(bareCode).open) void recordFxLiveBids({ [bareCode]: t.bid });
+      if (t && marketHours(bareCode).open && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     // Phase 20: Yahoo's FX intraday 1m bars are CLOSE-ONLY — every bar
     // arrives O=H=L=C (verified live 2026-11-19: EURUSD=X 6712/6712 flat,
@@ -1075,7 +1143,9 @@ export default handle(async (req, res) => {
     // several minutes, and the gold-api spot is the genuine spot price
     let live = false;
     const spotCode2 = SPOT_API_MAP[symbols];
-    if (spotCode2 && !periodMode && last) {
+    // Phase 28 §3: the gold-api spot is a frozen weekend price when closed —
+    // appending it here minted the false Saturday/Sunday daily + intraday bars
+    if (spotCode2 && !periodMode && last && marketHours(symbols).open) {
       const spot = await fetchSpot(spotCode2);
       if (spot != null && mergeSpotBars(capped, spot, si === "d" ? "1d" : interval === "5m" ? "5m" : interval)) live = true;
     }
@@ -1164,8 +1234,8 @@ export default handle(async (req, res) => {
       // Phase 18: paint the genuine BID — same price side as the Dukascopy
       // BID history the store serves; mid is reserved for execution quotes
       // Phase 20: and feed the live-minute recorder
-      if (t) void recordFxLiveBids({ [bareCode]: t.bid });
-      if (t && mergeSpotBars(bars, t.bid, interval)) live = true;
+      if (t && marketHours(bareCode).open) void recordFxLiveBids({ [bareCode]: t.bid });
+      if (t && marketHours(bareCode).open && mergeSpotBars(bars, t.bid, interval)) live = true;
     }
     const last = bars[bars.length - 1];
     return {
@@ -1357,6 +1427,7 @@ export default handle(async (req, res) => {
     // mode, never for futures-labeled payloads).
     let final: any = payload;
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
+      const marketLive = marketHours(bareCode).open; // Phase 28 §3: no tail paint on a closed market
       try {
         const t = (await truefxQuotes())[bareCode];
         // Phase 24 D6: paint the TrueFX BID tail ONLY onto BID-consistent
@@ -1365,7 +1436,7 @@ export default handle(async (req, res) => {
         // junction with no disclosure — the tail now leaves MID series as
         // MID (its tail just refreshes on the next cache generation).
         const bidConsistent = typeof final.source === "string" && final.source.startsWith("fx-store");
-        if (t?.bid > 0 && bidConsistent) {
+        if (t?.bid > 0 && bidConsistent && marketLive) {
           void recordFxLiveBids({ [bareCode]: t.bid });
           // copy-on-write: mergeSpotBars mutates its input — never mutate the
           // cached array the next cache generation will read from
@@ -1373,7 +1444,7 @@ export default handle(async (req, res) => {
           if (mergeSpotBars(bars2, t.bid, interval)) {
             final = { ...final, bars: bars2, at: Date.now(), liveTail: "truefx" };
           }
-        } else if (t?.bid > 0) {
+        } else if (t?.bid > 0 && marketLive) {
           // the observation still feeds the live-minute recorder (fromFxStore
           // unions it back in) — only the direct series paint is skipped
           void recordFxLiveBids({ [bareCode]: t.bid });
