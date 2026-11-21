@@ -33,7 +33,8 @@
   }
   :root[data-theme="light"] {
     color-scheme: light;
-    --background: 210 25% 97%; --foreground: 225 18% 12%; --card: 0 0% 100%; --card-foreground: 225 18% 12%; --popover: 0 0% 100%; --popover-foreground: 225 18% 12%; --primary: 222 47% 25%; --primary-foreground: 0 0% 100%; --secondary: 210 20% 91%; --secondary-foreground: 225 18% 12%; --muted: 210 20% 92%; --muted-foreground: 220 8% 42%; --accent: 210 20% 88%; --accent-foreground: 225 18% 12%; --destructive: 348 75% 44%; --destructive-foreground: 0 0% 100%; --success: 142 65% 34%; --success-foreground: 0 0% 100%; --border: 214 20% 84%; --input: 214 20% 84%; --ring: 222 47% 45%;
+    /* Phase 34d: darkened a notch — the old values were almost white-on-white */
+    --background: 210 20% 93%; --foreground: 225 18% 12%; --card: 0 0% 100%; --card-foreground: 225 18% 12%; --popover: 0 0% 100%; --popover-foreground: 225 18% 12%; --primary: 222 47% 25%; --primary-foreground: 0 0% 100%; --secondary: 210 15% 86%; --secondary-foreground: 225 18% 12%; --muted: 210 15% 87%; --muted-foreground: 220 10% 35%; --accent: 210 15% 83%; --accent-foreground: 225 18% 12%; --destructive: 348 75% 44%; --destructive-foreground: 0 0% 100%; --success: 142 65% 34%; --success-foreground: 0 0% 100%; --border: 214 15% 76%; --input: 214 15% 76%; --ring: 222 47% 45%;
   }
   :root[data-theme="ocean"] {
     color-scheme: dark;
@@ -62,12 +63,13 @@
      of the chosen theme. Token overrides below remap the exact utility
      classes the terminal uses, scoped to [data-term] (the terminal page
      root), so the rest of the site is untouched. */
+  /* Phase 34d: neutral black instead of the slate-blue chrome */
   :root {
-    --term-bg: #0b1220; --term-pane: #0a101f; --term-panel: rgb(15 23 42 / 0.9);
-    --term-panel-95: rgb(15 23 42 / 0.95); --term-solid: #0f172a;
-    --term-border: rgb(51 65 85 / 0.6); --term-border2: rgb(30 41 59 / 0.6);
-    --term-text: #e2e8f0; --term-muted: #94a3b8; --term-faint: #64748b;
-    --term-chip: rgb(30 41 59 / 0.9);
+    --term-bg: #0a0a0a; --term-pane: #060606; --term-panel: rgb(8 8 8 / 0.9);
+    --term-panel-95: rgb(8 8 8 / 0.95); --term-solid: #101010;
+    --term-border: rgb(64 64 64 / 0.55); --term-border2: rgb(38 38 38 / 0.6);
+    --term-text: #e5e5e5; --term-muted: #a3a3a3; --term-faint: #737373;
+    --term-chip: rgb(20 20 20 / 0.9);
   }
   :root[data-theme="light"] {
     --term-bg: #f8fafc; --term-pane: #eef2f7; --term-panel: rgb(255 255 255 / 0.92);
@@ -82,7 +84,7 @@
   :root[data-theme="aurora"]  { --term-bg: #04141c; --term-pane: #031118; --term-solid: #0a2029; --term-panel: rgb(10 32 41 / 0.92); --term-panel-95: rgb(10 32 41 / 0.96); --term-border: rgb(45 212 168 / 0.35); --term-border2: rgb(19 55 66 / 0.6); }
   :root[data-theme="neon"]    { --term-bg: #0d0618; --term-pane: #0b0515; --term-solid: #180c2b; --term-panel: rgb(24 12 43 / 0.92); --term-panel-95: rgb(24 12 43 / 0.96); --term-border: rgb(232 121 249 / 0.35); --term-border2: rgb(50 26 84 / 0.6); }
   :root[data-theme="cosmos"]  { --term-bg: #05060f; --term-pane: #04050d; --term-solid: #0b0d1e; --term-panel: rgb(11 13 30 / 0.92); --term-panel-95: rgb(11 13 30 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(30 33 66 / 0.6); }
-  :root[data-theme="knight"]  { --term-bg: #0b0e14; --term-pane: #090c11; --term-solid: #141824; --term-panel: rgb(20 24 36 / 0.92); --term-panel-95: rgb(20 24 36 / 0.96); --term-border: rgb(71 85 105 / 0.5); --term-border2: rgb(38 46 64 / 0.6); }
+  :root[data-theme="knight"]  { --term-bg: #0a0a0a; --term-pane: #070707; --term-solid: #121212; --term-panel: rgb(16 16 16 / 0.92); --term-panel-95: rgb(16 16 16 / 0.96); --term-border: rgb(64 64 64 / 0.5); --term-border2: rgb(36 36 36 / 0.6); }
   :root[data-theme="money"]   { --term-bg: #04140d; --term-pane: #03110a; --term-solid: #082418; --term-panel: rgb(8 36 24 / 0.92); --term-panel-95: rgb(8 36 24 / 0.96); --term-border: rgb(47 191 113 / 0.4); --term-border2: rgb(20 61 40 / 0.6); }
   :root[data-theme="f1"]      { --term-bg: #120404; --term-pane: #0f0303; --term-solid: #220707; --term-panel: rgb(34 7 7 / 0.92); --term-panel-95: rgb(34 7 7 / 0.96); --term-border: rgb(220 38 38 / 0.45); --term-border2: rgb(74 20 20 / 0.6); }
 

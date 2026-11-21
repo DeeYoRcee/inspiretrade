@@ -19,7 +19,6 @@ import { usePrice } from "@/lib/price-store";
 import { useServerQuote } from "@/hooks/use-server-quote";
 import { useTerminalSettings } from "@/lib/terminal-settings";
 import { useInstrumentSettings } from "@/lib/instrument-settings";
-import { playEntrySound, getEntrySound } from "@/lib/sfx";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -167,7 +166,6 @@ export function TradingPanel({
       sl: slPx, tp: tpPrice ? Number(tpPrice) : null,
     });
     if (res) {
-      if (ts.trading.entrySoundOnOrder) playEntrySound(getEntrySound());
       if (res.position) toast({ title: `${side === "buy" ? "BUY" : "SELL"} ${symbol} — filled`, description: `${lotsNum} lots @ ${res.position.entry.toFixed(d)} (server ${res.quote?.source ?? ""})` });
       else if (res.order) toast({ title: `${side === "buy" ? "Buy" : "Sell"} ${orderKind} placed`, description: `${symbol} trigger ${res.order.price}` });
     }

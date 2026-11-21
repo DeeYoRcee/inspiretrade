@@ -8,7 +8,6 @@ import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { ThemeProvider } from "@/lib/theme-context";
 import { LanguageProvider, useLanguage } from "@/lib/language-context";
-import { playEntryChimeOnce } from "@/lib/sfx";
 import { Navbar } from "@/components/layout/Navbar";
 import { ThemeBackdrop } from "@/components/layout/ThemeBackdrop";
 import NotFound from "@/pages/not-found";
@@ -174,11 +173,7 @@ function AppLayout({ children }: { children: ReactNode }) {
 }
 
 function LoadingScreen() {
-  // the splash chime — plays once per tab session; browsers that block
-  // audio before a gesture defer it to the first click/keypress
-  useEffect(() => {
-    playEntryChimeOnce();
-  }, []);
+  // Phase 34d: the splash entry chime was removed per user request
   return (
     <div className="min-h-screen flex items-center justify-center">
       <img src="/logo.png" alt="InspireTrade" draggable={false} className="h-16 w-auto animate-pulse" />

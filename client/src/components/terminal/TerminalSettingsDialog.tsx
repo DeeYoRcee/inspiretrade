@@ -350,10 +350,6 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                   <Toggle label="One-click trading" checked={ts.trading.oneClick}
                     onChange={(v) => updateTerminalSettings({ trading: { oneClick: v } })} />
                 </Show>
-                <Show label="Entry sound on fill" hint="Plays your selected entry sound when an order fills (pick the sound on the Settings page)">
-                  <Toggle label="Entry sound on fill" checked={ts.trading.entrySoundOnOrder}
-                    onChange={(v) => updateTerminalSettings({ trading: { entrySoundOnOrder: v } })} />
-                </Show>
               </div>
             )}
 

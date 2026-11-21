@@ -48,14 +48,14 @@ export interface ChartSettings {
 export const DEFAULT_SETTINGS: ChartSettings = {
   grid: true, countdown: true, legend: true, magnet: true, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
-  bgColor: "#0b1220", gridColor: "#16213a", crosshairColor: "rgba(224,229,237,0.35)",
+  bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)",
   drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
 };
 
 /** Phase 34: professional appearance presets — one click re-styles the chart. */
 export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSettings> }[] = [
-  { id: "inspire", label: "InspireTrade", s: { bgColor: "#0b1220", gridColor: "#16213a", crosshairColor: "rgba(224,229,237,0.35)", upColor: "#e9edf4", downColor: "#9598a1" } },
-  { id: "classic", label: "Classic Green", s: { bgColor: "#0b1220", gridColor: "#16213a", crosshairColor: "rgba(224,229,237,0.35)", upColor: "#22c55e", downColor: "#ef4444" } },
+  { id: "inspire", label: "InspireTrade", s: { bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)", upColor: "#e9edf4", downColor: "#9598a1" } },
+  { id: "classic", label: "Classic Green", s: { bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)", upColor: "#22c55e", downColor: "#ef4444" } },
   { id: "midnight", label: "Midnight", s: { bgColor: "#05070d", gridColor: "#101827", crosshairColor: "rgba(148,163,184,0.4)", upColor: "#26a69a", downColor: "#ef5350" } },
   { id: "contrast", label: "High Contrast", s: { bgColor: "#000000", gridColor: "#22262e", crosshairColor: "rgba(255,255,255,0.5)", upColor: "#4ade80", downColor: "#f87171" } },
   // Phase 34b — the five minimal TradingView-style themes from the reference

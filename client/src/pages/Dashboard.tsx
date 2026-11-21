@@ -169,7 +169,8 @@ export default function Dashboard() {
 
       <StatsCards category={category} />
 
-      {/* Community Win Rate */}
+      {/* Community stats + Top Currencies — Phase 34d: one compact row */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-2 items-start">
       {(() => {
         const PERIODS: { key: StatsPeriod; label: string }[] = [
           { key: "daily",   label: t("daily") },
@@ -182,7 +183,6 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-6"
           >
             <Card className="glass-panel border-primary/20">
               <CardHeader className="pb-3 pt-4 px-5">
@@ -278,9 +278,9 @@ export default function Dashboard() {
         );
       })()}
 
-      {/* Top Currencies (the separate win-rate chart was removed — win rate lives in StatsCards) */}
-      <div className="mt-8">
-        <TopCurrencies category={category} />
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <TopCurrencies category={category} />
+        </motion.div>
       </div>
 
       {/* Calendar */}

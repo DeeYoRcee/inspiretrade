@@ -253,8 +253,12 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
                 <button
                   key={p.id}
                   onClick={() => setGlobalCfg(p.s)}
-                  className="rounded-lg border border-slate-700/60 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:border-primary/50 hover:text-primary"
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-700/60 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:border-primary/50 hover:text-primary"
                 >
+                  <span className="relative h-3 w-6 shrink-0 overflow-hidden rounded-sm border border-slate-700" style={{ background: p.s.bgColor }}>
+                    <span className="absolute left-1 top-0 h-2.5 w-1.5 rounded-[1px]" style={{ background: p.s.upColor }} />
+                    <span className="absolute right-1 top-0.5 h-2 w-1.5 rounded-[1px]" style={{ background: p.s.downColor }} />
+                  </span>
                   {p.label}
                 </button>
               ))}

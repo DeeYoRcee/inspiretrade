@@ -148,14 +148,14 @@ export default function RewardsPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Daily claim — spans both rows on desktop: the left column is one
-            tall card, Cases + VIP stack on the right */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="lg:row-span-2">
+        {/* Daily claim — Phase 34d: back to its old compact form (natural
+            height, no stretching) */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
           <Card className="glass-panel h-full border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-lg"><Gift className="h-5 w-5 text-primary" />{t("dailyReward")}</CardTitle>
             </CardHeader>
-            <CardContent className="flex h-full flex-col justify-between gap-4">
+            <CardContent className="space-y-4">
               <div className="grid grid-cols-4 gap-2">
                 {Array.from({ length: REWARD_CYCLE_DAYS }, (_, i) => i + 1).map((day) => {
                   const isGold = day === GOLD_CASE_DAY;
@@ -287,9 +287,9 @@ export default function RewardsPage() {
           </Card>
         </motion.div>
 
-        {/* VIP Reward — Phase 34b: moved to the RIGHT column (under Cases)
-            to fill the empty area the user pointed at */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.06 }} className="lg:col-start-2">
+        {/* VIP Reward — Phase 34d: full width, spreading under BOTH Cases
+            and the Daily Reward (user request) */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.06 }} className="lg:col-span-2">
           <Card className={cn("glass-panel h-full border-emerald-500/25", !isVip && "opacity-80")}>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center justify-between gap-2 text-lg">

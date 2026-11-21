@@ -181,9 +181,10 @@ export function ChartToolbar({
                   onClick={() => { applyPreset(p.s); setThemeOpen(false); }}
                   className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-slate-300 hover:bg-slate-800"
                 >
-                  <span className="flex h-4 w-7 shrink-0 overflow-hidden rounded-sm border border-slate-700" style={{ background: p.s.bgColor }}>
-                    <span className="h-full w-1/2" style={{ background: p.s.upColor }} />
-                    <span className="h-full w-1/2" style={{ background: p.s.downColor }} />
+                  {/* the theme's BACKGROUND is part of the preset — show it */}
+                  <span className="relative h-4 w-7 shrink-0 overflow-hidden rounded-sm border border-slate-700" style={{ background: p.s.bgColor }}>
+                    <span className="absolute left-1 top-0.5 h-3 w-1.5 rounded-[1px]" style={{ background: p.s.upColor }} />
+                    <span className="absolute right-1 top-1 h-2.5 w-1.5 rounded-[1px]" style={{ background: p.s.downColor }} />
                   </span>
                   {p.label}
                 </button>
