@@ -18,6 +18,9 @@ interface ChatMessage {
   username?: string;
   /** stamped server-side via admin chat-send — renders the CEO badge */
   ceo?: boolean;
+  /** Phase 30: paid VIP (premium) member — gold VIP badge (stamped from the
+   *  sender's own premium flag; cosmetic only, CEO stays server-stamped) */
+  vip?: boolean;
   text: string;
   at: number;
 }
@@ -107,6 +110,8 @@ export function GlobalChat() {
           uid: user.uid,
           name: displayName,
           ...(profile?.username ? { username: profile.username } : {}),
+          // VIP badge mirrors the paid premium flag on the sender's profile
+          ...(profile?.isPremium || profile?.premiumPlan ? { vip: true } : {}),
           text: value,
           at: serverTimestamp(),
         });
@@ -177,28 +182,45 @@ export function GlobalChat() {
                   onClick={() => m.username && navigate(`/@${m.username}`)}
                   className={cn(
                     "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white",
-                    m.ceo ? "bg-gradient-to-br from-amber-400 to-yellow-600 text-black" : "",
+                    m.ceo
+                      ? "bg-gradient-to-br from-red-500 to-red-700 text-white ring-1 ring-red-300/50"
+                      : m.vip
+                        ? "bg-gradient-to-br from-amber-400 to-yellow-600 text-black"
+                        : "",
                     m.username && "cursor-pointer hover:opacity-85",
                   )}
-                  style={m.ceo ? undefined : { backgroundColor: uidColor(m.uid) }}
+                  style={m.ceo || m.vip ? undefined : { backgroundColor: uidColor(m.uid) }}
                   title={m.username ? `@${m.username}` : undefined}
                 >
-                  {m.ceo ? <Crown className="h-3.5 w-3.5" /> : (m.name || "?").replace("@", "").slice(0, 2).toUpperCase()}
+                  {m.ceo ? <Crown className="h-3.5 w-3.5" /> : m.vip ? "★" : (m.name || "?").replace("@", "").slice(0, 2).toUpperCase()}
                 </button>
                 <div className={cn("min-w-0 max-w-[75%]", m.uid === user.uid && "text-right")}>
                   <div className={cn("flex items-center gap-1.5", m.uid === user.uid && "flex-row-reverse")}>
                     {m.ceo ? (
-                      // platform owner — gold CEO badge, links to the public profile
+                      // platform owner — RED CEO badge, links to the public profile
                       <button
                         onClick={() => m.username && navigate(`/@${m.username}`)}
                         className={cn(
-                          "inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-300",
-                          m.username && "hover:bg-amber-500/25",
+                          "inline-flex items-center gap-1 rounded-full border border-red-500/50 bg-red-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-red-400",
+                          m.username && "hover:bg-red-500/25",
                         )}
                         title={m.username ? `@${m.username}` : "CEO"}
                       >
                         <Crown className="h-3 w-3" />
                         CEO
+                      </button>
+                    ) : m.vip ? (
+                      // Phase 30: paid VIP — gold badge, links to the public profile
+                      <button
+                        onClick={() => m.username && navigate(`/@${m.username}`)}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full border border-amber-400/50 bg-amber-400/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-300",
+                          m.username && "hover:bg-amber-400/25",
+                        )}
+                        title={m.username ? `@${m.username}` : "VIP"}
+                      >
+                        ★
+                        VIP
                       </button>
                     ) : (
                       <button

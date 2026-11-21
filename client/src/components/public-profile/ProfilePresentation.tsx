@@ -33,8 +33,12 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
     <article
       className={cn(
         "overflow-hidden rounded-3xl border bg-card shadow-[0_24px_90px_rgba(0,0,0,.28)]",
-        // Phase 19: CEO profiles carry the gold stroke on the public page too
-        profile.ceo ? "border-amber-400/80 shadow-[0_0_36px_rgba(251,191,36,0.15)]" : "border-border/60",
+        // Phase 30: CEO = red stroke, VIP (premium) = gold stroke on the public page
+        profile.ceo
+          ? "border-red-500/70 shadow-[0_0_36px_rgba(239,68,68,0.16)]"
+          : profile.vip
+            ? "border-amber-400/80 shadow-[0_0_36px_rgba(251,191,36,0.15)]"
+            : "border-border/60",
       )}
     >
       {/* Telegram-like mini profile card — Steam-style animated background */}
@@ -60,7 +64,12 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full bg-emerald-400/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-40 left-[20%] h-72 w-96 rounded-full bg-cyan-300/[0.06] blur-3xl" />
 
-        <div className="relative mx-auto flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-200/30 bg-emerald-100/10 text-2xl font-black text-emerald-50 shadow-[0_8px_40px_-8px_rgba(16,185,129,0.5)]">
+        <div
+          className={cn(
+            "relative mx-auto flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 bg-emerald-100/10 text-2xl font-black text-emerald-50 shadow-[0_8px_40px_-8px_rgba(16,185,129,0.5)]",
+            profile.ceo ? "border-red-500" : profile.vip ? "border-amber-400" : "border-emerald-200/30",
+          )}
+        >
           {videoSrc ? (
             <video
               src={videoSrc}
@@ -79,6 +88,21 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         </div>
 
         <h2 className="relative mt-3 text-2xl font-bold tracking-tight">{profile.displayName}</h2>
+        {/* Phase 30: CEO (red) / VIP (gold) badges — mirror the profile stroke */}
+        {(profile.ceo || profile.vip) && (
+          <div className="relative mt-1.5 flex items-center justify-center gap-1.5">
+            {profile.ceo && (
+              <span className="inline-flex items-center rounded-full border border-red-400/60 bg-red-500/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300">
+                CEO
+              </span>
+            )}
+            {profile.vip && (
+              <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-400/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                VIP
+              </span>
+            )}
+          </div>
+        )}
         <p className="relative text-sm text-emerald-50/60">@{profile.username}</p>
 
         {/* Telegram-collectible style — every handle this profile holds */}

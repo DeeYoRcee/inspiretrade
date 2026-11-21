@@ -427,6 +427,14 @@ export default function ProfilePage() {
     }
   };
 
+  // Phase 30: CEO = RED stroke/badge (platform owner), VIP = GOLD stroke/badge
+  // (paid premium membership). A CEO who is also premium shows both badges.
+  const isVip = !!(profile?.isPremium || profile?.premiumPlan);
+  const strokeTone = profile?.ceo
+    ? { border: "border-red-500", section: "border-red-500/70 shadow-[0_0_28px_rgba(239,68,68,0.18)]", avatar: "border-red-500 shadow-[0_0_18px_rgba(239,68,68,0.35)]" }
+    : isVip
+      ? { border: "border-amber-400", section: "border-amber-400/80 shadow-[0_0_28px_rgba(251,191,36,0.18)]", avatar: "border-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.35)]" }
+      : { border: "border-background", section: "border-border/50", avatar: "border-background" };
   const pnlTone = stats.netPnl > 0 ? "text-emerald-500" : stats.netPnl < 0 ? "text-red-500" : undefined;
   const pnlText = stats.total
     ? `${stats.netPnl >= 0 ? "+" : "-"}$${Math.abs(stats.netPnl).toFixed(2)}`
@@ -442,9 +450,7 @@ export default function ProfilePage() {
         className={cn(
           "relative isolate overflow-hidden rounded-3xl border pb-6 pt-10 text-center",
           // Phase 19: CEO accounts get a permanent gold stroke on their profile
-          profile?.ceo
-            ? "border-amber-400/80 shadow-[0_0_28px_rgba(251,191,36,0.18)]"
-            : "border-border/50",
+          strokeTone.section,
         )}
         style={profileBackground ? { background: profileBackground.tint } : undefined}
       >
@@ -491,7 +497,7 @@ export default function ProfilePage() {
               onClick={() => setMediaView({ src: avatarVideoSrc || profileVideoSrc!, kind: "video" })}
               className={cn(
                 "mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 object-cover shadow-lg",
-                profile?.ceo ? "border-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.35)]" : "border-background",
+                strokeTone.avatar,
               )}
             />
           ) : avatarSrc ? (
@@ -501,7 +507,7 @@ export default function ProfilePage() {
               onClick={() => setMediaView({ src: avatarSrc, kind: "image" })}
               className={cn(
                 "mx-auto h-24 w-24 cursor-zoom-in rounded-full border-4 object-cover shadow-lg",
-                profile?.ceo ? "border-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.35)]" : "border-background",
+                strokeTone.avatar,
               )}
               referrerPolicy="no-referrer"
             />
@@ -509,7 +515,7 @@ export default function ProfilePage() {
             <div
               className={cn(
                 "mx-auto flex h-24 w-24 items-center justify-center rounded-full border-4 text-3xl font-bold text-white shadow-lg",
-                profile?.ceo ? "border-amber-400" : "border-background",
+                strokeTone.border,
               )}
               style={{ background: `linear-gradient(160deg, ${gradient[0]}, ${gradient[1]})` }}
             >
@@ -517,12 +523,19 @@ export default function ProfilePage() {
             </div>
           )}
           <h1 className="mt-4 text-xl font-bold tracking-tight">{displayName}</h1>
-          {/* CEO badge — gold, mirrors the gold profile stroke */}
-          {profile?.ceo && (
-            <span className="mt-2 inline-flex items-center rounded-full border border-amber-400/60 bg-amber-400/15 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
-              CEO
-            </span>
-          )}
+          {/* Phase 30: CEO badge — red, mirrors the red profile stroke; VIP — gold */}
+          <div className="mt-2 flex items-center justify-center gap-1.5">
+            {profile?.ceo && (
+              <span className="inline-flex items-center rounded-full border border-red-500/60 bg-red-500/15 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-red-400">
+                CEO
+              </span>
+            )}
+            {isVip && (
+              <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-400/15 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                VIP
+              </span>
+            )}
+          </div>
           <p className="mt-0.5 text-[15px] font-medium text-[#3390ec]">
             {username ? `@${username}` : t("profileNoUsername")}
           </p>

@@ -41,8 +41,10 @@ export interface PublicProfileSnapshot {
   usernameKey: string;
   displayName: string;
   updatedAt: number;
-  /** platform owner — the page shows the gold CEO badge instead of @handle */
+  /** platform owner — the page shows the red CEO badge instead of @handle */
   ceo?: boolean;
+  /** Phase 30: paid VIP (premium) member — gold stroke + gold VIP badge */
+  vip?: boolean;
   /** Steam-style animated background shown on the public page header. */
   background?: string;
   /** profile picture — 256px JPEG data URL or the auth photoURL */
@@ -156,7 +158,7 @@ export function createPublicProfileSnapshot({
   settings: PublicProfileSettings;
   avatar?: string | null;
   /** full private profile — carries usernames/social/profileVideo */
-  profile?: { ceo?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } | null;
+  profile?: { ceo?: boolean; vip?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } | null;
 }): PublicProfileSnapshot {
   const usernameKey = username.trim().toLowerCase();
   const snapshot: PublicProfileSnapshot = {
@@ -182,6 +184,7 @@ export function createPublicProfileSnapshot({
   // the platform-owner badge must survive every republish (the old
   // set-username only stamped it server-side on an existing snapshot)
   if (profile?.ceo) snapshot.ceo = true;
+  if (profile?.vip) snapshot.vip = true;
   if (profile?.profileVideo) snapshot.profileVideo = profile.profileVideo;
   if (profile?.avatarVideo) snapshot.avatarVideo = profile.avatarVideo;
   if (profile?.social?.instagram || profile?.social?.telegram || profile?.social?.x) {

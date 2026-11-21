@@ -153,13 +153,16 @@ export function useSavePublicProfile() {
         // (users/{uid}/profile/avatar) with the auth photoURL as fallback,
         // plus held usernames / profile video / social handles
         let avatar: string | null = null;
-        let profileFields: { ceo?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } = {};
+        let profileFields: { ceo?: boolean; vip?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } = {};
         try {
           const { get: rtdbGet } = await import("firebase/database");
           const profileSnap = await rtdbGet(ref(db, `users/${user.uid}/profile`));
           const p = (profileSnap.val() || {}) as Record<string, any>;
           if (typeof p.avatar === "string" && p.avatar) avatar = p.avatar;
           if (p.ceo === true) profileFields.ceo = true;
+          // Phase 30: paid VIP (premium) — isPremium flips on purchase, premiumPlan
+          // names the plan; either marks the gold VIP stroke
+          if (p.isPremium === true || (typeof p.premiumPlan === "string" && p.premiumPlan)) profileFields.vip = true;
           if (p.usernames && typeof p.usernames === "object") profileFields.usernames = p.usernames;
           if (p.social && typeof p.social === "object") profileFields.social = p.social;
           if (typeof p.profileVideo === "string") profileFields.profileVideo = p.profileVideo;

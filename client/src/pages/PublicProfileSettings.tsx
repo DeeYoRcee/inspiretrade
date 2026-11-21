@@ -41,6 +41,14 @@ export default function PublicProfileSettingsPage() {
       displayName: user.displayName || profile.username,
       trades,
       settings: draft,
+      profile: profile ? {
+        ceo: profile.ceo,
+        vip: !!(profile.isPremium || profile.premiumPlan),
+        usernames: profile.usernames,
+        social: profile.social,
+        profileVideo: profile.profileVideo,
+        avatarVideo: profile.avatarVideo,
+      } : null,
     });
   }, [user, profile?.username, trades, draft]);
 
