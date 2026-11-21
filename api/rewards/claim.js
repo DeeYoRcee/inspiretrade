@@ -133,14 +133,27 @@ var GOLD_FRAGMENTS = [
   { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
   { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
+var TRADING_FRAGMENTS = [
+  { id: "trade-1", name: "25k$ 1", icon: "Briefcase", rarity: "common", dropPercent: 35 },
+  { id: "trade-2", name: "25k$ 2", icon: "Gauge", rarity: "common", dropPercent: 35 },
+  { id: "trade-3", name: "25k$ 3", icon: "LineChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-4", name: "25k$ 4", icon: "PieChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-5", name: "25k$ 5", icon: "Activity", rarity: "epic", dropPercent: 5 },
+  { id: "trade-6", name: "25k$ 6", icon: "BarChart3", rarity: "epic", dropPercent: 5 },
+  { id: "trade-7", name: "25k$ 7", icon: "Waves", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-8", name: "25k$ 8", icon: "Landmark", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-9", name: "25k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
 var CASES = {
   inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
-  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS }
+  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS },
+  trading: { id: "trading", name: "Trading Case", accountSize: 25e3, fragments: TRADING_FRAGMENTS }
 };
-var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
+var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_TRADING = TRADING_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var REWARD_CYCLE_DAYS = 7;
 var GOLD_CASE_DAY = REWARD_CYCLE_DAYS;
 function cycleDayOf(streak) {
@@ -156,13 +169,34 @@ var claim_default = handle(async (req, res) => {
   const user = await requireUser(req);
   const now = Date.now();
   const today = localDate();
+  const [profile, adminFlag] = await Promise.all([
+    rtdb().ref(`users/${user.uid}/profile`).get(),
+    rtdb().ref(`admins/${user.uid}`).get()
+  ]);
+  const p = profile.val() || {};
+  const isVip = p.isPremium === true || !!p.premiumPlan || p.ceo === true || adminFlag.val() === true;
   const result = await rtdb().ref(`economy/${user.uid}`).transaction((current) => {
-    const eco = current || { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };
+    let eco = current || { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };
     if (eco.lastClaimDate === today) return void 0;
     const continued = eco.lastClaimDate === previousDate(today);
     const streak = continued ? Math.floor(Number(eco.streak) || 0) + 1 : 1;
     const cycleDay2 = cycleDayOf(streak);
     const caseType2 = caseTypeForCycleDay(cycleDay2);
+    let vipCycleDay2 = 0;
+    let vipCaseType = null;
+    if (isVip) {
+      const vipContinued = eco.vipLastClaimDate === previousDate(today);
+      const vipStreak = vipContinued ? Math.floor(Number(eco.vipStreak) || 0) + 1 : 1;
+      vipCycleDay2 = cycleDayOf(vipStreak);
+      vipCaseType = vipCycleDay2 >= REWARD_CYCLE_DAYS ? "trading" : "gold";
+      eco = {
+        ...eco,
+        vipStreak,
+        vipLastClaimDate: today,
+        goldCases: (eco.goldCases || 0) + (vipCaseType === "gold" ? 1 : 0),
+        tradingCases: (eco.tradingCases || 0) + (vipCaseType === "trading" ? 1 : 0)
+      };
+    }
     return {
       ...eco,
       coins: eco.coins || 0,
@@ -180,11 +214,23 @@ var claim_default = handle(async (req, res) => {
   const economy = result.snapshot.val();
   const cycleDay = cycleDayOf(economy.streak);
   const caseType = caseTypeForCycleDay(cycleDay);
-  await logLedger({ type: "daily_claim", uid: user.uid, streak: economy.streak, day: today, cycleDay, caseType });
+  const vipCycleDay = isVip ? cycleDayOf(Math.floor(Number(economy.vipStreak) || 1)) : 0;
+  await logLedger({
+    type: "daily_claim",
+    uid: user.uid,
+    streak: economy.streak,
+    day: today,
+    cycleDay,
+    caseType,
+    vip: isVip,
+    vipCycleDay: vipCycleDay || void 0,
+    vipCaseType: isVip ? vipCycleDay >= REWARD_CYCLE_DAYS ? "trading" : "gold" : void 0
+  });
   res.status(200).json({
     ok: true,
     economy,
-    reward: { cycleDay, caseType, caseName: CASES[caseType].name }
+    reward: { cycleDay, caseType, caseName: CASES[caseType].name },
+    vipReward: isVip ? { cycleDay: vipCycleDay, caseType: vipCycleDay >= REWARD_CYCLE_DAYS ? "trading" : "gold", caseName: vipCycleDay >= REWARD_CYCLE_DAYS ? CASES.trading.name : CASES.gold.name } : null
   });
 });
 export {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
-import { Gift, Gem, BadgeCheck, ChevronRight, X, Check, Crown } from "lucide-react";
+import { Gift, Gem, BadgeCheck, ChevronRight, X, Check, Crown, Briefcase } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/language-context";
 import { authedFetch } from "@/lib/api";
 import { useEconomy, useEconomyInvalidator, todayTashkent } from "@/hooks/use-economy";
 import { useAuth } from "@/hooks/use-auth";
+import { usePremiumStatus, useUserProfile } from "@/hooks/use-premium";
 import { CaseOpeningDialog } from "@/components/rewards/CaseOpeningDialog";
 import {
   REWARD_CYCLE_DAYS, GOLD_CASE_DAY, CASES, cycleDayOf, caseTypeForCycleDay,
@@ -20,6 +21,7 @@ type Phase = "ready" | "claimed";
 interface ClaimResponse {
   economy: { streak: number };
   reward: { cycleDay: number; caseType: CaseType; caseName: string };
+  vipReward?: { cycleDay: number; caseType: string; caseName: string } | null;
 }
 
 /**
@@ -32,6 +34,11 @@ interface ClaimResponse {
 export function DailyRewardDialog() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { data: premiumStatus } = usePremiumStatus();
+  const { data: profile } = useUserProfile();
+  // Phase 32: VIPs (premium subscribers and the owner) build a SECOND 7-day
+  // track — days 1-6 grant a Gold Case, day 7 the Trading Case (25k$).
+  const isVip = premiumStatus === true || profile?.isPremium === true || profile?.ceo === true;
   const { toast } = useToast();
   const { data: economy, isLoading } = useEconomy();
   const invalidate = useEconomyInvalidator();
@@ -41,6 +48,7 @@ export function DailyRewardDialog() {
   const [dismissed, setDismissed] = useState(false);
   const [phase, setPhase] = useState<Phase>("ready");
   const [granted, setGranted] = useState<{ caseType: CaseType; caseName: string } | null>(null);
+  const [vipGranted, setVipGranted] = useState<{ caseName: string; isTrading: boolean } | null>(null);
   const [caseResult, setCaseResult] = useState<FragmentDef | null>(null);
   const [openCaseType, setOpenCaseType] = useState<CaseType>("inspire");
 
@@ -66,6 +74,7 @@ export function DailyRewardDialog() {
     onSuccess: (data) => {
       invalidate();
       setGranted({ caseType: data.reward.caseType, caseName: data.reward.caseName });
+      setVipGranted(data.vipReward ? { caseName: data.vipReward.caseName, isTrading: data.vipReward.caseType === "trading" } : null);
       setPhase("claimed");
     },
     onError: (error: any) => {
@@ -183,6 +192,45 @@ export function DailyRewardDialog() {
                 })}
               </div>
 
+              {isVip && (
+                <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-3">
+                  <p className="flex items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                    <Crown className="h-3.5 w-3.5" /> VIP reward track
+                  </p>
+                  <div className="mt-2 grid grid-cols-4 gap-1.5">
+                    {days.map((day) => {
+                      const isTradingDay = day === REWARD_CYCLE_DAYS;
+                      const vipDay = cycleDayOf(Math.max(1, claimedToday ? Number(economy?.vipStreak) || 1 : (Number(economy?.vipStreak) || 0) + 1));
+                      const vipClaimed = claimedToday && day <= vipDay;
+                      const vipNext = !claimedToday && day === vipDay;
+                      return (
+                        <div
+                          key={`vip-${day}`}
+                          className={cn(
+                            "relative flex flex-col items-center justify-center gap-0.5 rounded-xl border px-1 py-2 transition-colors",
+                            isTradingDay ? "border-emerald-500/50" : "border-amber-500/40",
+                            vipClaimed && "bg-muted/40 opacity-55",
+                            vipNext && (isTradingDay ? "bg-emerald-500/15 shadow-[0_0_18px_-4px_rgba(16,185,129,0.7)]" : "bg-amber-500/15"),
+                            !vipClaimed && !vipNext && "bg-card/50",
+                          )}
+                        >
+                          {isTradingDay ? <Briefcase className="h-5 w-5 text-emerald-400" /> : <Crown className="h-5 w-5 text-amber-400" />}
+                          <span className={cn("text-[8px] font-bold uppercase tracking-wide", isTradingDay ? "text-emerald-400" : "text-amber-400")}>
+                            {isTradingDay ? "25k$" : "Gold"}
+                          </span>
+                          {vipClaimed && (
+                            <span className="absolute right-0.5 top-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-success text-success-foreground">
+                              <Check className="h-2 w-2" />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-[10px] text-muted-foreground">Days 1-6 → Gold Case · Day 7 → Trading Case ($25,000)</p>
+                </div>
+              )}
+
               <p className="text-xs font-medium text-muted-foreground">
                 {t("dailyRewardToday").replace("{case}", CASES[nextCaseType].name)}
               </p>
@@ -224,6 +272,11 @@ export function DailyRewardDialog() {
                 <p className="mt-1 text-sm font-semibold text-muted-foreground">
                   +1 {granted?.caseName}
                 </p>
+                {vipGranted && (
+                  <p className="mt-1 text-sm font-semibold text-emerald-400">
+                    <Crown className="mr-1 inline h-4 w-4" /> VIP: +1 {vipGranted.caseName}
+                  </p>
+                )}
                 <p className="mt-1 text-sm text-muted-foreground">{t("dailyRewardOpenNow")}</p>
               </div>
               <Button

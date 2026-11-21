@@ -23,7 +23,8 @@ export default handle(async (req, res) => {
   const now = Date.now();
 
   const body = (req.body && typeof req.body === "object") ? req.body : {};
-  const set: CaseType = body.set === "gold" ? "gold" : "inspire";
+  // Phase 32: "trading" joins gold/inspire — the $25,000 account puzzle.
+  const set: CaseType = body.set === "gold" ? "gold" : body.set === "trading" ? "trading" : "inspire";
   const caseDef = CASES[set];
   const fragmentList = caseDef.fragments;
 
@@ -55,7 +56,7 @@ export default handle(async (req, res) => {
     throw new HttpError(400, "MISSING_FRAGMENTS", "You need at least one fragment of every type (9 total)");
   }
 
-  const reference = makeReference(set === "gold" ? "GLD" : "INSP");
+  const reference = makeReference(set === "gold" ? "GLD" : set === "trading" ? "TRD" : "INSP");
   const claimRef = db.ref(`claims/${user.uid}`).push();
   const claim = {
     id: claimRef.key,

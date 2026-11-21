@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Coins, PackageOpen, Gem, Layers, ChevronRight, Crown, Lock, Package, Box,
+  Coins, PackageOpen, Gem, Layers, ChevronRight, Crown, Lock, Package, Box, Briefcase,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { CaseOpeningDialog } from "@/components/rewards/CaseOpeningDialog";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
 import { PropPuzzle } from "@/components/rewards/PropPuzzle";
 import {
-  FRAGMENTS, GOLD_FRAGMENTS, RARITY_META, ALL_FRAGMENTS, getFragment,
+  FRAGMENTS, GOLD_FRAGMENTS, TRADING_FRAGMENTS, RARITY_META, ALL_FRAGMENTS, getFragment,
   type FragmentDef, type CaseType,
 } from "@shared/fragments";
 import { cn } from "@/lib/utils";
@@ -43,6 +43,7 @@ export default function InventoryPage() {
   const coins = economy?.coins ?? 0;
   const cases = economy?.cases ?? 0;
   const goldCases = economy?.goldCases ?? 0;
+  const tradingCases = economy?.tradingCases ?? 0;
   const customCaseCount = (caseId: string) => economy?.customCases?.[caseId] ?? 0;
 
   const openMutation = useMutation({
@@ -83,13 +84,17 @@ export default function InventoryPage() {
     () => GOLD_FRAGMENTS.filter((f) => (inventory?.[f.id] || 0) >= 1).length,
     [inventory],
   );
+  const ownedTradingTypes = useMemo(
+    () => TRADING_FRAGMENTS.filter((f) => (inventory?.[f.id] || 0) >= 1).length,
+    [inventory],
+  );
   const totalFragments = useMemo(
-    () => [...FRAGMENTS, ...GOLD_FRAGMENTS].reduce((s, f) => s + (inventory?.[f.id] || 0), 0),
+    () => [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS].reduce((s, f) => s + (inventory?.[f.id] || 0), 0),
     [inventory],
   );
 
   const renderCollection = (list: FragmentDef[], set: CaseType) => {
-    const owned = set === "inspire" ? ownedTypes : ownedGoldTypes;
+    const owned = set === "inspire" ? ownedTypes : set === "gold" ? ownedGoldTypes : ownedTradingTypes;
     const canCombine = owned === list.length;
     return (
       <CardContent className="space-y-5">
@@ -114,13 +119,15 @@ export default function InventoryPage() {
               "w-full max-w-md rounded-xl font-semibold",
               set === "gold"
                 ? "bg-gradient-to-r from-amber-500 to-yellow-400 text-black hover:from-amber-400 hover:to-yellow-300"
-                : "bg-amber-500 text-black hover:bg-amber-400",
+                : set === "trading"
+                  ? "bg-gradient-to-r from-emerald-500 to-teal-400 text-black hover:from-emerald-400 hover:to-teal-300"
+                  : "bg-amber-500 text-black hover:bg-amber-400",
             )}
             disabled={!canCombine || combineMutation.isPending}
             onClick={() => setCombineConfirm(set)}
           >
             <Lock className="mr-2 h-5 w-5" />
-            {set === "gold" ? t("combineButtonGold") : t("combineButton")}
+            {set === "gold" ? t("combineButtonGold") : set === "trading" ? "Combine into 25k$ Prop Account" : t("combineButton")}
           </Button>
           <p className="text-xs text-muted-foreground">
             {canCombine ? t("combineReady") : t("missingFragmentsHint")}
@@ -132,7 +139,8 @@ export default function InventoryPage() {
 
   const renderCaseRow = (set: CaseType) => {
     const isGold = set === "gold";
-    const count = isGold ? goldCases : cases;
+    const isTrading = set === "trading";
+    const count = isGold ? goldCases : isTrading ? tradingCases : cases;
     return (
       <div
         className="flex cursor-pointer items-center gap-4 rounded-xl border border-transparent p-1 -m-1 transition-colors hover:border-border/50 hover:bg-accent/30"
@@ -144,17 +152,19 @@ export default function InventoryPage() {
             "relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border",
             isGold
               ? "border-amber-500/40 bg-gradient-to-br from-amber-500/25 via-amber-500/5 to-transparent shadow-[0_0_24px_-6px_rgba(245,158,11,0.6)]"
-              : "border-primary/30 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent shadow-[0_0_24px_-6px_hsl(var(--primary)/0.5)]",
+              : isTrading
+                ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/25 via-emerald-500/5 to-transparent shadow-[0_0_24px_-6px_rgba(16,185,129,0.6)]"
+                : "border-primary/30 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent shadow-[0_0_24px_-6px_hsl(var(--primary)/0.5)]",
           )}
         >
-          {isGold ? <Crown className="h-7 w-7 text-amber-400" /> : <Gem className="h-7 w-7 text-primary" />}
-          <span className={cn("absolute -right-2 -top-2 rounded-full px-2 py-0.5 text-xs font-bold", isGold ? "bg-amber-500 text-black" : "bg-primary text-primary-foreground")}>
+          {isGold ? <Crown className="h-7 w-7 text-amber-400" /> : isTrading ? <Briefcase className="h-7 w-7 text-emerald-400" /> : <Gem className="h-7 w-7 text-primary" />}
+          <span className={cn("absolute -right-2 -top-2 rounded-full px-2 py-0.5 text-xs font-bold", isGold ? "bg-amber-500 text-black" : isTrading ? "bg-emerald-500 text-black" : "bg-primary text-primary-foreground")}>
             {count}
           </span>
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">
-            {isGold ? t("goldCase") : t("inspireCase")} · {isGold ? "10k$ Prop" : "5k$ Prop"}
+            {isGold ? t("goldCase") : isTrading ? "Trading Case" : t("inspireCase")} · {isGold ? "10k$ Prop" : isTrading ? "25k$ Prop" : "5k$ Prop"}
           </p>
         </div>
         <Button
@@ -203,8 +213,8 @@ export default function InventoryPage() {
   // their canonical definitions, custom cases map ids → fragment defs with
   // the owner's weights (shown normalized to a percentage).
   const previewDef = previewCase
-    ? previewCase === "inspire" || previewCase === "gold"
-      ? { name: previewCase === "gold" ? t("goldCase") : t("inspireCase"), isGold: previewCase === "gold", fragments: previewCase === "gold" ? GOLD_FRAGMENTS : FRAGMENTS, weights: null as Record<string, number> | null }
+    ? previewCase === "inspire" || previewCase === "gold" || previewCase === "trading"
+      ? { name: previewCase === "gold" ? t("goldCase") : previewCase === "trading" ? "Trading Case" : t("inspireCase"), isGold: previewCase === "gold", fragments: previewCase === "gold" ? GOLD_FRAGMENTS : previewCase === "trading" ? TRADING_FRAGMENTS : FRAGMENTS, weights: null as Record<string, number> | null }
       : (() => {
           const def = customCases?.find((c) => c.caseId === previewCase);
           if (!def) return null;
@@ -216,7 +226,7 @@ export default function InventoryPage() {
           return { name: def.name, isGold: false, fragments, weights };
         })()
     : null;
-  const previewCount = previewCase ? (previewCase === "inspire" ? cases : previewCase === "gold" ? goldCases : customCaseCount(previewCase)) : 0;
+  const previewCount = previewCase ? (previewCase === "inspire" ? cases : previewCase === "gold" ? goldCases : previewCase === "trading" ? tradingCases : customCaseCount(previewCase)) : 0;
   const previewTotalWeight = previewDef ? previewDef.fragments.reduce((s, f) => s + (previewDef.weights ? previewDef.weights[f.id] || 0 : f.dropPercent), 0) : 0;
 
   return (
@@ -242,6 +252,11 @@ export default function InventoryPage() {
               <Crown className="h-4 w-4" /> {goldCases}
             </Badge>
           )}
+          {tradingCases > 0 && (
+            <Badge variant="outline" className="gap-1.5 rounded-full border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm font-bold text-emerald-400">
+              <Briefcase className="h-4 w-4" /> {tradingCases}
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -253,10 +268,11 @@ export default function InventoryPage() {
         <CardContent className="space-y-5">
           {renderCaseRow("inspire")}
           {renderCaseRow("gold")}
+          {renderCaseRow("trading")}
           {(customCases ?? []).map((def) => (
             <RenderCustomCaseRow key={def.caseId} def={def} />
           ))}
-          {cases < 1 && goldCases < 1 && (customCases ?? []).every((def) => customCaseCount(def.caseId) < 1) && (
+          {cases < 1 && goldCases < 1 && tradingCases < 1 && (customCases ?? []).every((def) => customCaseCount(def.caseId) < 1) && (
             <p className="text-center text-xs text-muted-foreground">{t("noCases")}</p>
           )}
         </CardContent>
@@ -267,6 +283,7 @@ export default function InventoryPage() {
         <TabsList className="glass-panel rounded-full border border-border/60">
           <TabsTrigger value="inspire" className="gap-1.5 rounded-full"><Gem className="h-4 w-4" />5k$</TabsTrigger>
           <TabsTrigger value="gold" className="gap-1.5 rounded-full"><Crown className="h-4 w-4" />10k$</TabsTrigger>
+          <TabsTrigger value="trading" className="gap-1.5 rounded-full"><Briefcase className="h-4 w-4" />25k$</TabsTrigger>
         </TabsList>
 
         <TabsContent value="inspire" className="mt-4 space-y-6">
@@ -323,6 +340,32 @@ export default function InventoryPage() {
             {renderCollection(GOLD_FRAGMENTS, "gold")}
           </Card>
         </TabsContent>
+
+        <TabsContent value="trading" className="mt-4 space-y-6">
+          <Card className="glass-panel border-emerald-500/30">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg"><Briefcase className="h-5 w-5 text-emerald-400" />{t("propAccountPuzzle")} · 25k$</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <PropPuzzle
+                inventory={inventory}
+                set="trading"
+                completing={combineMutation.isPending}
+                onComplete={() => setCombineConfirm("trading")}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader className="pb-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-emerald-400" />Trading Collection</CardTitle>
+                <span className="text-sm font-semibold text-muted-foreground">{ownedTradingTypes}/{TRADING_FRAGMENTS.length}</span>
+              </div>
+            </CardHeader>
+            {renderCollection(TRADING_FRAGMENTS, "trading")}
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* CS2-style case preview — contents + chances; the roll starts only
@@ -364,7 +407,9 @@ export default function InventoryPage() {
               "w-full rounded-xl font-semibold",
               previewCase === "gold"
                 ? "bg-gradient-to-r from-amber-500 to-yellow-400 text-black hover:from-amber-400 hover:to-yellow-300"
-                : "bg-amber-500 text-black hover:bg-amber-400",
+                : previewCase === "trading"
+                  ? "bg-gradient-to-r from-emerald-500 to-teal-400 text-black hover:from-emerald-400 hover:to-teal-300"
+                  : "bg-amber-500 text-black hover:bg-amber-400",
             )}
             disabled={previewCount < 1 || openMutation.isPending}
             onClick={() => previewCase && openMutation.mutate(previewCase)}
@@ -401,7 +446,7 @@ export default function InventoryPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 font-display"><Crown className="h-5 w-5 text-amber-400" />{t("combineTitle")}</AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground">
-              {combineConfirm === "gold" ? t("combineDescriptionGold") : t("combineDescription")}
+              {combineConfirm === "gold" ? t("combineDescriptionGold") : combineConfirm === "trading" ? "This burns one of each 25k$ fragment (9 total) and creates a $25,000 prop-account claim for the team to review." : t("combineDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

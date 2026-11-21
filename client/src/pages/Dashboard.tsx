@@ -1,7 +1,6 @@
 import { StatsCards } from "@/components/dashboard/StatsCards";
 import { TradeTable } from "@/components/trades/TradeTable";
 import { AddTradeDialog } from "@/components/trades/AddTradeDialog";
-import { WinRateChart } from "@/components/dashboard/WinRateChart";
 import { TopCurrencies } from "@/components/dashboard/TopCurrencies";
 import { DailyPnLChart } from "@/components/dashboard/DailyPnLChart";
 import { DayScreenshotDialog } from "@/components/dashboard/DayScreenshotDialog";
@@ -279,9 +278,8 @@ export default function Dashboard() {
         );
       })()}
 
-      {/* Win Rate + Top Currencies */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-        <WinRateChart category={category} />
+      {/* Top Currencies (the separate win-rate chart was removed — win rate lives in StatsCards) */}
+      <div className="mt-8">
         <TopCurrencies category={category} />
       </div>
 

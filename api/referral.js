@@ -100,6 +100,53 @@ async function logLedger(entry) {
   }
 }
 
+// shared/fragments.ts
+var FRAGMENTS = [
+  { id: "discipline", name: "5k$ 1", icon: "ShieldCheck", rarity: "common", dropPercent: 35 },
+  { id: "patience", name: "5k$ 2", icon: "Hourglass", rarity: "common", dropPercent: 35 },
+  { id: "risk-management", name: "5k$ 3", icon: "Scale", rarity: "rare", dropPercent: 8 },
+  { id: "backtesting", name: "5k$ 4", icon: "FlaskConical", rarity: "rare", dropPercent: 8 },
+  { id: "trading-plan", name: "5k$ 5", icon: "ClipboardList", rarity: "epic", dropPercent: 5 },
+  { id: "psychology", name: "5k$ 6", icon: "Brain", rarity: "epic", dropPercent: 5 },
+  { id: "consistency", name: "5k$ 7", icon: "Repeat", rarity: "covert", dropPercent: 2.9995 },
+  { id: "execution", name: "5k$ 8", icon: "Crosshair", rarity: "covert", dropPercent: 2.9995 },
+  { id: "master-trader", name: "5k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
+var GOLD_FRAGMENTS = [
+  { id: "gold-1", name: "10k$ 1", icon: "Gem", rarity: "common", dropPercent: 35 },
+  { id: "gold-2", name: "10k$ 2", icon: "Zap", rarity: "common", dropPercent: 35 },
+  { id: "gold-3", name: "10k$ 3", icon: "Star", rarity: "rare", dropPercent: 8 },
+  { id: "gold-4", name: "10k$ 4", icon: "Target", rarity: "rare", dropPercent: 8 },
+  { id: "gold-5", name: "10k$ 5", icon: "Medal", rarity: "epic", dropPercent: 5 },
+  { id: "gold-6", name: "10k$ 6", icon: "Trophy", rarity: "epic", dropPercent: 5 },
+  { id: "gold-7", name: "10k$ 7", icon: "Rocket", rarity: "covert", dropPercent: 2.9995 },
+  { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
+  { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
+var TRADING_FRAGMENTS = [
+  { id: "trade-1", name: "25k$ 1", icon: "Briefcase", rarity: "common", dropPercent: 35 },
+  { id: "trade-2", name: "25k$ 2", icon: "Gauge", rarity: "common", dropPercent: 35 },
+  { id: "trade-3", name: "25k$ 3", icon: "LineChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-4", name: "25k$ 4", icon: "PieChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-5", name: "25k$ 5", icon: "Activity", rarity: "epic", dropPercent: 5 },
+  { id: "trade-6", name: "25k$ 6", icon: "BarChart3", rarity: "epic", dropPercent: 5 },
+  { id: "trade-7", name: "25k$ 7", icon: "Waves", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-8", name: "25k$ 8", icon: "Landmark", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-9", name: "25k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
+var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
+var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
+var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_TRADING = TRADING_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var REFERRAL_MILESTONES = [
+  { invited: 3, cases: 1, goldCases: 0, insp: 0 },
+  { invited: 10, cases: 3, goldCases: 0, insp: 0 },
+  { invited: 25, cases: 5, goldCases: 1, insp: 0 },
+  { invited: 50, cases: 7, goldCases: 3, insp: 5 },
+  { invited: 100, cases: 10, goldCases: 5, insp: 10 }
+];
+
 // api/_src/referral/index.ts
 var BONUS_NEW = 0;
 var REFERRAL_CASES = 0;
@@ -150,14 +197,51 @@ var index_default = handle(async (req, res) => {
   if (action === "info") {
     const code = await ensureCode(user.uid);
     const node = (await rtdb().ref(`referrals/${user.uid}`).get()).val() || {};
+    const claimed = (await rtdb().ref(`referralMilestones/${user.uid}`).get()).val() || {};
     return res.status(200).json({
       ok: true,
       code,
       invited: node.count || 0,
       earned: node.earned || 0,
       referredByCode: node.referredByCode || null,
-      bonuses: { new: BONUS_NEW, referrerCase: REFERRAL_CASES }
+      bonuses: { new: BONUS_NEW, referrerCase: REFERRAL_CASES },
+      milestones: REFERRAL_MILESTONES,
+      claimedMilestones: Object.keys(claimed).filter((k) => claimed[k] === true).map(Number)
     });
+  }
+  if (action === "milestone") {
+    const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+    const tierIdx = Number(body?.tier);
+    const tier = REFERRAL_MILESTONES[tierIdx];
+    if (!tier) throw new HttpError(400, "BAD_TIER", "Unknown milestone tier");
+    const node = (await rtdb().ref(`referrals/${user.uid}`).get()).val() || {};
+    if ((node.count || 0) < tier.invited) {
+      throw new HttpError(409, "NOT_REACHED", `You need ${tier.invited} invited users to claim this reward`);
+    }
+    const token = `${user.uid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    const now = Date.now();
+    const ecoTx = await rtdb().ref(`economy/${user.uid}`).transaction((eco) => {
+      const e = { ...eco || {} };
+      const milestones = { ...e.milestones || {} };
+      const existing = milestones[tierIdx];
+      if (existing?.claimed === true) return e;
+      milestones[tierIdx] = { claimed: true, token, at: now };
+      return {
+        ...e,
+        milestones,
+        coins: (e.coins || 0) + tier.insp,
+        cases: (e.cases || 0) + tier.cases,
+        goldCases: (e.goldCases || 0) + tier.goldCases,
+        updatedAt: now
+      };
+    });
+    const after = ecoTx?.snapshot?.val?.() || {};
+    const won = ecoTx.committed && after?.milestones?.[tierIdx]?.token === token;
+    if (!won) {
+      throw new HttpError(409, "ALREADY_CLAIMED", "This milestone reward has already been claimed");
+    }
+    await logLedger({ type: "referral_milestone", uid: user.uid, tier: tierIdx, invited: tier.invited, cases: tier.cases, goldCases: tier.goldCases, insp: tier.insp });
+    return res.status(200).json({ ok: true, tier: tierIdx, reward: { cases: tier.cases, goldCases: tier.goldCases, insp: tier.insp } });
   }
   if (action === "apply") {
     const code = bodyCode(req);

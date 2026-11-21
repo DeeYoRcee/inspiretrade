@@ -15,6 +15,7 @@ import { authedFetch } from "@/lib/api";
 import { auth } from "@/lib/firebase";
 import { useEconomy } from "@/hooks/use-economy";
 import { ReferralCard } from "@/components/wallet/ReferralCard";
+import { ReferralMilestones } from "@/components/wallet/ReferralMilestones";
 import { ref, get } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
@@ -190,9 +191,6 @@ export default function WalletPage() {
         </Card>
       </motion.div>
 
-      {/* Referral — share the link, earn INSP */}
-      <ReferralCard />
-
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Deposit — in-app request, no Telegram needed */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
@@ -361,6 +359,12 @@ export default function WalletPage() {
             </CardContent>
           </Card>
         </motion.div>
+
+      {/* Referral — moved to the bottom (Phase 32) + milestone rewards */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <ReferralCard />
+        <ReferralMilestones />
+      </div>
       </div>
 
       {/* History */}

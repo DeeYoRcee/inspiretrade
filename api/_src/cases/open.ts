@@ -36,18 +36,20 @@ export default handle(async (req, res) => {
   let caseName: string;
   let noCasesError: HttpError;
 
-  if (caseType === "inspire" || caseType === "gold") {
+  if (caseType === "inspire" || caseType === "gold" || caseType === "trading") {
     const caseDef = CASES[caseType];
     fragments = caseDef.fragments;
     caseName = caseDef.name;
     counterRef =
       caseType === "gold"
         ? db.ref(`economy/${user.uid}/goldCases`)
-        : db.ref(`economy/${user.uid}/cases`);
+        : caseType === "trading"
+          ? db.ref(`economy/${user.uid}/tradingCases`)
+          : db.ref(`economy/${user.uid}/cases`);
     noCasesError = new HttpError(
       400,
-      caseType === "gold" ? "NO_GOLD_CASES" : "NO_CASES",
-      caseType === "gold" ? "You have no Gold Cases to open" : "You have no cases to open",
+      caseType === "gold" ? "NO_GOLD_CASES" : caseType === "trading" ? "NO_TRADING_CASES" : "NO_CASES",
+      caseType === "gold" ? "You have no Gold Cases to open" : caseType === "trading" ? "You have no Trading Cases to open" : "You have no cases to open",
     );
   } else {
     // custom case — validate the id shape and that the definition still exists

@@ -12,9 +12,14 @@ export interface Economy {
   goldCases: number;
   /** owner-made custom case counts — economy/<uid>/customCases/<caseId> */
   customCases?: Record<string, number>;
+  /** Trading Case count (25k$ fragments) — the Day-7 VIP streak reward (Phase 32) */
+  tradingCases?: number;
   streak: number;
   lastClaimDate?: string;
   totalClaimed?: number;
+  /** Phase 32: the separate VIP 7-day reward track (days 1-6 gold, 7 trading) */
+  vipStreak?: number;
+  vipLastClaimDate?: string;
 }
 
 export const EMPTY_ECONOMY: Economy = { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };

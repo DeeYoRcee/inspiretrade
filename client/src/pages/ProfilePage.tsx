@@ -21,6 +21,7 @@ import { ALL_FRAGMENTS } from "@shared/fragments";
 import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
+import { TitleStrip, titlesForProfile } from "@/pages/TitlesPage";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createPublicProfileSnapshot, createDefaultPublicProfileSettings } from "@/lib/public-profile";
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
@@ -576,6 +577,8 @@ export default function ProfilePage() {
           <p className="mt-0.5 text-[15px] font-medium text-[#3390ec]">
             {username ? `@${username}` : t("profileNoUsername")}
           </p>
+          {/* Phase 32: CS2-style titles (CEO gold, VIP, …) */}
+          <TitleStrip titles={titlesForProfile({ ...profile, emailVerified: user?.emailVerified })} />
           {/* Telegram-collectible style — every handle this account holds */}
           {heldUsernames.length > 1 && (
             <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 px-6">

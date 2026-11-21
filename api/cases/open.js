@@ -141,14 +141,27 @@ var GOLD_FRAGMENTS = [
   { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
   { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
+var TRADING_FRAGMENTS = [
+  { id: "trade-1", name: "25k$ 1", icon: "Briefcase", rarity: "common", dropPercent: 35 },
+  { id: "trade-2", name: "25k$ 2", icon: "Gauge", rarity: "common", dropPercent: 35 },
+  { id: "trade-3", name: "25k$ 3", icon: "LineChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-4", name: "25k$ 4", icon: "PieChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-5", name: "25k$ 5", icon: "Activity", rarity: "epic", dropPercent: 5 },
+  { id: "trade-6", name: "25k$ 6", icon: "BarChart3", rarity: "epic", dropPercent: 5 },
+  { id: "trade-7", name: "25k$ 7", icon: "Waves", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-8", name: "25k$ 8", icon: "Landmark", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-9", name: "25k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
 var CASES = {
   inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
-  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS }
+  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS },
+  trading: { id: "trading", name: "Trading Case", accountSize: 25e3, fragments: TRADING_FRAGMENTS }
 };
-var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
+var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_TRADING = TRADING_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 
 // api/_src/cases/open.ts
 function rollFragment(list, totalWeight) {
@@ -171,15 +184,15 @@ var open_default = handle(async (req, res) => {
   let counterRef;
   let caseName;
   let noCasesError;
-  if (caseType === "inspire" || caseType === "gold") {
+  if (caseType === "inspire" || caseType === "gold" || caseType === "trading") {
     const caseDef = CASES[caseType];
     fragments = caseDef.fragments;
     caseName = caseDef.name;
-    counterRef = caseType === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : db.ref(`economy/${user.uid}/cases`);
+    counterRef = caseType === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : caseType === "trading" ? db.ref(`economy/${user.uid}/tradingCases`) : db.ref(`economy/${user.uid}/cases`);
     noCasesError = new HttpError(
       400,
-      caseType === "gold" ? "NO_GOLD_CASES" : "NO_CASES",
-      caseType === "gold" ? "You have no Gold Cases to open" : "You have no cases to open"
+      caseType === "gold" ? "NO_GOLD_CASES" : caseType === "trading" ? "NO_TRADING_CASES" : "NO_CASES",
+      caseType === "gold" ? "You have no Gold Cases to open" : caseType === "trading" ? "You have no Trading Cases to open" : "You have no cases to open"
     );
   } else {
     if (!CASE_ID_RE.test(caseType)) throw new HttpError(400, "BAD_CASE", "Unknown case");

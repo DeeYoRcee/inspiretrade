@@ -138,6 +138,34 @@ async function deliverUsername(db: any, buyerUid: string, listing: any, revertLi
   const username = String(listing.username || "");
   const sellerUid = String(listing.sellerUid || "");
 
+  // Phase 32 — collectible handle CAP: the buyer may hold at most
+  // VIP 5 / regular 2 usernames (the primary + purchased collectibles,
+  // Telegram-style). VIP = premium profile flag, a premium plan, the CEO
+  // profile or the owner node in admins/{uid}. Checked BEFORE the handle
+  // moves so a rejected buy never leaves a half-delivered state.
+  const [buyerProfileSnap, buyerAdminSnap] = await Promise.all([
+    db.ref(`users/${buyerUid}/profile`).once("value"),
+    db.ref(`admins/${buyerUid}`).once("value"),
+  ]);
+  const buyerProfile = buyerProfileSnap.val() || {};
+  const buyerVip =
+    buyerProfile.isPremium === true || !!buyerProfile.premiumPlan ||
+    buyerProfile.ceo === true || buyerAdminSnap.val() === true;
+  const USERNAME_CAP = buyerVip ? 5 : 2;
+  const heldBefore: Record<string, unknown> = { ...((buyerProfile.usernames as Record<string, unknown>) || {}) };
+  const primaryBefore = typeof buyerProfile.username === "string" ? buyerProfile.username.toLowerCase() : "";
+  const willHold = new Set([...Object.keys(heldBefore), primaryBefore, key].filter(Boolean));
+  if (willHold.size > USERNAME_CAP) {
+    await revertListing();
+    throw new HttpError(
+      409,
+      "USERNAME_CAP_REACHED",
+      buyerVip
+        ? `VIP accounts can hold at most ${USERNAME_CAP} usernames`
+        : `Accounts can hold at most ${USERNAME_CAP} usernames (VIP raises the cap to 5)`,
+    );
+  }
+
   // 1) transfer the handle mapping atomically (free OR held by the seller)
   const mapTx = await db.ref(`usernames/${key}`).transaction((current: any) => {
     if (current === null || current === sellerUid) return buyerUid;

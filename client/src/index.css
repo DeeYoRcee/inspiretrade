@@ -451,3 +451,14 @@ img[src="/logo.png"] {
 
 /* Phase 21 — terminal density setting (Terminal Settings → Appearance) */
 html.density-cozy .wl-row { padding-top: 0.4rem; padding-bottom: 0.4rem; }
+
+/* Phase 32 — auth hero: animated market path (dash flow) */
+@keyframes hero-dash-flow {
+  to { stroke-dashoffset: -480; }
+}
+.hero-dash {
+  animation: hero-dash-flow 9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-dash { animation: none; }
+}

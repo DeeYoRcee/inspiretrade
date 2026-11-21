@@ -215,7 +215,7 @@ export default function TerminalPage() {
   if (loading && !account && mode === "live") {
     return (
       <div className="flex h-[60vh] items-center justify-center">
-        <img src="/logo.png" alt="InspireTrade" draggable={false} className="h-16 w-auto max-w-[220px] select-none object-contain opacity-90" />
+        <span className="text-sm text-slate-400">loading…</span>
       </div>
     );
   }

@@ -147,6 +147,9 @@ export function UsernameDialog({ open, currentUsername, isPremium, onClose }: Us
           <p className="text-xs text-muted-foreground">
              {t("usernameHint")}
           </p>
+          <p className="text-xs text-muted-foreground">
+            Extra collectible usernames are bought on the Market — accounts hold up to 2, VIP up to 5.
+          </p>
 
           {value && !validate(value) && (
            <p className="text-xs text-destructive">{t("invalidFormat")}</p>

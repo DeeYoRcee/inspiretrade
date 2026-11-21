@@ -50,6 +50,13 @@ const CASE_SKIN: Record<CaseType, { border: string; glow: string; iconTint: stri
     badge: "text-amber-400/90",
     lid: "border-amber-500/60 bg-gradient-to-b from-amber-400/50 to-amber-500/10",
   },
+  trading: {
+    border: "border-emerald-500/60",
+    glow: "rgba(16,185,129,0.7)",
+    iconTint: "text-emerald-400",
+    badge: "text-emerald-400/90",
+    lid: "border-emerald-500/60 bg-gradient-to-b from-emerald-400/50 to-emerald-500/10",
+  },
 };
 
 /**
@@ -65,7 +72,7 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
   const [offset, setOffset] = useState<number | null>(null);
 
   // built-ins come from CASES; owner-made custom cases carry their own pool
-  const isBuiltin = caseType === "inspire" || caseType === "gold";
+  const isBuiltin = caseType === "inspire" || caseType === "gold" || caseType === "trading";
   const caseDef = isBuiltin
     ? CASES[caseType as CaseType]
     : { id: caseType as CaseType, name: caseName || caseType, fragments: pool || FRAGMENTS };

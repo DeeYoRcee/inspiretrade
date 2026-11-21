@@ -15,9 +15,16 @@
  *   refCodes/{CODE} = uid            (code → owner lookup)
  */
 import { handle, requireUser, rtdb, HttpError, logLedger } from "../lib/firebase";
+import { REFERRAL_MILESTONES } from "../lib/fragments";
 
 const BONUS_NEW = 0; // disabled — no INSP for the invited user
 const REFERRAL_CASES = 0; // disabled — no Inspire Cases for the referrer
+
+// Phase 32 — referral milestones. One-time rewards for reaching an invited
+// count; claimed explicitly from the Wallet page. A tier can be claimed only
+// when the referrer's count has REACHED the threshold; everything is
+// transactional (referralMilestones/{uid}/{tier} = true) and ledgered.
+
 
 // Unambiguous alphabet (no 0/O, 1/I/L confusion) — codes are shown in URLs.
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -78,6 +85,7 @@ export default handle(async (req, res) => {
   if (action === "info") {
     const code = await ensureCode(user.uid);
     const node = (await rtdb().ref(`referrals/${user.uid}`).get()).val() || {};
+    const claimed = (await rtdb().ref(`referralMilestones/${user.uid}`).get()).val() || {};
     return res.status(200).json({
       ok: true,
       code,
@@ -85,7 +93,50 @@ export default handle(async (req, res) => {
       earned: node.earned || 0,
       referredByCode: node.referredByCode || null,
       bonuses: { new: BONUS_NEW, referrerCase: REFERRAL_CASES },
+      milestones: REFERRAL_MILESTONES,
+      claimedMilestones: Object.keys(claimed).filter((k) => claimed[k] === true).map(Number),
     });
+  }
+
+  // Phase 32: claim a referral milestone tier (one-time, atomic). The grant
+  // rides INSIDE the economy transaction and is validated by a unique token
+  // landing in the node — concurrent claims of the same tier cannot double-
+  // grant (the loser's token never lands, so it must not credit anything).
+  if (action === "milestone") {
+    const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+    const tierIdx = Number(body?.tier);
+    const tier = REFERRAL_MILESTONES[tierIdx];
+    if (!tier) throw new HttpError(400, "BAD_TIER", "Unknown milestone tier");
+    const node = (await rtdb().ref(`referrals/${user.uid}`).get()).val() || {};
+    if ((node.count || 0) < tier.invited) {
+      throw new HttpError(409, "NOT_REACHED", `You need ${tier.invited} invited users to claim this reward`);
+    }
+    const token = `${user.uid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    const now = Date.now();
+    const ecoTx = await rtdb()
+      .ref(`economy/${user.uid}`)
+      .transaction((eco: any) => {
+        const e = { ...(eco || {}) };
+        const milestones = { ...((e as any).milestones || {}) };
+        const existing = milestones[tierIdx];
+        if (existing?.claimed === true) return e; // no-op — already claimed (token differs)
+        milestones[tierIdx] = { claimed: true, token, at: now };
+        return {
+          ...e,
+          milestones,
+          coins: (e.coins || 0) + tier.insp,
+          cases: (e.cases || 0) + tier.cases,
+          goldCases: (e.goldCases || 0) + tier.goldCases,
+          updatedAt: now,
+        };
+      });
+    const after = ecoTx?.snapshot?.val?.() || {};
+    const won = ecoTx.committed && (after as any)?.milestones?.[tierIdx]?.token === token;
+    if (!won) {
+      throw new HttpError(409, "ALREADY_CLAIMED", "This milestone reward has already been claimed");
+    }
+    await logLedger({ type: "referral_milestone", uid: user.uid, tier: tierIdx, invited: tier.invited, cases: tier.cases, goldCases: tier.goldCases, insp: tier.insp });
+    return res.status(200).json({ ok: true, tier: tierIdx, reward: { cases: tier.cases, goldCases: tier.goldCases, insp: tier.insp } });
   }
 
   if (action === "apply") {

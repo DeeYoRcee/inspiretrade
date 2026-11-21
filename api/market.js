@@ -138,14 +138,27 @@ var GOLD_FRAGMENTS = [
   { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
   { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
+var TRADING_FRAGMENTS = [
+  { id: "trade-1", name: "25k$ 1", icon: "Briefcase", rarity: "common", dropPercent: 35 },
+  { id: "trade-2", name: "25k$ 2", icon: "Gauge", rarity: "common", dropPercent: 35 },
+  { id: "trade-3", name: "25k$ 3", icon: "LineChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-4", name: "25k$ 4", icon: "PieChart", rarity: "rare", dropPercent: 8 },
+  { id: "trade-5", name: "25k$ 5", icon: "Activity", rarity: "epic", dropPercent: 5 },
+  { id: "trade-6", name: "25k$ 6", icon: "BarChart3", rarity: "epic", dropPercent: 5 },
+  { id: "trade-7", name: "25k$ 7", icon: "Waves", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-8", name: "25k$ 8", icon: "Landmark", rarity: "covert", dropPercent: 2.9995 },
+  { id: "trade-9", name: "25k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
+];
 var CASES = {
   inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
-  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS }
+  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS },
+  trading: { id: "trading", name: "Trading Case", accountSize: 25e3, fragments: TRADING_FRAGMENTS }
 };
-var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS];
+var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+var TOTAL_DROP_WEIGHT_TRADING = TRADING_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var MARKET_FEE_PERCENT = 10;
 var MAX_ACTIVE_LISTINGS = 20;
 var MIN_LISTING_PRICE = 0.01;
@@ -321,6 +334,24 @@ async function deliverUsername(db, buyerUid, listing, revertListing, sellerRecei
   const key = String(listing.usernameKey || "");
   const username = String(listing.username || "");
   const sellerUid = String(listing.sellerUid || "");
+  const [buyerProfileSnap, buyerAdminSnap] = await Promise.all([
+    db.ref(`users/${buyerUid}/profile`).once("value"),
+    db.ref(`admins/${buyerUid}`).once("value")
+  ]);
+  const buyerProfile = buyerProfileSnap.val() || {};
+  const buyerVip = buyerProfile.isPremium === true || !!buyerProfile.premiumPlan || buyerProfile.ceo === true || buyerAdminSnap.val() === true;
+  const USERNAME_CAP = buyerVip ? 5 : 2;
+  const heldBefore = { ...buyerProfile.usernames || {} };
+  const primaryBefore = typeof buyerProfile.username === "string" ? buyerProfile.username.toLowerCase() : "";
+  const willHold = new Set([...Object.keys(heldBefore), primaryBefore, key].filter(Boolean));
+  if (willHold.size > USERNAME_CAP) {
+    await revertListing();
+    throw new HttpError(
+      409,
+      "USERNAME_CAP_REACHED",
+      buyerVip ? `VIP accounts can hold at most ${USERNAME_CAP} usernames` : `Accounts can hold at most ${USERNAME_CAP} usernames (VIP raises the cap to 5)`
+    );
+  }
   const mapTx = await db.ref(`usernames/${key}`).transaction((current) => {
     if (current === null || current === sellerUid) return buyerUid;
     return current;

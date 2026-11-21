@@ -69,7 +69,7 @@ export const GOLD_FRAGMENTS: FragmentDef[] = [
   { id: "gold-9", name: "10k$ 9", icon: "Crown",   rarity: "mythic",  dropPercent: 0.001 },
 ];
 
-export type CaseType = "inspire" | "gold";
+export type CaseType = "inspire" | "gold" | "trading";
 
 export interface CaseDef {
   id: CaseType;
@@ -79,17 +79,38 @@ export interface CaseDef {
   fragments: FragmentDef[];
 }
 
-/** The two case types of the economy. */
+/**
+ * Trading Case — Phase 32. The $25,000 prop account as a 9-piece puzzle
+ * ("25k$ 1" … "25k$ 9"), built exactly like the Inspire/Gold cases. It is
+ * the Day-7 VIP daily reward and can drop from owner grants. Same rarity
+ * curve as the other two cases.
+ */
+export const TRADING_ACCOUNT_LABEL = "25k$ Prop"; // matches the $25,000 prop account
+export const TRADING_FRAGMENTS: FragmentDef[] = [
+  { id: "trade-1", name: "25k$ 1", icon: "Briefcase", rarity: "common",  dropPercent: 35 },
+  { id: "trade-2", name: "25k$ 2", icon: "Gauge",     rarity: "common",  dropPercent: 35 },
+  { id: "trade-3", name: "25k$ 3", icon: "LineChart", rarity: "rare",    dropPercent: 8 },
+  { id: "trade-4", name: "25k$ 4", icon: "PieChart",  rarity: "rare",    dropPercent: 8 },
+  { id: "trade-5", name: "25k$ 5", icon: "Activity",  rarity: "epic",    dropPercent: 5 },
+  { id: "trade-6", name: "25k$ 6", icon: "BarChart3", rarity: "epic",    dropPercent: 5 },
+  { id: "trade-7", name: "25k$ 7", icon: "Waves",     rarity: "covert",  dropPercent: 2.9995 },
+  { id: "trade-8", name: "25k$ 8", icon: "Landmark",  rarity: "covert",  dropPercent: 2.9995 },
+  { id: "trade-9", name: "25k$ 9", icon: "Crown",     rarity: "mythic",  dropPercent: 0.001 },
+];
+
+/** The case types of the economy. */
 export const CASES: Record<CaseType, CaseDef> = {
   inspire: { id: "inspire", name: "Inspire Case", accountSize: 5000, fragments: FRAGMENTS },
   gold:    { id: "gold",    name: "Gold Case",    accountSize: 10000, fragments: GOLD_FRAGMENTS },
+  trading: { id: "trading", name: "Trading Case", accountSize: 25000, fragments: TRADING_FRAGMENTS },
 };
 
-export const ALL_FRAGMENTS: FragmentDef[] = [...FRAGMENTS, ...GOLD_FRAGMENTS];
+export const ALL_FRAGMENTS: FragmentDef[] = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
 
 export const FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 export const TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 export const TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
+export const TOTAL_DROP_WEIGHT_TRADING = TRADING_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 
 // ---- Daily reward cycle (PUBG-style 7-day login calendar) -----------------
 export const REWARD_CYCLE_DAYS = 7;        // day 1-6 → Inspire Case, day 7 → Gold Case
@@ -116,6 +137,19 @@ export function sellerReceives(price: number): number {
   const cents = Math.round(price * 100);
   return (cents - Math.round((cents * MARKET_FEE_PERCENT) / 100)) / 100;
 }
+
+// ---- Referral milestones (Phase 32) ----------------------------------------
+// One-time rewards for reaching an invited count, claimed from the Wallet.
+// 3→1 InspireCase · 10→3 InspireCase · 25→5 InspireCase+1 GoldCase ·
+// 50→7 InspireCase+3 GoldCase+5 INSP · 100→10 InspireCase+5 GoldCase+10 INSP.
+export interface ReferralMilestoneTier { invited: number; cases: number; goldCases: number; insp: number }
+export const REFERRAL_MILESTONES: ReferralMilestoneTier[] = [
+  { invited: 3,   cases: 1,  goldCases: 0, insp: 0 },
+  { invited: 10,  cases: 3,  goldCases: 0, insp: 0 },
+  { invited: 25,  cases: 5,  goldCases: 1, insp: 0 },
+  { invited: 50,  cases: 7,  goldCases: 3, insp: 5 },
+  { invited: 100, cases: 10, goldCases: 5, insp: 10 },
+];
 
 /** Cycle day (1…7) for a given streak count AFTER the claim. */
 export function cycleDayOf(streak: number): number {

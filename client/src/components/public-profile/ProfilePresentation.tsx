@@ -1,5 +1,6 @@
 import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TitleStrip, titlesForProfile } from "@/pages/TitlesPage";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
 import { getProfileBackground } from "@/lib/profile-backgrounds";
@@ -101,6 +102,7 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
                 VIP
               </span>
             )}
+        <TitleStrip titles={titlesForProfile(profile)} size="sm" />
           </div>
         )}
         <p className="relative text-sm text-emerald-50/60">@{profile.username}</p>

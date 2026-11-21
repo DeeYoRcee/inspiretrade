@@ -12,6 +12,8 @@ import { playEntryChimeOnce } from "@/lib/sfx";
 import { Navbar } from "@/components/layout/Navbar";
 import { ThemeBackdrop } from "@/components/layout/ThemeBackdrop";
 import NotFound from "@/pages/not-found";
+import VerifyEmailScreen from "@/pages/VerifyEmailPage";
+import TitlesPage from "@/pages/TitlesPage";
 import Dashboard from "@/pages/Dashboard";
 import AuthPage from "@/pages/AuthPage";
 import PremiumPage from "@/pages/PremiumPage";
@@ -154,6 +156,10 @@ function AppFooter() {
 }
 
 function AppLayout({ children }: { children: ReactNode }) {
+  // Phase 32: mandatory email verification — unverified accounts see the
+  // verification screen instead of the app (Google accounts are verified).
+  const { user } = useAuth();
+  if (user && user.emailVerified === false) return <VerifyEmailScreen />;
   return (
     <div className="min-h-screen flex flex-col">
       <ThemeBackdrop />
@@ -328,6 +334,13 @@ function CertificateRoute() {
   return <AppLayout><CertificatePage /></AppLayout>;
 }
 
+function TitlesRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <AuthPage />;
+  return <AppLayout><TitlesPage /></AppLayout>;
+}
+
 function PublicProfileRoute({ params }: { params: { handle: string } }) {
   if (!params.handle.startsWith("@")) return <NotFound />;
   return <PublicProfilePage username={params.handle.slice(1)} />;
@@ -353,6 +366,7 @@ function Router() {
         <Route path="/wallet" component={WalletRoute} />
         <Route path="/admin" component={AdminRoute} />
         <Route path="/certificate" component={CertificateRoute} />
+        <Route path="/titles"><TitlesRoute /></Route>
         <Route path="/:handle" component={PublicProfileRoute} />
         <Route component={NotFound} />
       </Switch>

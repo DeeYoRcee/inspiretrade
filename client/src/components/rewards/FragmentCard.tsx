@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import {
   ShieldCheck, Hourglass, Scale, FlaskConical, ClipboardList, Brain,
   Repeat, Crosshair, Crown, Gem, Zap, Star, Target, Medal, Trophy,
-  Rocket, Diamond, type LucideIcon,
+  Rocket, Diamond, Briefcase, Gauge, LineChart, PieChart, Activity,
+  BarChart3, Waves, Landmark, type LucideIcon,
 } from "lucide-react";
 import { getFragment, RARITY_META, type FragmentDef, type Rarity } from "@shared/fragments";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,8 @@ import { cn } from "@/lib/utils";
 const ICONS: Record<string, LucideIcon> = {
   ShieldCheck, Hourglass, Scale, FlaskConical, ClipboardList, Brain,
   Repeat, Crosshair, Crown, Gem, Zap, Star, Target, Medal, Trophy,
-  Rocket, Diamond,
+  Rocket, Diamond, Briefcase, Gauge, LineChart, PieChart, Activity,
+  BarChart3, Waves, Landmark,
 };
 
 /** Lucide icon by fragment `icon` name — shared with the case-opening reel. */
