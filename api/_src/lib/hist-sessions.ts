@@ -97,3 +97,57 @@ export const READ_AGG_CHAIN: Record<string, Array<{ src: string; factorMin: numb
  * scroll-back chunk stays cheap (the chart asks for days, never years). */
 export const MAX_1M_FOLD_WINDOW_SEC = 90 * 86400;
 
+
+// ---- Phase 31: closed-session anchors --------------------------------------
+
+/** Timeframes whose bucket ANCHOR must sit inside an open session. A 1m/5m/
+ * 15m/30m/1h/2h/4h bar anchored in a closed interval (weekend, daily break)
+ * can only contain closed-session minutes — stale quotes recorded as ticks.
+ * 1d/1W/1M are exempt: their UTC-midnight / Monday anchors routinely fall in
+ * a closed interval while the DAY itself traded (e.g. Sunday-evening bars). */
+export const INTRADAY_TFS: ReadonlySet<string> = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h"]);
+
+export function isIntradayTf(tf: string): boolean {
+  return INTRADAY_TFS.has(tf);
+}
+
+/** Drop every bar whose bucket anchor falls inside one of the closed
+ * intervals ([from, to) epoch seconds, sorted ascending). Binary search per
+ * bar — O(bars · log intervals). Crypto callers simply pass an empty list
+ * (closedIntervals returns [] for crypto), so the 24/7 behavior is untouched. */
+export function dropClosedAnchors<T extends { time: number }>(bars: T[], ivs: Array<{ from: number; to: number }>): { bars: T[]; dropped: number } {
+  if (!ivs.length || !bars.length) return { bars, dropped: 0 };
+  const starts = ivs.map((iv) => iv.from);
+  const out: T[] = [];
+  let dropped = 0;
+  for (const b of bars) {
+    let lo = 0, hi = starts.length - 1, inside = false;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const iv = ivs[mid];
+      if (b.time < iv.from) hi = mid - 1;
+      else if (b.time >= iv.to) lo = mid + 1;
+      else { inside = true; break; }
+    }
+    if (inside) dropped++;
+    else out.push(b);
+  }
+  return { bars: out, dropped };
+}
+
+/** Week completeness guard for 1d→1W folds: a weekly bucket may only be
+ * written when every weekday (Mon-Fri) has a daily bar. The LIVE week never
+ * folds — its bucket belongs to the live aggregation engine, and its 1d
+ * base days cannot be complete until the week is over. Week buckets are
+ * Monday-anchored (bucketStart 604800). */
+export function foldWeekComplete(dayKeys: Set<string>, weekStartSec: number, nowSec: number): boolean {
+  const weekEnd = weekStartSec + 604800;
+  if (nowSec < weekEnd) return false; // current live week — never fold it
+  for (let d = 0; d < 5; d++) {
+    const daySec = weekStartSec + d * 86400;
+    const dt = new Date(daySec * 1000);
+    const key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+    if (!dayKeys.has(key)) return false;
+  }
+  return true;
+}

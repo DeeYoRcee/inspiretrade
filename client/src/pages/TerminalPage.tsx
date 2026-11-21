@@ -214,8 +214,8 @@ export default function TerminalPage() {
   // ---- loading gate (live account) ------------------------------------------
   if (loading && !account && mode === "live") {
     return (
-      <div className="flex h-[60vh] items-center justify-center text-sm text-slate-400">
-        Loading trading account…
+      <div className="flex h-[60vh] items-center justify-center">
+        <img src="/logo.png" alt="InspireTrade" draggable={false} className="h-16 w-auto max-w-[220px] select-none object-contain opacity-90" />
       </div>
     );
   }

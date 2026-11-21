@@ -453,6 +453,12 @@ export function maybeFireDeepHeal(symbol: string, tf: Timeframe): void {
     authedFetch("/api/quotes?action=backfill-metals", { symbol, tf }).catch(() => { /* best-effort — resume cursor continues later */ });
     maybePurgeWeekendCandles();
   }
+  // Phase 31: EURUSD/GBPUSD ride the same shared-store self-heal through the
+  // backfill-deep action (tf=1m → Dukascopy walk; higher tf → shard fold),
+  // so scrolling an empty intraday past starts filling it for every device.
+  if (symbol === "EURUSD" || symbol === "GBPUSD") {
+    authedFetch("/api/quotes?action=backfill-deep", { symbol, tf }).catch(() => { /* best-effort — resume cursor continues later */ });
+  }
 }
 
 // Phase 28 §9: once per 6h per device, an admin session purges the

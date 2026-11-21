@@ -768,6 +768,43 @@ var READ_AGG_CHAIN = {
   "1M": [{ src: "1d", factorMin: 43200 }]
 };
 var MAX_1M_FOLD_WINDOW_SEC = 90 * 86400;
+var INTRADAY_TFS = /* @__PURE__ */ new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h"]);
+function isIntradayTf(tf) {
+  return INTRADAY_TFS.has(tf);
+}
+function dropClosedAnchors(bars, ivs) {
+  if (!ivs.length || !bars.length) return { bars, dropped: 0 };
+  const starts = ivs.map((iv) => iv.from);
+  const out = [];
+  let dropped = 0;
+  for (const b of bars) {
+    let lo = 0, hi = starts.length - 1, inside = false;
+    while (lo <= hi) {
+      const mid = lo + hi >> 1;
+      const iv = ivs[mid];
+      if (b.time < iv.from) hi = mid - 1;
+      else if (b.time >= iv.to) lo = mid + 1;
+      else {
+        inside = true;
+        break;
+      }
+    }
+    if (inside) dropped++;
+    else out.push(b);
+  }
+  return { bars: out, dropped };
+}
+function foldWeekComplete(dayKeys, weekStartSec, nowSec) {
+  const weekEnd = weekStartSec + 604800;
+  if (nowSec < weekEnd) return false;
+  for (let d = 0; d < 5; d++) {
+    const daySec = weekStartSec + d * 86400;
+    const dt = new Date(daySec * 1e3);
+    const key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+    if (!dayKeys.has(key)) return false;
+  }
+  return true;
+}
 
 // api/_src/lib/hist.ts
 var HIST_STOOQ = {
@@ -812,8 +849,14 @@ function groupByDay(bars) {
 }
 async function writeShards(symbol, tf, raw, provider, opts) {
   const checked = validateBars(raw);
-  const { bars } = alignAndDedupe(checked.bars, tf === "1d" ? 86400 : tf === "1W" ? 604800 : tf === "1M" ? 2592e3 : 60);
-  const rejected = checked.invalid + (raw.length - checked.bars.length);
+  const aligned = alignAndDedupe(checked.bars, tf === "1d" ? 86400 : tf === "1W" ? 604800 : tf === "1M" ? 2592e3 : 60);
+  let rejected = checked.invalid + (raw.length - checked.bars.length);
+  let bars = aligned.bars;
+  if (isIntradayTf(tf) && assetClassOf(symbol) !== "crypto" && bars.length) {
+    const g = dropClosedAnchors(bars, closedIntervals(symbol, bars[0].time - 2 * 86400, bars[bars.length - 1].time + 2 * 86400));
+    rejected += g.dropped;
+    bars = g.bars;
+  }
   const out = { written: 0, skipped: 0, days: [], rejected };
   const metaRef = rtdb().ref(`histMeta/${symbol}/${tf}`);
   const dataRef = rtdb().ref(`hist/${symbol}/${tf}`);
@@ -877,6 +920,10 @@ async function readShards(symbol, tf, fromSec, toSec) {
     }
   }
   if (tf === "1d") return { bars: normalizeDailyAnchors(bars), providers };
+  if (isIntradayTf(tf) && assetClassOf(symbol) !== "crypto" && bars.length) {
+    const g = dropClosedAnchors(bars, closedIntervals(symbol, fromSec - 2 * 86400, toSec + 2 * 86400));
+    if (g.dropped) return { bars: g.bars, providers };
+  }
   bars.sort((a, b) => a.time - b.time);
   return { bars, providers };
 }
@@ -1137,7 +1184,13 @@ async function runBackfillStep(req) {
     if (!iv) {
       const srcTf = tf === "2h" || tf === "4h" ? "1h" : tf === "1W" || tf === "1M" ? "1d" : null;
       if (!srcTf) return { ...base, ok: false, provider: "none", error: `no source interval for ${tf}` };
-      const srcBars = await fetchStooqBars(stooqSym, HIST_STOOQ_INTERVAL[srcTf]);
+      let srcBars;
+      try {
+        srcBars = await fetchStooqBars(stooqSym, HIST_STOOQ_INTERVAL[srcTf]);
+      } catch (e) {
+        const fb = await foldBackfillStep(req);
+        return { ...fb, note: `stooq ${String(e?.message || e)} \u2192 ${fb.note || "shard fold"}` };
+      }
       const inWin2 = srcBars.filter((b) => b.time >= covered);
       let agg;
       if (tf === "1W" || tf === "1M") {
@@ -1167,7 +1220,16 @@ async function runBackfillStep(req) {
       await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, targetFrom: wantFrom, done: true, written: (state.written ?? 0) + sh2.written, rejected: (state.rejected ?? 0) + sh2.rejected, updatedAt: Date.now(), error: null });
       return { ...base, provider: `stooq-${srcTf}-fold`, written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: agg.length ? agg[0].time : null, newest: agg.length ? agg[agg.length - 1].time : null, done: true };
     }
-    const raw = await fetchStooqBars(stooqSym, iv);
+    const raw = await (async () => {
+      try {
+        return await fetchStooqBars(stooqSym, iv);
+      } catch (e) {
+        const fb = await foldBackfillStep(req);
+        const err = new Error(`stooq-fallback:${String(e?.message || e)}`);
+        err.foldResult = fb;
+        throw err;
+      }
+    })();
     const inWin = raw.filter((b) => b.time >= covered && b.time <= now);
     const sh = await writeShards(symbol, tf, inWin, "stooq-spot", { force: req.force });
     const oldest = inWin.length ? inWin[0].time : state.oldest ?? null;
@@ -1185,6 +1247,143 @@ async function runBackfillStep(req) {
       error: null
     });
     return { ...base, provider: "stooq-spot", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest, newest, cursor: oldest, done: true, note: `${raw.length} archive rows scanned` };
+  } catch (e) {
+    if (e && e.foldResult) return e.foldResult;
+    const msg = String(e?.message || e);
+    await stateRef.update({ error: msg, updatedAt: Date.now() }).catch(() => {
+    });
+    return { ...base, ok: false, error: msg };
+  }
+}
+async function foldBackfillStep(req) {
+  const { symbol, tf } = req;
+  const now = Math.floor(Date.now() / 1e3);
+  const stateRef = rtdb().ref(`histState/${symbol}/${tf}`);
+  const state = (await stateRef.once("value")).val() || {};
+  const base = { ok: true, symbol, tf, provider: "", written: 0, skipped: 0, rejected: 0, oldest: state.oldest ?? null, newest: state.newest ?? null, cursor: state.oldest ?? null, targetFrom: null, done: false };
+  try {
+    const cls = assetClassOf(symbol);
+    if (cls === "crypto") return { ...base, provider: "binance", done: true, note: "crypto history is served natively by the Binance REST/WS engine" };
+    const deadline = Date.now() + 15e3;
+    if (tf === "1W" || tf === "1M") {
+      const tgtMeta2 = (await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value")).val() || {};
+      const snap = await rtdb().ref(`hist/${symbol}/1d`).once("value");
+      const dayObj = snap.val() || {};
+      const dayKeys = Object.keys(dayObj).filter((d) => typeof dayObj[d] === "string" && dayObj[d]);
+      if (!dayKeys.length) return { ...base, ok: false, provider: "none", error: "no 1d shards to fold from \u2014 run the 1m backfill first (it folds 1d automatically)" };
+      const dayBars = [];
+      for (const d of dayKeys) {
+        for (const row of String(dayObj[d]).split("|")) {
+          const a = parseShardRow(row);
+          if (a) dayBars.push({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] });
+        }
+      }
+      const sec = tf === "1W" ? 604800 : 2592e3;
+      const byBucket = /* @__PURE__ */ new Map();
+      for (const b of dayBars) {
+        const k = bucketStart(b.time, sec);
+        let arr = byBucket.get(k);
+        if (!arr) {
+          arr = [];
+          byBucket.set(k, arr);
+        }
+        arr.push(b);
+      }
+      const agg = [];
+      let skippedWeeks = 0;
+      for (const [bucket, arr] of [...byBucket.entries()].sort((a, b) => a[0] - b[0])) {
+        if (tf === "1W" && !foldWeekComplete(new Set(arr.map((b) => dayKey(b.time))), bucket, now)) {
+          skippedWeeks++;
+          continue;
+        }
+        agg.push({
+          time: bucket,
+          open: arr[0].open,
+          high: Math.max(...arr.map((b) => b.high)),
+          low: Math.min(...arr.map((b) => b.low)),
+          close: arr[arr.length - 1].close,
+          volume: arr.reduce((s, b) => s + (b.volume ?? 0), 0)
+        });
+      }
+      const sh2 = await writeShards(symbol, tf, agg, "1d-shard-fold", { force: !!req.force });
+      const oldest2 = agg.length ? agg[0].time : state.oldest ?? null;
+      const newest2 = agg.length ? agg[agg.length - 1].time : state.newest ?? null;
+      await stateRef.update({
+        provider: "1d-shard-fold",
+        oldest: oldest2,
+        newest: newest2,
+        targetFrom: backfillWindowFrom(HIST_MONTHS_CAP[tf] ?? 240, now),
+        done: true,
+        written: (state.written ?? 0) + sh2.written,
+        rejected: (state.rejected ?? 0) + sh2.rejected + sh2.skipped,
+        updatedAt: Date.now(),
+        error: null
+      });
+      return { ...base, provider: "1d-shard-fold", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: oldest2, newest: newest2, done: true, note: `${dayBars.length} day bars \u2192 ${agg.length} ${tf} buckets${skippedWeeks ? ` \xB7 ${skippedWeeks} incomplete ${tf === "1W" ? "weeks" : "months"} skipped` : ""}` };
+    }
+    const factorMin = tf === "1d" ? 1440 : Number(tf.slice(0, -1)) * 60;
+    if (!Number.isFinite(factorMin) || factorMin <= 0) return { ...base, ok: false, provider: "none", error: `cannot fold ${tf}` };
+    const baseMeta = (await rtdb().ref(`histMeta/${symbol}/1m`).once("value")).val() || {};
+    const baseDays = Object.keys(baseMeta).filter((d) => typeof baseMeta[d] === "string" && baseMeta[d]).sort();
+    if (!baseDays.length) return { ...base, ok: false, provider: "none", error: "no 1m shards to fold from \u2014 run the 1m backfill first" };
+    const tgtMeta = (await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value")).val() || {};
+    const pending = baseDays.filter((d) => !tgtMeta[d] || tgtMeta[d] === "dukascopy-bid-fold");
+    if (!pending.length) {
+      await stateRef.update({ provider: "1m-shard-fold", done: true, updatedAt: Date.now(), error: null }).catch(() => {
+      });
+      return { ...base, provider: "1m-shard-fold", done: true, note: "all base days already folded" };
+    }
+    const chunk = pending.slice(0, 45);
+    const pendingSet = new Set(chunk);
+    const chunkStart = Date.parse(`${chunk[0]}T00:00:00Z`) / 1e3;
+    const chunkEnd = Date.parse(`${chunk[chunk.length - 1]}T00:00:00Z`) / 1e3 + 86400;
+    const read = await readShards(symbol, "1m", chunkStart, chunkEnd);
+    let m1 = read.bars;
+    if (m1.length && assetClassOf(symbol) !== "crypto") {
+      m1 = dropClosedAnchors(m1, closedIntervals(symbol, chunkStart - 2 * 86400, chunkEnd + 86400)).bars;
+    }
+    const byDay = /* @__PURE__ */ new Map();
+    for (const b of m1) {
+      const k = dayKey(b.time);
+      if (!pendingSet.has(k)) continue;
+      let arr = byDay.get(k);
+      if (!arr) {
+        arr = [];
+        byDay.set(k, arr);
+      }
+      arr.push(b);
+    }
+    const folded = [];
+    let skippedDays = 0;
+    for (const [day, rows] of [...byDay.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1)) {
+      if (rows.length < 600) {
+        skippedDays++;
+        continue;
+      }
+      if (Date.now() > deadline) {
+        skippedDays++;
+        continue;
+      }
+      folded.push(...aggregateBars(rows, factorMin));
+    }
+    const sh = folded.length ? await writeShards(symbol, tf, folded, "1m-shard-fold", { force: true }) : { written: 0, skipped: 0, days: [], rejected: 0 };
+    const times = folded.map((b) => b.time);
+    const oldest = times.length ? Math.min(...times) : state.oldest ?? null;
+    const newest = times.length ? Math.max(...times) : state.newest ?? null;
+    const done = pending.length <= 45;
+    await stateRef.update({
+      provider: "1m-shard-fold",
+      oldest,
+      newest,
+      targetFrom: backfillWindowFrom(HIST_MONTHS_CAP[tf] ?? 240, now),
+      done,
+      written: (state.written ?? 0) + sh.written,
+      rejected: (state.rejected ?? 0) + sh.rejected,
+      foldCursor: pending.length ? chunk[chunk.length - 1] : null,
+      updatedAt: Date.now(),
+      error: null
+    });
+    return { ...base, provider: "1m-shard-fold", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest, newest, done, note: `folded ${sh.written}/${byDay.size} days ${chunk[0]}\u2192${chunk[chunk.length - 1]} from 1m${skippedDays ? ` \xB7 ${skippedDays} incomplete days skipped` : ""} \xB7 ${pending.length - sh.written > 0 ? "resume to continue" : "caught up"}` };
   } catch (e) {
     const msg = String(e?.message || e);
     await stateRef.update({ error: msg, updatedAt: Date.now() }).catch(() => {
@@ -1489,6 +1688,7 @@ async function recordFxLiveBids(bids) {
     for (const [code, bidRaw] of Object.entries(bids)) {
       const bid = Number(bidRaw);
       if (!DUKA_MAP[code] || !(bid > 0)) continue;
+      if (!marketHours(code).open) continue;
       await rtdb().ref(`fxLive/${code}/${t}`).transaction((cur) => {
         const o = Number(cur?.o), h = Number(cur?.h), l = Number(cur?.l), s = Number(cur?.s || 1);
         if (cur && [o, h, l, Number(cur.c)].every(Number.isFinite) && o > 0) {
@@ -1853,6 +2053,23 @@ var quotes_default = handle(async (req, res) => {
     });
     return res.json(step);
   }
+  if (action === "backfill-deep" && req.method === "POST") {
+    const user = await requireUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: "auth-required" });
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const symbol = String(raw?.symbol || "").toUpperCase();
+    const DEEP_SYMBOLS = /* @__PURE__ */ new Set(["XAUUSD", "EURUSD", "GBPUSD"]);
+    if (!DEEP_SYMBOLS.has(symbol)) return res.json({ ok: false, reason: "not-in-phase31-scope" });
+    const tf = String(raw?.tf || "1m");
+    if (!["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "1W"].includes(tf)) return res.json({ ok: false, reason: "bad-tf" });
+    const gateRef = rtdb().ref(`config/deepBackfillAt/${symbol}/${tf}`);
+    const lastAt = Number((await gateRef.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 3e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((3e4 - (nowMs - lastAt)) / 1e3) });
+    await gateRef.set(nowMs);
+    const step = tf === "1m" ? await runBackfillStep({ symbol, tf, months: raw?.months != null ? Number(raw.months) : 240, maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 240 }) : await foldBackfillStep({ symbol, tf, force: !!raw?.force });
+    return res.json(step);
+  }
   if (action === "hist-backfill" && req.method === "POST") {
     const adminUser = await requireAdmin(req);
     if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
@@ -1898,7 +2115,28 @@ var quotes_default = handle(async (req, res) => {
     for (const symRaw of wanted) {
       const symbol = String(symRaw).toUpperCase();
       const code = symbol === "XAUUSD" ? "XAU" : symbol === "XAGUSD" ? "XAG" : null;
-      if (!code) continue;
+      if (!code && !DUKA_MAP[symbol]) continue;
+      const fxStore = !code && DUKA_MAP[symbol];
+      if (fxStore) {
+        const fxIntervals = closedIntervals(symbol, from, now);
+        let removedFx = 0;
+        for (const store of ["fxLive", "fxBars"]) {
+          const snap2 = await rtdb().ref(`${store}/${symbol}`).orderByKey().startAt(String(from)).endAt(String(now)).once("value");
+          const obj2 = snap2.val() || {};
+          const keys = Object.keys(obj2).filter((k) => {
+            const t = Number(k);
+            return fxIntervals.some((iv) => t >= iv.from && t < iv.to);
+          });
+          for (let i = 0; i < keys.length; i += 500) {
+            const chunk = {};
+            for (const k of keys.slice(i, i + 500)) chunk[k] = null;
+            await rtdb().ref(`${store}/${symbol}`).update(chunk);
+          }
+          removedFx += keys.length;
+        }
+        report[`${symbol} (fxLive+fxBars)`] = { removed: removedFx, kept: 0 };
+        continue;
+      }
       const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
       const obj = snap.val() || {};
       const entries = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= from && c.t <= now);
@@ -1921,6 +2159,49 @@ var quotes_default = handle(async (req, res) => {
       }
       const removed = toDelete.length;
       report[symbol] = { removed, kept: entries.length - removed };
+    }
+    if (raw?.hist === true) {
+      const histSyms = (Array.isArray(raw?.symbols) && raw.symbols.length ? raw.symbols : ["XAUUSD", "EURUSD", "GBPUSD"]).map((s) => String(s).toUpperCase());
+      const histTfs = (Array.isArray(raw?.tfs) && raw.tfs.length ? raw.tfs : ["1m"]).map((s) => String(s));
+      for (const symbol of histSyms) {
+        for (const tf of histTfs) {
+          let removedDays = 0, cleanedDays = 0, keptRows = 0;
+          const metaObj = (await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value")).val() || {};
+          const days = Object.keys(metaObj).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+          for (const day of days.slice(0, 400)) {
+            const dayStart = Date.parse(`${day}T00:00:00Z`) / 1e3;
+            const dayEnd = dayStart + 86400;
+            const ivs = closedIntervals(symbol, dayStart, dayEnd);
+            const fullyClosed = ivs.some((iv) => iv.from <= dayStart && iv.to >= dayEnd);
+            if (fullyClosed) {
+              await rtdb().ref(`hist/${symbol}/${tf}/${day}`).remove();
+              await rtdb().ref(`histMeta/${symbol}/${tf}/${day}`).remove();
+              removedDays++;
+              continue;
+            }
+            if (!ivs.length) {
+              keptRows++;
+              continue;
+            }
+            const blob = (await rtdb().ref(`hist/${symbol}/${tf}/${day}`).once("value")).val();
+            if (typeof blob !== "string" || !blob) continue;
+            const rows = blob.split("|").map((r) => parseShardRow(r)).filter((a) => !!a);
+            const kept = rows.filter((a) => !ivs.some((iv) => a[0] >= iv.from && a[0] < iv.to));
+            if (kept.length !== rows.length) {
+              cleanedDays++;
+              if (kept.length === 0) {
+                await rtdb().ref(`hist/${symbol}/${tf}/${day}`).remove();
+                await rtdb().ref(`histMeta/${symbol}/${tf}/${day}`).remove();
+                removedDays++;
+              } else {
+                await rtdb().ref(`hist/${symbol}/${tf}/${day}`).set(kept.map((a) => JSON.stringify(a)).join("|"));
+              }
+            } else keptRows++;
+          }
+          report[`${symbol}/${tf} (hist)`] = { removed: removedDays, kept: keptRows };
+          if (cleanedDays) report[`${symbol}/${tf} (hist)`].cleaned = cleanedDays;
+        }
+      }
     }
     return res.json({ ok: true, report, at: Date.now() });
   }
@@ -2375,7 +2656,8 @@ var quotes_default = handle(async (req, res) => {
     const checked = validateBars(island.bars);
     const deduped = alignAndDedupe(checked.bars, 60);
     const stale = staleRunFilter(repairOutlierExtremes(deduped.bars).bars);
-    const m1 = stale.bars;
+    const m1 = filterClosedCandles(bareCode, stale.bars);
+    const closedDropped = stale.bars.length - m1.length;
     if (!m1.length && !daily) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     let bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
     let dailyDeep = false;
@@ -2412,7 +2694,8 @@ var quotes_default = handle(async (req, res) => {
       regularMarketPrice: last.close,
       previousClose: bars.length > 1 ? bars[bars.length - 2].close : null,
       bars,
-      islandBars: island.rejected
+      islandBars: island.rejected,
+      closedDropped
     };
   };
   try {
@@ -2457,6 +2740,11 @@ var quotes_default = handle(async (req, res) => {
     });
     let final = payload;
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
+      try {
+        const fb = filterClosedCandles(bareCode, final.bars);
+        if (fb.length !== final.bars.length) final = { ...final, bars: fb, closedDropped: final.bars.length - fb.length };
+      } catch {
+      }
       const marketLive = marketHours(bareCode).open;
       try {
         const t = (await truefxQuotes())[bareCode];

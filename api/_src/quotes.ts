@@ -218,13 +218,13 @@ async function fetchSpot(code: string): Promise<number | null> {
 
 import {
   validateBars, alignAndDedupe, spotMergeGuard, bucketStart, minuteIslandFilter,
-  flatShare, repairOutlierExtremes, staleRunFilter,
+  flatShare, repairOutlierExtremes, staleRunFilter, parseShardRow,
   type RawBar,
 } from "../../shared/feed-validation";
 import { aggregateBars, SPOT_PRICE_BANDS, normalizeDailyAnchors, mergeFxStoreDaily } from "../../shared/terminal";
 import { marketHours, filterClosedCandles, closedIntervals } from "../../shared/market-hours";
 import { DUKA_MAP, DUKA_METALS, fetchDukaDay, decodeDukaDay } from "./lib/duka";
-import { runBackfillStep, readRange, coverageReport, writeShards, fetchStooqBars, HIST_STOOQ, HIST_MONTHS_CAP } from "./lib/hist";
+import { runBackfillStep, foldBackfillStep, readRange, coverageReport, writeShards, fetchStooqBars, HIST_STOOQ, HIST_MONTHS_CAP } from "./lib/hist";
 import type { BackfillResult, RangeResult, CoverageRow } from "./lib/hist";
 
 /**
@@ -282,6 +282,14 @@ async function recordFxLiveBids(bids: Record<string, number | undefined>): Promi
     for (const [code, bidRaw] of Object.entries(bids)) {
       const bid = Number(bidRaw);
       if (!DUKA_MAP[code] || !(bid > 0)) continue;
+      // Phase 31: gate the RECORDER itself. The batch Market Watch poll
+      // called this function with NO market check, so TrueFX's stale
+      // weekend BIDs kept folding minute candles all Saturday — 799 closed-
+      // session minutes live-verified in fxLive/EURUSD+GBPUSD for Nov 21.
+      // Every call site is now safe by construction; crypto never reaches
+      // this loop (DUKA_MAP is forex-only) and the NY-wall-clock session
+      // engine handles DST on the Fri-close / Sun-open boundaries.
+      if (!marketHours(code).open) continue;
       // Phase 23 BUG-3: merge against the REMOTE minute via a transaction —
       // concurrent instances all fold their extremes in, nobody's write can
       // erase another's high/low.
@@ -771,6 +779,35 @@ export default handle(async (req, res) => {
     return res.json(step as BackfillResult);
   }
 
+  // ---- Phase 31: user-level DEEP backfill for the three Phase 31 symbols --
+  // hist-backfill is admin-only (ADMIN_EMAILS / admins/{uid}) and the forex
+  // deep store was EMPTY (live-verified: EURUSD/GBPUSD count=0 on every tf),
+  // so no session could ever start the Dukascopy forex walk. This mirrors
+  // backfill-metals for exactly the Phase 31 scope — XAUUSD / EURUSD /
+  // GBPUSD — with a per-symbol+tf 30s cooldown: tf=1m runs the resumable
+  // Dukascopy BID walk; any higher tf runs the shard FOLD engine (1m →
+  // 3m/5m/15m/30m/1h/2h/4h/1d, 1d → 1W), so one deep 1m store powers every
+  // timeframe. The admin hist-backfill stays open for everything else.
+  if (action === "backfill-deep" && req.method === "POST") {
+    const user = await requireUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: "auth-required" });
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const symbol = String(raw?.symbol || "").toUpperCase();
+    const DEEP_SYMBOLS = new Set(["XAUUSD", "EURUSD", "GBPUSD"]);
+    if (!DEEP_SYMBOLS.has(symbol)) return res.json({ ok: false, reason: "not-in-phase31-scope" });
+    const tf = String(raw?.tf || "1m");
+    if (!["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "1W"].includes(tf)) return res.json({ ok: false, reason: "bad-tf" });
+    const gateRef = rtdb().ref(`config/deepBackfillAt/${symbol}/${tf}`);
+    const lastAt = Number((await gateRef.once("value")).val() || 0);
+    const nowMs = Date.now();
+    if (nowMs - lastAt < 30000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((30000 - (nowMs - lastAt)) / 1000) });
+    await gateRef.set(nowMs);
+    const step = tf === "1m"
+      ? await runBackfillStep({ symbol, tf, months: raw?.months != null ? Number(raw.months) : 240, maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 240 })
+      : await foldBackfillStep({ symbol, tf, force: !!raw?.force });
+    return res.json(step as BackfillResult);
+  }
+
   // ---- Bulk forex-store ingest (Phase 17) ----------------------------------
   // The Dukascopy CDN is flaky per network: when an environment CAN reach it,
   // it decodes day files locally and pushes the decoded bars here instead of
@@ -827,11 +864,34 @@ export default handle(async (req, res) => {
     const wanted = Array.isArray(raw?.symbols) && raw.symbols.length ? raw.symbols : ["XAUUSD", "XAGUSD"];
     const now = Math.floor(Date.now() / 1000);
     const from = now - 70 * 86400; // recorder validity 8d · serve window 65d → 70d covers every poisonable key
-    const report: Record<string, { removed: number; kept: number }> = {};
+    const report: Record<string, { removed: number; kept: number; cleaned?: number }> = {};
     for (const symRaw of wanted) {
       const symbol = String(symRaw).toUpperCase();
       const code = symbol === "XAUUSD" ? "XAU" : symbol === "XAGUSD" ? "XAG" : null;
-      if (!code) continue;
+      // Phase 31: forex stores carry the same poison (799 Sat minutes per
+      // pair in fxLive) — purge fxLive + fxBars with the identical engine.
+      if (!code && !DUKA_MAP[symbol]) continue;
+      const fxStore = !code && DUKA_MAP[symbol];
+      if (fxStore) {
+        const fxIntervals = closedIntervals(symbol, from, now);
+        let removedFx = 0;
+        for (const store of ["fxLive", "fxBars"]) {
+          const snap = await rtdb().ref(`${store}/${symbol}`).orderByKey().startAt(String(from)).endAt(String(now)).once("value");
+          const obj: Record<string, any> = snap.val() || {};
+          const keys = Object.keys(obj).filter((k) => {
+            const t = Number(k);
+            return fxIntervals.some((iv) => t >= iv.from && t < iv.to);
+          });
+          for (let i = 0; i < keys.length; i += 500) {
+            const chunk: Record<string, null> = {};
+            for (const k of keys.slice(i, i + 500)) chunk[k] = null;
+            await rtdb().ref(`${store}/${symbol}`).update(chunk);
+          }
+          removedFx += keys.length;
+        }
+        report[`${symbol} (fxLive+fxBars)`] = { removed: removedFx, kept: 0 };
+        continue;
+      }
       const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
       const obj: Record<string, any> = snap.val() || {};
       const entries = Object.entries(obj)
@@ -854,6 +914,54 @@ export default handle(async (req, res) => {
       }
       const removed = toDelete.length;
       report[symbol] = { removed, kept: entries.length - removed };
+    }
+    // ---- Phase 31: hist day-shard cleanup --------------------------------
+    // body { hist: true, symbols: [...], tfs: [...] } — rewrite the deep
+    // store's intraday shards WITHOUT closed-session rows: fully-closed days
+    // (Saturdays, Sundays before the FX/metals open) are deleted; boundary
+    // days (Fri, Sun-evening, daily breaks) keep only open-session rows.
+    // This is what removes the 2,879 Sat/Sun static-quote minutes already
+    // stored in hist/XAUUSD/1m by the pre-gate walk. The READ-side gate
+    // hides them meanwhile, but the storage itself must get clean too.
+    if (raw?.hist === true) {
+      const histSyms = (Array.isArray(raw?.symbols) && raw.symbols.length ? raw.symbols : ["XAUUSD", "EURUSD", "GBPUSD"]).map((s: string) => String(s).toUpperCase());
+      const histTfs = (Array.isArray(raw?.tfs) && raw.tfs.length ? raw.tfs : ["1m"]).map((s: string) => String(s));
+      for (const symbol of histSyms) {
+        for (const tf of histTfs) {
+          let removedDays = 0, cleanedDays = 0, keptRows = 0;
+          const metaObj = (await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value")).val() || {};
+          const days = Object.keys(metaObj).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+          for (const day of days.slice(0, 400)) { // bounded per call
+            const dayStart = Date.parse(`${day}T00:00:00Z`) / 1000;
+            const dayEnd = dayStart + 86400;
+            const ivs = closedIntervals(symbol, dayStart, dayEnd);
+            const fullyClosed = ivs.some((iv) => iv.from <= dayStart && iv.to >= dayEnd);
+            if (fullyClosed) {
+              await rtdb().ref(`hist/${symbol}/${tf}/${day}`).remove();
+              await rtdb().ref(`histMeta/${symbol}/${tf}/${day}`).remove();
+              removedDays++;
+              continue;
+            }
+            if (!ivs.length) { keptRows++; continue; }
+            const blob = (await rtdb().ref(`hist/${symbol}/${tf}/${day}`).once("value")).val();
+            if (typeof blob !== "string" || !blob) continue;
+            const rows = blob.split("|").map((r) => parseShardRow(r)).filter((a): a is [number, number, number, number, number, number] => !!a);
+            const kept = rows.filter((a) => !ivs.some((iv) => a[0] >= iv.from && a[0] < iv.to));
+            if (kept.length !== rows.length) {
+              cleanedDays++;
+              if (kept.length === 0) {
+                await rtdb().ref(`hist/${symbol}/${tf}/${day}`).remove();
+                await rtdb().ref(`histMeta/${symbol}/${tf}/${day}`).remove();
+                removedDays++;
+              } else {
+                await rtdb().ref(`hist/${symbol}/${tf}/${day}`).set(kept.map((a) => JSON.stringify(a)).join("|"));
+              }
+            } else keptRows++;
+          }
+          report[`${symbol}/${tf} (hist)`] = { removed: removedDays, kept: keptRows };
+          if (cleanedDays) report[`${symbol}/${tf} (hist)`].cleaned = cleanedDays;
+        }
+      }
     }
     return res.json({ ok: true, report, at: Date.now() });
   }
@@ -1378,7 +1486,13 @@ export default handle(async (req, res) => {
     // flat dotted lines on the M1/M15 charts) go through the same shared
     // filter the metals recorder uses.
     const stale = staleRunFilter(repairOutlierExtremes(deduped.bars).bars);
-    const m1 = stale.bars;
+    // Phase 31: closed-session minutes NEVER serve or fold — fxLive carries
+    // recorder minutes written before the Phase 31 recorder gate (799 Sat
+    // minutes per pair, live-verified Nov 21). The shared market-hours
+    // engine drops them BEFORE the FX_STORE_STALE check and the aggregation,
+    // so a weekend union goes stale honestly instead of looking live.
+    const m1 = filterClosedCandles(bareCode, stale.bars);
+    const closedDropped = stale.bars.length - m1.length;
     if (!m1.length && !daily) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     let bars = (sec === 60 ? m1 : aggregateBars(m1, sec / 60)) as { time: number; open: number; high: number; low: number; close: number; volume?: number }[];
     // Phase 29 Issue 2 — DAILY consistency: aggregate the store's BID minutes
@@ -1428,6 +1542,7 @@ export default handle(async (req, res) => {
       previousClose: bars.length > 1 ? bars[bars.length - 2].close : null,
       bars,
       islandBars: island.rejected,
+      closedDropped,
     };
   };
 
@@ -1525,6 +1640,17 @@ export default handle(async (req, res) => {
     // mode, never for futures-labeled payloads).
     let final: any = payload;
     if (fxIntraday && !periodMode && Array.isArray(final?.bars) && final.bars.length) {
+      // Phase 31: server-side session filter for the WHOLE FX intraday
+      // payload. fromFxStore filters its own union, but the chain fallbacks
+      // (Yahoo/TwelveData) still emit weekend bars for EURUSD/GBPUSD, and
+      // any source can carry minutes written before the recorder gate. The
+      // backend drops them here so no frontend hiding is involved.
+      // fxIntraday is intraday by definition (≤60m); daily/weekly buckets
+      // never enter this branch, so their Monday/midnight anchors are safe.
+      try {
+        const fb = filterClosedCandles(bareCode, final.bars);
+        if (fb.length !== final.bars.length) final = { ...final, bars: fb, closedDropped: final.bars.length - fb.length };
+      } catch { /* filtering is best-effort — the payload still passes validation */ }
       const marketLive = marketHours(bareCode).open; // Phase 28 §3: no tail paint on a closed market
       try {
         const t = (await truefxQuotes())[bareCode];

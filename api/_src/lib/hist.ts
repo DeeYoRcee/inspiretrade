@@ -37,9 +37,10 @@ import { rtdb } from "./firebase";
 import { validateBars, alignAndDedupe, repairOutlierExtremes, parseShardRow, type RawBar } from "../../../shared/feed-validation";
 import { aggregateBars } from "../../../shared/terminal";
 import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
-import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, type AssetClass } from "./hist-sessions";
+import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, isIntradayTf, dropClosedAnchors, foldWeekComplete, type AssetClass } from "./hist-sessions";
 import { bucketStart } from "../../../shared/feed-validation";
 import { normalizeDailyAnchors } from "../../../shared/terminal";
+import { closedIntervals } from "../../../shared/market-hours";
 
 export { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC };
 
@@ -103,8 +104,23 @@ export async function writeShards(
   opts?: { before?: number; after?: number; force?: boolean },
 ): Promise<ShardsWritten> {
   const checked = validateBars(raw);
-  const { bars } = alignAndDedupe(checked.bars, tf === "1d" ? 86400 : tf === "1W" ? 604800 : tf === "1M" ? 2592000 : 60);
-  const rejected = checked.invalid + (raw.length - checked.bars.length);
+  const aligned = alignAndDedupe(checked.bars, tf === "1d" ? 86400 : tf === "1W" ? 604800 : tf === "1M" ? 2592000 : 60);
+  let rejected = checked.invalid + (raw.length - checked.bars.length);
+  // Phase 31: closed-session anchors must never ENTER the deep store. The
+  // Dukascopy weekend files for metals publish static quotes (a flat row
+  // every minute all Saturday/Sunday — 2,879 such minutes were found live in
+  // hist/XAUUSD/1m for the Nov 14-15 weekend), and the forex walk picks up
+  // the minutes around the Fri-close/Sun-open boundary. Drop intraday bars
+  // whose bucket anchor sits inside a closed interval; crypto passes an
+  // empty interval list (closedIntervals returns []) so 24/7 is untouched.
+  // 1d/1W/1M are exempt: their UTC-midnight/Monday anchors legitimately fall
+  // in a closed interval while the day itself traded.
+  let bars: RawBar[] = aligned.bars;
+  if (isIntradayTf(tf) && assetClassOf(symbol) !== "crypto" && bars.length) {
+    const g = dropClosedAnchors(bars, closedIntervals(symbol, bars[0].time - 2 * 86400, bars[bars.length - 1].time + 2 * 86400));
+    rejected += g.dropped;
+    bars = g.bars;
+  }
   const out: ShardsWritten = { written: 0, skipped: 0, days: [], rejected };
   const metaRef = rtdb().ref(`histMeta/${symbol}/${tf}`);
   const dataRef = rtdb().ref(`hist/${symbol}/${tf}`);
@@ -181,6 +197,13 @@ export async function readShards(symbol: string, tf: string, fromSec: number, to
   // same day twice, one bar shifted half a day left. Re-anchor at READ time
   // (idempotent for UTC rows; only 1d granularity is touched).
   if (tf === "1d") return { bars: normalizeDailyAnchors(bars) as RawBar[], providers };
+  // Phase 31: never SERVE closed-session anchors either — shards written
+  // before the write-side gate still carry the poison (2,879 Sat/Sun static
+  // rows in hist/XAUUSD/1m). Same intraday-only exemption as the write gate.
+  if (isIntradayTf(tf) && assetClassOf(symbol) !== "crypto" && bars.length) {
+    const g = dropClosedAnchors(bars, closedIntervals(symbol, fromSec - 2 * 86400, toSec + 2 * 86400));
+    if (g.dropped) return { bars: g.bars, providers };
+  }
   bars.sort((a, b) => a.time - b.time);
   return { bars, providers };
 }
@@ -499,7 +522,15 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
       // OHLC folds, never fabricated candles
       const srcTf = tf === "2h" || tf === "4h" ? "1h" : tf === "1W" || tf === "1M" ? "1d" : null;
       if (!srcTf) return { ...base, ok: false, provider: "none", error: `no source interval for ${tf}` };
-      const srcBars = await fetchStooqBars(stooqSym, HIST_STOOQ_INTERVAL[srcTf]);
+      let srcBars: RawBar[];
+      try {
+        srcBars = await fetchStooqBars(stooqSym, HIST_STOOQ_INTERVAL[srcTf]);
+      } catch (e) {
+        // Phase 31: stooq blocked → fold from the symbol's own deep shards
+        // (2h/4h/1M from 1m; 1W from the 1d shards the 1m walk already folds).
+        const fb = await foldBackfillStep(req);
+        return { ...fb, note: `stooq ${String((e as any)?.message || e)} → ${fb.note || "shard fold"}` };
+      }
       const inWin = srcBars.filter((b) => b.time >= covered);
       // Phase 24 D5: weeks anchor MONDAY and months use calendar buckets via
       // bucketStart — the naive floor fold produced Thursday-anchored weeks
@@ -529,7 +560,19 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
       await stateRef.set({ provider: `stooq-${srcTf}-fold`, oldest: agg.length ? agg[0].time : state.oldest ?? null, newest: agg.length ? agg[agg.length - 1].time : state.newest ?? null, targetFrom: wantFrom, done: true, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null });
       return { ...base, provider: `stooq-${srcTf}-fold`, written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: agg.length ? agg[0].time : null, newest: agg.length ? agg[agg.length - 1].time : null, done: true };
     }
-    const raw = await fetchStooqBars(stooqSym, iv);
+    const raw = await (async () => {
+      try {
+        return await fetchStooqBars(stooqSym, iv);
+      } catch (e) {
+        // Phase 31: stooq's intraday archive is IP-blocked from the Vercel
+        // functions (STOOQ_403 live-verified for every tf probe) — fold from
+        // the symbol's OWN deep shards instead of failing the step.
+        const fb = await foldBackfillStep(req);
+        const err = new Error(`stooq-fallback:${String((e as any)?.message || e)}`);
+        (err as any).foldResult = fb;
+        throw err;
+      }
+    })();
     const inWin = raw.filter((b) => b.time >= covered && b.time <= now);
     const sh = await writeShards(symbol, tf, inWin, "stooq-spot", { force: req.force });
     const oldest = inWin.length ? inWin[0].time : state.oldest ?? null;
@@ -540,6 +583,148 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
       updatedAt: Date.now(), error: null,
     });
     return { ...base, provider: "stooq-spot", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest, newest, cursor: oldest, done: true, note: `${raw.length} archive rows scanned` };
+  } catch (e: any) {
+    // Phase 31: a stooq failure that already produced a shard-fold result
+    // must surface the FOLD's outcome, not the transport error.
+    if (e && (e as any).foldResult) return (e as any).foldResult as BackfillResult;
+    const msg = String(e?.message || e);
+    await stateRef.update({ error: msg, updatedAt: Date.now() }).catch(() => {});
+    return { ...base, ok: false, error: msg };
+  }
+}
+
+/**
+ * Phase 31 — FOLD backfill: build higher-timeframe shards from the symbol's
+ * OWN lower-timeframe shards (1m → 3m/5m/15m/30m/1h/2h/4h/1d; 1d → 1W).
+ * This is the fix for "W1 has history, D1/H4/H1/M30/M15/M5/M3/M1 don't":
+ * stooq's intraday archive is IP-blocked from the Vercel functions
+ * (STOOQ_403 live-verified), so the only genuine path to intraday depth for
+ * XAUUSD/EURUSD/GBPUSD above 1m is folding the deep Dukascopy BID 1m store
+ * the walk already wrote. Genuine OHLC folds of stored data — never
+ * fabricated candles, never cross-provider mixing.
+ *
+ * Guards: a base day is folded only when it is COMPLETE (≥600 1m rows — a
+ * partial day would print wrong extremes into every higher timeframe, and
+ * the walk's wall-clock boundary days would poison the folds); weekend /
+ * closed-session base rows are dropped first (the metals walk wrote static
+ * Sat/Sun quotes); weekly buckets additionally require every passed weekday
+ * (foldWeekComplete) so a hole in the 1d store can't fake a weekly bar.
+ * Days already folded are skipped via meta dedupe; days tagged
+ * "dukascopy-bid-fold" (the walk's own partial folds) are re-folded from the
+ * authoritative 1m store. Every step is bounded (45 days or 60 weeks +
+ * 15s deadline) and idempotent — safe to call repeatedly.
+ */
+export async function foldBackfillStep(req: BackfillRequest): Promise<BackfillResult> {
+  const { symbol, tf } = req;
+  const now = Math.floor(Date.now() / 1000);
+  const stateRef = rtdb().ref(`histState/${symbol}/${tf}`);
+  const state = (await stateRef.once("value")).val() || {};
+  const base: BackfillResult = { ok: true, symbol, tf, provider: "", written: 0, skipped: 0, rejected: 0, oldest: state.oldest ?? null, newest: state.newest ?? null, cursor: state.oldest ?? null, targetFrom: null, done: false };
+  try {
+    const cls = assetClassOf(symbol);
+    if (cls === "crypto") return { ...base, provider: "binance", done: true, note: "crypto history is served natively by the Binance REST/WS engine" };
+    const deadline = Date.now() + 15000;
+
+    if (tf === "1W" || tf === "1M") {
+      // ---- weekly/monthly: fold from the symbol's own 1d shards ----------
+      const tgtMeta = (await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value")).val() || {};
+      const snap = await rtdb().ref(`hist/${symbol}/1d`).once("value");
+      const dayObj: Record<string, string> = snap.val() || {};
+      const dayKeys = Object.keys(dayObj).filter((d) => typeof dayObj[d] === "string" && dayObj[d]);
+      if (!dayKeys.length) return { ...base, ok: false, provider: "none", error: "no 1d shards to fold from — run the 1m backfill first (it folds 1d automatically)" };
+      const dayBars: { time: number; open: number; high: number; low: number; close: number; volume?: number }[] = [];
+      for (const d of dayKeys) {
+        for (const row of String(dayObj[d]).split("|")) {
+          const a = parseShardRow(row);
+          if (a) dayBars.push({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] });
+        }
+      }
+      const sec = tf === "1W" ? 604800 : 2592000;
+      const byBucket = new Map<number, typeof dayBars>();
+      for (const b of dayBars) {
+        const k = bucketStart(b.time, sec);
+        let arr = byBucket.get(k);
+        if (!arr) { arr = []; byBucket.set(k, arr); }
+        arr.push(b);
+      }
+      const agg: RawBar[] = [];
+      let skippedWeeks = 0;
+      for (const [bucket, arr] of [...byBucket.entries()].sort((a, b) => a[0] - b[0])) {
+        if (tf === "1W" && !foldWeekComplete(new Set(arr.map((b) => dayKey(b.time))), bucket, now)) { skippedWeeks++; continue; }
+        agg.push({
+          time: bucket,
+          open: arr[0].open,
+          high: Math.max(...arr.map((b) => b.high)),
+          low: Math.min(...arr.map((b) => b.low)),
+          close: arr[arr.length - 1].close,
+          volume: arr.reduce((s, b) => s + (b.volume ?? 0), 0),
+        });
+      }
+      const sh = await writeShards(symbol, tf, agg, "1d-shard-fold", { force: !!req.force });
+      const oldest = agg.length ? agg[0].time : state.oldest ?? null;
+      const newest = agg.length ? agg[agg.length - 1].time : state.newest ?? null;
+      await stateRef.update({
+        provider: "1d-shard-fold", oldest, newest, targetFrom: backfillWindowFrom(HIST_MONTHS_CAP[tf] ?? 240, now),
+        done: true, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected + sh.skipped,
+        updatedAt: Date.now(), error: null,
+      });
+      return { ...base, provider: "1d-shard-fold", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest, newest, done: true, note: `${dayBars.length} day bars → ${agg.length} ${tf} buckets${skippedWeeks ? ` · ${skippedWeeks} incomplete ${tf === "1W" ? "weeks" : "months"} skipped` : ""}` };
+    }
+
+    // ---- intraday: fold from the symbol's own 1m shards -----------------
+    const factorMin = tf === "1d" ? 1440 : Number(tf.slice(0, -1)) * 60;
+    if (!Number.isFinite(factorMin) || factorMin <= 0) return { ...base, ok: false, provider: "none", error: `cannot fold ${tf}` };
+    const baseMeta = (await rtdb().ref(`histMeta/${symbol}/1m`).once("value")).val() || {};
+    const baseDays = Object.keys(baseMeta).filter((d) => typeof baseMeta[d] === "string" && baseMeta[d]).sort();
+    if (!baseDays.length) return { ...base, ok: false, provider: "none", error: "no 1m shards to fold from — run the 1m backfill first" };
+    const tgtMeta = (await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value")).val() || {};
+    // missing days + the walk's own partial folds (re-fold from the source of
+    // truth; our own "1m-shard-fold" days are already complete)
+    const pending = baseDays.filter((d) => !tgtMeta[d] || tgtMeta[d] === "dukascopy-bid-fold");
+    if (!pending.length) {
+      await stateRef.update({ provider: "1m-shard-fold", done: true, updatedAt: Date.now(), error: null }).catch(() => {});
+      return { ...base, provider: "1m-shard-fold", done: true, note: "all base days already folded" };
+    }
+    const chunk = pending.slice(0, 45);
+    const pendingSet = new Set(chunk);
+    const chunkStart = Date.parse(`${chunk[0]}T00:00:00Z`) / 1000;
+    const chunkEnd = Date.parse(`${chunk[chunk.length - 1]}T00:00:00Z`) / 1000 + 86400;
+    const read = await readShards(symbol, "1m", chunkStart, chunkEnd);
+    // closed-session base rows never fold (metals Sat/Sun static quotes)
+    let m1 = read.bars;
+    if (m1.length && assetClassOf(symbol) !== "crypto") {
+      m1 = dropClosedAnchors(m1, closedIntervals(symbol, chunkStart - 2 * 86400, chunkEnd + 86400)).bars;
+    }
+    const byDay = new Map<string, RawBar[]>();
+    for (const b of m1) {
+      const k = dayKey(b.time);
+      if (!pendingSet.has(k)) continue; // already folded in a previous step
+      let arr = byDay.get(k);
+      if (!arr) { arr = []; byDay.set(k, arr); }
+      arr.push(b);
+    }
+    const folded: RawBar[] = [];
+    let skippedDays = 0;
+    for (const [day, rows] of [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      if (rows.length < 600) { skippedDays++; continue; } // incomplete base day — never fold it
+      if (Date.now() > deadline) { skippedDays++; continue; }
+      folded.push(...(aggregateBars(rows, factorMin) as RawBar[]));
+    }
+    const sh = folded.length
+      ? await writeShards(symbol, tf, folded, "1m-shard-fold", { force: true })
+      : { written: 0, skipped: 0, days: [] as string[], rejected: 0 };
+    const times = folded.map((b) => b.time);
+    const oldest = times.length ? Math.min(...times) : state.oldest ?? null;
+    const newest = times.length ? Math.max(...times) : state.newest ?? null;
+    const done = pending.length <= 45;
+    await stateRef.update({
+      provider: "1m-shard-fold", oldest, newest,
+      targetFrom: backfillWindowFrom(HIST_MONTHS_CAP[tf] ?? 240, now),
+      done, written: (state.written ?? 0) + sh.written, rejected: (state.rejected ?? 0) + sh.rejected,
+      foldCursor: pending.length ? chunk[chunk.length - 1] : null,
+      updatedAt: Date.now(), error: null,
+    });
+    return { ...base, provider: "1m-shard-fold", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest, newest, done, note: `folded ${sh.written}/${byDay.size} days ${chunk[0]}→${chunk[chunk.length - 1]} from 1m${skippedDays ? ` · ${skippedDays} incomplete days skipped` : ""} · ${pending.length - sh.written > 0 ? "resume to continue" : "caught up"}` };
   } catch (e: any) {
     const msg = String(e?.message || e);
     await stateRef.update({ error: msg, updatedAt: Date.now() }).catch(() => {});
