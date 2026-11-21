@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Lock, Mail, Eye, EyeOff, LineChart, BookOpen, Briefcase, Newspaper, CalendarDays, Gift, TerminalSquare, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { SiGoogle } from "react-icons/si";
 
 /**
  * Phase 32 — premium entry redesign. Visual shell only: every auth handler
@@ -28,6 +27,18 @@ const ECOSYSTEM = [
   { icon: CalendarDays, label: "Economic Calendar" },
   { icon: Gift, label: "Rewards & Marketplace" },
 ];
+
+/** Official four-color Google G — inline SVG, no extra dependency. */
+function GoogleG() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47a5.57 5.57 0 0 1-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z" />
+      <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09A11.99 11.99 0 0 0 12 24z" />
+      <path fill="#FBBC05" d="M5.27 14.29A7.2 7.2 0 0 1 4.89 12c0-.8.14-1.57.38-2.29V6.62H1.29a11.99 11.99 0 0 0 0 10.76l3.98-3.09z" />
+      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.69 1.29 6.62l3.98 3.09C6.22 6.86 8.87 4.75 12 4.75z" />
+    </svg>
+  );
+}
 
 const SYMBOLS = [
   { name: "XAUUSD", price: "4,391.20", delta: "+0.84%", up: true, top: "12%", left: "8%", dur: 7 },
@@ -386,20 +397,24 @@ export default function AuthPage() {
                       <span className="px-3 bg-card text-muted-foreground">or</span>
                     </div>
                   </div>
-                  <Button
+                  {/* Phase 32b: premium trading-grade Google button */}
+                  <button
                     type="button"
-                    variant="outline"
-                    className="w-full mt-4 border-border/60 bg-background/50 hover:bg-secondary/60 transition-all font-medium gap-3 h-11"
                     onClick={handleGoogleSignIn}
                     disabled={googleLoading}
+                    className="group relative mt-4 flex h-12 w-full items-center justify-center gap-3 overflow-hidden rounded-xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-white/[0.02] font-medium text-foreground transition-all duration-300 hover:border-primary/40 hover:from-white/[0.1] hover:shadow-[0_0_28px_-8px_hsl(var(--primary)/0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-60"
                   >
+                    <span className="absolute inset-x-10 -top-px h-px bg-gradient-to-r from-transparent via-white/25 to-transparent transition-all duration-300 group-hover:via-primary/60" aria-hidden />
                     {googleLoading ? (
-                      <span className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      <span className="h-5 w-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     ) : (
-                      <SiGoogle className="w-4 h-4 text-muted-foreground" />
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm transition-transform duration-300 group-hover:scale-105">
+                        <GoogleG />
+                      </span>
                     )}
-                    {googleLoading ? "Signing in…" : "Continue with Google"}
-                  </Button>
+                    <span>{googleLoading ? "Signing in…" : "Continue with Google"}</span>
+                    <ArrowRight className="h-4 w-4 -translate-x-1 text-muted-foreground opacity-0 transition-all duration-300 group-hover:translate-x-0 group-hover:opacity-100" aria-hidden />
+                  </button>
 
                   <div className="text-center text-sm mt-6">
                     <span className="text-muted-foreground">

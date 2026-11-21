@@ -50,6 +50,7 @@ function slugifyCaseId(name: string): string {
 export async function caseCounterRef(db: any, uid: string, caseId: string) {
   if (caseId === "inspire") return { ref: db.ref(`economy/${uid}/cases`), name: CASES.inspire.name };
   if (caseId === "gold") return { ref: db.ref(`economy/${uid}/goldCases`), name: CASES.gold.name };
+  if (caseId === "trading") return { ref: db.ref(`economy/${uid}/tradingCases`), name: CASES.trading.name };
   if (!CASE_ID_RE.test(caseId)) throw new HttpError(400, "BAD_CASE", "Unknown case id");
   const def = (await db.ref(`economyConfig/cases/${caseId}`).get()).val();
   if (!def) throw new HttpError(404, "CASE_NOT_FOUND", `Case "${caseId}" does not exist`);

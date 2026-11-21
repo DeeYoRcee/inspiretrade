@@ -1,6 +1,5 @@
-import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter , Crown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TitleStrip, titlesForProfile } from "@/pages/TitlesPage";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
 import { getProfileBackground } from "@/lib/profile-backgrounds";
@@ -88,23 +87,20 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
           )}
         </div>
 
-        <h2 className="relative mt-3 text-2xl font-bold tracking-tight">{profile.displayName}</h2>
-        {/* Phase 30: CEO (red) / VIP (gold) badges — mirror the profile stroke */}
-        {(profile.ceo || profile.vip) && (
-          <div className="relative mt-1.5 flex items-center justify-center gap-1.5">
-            {profile.ceo && (
-              <span className="inline-flex items-center rounded-full border border-red-400/60 bg-red-500/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300">
-                CEO
-              </span>
-            )}
-            {profile.vip && (
-              <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-400/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">
-                VIP
-              </span>
-            )}
-        <TitleStrip titles={titlesForProfile(profile)} size="sm" />
-          </div>
-        )}
+        {/* Phase 32b: Telegram-style badge inline to the right of the name */}
+        <div className="relative mt-3 flex items-center justify-center gap-1.5">
+          <h2 className="text-2xl font-bold tracking-tight">{profile.displayName}</h2>
+          {profile.ceo && (
+            <span className="inline-flex items-center gap-0.5 rounded-full border border-red-400/60 bg-red-500/20 px-1.5 py-px text-[10px] font-bold uppercase tracking-wider text-red-300" title="CEO">
+              <Crown className="h-2.5 w-2.5" />CEO
+            </span>
+          )}
+          {!profile.ceo && profile.vip && (
+            <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/60 bg-amber-400/20 px-1.5 py-px text-[10px] font-bold uppercase tracking-wider text-amber-300" title="VIP">
+              <Crown className="h-2.5 w-2.5" />VIP
+            </span>
+          )}
+        </div>
         <p className="relative text-sm text-emerald-50/60">@{profile.username}</p>
 
         {/* Telegram-collectible style — every handle this profile holds */}

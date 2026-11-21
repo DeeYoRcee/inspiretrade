@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Crown, ShieldCheck, Sparkles, Award, Gem } from "lucide-react";
+import { Crown, Sparkles, Award, Gem } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useUserProfile } from "@/hooks/use-premium";
@@ -44,16 +44,6 @@ export const TITLE_DEFS: TitleDef[] = [
     glow: "shadow-[0_0_22px_-4px_rgba(139,92,246,0.7)]",
     icon: Sparkles,
     description: "Premium membership status.",
-  },
-  {
-    id: "verified",
-    label: "Verified",
-    color: "text-emerald-300",
-    border: "border-emerald-400/60",
-    bg: "bg-gradient-to-br from-emerald-500/20 via-emerald-500/10 to-transparent",
-    glow: "shadow-[0_0_22px_-4px_rgba(16,185,129,0.6)]",
-    icon: ShieldCheck,
-    description: "Email verified and in good standing.",
   },
   {
     id: "collector",
@@ -157,7 +147,8 @@ export default function TitlesPage() {
           <CardTitle className="text-lg">All titles</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2.5">
-          {TITLE_DEFS.map((tt) => (
+          {/* Phase 32b: the CEO title is personal — it is not listed here; Verified was removed */}
+          {TITLE_DEFS.filter((tt) => tt.id !== "ceo").map((tt) => (
             <div key={tt.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-card/40 px-3.5 py-2.5">
               <div className="flex items-center gap-3 min-w-0">
                 <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider", tt.border, tt.bg, tt.color)}>

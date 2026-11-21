@@ -21,7 +21,6 @@ import { ALL_FRAGMENTS } from "@shared/fragments";
 import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
-import { TitleStrip, titlesForProfile } from "@/pages/TitlesPage";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createPublicProfileSnapshot, createDefaultPublicProfileSettings } from "@/lib/public-profile";
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
@@ -561,24 +560,22 @@ export default function ProfilePage() {
             </div>
           )}
           <h1 className="mt-4 text-xl font-bold tracking-tight">{displayName}</h1>
-          {/* Phase 30: CEO badge — red, mirrors the red profile stroke; VIP — gold */}
-          <div className="mt-2 flex items-center justify-center gap-1.5">
+          {/* Phase 32b: Telegram-style badge to the RIGHT of the handle */}
+          <div className="mt-0.5 flex items-center justify-center gap-1.5">
+            <p className="text-[15px] font-medium text-[#3390ec]">
+              {username ? `@${username}` : t("profileNoUsername")}
+            </p>
             {profile?.ceo && (
-              <span className="inline-flex items-center rounded-full border border-red-500/60 bg-red-500/15 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-red-400">
-                CEO
+              <span className="inline-flex items-center gap-0.5 rounded-full border border-red-500/60 bg-red-500/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wider text-red-400" title="CEO">
+                <Crown className="h-2.5 w-2.5" />CEO
               </span>
             )}
-            {isVip && (
-              <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-400/15 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
-                VIP
+            {!profile?.ceo && isVip && (
+              <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/60 bg-amber-400/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wider text-amber-300" title="VIP">
+                <Crown className="h-2.5 w-2.5" />VIP
               </span>
             )}
           </div>
-          <p className="mt-0.5 text-[15px] font-medium text-[#3390ec]">
-            {username ? `@${username}` : t("profileNoUsername")}
-          </p>
-          {/* Phase 32: CS2-style titles (CEO gold, VIP, …) */}
-          <TitleStrip titles={titlesForProfile({ ...profile, emailVerified: user?.emailVerified })} />
           {/* Telegram-collectible style — every handle this account holds */}
           {heldUsernames.length > 1 && (
             <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 px-6">

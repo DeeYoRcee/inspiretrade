@@ -128,12 +128,13 @@ var gift_default = handle(async (req, res) => {
   const coins = Math.floor(Number(body.coins) || 0);
   const cases = Math.floor(Number(body.cases) || 0);
   const goldCases = Math.floor(Number(body.goldCases) || 0);
+  const tradingCases = Math.floor(Number(body.tradingCases) || 0);
   const note = String(body.note || "").slice(0, 200);
-  if (coins <= 0 && cases <= 0 && goldCases <= 0) {
+  if (coins <= 0 && cases <= 0 && goldCases <= 0 && tradingCases <= 0) {
     throw new HttpError(400, "INVALID_AMOUNT", "Provide a positive coins and/or cases amount");
   }
-  if (coins > 1e5 || cases > 1e3 || goldCases > 1e3) {
-    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000, goldCases<=1000)");
+  if (coins > 1e5 || cases > 1e3 || goldCases > 1e3 || tradingCases > 1e3) {
+    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000, goldCases<=1000, tradingCases<=1000)");
   }
   let targetUid = String(body.uid || "").trim();
   if (!targetUid) {
@@ -152,6 +153,7 @@ var gift_default = handle(async (req, res) => {
       coins: (eco.coins || 0) + coins,
       cases: (eco.cases || 0) + cases,
       goldCases: (eco.goldCases || 0) + goldCases,
+      tradingCases: (eco.tradingCases || 0) + tradingCases,
       updatedAt: Date.now()
     };
   });
@@ -162,6 +164,7 @@ var gift_default = handle(async (req, res) => {
     coins,
     cases,
     goldCases,
+    tradingCases,
     note,
     by: admin2.email || admin2.uid
   });
@@ -699,6 +702,7 @@ function slugifyCaseId(name) {
 async function caseCounterRef(db3, uid, caseId) {
   if (caseId === "inspire") return { ref: db3.ref(`economy/${uid}/cases`), name: CASES.inspire.name };
   if (caseId === "gold") return { ref: db3.ref(`economy/${uid}/goldCases`), name: CASES.gold.name };
+  if (caseId === "trading") return { ref: db3.ref(`economy/${uid}/tradingCases`), name: CASES.trading.name };
   if (!CASE_ID_RE.test(caseId)) throw new HttpError(400, "BAD_CASE", "Unknown case id");
   const def = (await db3.ref(`economyConfig/cases/${caseId}`).get()).val();
   if (!def) throw new HttpError(404, "CASE_NOT_FOUND", `Case "${caseId}" does not exist`);

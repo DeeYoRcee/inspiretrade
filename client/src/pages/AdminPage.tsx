@@ -60,6 +60,7 @@ export default function AdminPage() {
   // Owner panel — spawn cases for yourself + claim any username
   const [spawnCases, setSpawnCases] = useState("");
   const [spawnGold, setSpawnGold] = useState("");
+  const [spawnTrading, setSpawnTrading] = useState("");
   const [claimName, setClaimName] = useState("");
   const [histBusy, setHistBusy] = useState(false);
   const [histLog, setHistLog] = useState("");
@@ -220,12 +221,14 @@ export default function AdminPage() {
         uid: user!.uid,
         cases: Number(spawnCases) || 0,
         goldCases: Number(spawnGold) || 0,
+        tradingCases: Number(spawnTrading) || 0,
         note: "owner spawn",
       }),
     onSuccess: () => {
       toast({ title: t("ownerSpawnDone") });
       setSpawnCases("");
       setSpawnGold("");
+      setSpawnTrading("");
     },
     onError: (error: any) => {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
@@ -275,7 +278,7 @@ export default function AdminPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-xs leading-relaxed text-muted-foreground">{t("ownerSpawnHint")}</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1.5">
                     <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                       <PackageOpen className="h-3.5 w-3.5 text-primary" />{t("giftCases")}
@@ -288,11 +291,17 @@ export default function AdminPage() {
                     </label>
                     <Input type="number" min={0} max={1000} value={spawnGold} onChange={(e) => setSpawnGold(e.target.value)} placeholder="0" className="h-11 rounded-xl" />
                   </div>
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <Briefcase className="h-3.5 w-3.5 text-emerald-400" />Trading
+                    </label>
+                    <Input type="number" min={0} max={1000} value={spawnTrading} onChange={(e) => setSpawnTrading(e.target.value)} placeholder="0" className="h-11 rounded-xl" />
+                  </div>
                 </div>
                 <Button
                   size="lg"
                   className="w-full rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-semibold text-black hover:from-amber-400 hover:to-yellow-300"
-                  disabled={spawnMutation.isPending || (!Number(spawnCases) && !Number(spawnGold))}
+                  disabled={spawnMutation.isPending || (!Number(spawnCases) && !Number(spawnGold) && !Number(spawnTrading))}
                   onClick={() => spawnMutation.mutate()}
                 >
                   {spawnMutation.isPending ? t("sending") : <><PackageOpen className="mr-2 h-5 w-5" />{t("ownerSpawnButton")}</>}
@@ -494,6 +503,7 @@ export default function AdminPage() {
                         <SelectContent className="glass-panel border-border/60">
                           <SelectItem value="inspire">{CASES.inspire.name}</SelectItem>
                           <SelectItem value="gold">{CASES.gold.name}</SelectItem>
+                          <SelectItem value="trading">{CASES.trading.name}</SelectItem>
                           {(customCases ?? []).map((def) => (
                             <SelectItem key={def.caseId} value={def.caseId}>{def.name}</SelectItem>
                           ))}

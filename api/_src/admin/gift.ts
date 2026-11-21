@@ -1,6 +1,6 @@
 /**
  * POST /api/admin?action=gift   (owner only)
- * Body: { uid?: string, username?: string, coins?: number, cases?: number, goldCases?: number, note?: string }
+ * Body: { uid?: string, username?: string, coins?: number, cases?: number, goldCases?: number, tradingCases?: number, note?: string }
  * Grants INSP coins and/or cases to a user. Owner-facing tool for deposits
  * processed manually (Telegram payments), gifts and the owner panel spawn.
  */
@@ -14,12 +14,14 @@ export default handle(async (req, res) => {
   const coins = Math.floor(Number(body.coins) || 0);
   const cases = Math.floor(Number(body.cases) || 0);
   const goldCases = Math.floor(Number(body.goldCases) || 0);
+  // Phase 32: the Trading Case ($25,000 account puzzle) is grantable too.
+  const tradingCases = Math.floor(Number(body.tradingCases) || 0);
   const note = String(body.note || "").slice(0, 200);
-  if (coins <= 0 && cases <= 0 && goldCases <= 0) {
+  if (coins <= 0 && cases <= 0 && goldCases <= 0 && tradingCases <= 0) {
     throw new HttpError(400, "INVALID_AMOUNT", "Provide a positive coins and/or cases amount");
   }
-  if (coins > 100000 || cases > 1000 || goldCases > 1000) {
-    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000, goldCases<=1000)");
+  if (coins > 100000 || cases > 1000 || goldCases > 1000 || tradingCases > 1000) {
+    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000, goldCases<=1000, tradingCases<=1000)");
   }
 
   // Resolve target: direct uid or username key from the usernames map.
@@ -43,6 +45,7 @@ export default handle(async (req, res) => {
         coins: (eco.coins || 0) + coins,
         cases: (eco.cases || 0) + cases,
         goldCases: (eco.goldCases || 0) + goldCases,
+        tradingCases: (eco.tradingCases || 0) + tradingCases,
         updatedAt: Date.now(),
       };
     });
@@ -54,6 +57,7 @@ export default handle(async (req, res) => {
     coins,
     cases,
     goldCases,
+    tradingCases,
     note,
     by: admin.email || admin.uid,
   });

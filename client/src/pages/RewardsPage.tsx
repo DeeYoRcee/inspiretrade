@@ -73,7 +73,12 @@ export default function RewardsPage() {
     [inventory],
   );
   const canCombine = ownedTypes === FRAGMENTS.length;
+  const ownedTradingTypes = useMemo(
+    () => TRADING_FRAGMENTS.filter((f) => (inventory?.[f.id] || 0) >= 1).length,
+    [inventory],
+  );
   const canCombineGold = ownedGoldTypes === GOLD_FRAGMENTS.length;
+  const canCombineTrading = ownedTradingTypes === TRADING_FRAGMENTS.length;
 
   const claimMutation = useMutation({
     mutationFn: async () => authedFetch("/api/rewards/claim", {}) as Promise<ClaimResponse>,
@@ -185,16 +190,6 @@ export default function RewardsPage() {
                 })}
               </div>
               <div className="space-y-4">
-                {isVip && (
-                  <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 px-3 py-2.5">
-                    <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-emerald-400">
-                      <Crown className="h-3.5 w-3.5" /> VIP track — days 1-6: Gold Case · day 7: Trading Case ($25,000)
-                    </p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      VIP day {claimedToday ? cycleDayOf(Math.max(1, Number(economy?.vipStreak) || 1)) : cycleDayOf((Number(economy?.vipStreak) || 0) + 1)} of 7 — claimed together with the daily reward above.
-                    </p>
-                  </div>
-                )}
                 <p className="text-xs text-muted-foreground">
                   {claimedToday
                     ? t("dailyComeBackTomorrow")
@@ -278,16 +273,93 @@ export default function RewardsPage() {
                 </div>
                 <Button
                   size="sm"
-                  className="shrink-0 rounded-xl bg-amber-500 font-semibold text-black hover:bg-amber-400"
-                  disabled={goldCases < 1 || openMutation.isPending}
+                  className="shrink-0 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 font-semibold text-black hover:from-emerald-400 hover:to-teal-300"
+                  disabled={tradingCases < 1 || openMutation.isPending}
                   onClick={() => openMutation.mutate("trading")}
                 >
                   <ChevronRight className="mr-1 h-4 w-4" />{t("openCase")}
                 </Button>
               </div>
 
-              {cases < 1 && goldCases < 1 && (
+              {cases < 1 && goldCases < 1 && tradingCases < 1 && (
                 <p className="text-center text-xs text-muted-foreground">{t("noCases")}</p>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* VIP Reward — Phase 32: second 7-day track, premium members only (owner included) */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.06 }}>
+          <Card className={cn("glass-panel h-full border-emerald-500/25", !isVip && "opacity-80")}>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center justify-between gap-2 text-lg">
+                <span className="flex items-center gap-2"><Crown className="h-5 w-5 text-amber-400" />{t("vipReward")}</span>
+                {isVip ? (
+                  <Badge variant="outline" className="border-emerald-500/50 text-emerald-400">VIP</Badge>
+                ) : (
+                  <Badge variant="outline" className="gap-1 border-border/60 text-muted-foreground"><Lock className="h-3 w-3" /> VIP only</Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {isVip ? (
+                <>
+                  <div className="grid grid-cols-4 gap-2">
+                    {Array.from({ length: REWARD_CYCLE_DAYS }, (_, i) => i + 1).map((day) => {
+                      const isTradingDay = day === REWARD_CYCLE_DAYS;
+                      const vipDay = claimedToday ? cycleDayOf(Math.max(1, Number(economy?.vipStreak) || 1)) : cycleDayOf((Number(economy?.vipStreak) || 0) + 1);
+                      const vipClaimed = claimedToday && day <= vipDay;
+                      const vipNext = !claimedToday && day === vipDay;
+                      return (
+                        <div
+                          key={`vip-${day}`}
+                          className={cn(
+                            "relative flex flex-col items-center justify-center gap-1 rounded-xl border px-1 py-3",
+                            isTradingDay ? "border-emerald-500/50" : "border-amber-500/40",
+                            vipClaimed && "bg-muted/40 opacity-55",
+                            vipNext && (isTradingDay ? "bg-emerald-500/15 shadow-[0_0_22px_-4px_rgba(16,185,129,0.7)]" : "bg-amber-500/15"),
+                            !vipClaimed && !vipNext && "bg-card/50",
+                          )}
+                        >
+                          {vipClaimed ? (
+                            <span className={cn("flex h-9 w-9 items-center justify-center rounded-full", isTradingDay ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-400")}>
+                              <Check className="h-5 w-5" />
+                            </span>
+                          ) : isTradingDay ? (
+                            <Briefcase className="h-8 w-8 text-emerald-400" />
+                          ) : (
+                            <Crown className={cn("h-8 w-8", vipNext ? "text-amber-400" : "text-amber-400/60")} />
+                          )}
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("dayN").replace("{n}", String(day))}</span>
+                          <span className={cn("max-w-full truncate px-1 text-[9px] font-semibold leading-tight", isTradingDay ? "text-emerald-400" : "text-amber-400")}>
+                            {isTradingDay ? "Trading Case" : t("goldCase")}
+                          </span>
+                          {isTradingDay && !vipClaimed && (
+                            <span className="absolute -right-1 -top-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[8px] font-black uppercase text-black">25k$</span>
+                          )}
+                          {vipClaimed && (
+                            <span className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-success text-success-foreground">
+                              <Check className="h-2.5 w-2.5" />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {claimedToday ? t("dailyComeBackTomorrow") : t("vipRewardNote")}
+                  </p>
+                </>
+              ) : (
+                <div className="flex flex-col items-center gap-3 py-4 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/40 bg-amber-500/10">
+                    <Lock className="h-6 w-6 text-amber-400" />
+                  </div>
+                  <p className="max-w-[300px] text-xs leading-relaxed text-muted-foreground">{t("vipRewardLocked")}</p>
+                  <Button size="sm" variant="outline" className="border-amber-500/50 text-amber-300" onClick={() => (window.location.href = "/premium")}>
+                    {t("getPremium")}
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -378,6 +450,48 @@ export default function RewardsPage() {
         </CardContent>
       </Card>
 
+      {/* Inventory — 25k$ trading set (Phase 32) */}
+      <Card className="glass-panel border-emerald-500/25">
+        <CardHeader className="pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2 text-lg"><Briefcase className="h-5 w-5 text-emerald-400" />{t("inventoryTitle")} · 25k$ Prop</CardTitle>
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-semibold text-muted-foreground">{ownedTradingTypes}/{TRADING_FRAGMENTS.length}</span>
+              <Progress value={(ownedTradingTypes / TRADING_FRAGMENTS.length) * 100} className="h-1.5 w-28" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {TRADING_FRAGMENTS.map((fragment) => {
+              const count = inventory?.[fragment.id] || 0;
+              return (
+                <FragmentCard
+                  key={fragment.id}
+                  fragmentId={fragment.id}
+                  count={count}
+                  highlight={count > 0 && fragment.rarity === "mythic"}
+                  className={count === 0 ? "opacity-45 grayscale" : undefined}
+                />
+              );
+            })}
+          </div>
+          <div className="flex flex-col items-center gap-2">
+            <Button
+              size="lg"
+              className="w-full max-w-md rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 font-bold text-black hover:from-emerald-400 hover:to-teal-300"
+              disabled={!canCombineTrading || combineMutation.isPending}
+              onClick={() => setCombineConfirm("trading")}
+            >
+              <Lock className="mr-2 h-5 w-5" />Combine into 25k$ Prop Account
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              {canCombineTrading ? t("combineReady") : t("missingFragmentsHint")}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Claims */}
       {claims && claims.length > 0 && (
         <Card className="glass-panel border-border/50">
@@ -418,7 +532,7 @@ export default function RewardsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 font-display"><Crown className="h-5 w-5 text-amber-400" />{t("combineTitle")}</AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground">
-              {combineConfirm === "gold" ? t("combineDescriptionGold") : t("combineDescription")}
+              {combineConfirm === "gold" ? t("combineDescriptionGold") : combineConfirm === "trading" ? "This burns one of each 25k$ fragment (9 total) and creates a $25,000 prop-account claim for the team to review." : t("combineDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

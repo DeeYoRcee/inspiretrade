@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
-import { Gift, Gem, BadgeCheck, ChevronRight, X, Check, Crown, Briefcase } from "lucide-react";
+import { Gift, Gem, BadgeCheck, ChevronRight, X, Check, Crown, Briefcase, Lock } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -47,6 +47,8 @@ export function DailyRewardDialog() {
   const dismissedKey = `daily-reward-dismissed-${today}`;
   const [dismissed, setDismissed] = useState(false);
   const [phase, setPhase] = useState<Phase>("ready");
+  // Phase 32b: Daily / VIP tab — the VIP tab is locked for non-premium users
+  const [vipTab, setVipTab] = useState(false);
   const [granted, setGranted] = useState<{ caseType: CaseType; caseName: string } | null>(null);
   const [vipGranted, setVipGranted] = useState<{ caseName: string; isTrading: boolean } | null>(null);
   const [caseResult, setCaseResult] = useState<FragmentDef | null>(null);
@@ -60,7 +62,11 @@ export function DailyRewardDialog() {
   // Phase 32: unverified accounts see the verification gate first — the
   // reward dialog waits until the email is confirmed (user.emailVerified is
   // undefined for loading states, so only an explicit false blocks it).
-  const open = !!user && user.emailVerified !== false && !isLoading && !claimedToday && !dismissed;
+  // Phase 32b: the dialog STAYS OPEN through the "claimed" phase — closing it
+  // instantly after the claim made the "Open case now" button unreachable.
+  const open =
+    (!!user && user.emailVerified !== false && !isLoading && !claimedToday && !dismissed) ||
+    (phase === "claimed" && !!granted);
 
   // Number() guard — a streak stored as a string would break the cycle math
   const streak = Number(economy?.streak) || 0;
@@ -125,11 +131,37 @@ export function DailyRewardDialog() {
           {phase === "ready" && (
             <motion.div initial={{ scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="space-y-4 pt-1">
               <div>
-                <h3 className="text-xl font-bold font-display">{t("dailyRewardReady")}</h3>
+                <h3 className="text-xl font-bold font-display">{vipTab ? t("vipReward") : t("dailyRewardReady")}</h3>
                 <p className="mt-1 text-sm text-muted-foreground">{t("dailyRewardNote")}</p>
               </div>
 
+              {/* Phase 32b: Daily / VIP tab switcher — VIP locked for regular users */}
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-secondary/40 p-1">
+                <button
+                  type="button"
+                  onClick={() => setVipTab(false)}
+                  className={cn(
+                    "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
+                    !vipTab ? "bg-primary/20 text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Gift className="h-3.5 w-3.5" />{t("dailyReward")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVipTab(true)}
+                  className={cn(
+                    "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
+                    vipTab ? "bg-amber-500/20 text-amber-300 shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {isVip ? <Crown className="h-3.5 w-3.5 text-amber-400" /> : <Lock className="h-3.5 w-3.5" />}
+                  {t("vipReward")}
+                </button>
+              </div>
+
               {/* 7-day reward calendar — no streak tile */}
+              {!vipTab && (<>
               <div className="grid grid-cols-4 gap-2">
                 {days.map((day) => {
                   const isGold = day === GOLD_CASE_DAY;
@@ -195,63 +227,94 @@ export function DailyRewardDialog() {
                 })}
               </div>
 
-              {isVip && (
-                <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-3">
-                  <p className="flex items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-emerald-400">
-                    <Crown className="h-3.5 w-3.5" /> VIP reward track
-                  </p>
-                  <div className="mt-2 grid grid-cols-4 gap-1.5">
-                    {days.map((day) => {
-                      const isTradingDay = day === REWARD_CYCLE_DAYS;
-                      const vipDay = cycleDayOf(Math.max(1, claimedToday ? Number(economy?.vipStreak) || 1 : (Number(economy?.vipStreak) || 0) + 1));
-                      const vipClaimed = claimedToday && day <= vipDay;
-                      const vipNext = !claimedToday && day === vipDay;
-                      return (
-                        <div
-                          key={`vip-${day}`}
-                          className={cn(
-                            "relative flex flex-col items-center justify-center gap-0.5 rounded-xl border px-1 py-2 transition-colors",
-                            isTradingDay ? "border-emerald-500/50" : "border-amber-500/40",
-                            vipClaimed && "bg-muted/40 opacity-55",
-                            vipNext && (isTradingDay ? "bg-emerald-500/15 shadow-[0_0_18px_-4px_rgba(16,185,129,0.7)]" : "bg-amber-500/15"),
-                            !vipClaimed && !vipNext && "bg-card/50",
-                          )}
-                        >
-                          {isTradingDay ? <Briefcase className="h-5 w-5 text-emerald-400" /> : <Crown className="h-5 w-5 text-amber-400" />}
-                          <span className={cn("text-[8px] font-bold uppercase tracking-wide", isTradingDay ? "text-emerald-400" : "text-amber-400")}>
-                            {isTradingDay ? "25k$" : "Gold"}
+                <p className="text-xs font-medium text-muted-foreground">
+                  {t("dailyRewardToday").replace("{case}", CASES[nextCaseType].name)}
+                </p>
+
+                <Button
+                  size="lg"
+                  className={cn(
+                    "w-full rounded-xl font-semibold",
+                    nextIsGold && "bg-gradient-to-r from-amber-500 to-yellow-400 text-black hover:from-amber-400 hover:to-yellow-300",
+                  )}
+                  disabled={claimMutation.isPending}
+                  onClick={() => claimMutation.mutate()}
+                >
+                  {claimMutation.isPending ? t("claiming") : <><Gift className="mr-2 h-5 w-5" />{t("claimReward")}</>}
+                </Button>
+                <button onClick={dismiss} className="text-xs text-muted-foreground underline-offset-2 hover:underline">
+                  {t("later")}
+                </button>
+              </>)}
+
+              {vipTab && isVip && (<>
+                <div className="grid grid-cols-4 gap-2">
+                  {days.map((day) => {
+                    const isTradingDay = day === REWARD_CYCLE_DAYS;
+                    const vipDay = cycleDayOf(Math.max(1, claimedToday ? Number(economy?.vipStreak) || 1 : (Number(economy?.vipStreak) || 0) + 1));
+                    const vipClaimed = claimedToday && day <= vipDay;
+                    const vipNext = !claimedToday && day === vipDay;
+                    return (
+                      <div
+                        key={`vip-${day}`}
+                        className={cn(
+                          "relative flex flex-col items-center justify-center gap-1 rounded-xl border px-1 py-3",
+                          isTradingDay ? "border-emerald-500/50" : "border-amber-500/40",
+                          vipClaimed && "bg-muted/40 opacity-55",
+                          vipNext && (isTradingDay ? "bg-emerald-500/15 shadow-[0_0_22px_-4px_rgba(16,185,129,0.7)]" : "bg-amber-500/15"),
+                          !vipClaimed && !vipNext && "bg-card/50",
+                        )}
+                      >
+                        {vipClaimed ? (
+                          <span className={cn("flex h-9 w-9 items-center justify-center rounded-full", isTradingDay ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-400")}>
+                            <Check className="h-5 w-5" />
                           </span>
-                          {vipClaimed && (
-                            <span className="absolute right-0.5 top-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-success text-success-foreground">
-                              <Check className="h-2 w-2" />
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
+                        ) : isTradingDay ? (
+                          <Briefcase className="h-8 w-8 text-emerald-400" />
+                        ) : (
+                          <Crown className={cn("h-8 w-8", vipNext ? "text-amber-400" : "text-amber-400/60")} />
+                        )}
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("dayN").replace("{n}", String(day))}</span>
+                        <span className={cn("max-w-full truncate px-1 text-[9px] font-semibold leading-tight", isTradingDay ? "text-emerald-400" : "text-amber-400")}>
+                          {isTradingDay ? "Trading Case" : t("goldCase")}
+                        </span>
+                        {isTradingDay && !vipClaimed && (
+                          <span className="absolute -right-1 -top-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[8px] font-black uppercase text-black">25k$</span>
+                        )}
+                        {vipClaimed && (
+                          <span className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-success text-success-foreground">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs font-medium text-muted-foreground">
+                  {claimedToday ? t("dailyComeBackTomorrow") : t("vipRewardNote")}
+                </p>
+                <Button
+                  size="lg"
+                  className="w-full rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-semibold text-black hover:from-amber-400 hover:to-yellow-300"
+                  disabled={claimMutation.isPending}
+                  onClick={() => claimMutation.mutate()}
+                >
+                  {claimMutation.isPending ? t("claiming") : <><Gift className="mr-2 h-5 w-5" />{t("claimReward")}</>}
+                </Button>
+                <button onClick={dismiss} className="text-xs text-muted-foreground underline-offset-2 hover:underline">
+                  {t("later")}
+                </button>
+              </>)}
+
+              {vipTab && !isVip && (
+                <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/50 bg-card/40 px-4 py-8 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/40 bg-amber-500/10">
+                    <Lock className="h-6 w-6 text-amber-400" />
                   </div>
-                  <p className="mt-2 text-[10px] text-muted-foreground">Days 1-6 → Gold Case · Day 7 → Trading Case ($25,000)</p>
+                  <p className="text-sm font-bold uppercase tracking-wider text-amber-300">VIP only</p>
+                  <p className="max-w-[280px] text-xs leading-relaxed text-muted-foreground">{t("vipRewardLocked")}</p>
                 </div>
               )}
-
-              <p className="text-xs font-medium text-muted-foreground">
-                {t("dailyRewardToday").replace("{case}", CASES[nextCaseType].name)}
-              </p>
-
-              <Button
-                size="lg"
-                className={cn(
-                  "w-full rounded-xl font-semibold",
-                  nextIsGold && "bg-gradient-to-r from-amber-500 to-yellow-400 text-black hover:from-amber-400 hover:to-yellow-300",
-                )}
-                disabled={claimMutation.isPending}
-                onClick={() => claimMutation.mutate()}
-              >
-                {claimMutation.isPending ? t("claiming") : <><Gift className="mr-2 h-5 w-5" />{t("claimReward")}</>}
-              </Button>
-              <button onClick={dismiss} className="text-xs text-muted-foreground underline-offset-2 hover:underline">
-                {t("later")}
-              </button>
             </motion.div>
           )}
 
