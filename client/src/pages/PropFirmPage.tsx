@@ -15,6 +15,7 @@ import {
 } from "@/lib/trading-api";
 import { useLanguage } from "@/lib/language-context";
 import { LeaderboardPanel } from "@/components/leaderboard/LeaderboardPanel";
+import { CustomAccountBuilder } from "@/components/prop/CustomAccountBuilder";
 import { cn } from "@/lib/utils";
 
 type Phase6Type = {
@@ -379,7 +380,7 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
-  const [tab, setTab] = useState<"rankings" | "marketplace" | "accounts">("rankings");
+  const [tab, setTab] = useState<"rankings" | "marketplace" | "custom" | "accounts">("rankings");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // evaluated account ids — evaluate is idempotent but we run it once per mount
   const evaluatedRef = useRef<Set<string>>(new Set());
@@ -437,6 +438,8 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   const tabs = [
     { id: "rankings" as const, label: t("pfTabRankings") },
     { id: "marketplace" as const, label: t("pfTabMarket") },
+    // Phase 35 — the custom-account builder (raw label: the page chrome is English)
+    { id: "custom" as const, label: "Custom" },
     ...(user ? [{ id: "accounts" as const, label: t("pfTabMine") }] : []),
   ];
 
@@ -475,6 +478,11 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
             {types.map((item) => <TypeCard key={item.id} item={item} onDetails={() => navigate(`/prop-firm/${item.id}`)} />)}
             {types.length === 0 && <div className="rounded-xl border border-border/60 p-8 text-center text-sm text-muted-foreground sm:col-span-2 lg:col-span-3">No challenges match.</div>}
           </div>
+        )}
+
+        {/* Phase 35 — Create Your Custom Account builder */}
+        {tab === "custom" && (
+          <CustomAccountBuilder onCreated={(accountId) => { setSelectedId(accountId); setTab("accounts"); }} />
         )}
 
         {tab === "accounts" && user && (

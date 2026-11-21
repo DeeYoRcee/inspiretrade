@@ -14,6 +14,10 @@ import {
   GripVertical, ListPlus, Pencil, Search,
   Star, Trash2, X,
 } from "lucide-react";
+import {
+  ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
+  ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { getInstrument } from "@shared/terminal";
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { usePrice } from "@/lib/price-store";
@@ -41,8 +45,35 @@ function loadPrefs(): { sort: SortMode; compact: boolean } {
   } catch { return { sort: "manual", compact: false }; }
 }
 
+/** Mini daily-close line — real provider data only (QuoteRow.spark); when
+ *  there is not enough history yet a neutral dotted placeholder keeps the
+ *  column aligned instead of inventing a line (Phase 35 §2). */
+function Spark({ points, tone }: { points: number[]; tone: boolean | null }) {
+  const w = 44, h = 14, pad = 2;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const step = (w - pad * 2) / (points.length - 1);
+  const d = points
+    .map((v, i) => `${(pad + i * step).toFixed(1)},${(h - pad - ((v - min) / span) * (h - pad * 2)).toFixed(1)}`)
+    .join(" ");
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="shrink-0" aria-hidden>
+      <polyline
+        points={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={tone === null ? "text-slate-500" : tone ? "text-emerald-400/80" : "text-red-400/80"}
+      />
+    </svg>
+  );
+}
+
 function WatchRow({
-  symbol, active, compact, sortable, index, listId, favorite, onSelect,
+  symbol, active, compact, sortable, index, listId, favorite, otherLists, onSelect,
 }: {
   symbol: string;
   active: boolean;
@@ -51,6 +82,7 @@ function WatchRow({
   index: number;
   listId: string;
   favorite: boolean;
+  otherLists: { id: string; name: string }[];
   onSelect: (s: string) => void;
 }) {
   const inst = getInstrument(symbol);
@@ -66,8 +98,11 @@ function WatchRow({
   const status = marketStatus(symbol);
 
   if (!inst) return null;
+  const tone = pct == null && abs == null ? null : (pct ?? abs ?? 0) >= 0;
   return (
-    <div
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+      <div
       draggable={sortable}
       onDragStart={(e) => {
         e.dataTransfer.setData("text/watchlist-index", String(index));
@@ -83,7 +118,7 @@ function WatchRow({
       onClick={() => onSelect(symbol)}
       className={cn(
         "wl-row group flex w-full cursor-pointer items-center gap-1.5 px-2 py-1.5 text-left transition-colors",
-        active ? "bg-sky-500/15" : "hover:bg-slate-800/70",
+        active ? "bg-sky-500/15 shadow-[inset_2px_0_0_0_rgb(56_189_248)]" : "hover:bg-slate-800/70",
       )}
     >
       {sortable && <GripVertical className="h-3 w-3 shrink-0 cursor-grab text-slate-600 opacity-0 transition-opacity group-hover:opacity-100" />}
@@ -101,6 +136,11 @@ function WatchRow({
         </span>
         {!compact && <span className="block truncate text-[9px] text-slate-500">{inst.name}</span>}
       </span>
+      {!compact && (
+        row?.spark && row.spark.length >= 2
+          ? <Spark points={row.spark} tone={tone} />
+          : <span className="shrink-0 text-center text-[9px] tracking-widest text-slate-700" style={{ width: 44 }}>···</span>
+      )}
       <span className="shrink-0 text-right">
         <span className="block font-number text-[11px] font-semibold tabular-nums text-slate-100">
           {formatPriceValue(price, d, grouped)}
@@ -117,15 +157,59 @@ function WatchRow({
       >
         <X className="h-3 w-3" />
       </button>
-    </div>
+      </div>
+      </ContextMenuTrigger>
+      {/* Phase 35 §4 — row context menu: chart / favorite / list management */}
+      <ContextMenuContent className="w-52">
+        <ContextMenuItem onClick={() => onSelect(symbol)}>Open in chart</ContextMenuItem>
+        <ContextMenuItem onClick={() => toggleFavorite(symbol)}>
+          {favorite ? "Remove from favorites" : "Add to favorites"}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>Add to list…</ContextMenuSubTrigger>
+          <ContextMenuSubContent className="w-44">
+            {otherLists.length === 0 && (
+              <p className="px-2 py-1.5 text-[11px] text-slate-500">No other lists yet</p>
+            )}
+            {otherLists.map((l) => (
+              <ContextMenuItem key={l.id} onClick={() => addToList(l.id, symbol)}>
+                {l.name}
+              </ContextMenuItem>
+            ))}
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={() => {
+                const name = window.prompt("New watchlist name");
+                if (name) {
+                  const id = createList(name);
+                  if (id) addToList(id, symbol);
+                }
+              }}
+            >
+              New list…
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          className="text-red-400 focus:text-red-300"
+          onClick={() => removeFromList(listId, symbol)}
+        >
+          Remove from this list
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
 export function Watchlist({
-  symbol, onSymbolChange, className,
+  symbol, onSymbolChange, onBrowse, className,
 }: {
   symbol: string;
   onSymbolChange: (s: string) => void;
+  /** opens the instrument explorer (empty-state CTA) */
+  onBrowse?: () => void;
   className?: string;
 }) {
   const doc = useWatchlists();
@@ -175,6 +259,7 @@ export function Watchlist({
   }, [visible, prefs.sort, rows, doc.favorites]);
 
   const grouped = prefs.sort === "manual" && !q ? groupByClass(finalList) : null;
+  const otherLists = doc.lists.filter((l) => l.id !== active.id).map((l) => ({ id: l.id, name: l.name }));
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col border-slate-800 bg-[#0b1220]", className)}>
@@ -266,7 +351,7 @@ export function Watchlist({
                 </p>
                 {syms.map((s, idx) => (
                   <WatchRow key={s} symbol={s} index={idx} listId={active.id} active={s === symbol} compact={prefs.compact}
-                    sortable favorite={doc.favorites.includes(s)} onSelect={onSymbolChange} />
+                    sortable favorite={doc.favorites.includes(s)} otherLists={otherLists} onSelect={onSymbolChange} />
                 ))}
               </div>
             );
@@ -274,12 +359,24 @@ export function Watchlist({
         ) : (
           finalList.map((s, idx) => (
             <WatchRow key={s} symbol={s} index={idx} listId={active.id} active={s === symbol} compact={prefs.compact}
-              sortable favorite={doc.favorites.includes(s)} onSelect={onSymbolChange} />
+              sortable favorite={doc.favorites.includes(s)} otherLists={otherLists} onSelect={onSymbolChange} />
           ))
         )}
+        {/* Phase 35 §4 — useful empty state for new lists */}
         {!finalList.length && (
-          <div className="p-3 text-center text-[11px] text-slate-500">
-            {q ? "No match in this list" : "This watchlist is empty — add instruments from the explorer"}
+          <div className="flex flex-col items-center gap-2 p-6 text-center">
+            <ListPlus className="h-5 w-5 text-slate-600" />
+            <p className="text-[11px] leading-4 text-slate-500">
+              {q ? "No match in this list" : "This watchlist is empty — browse instruments to fill it."}
+            </p>
+            {!q && onBrowse && (
+              <button
+                onClick={onBrowse}
+                className="rounded-md border border-slate-700 px-2.5 py-1 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-500/10"
+              >
+                Browse instruments
+              </button>
+            )}
           </div>
         )}
       </div>

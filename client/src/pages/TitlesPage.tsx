@@ -8,7 +8,7 @@ import { useLanguage } from "@/lib/language-context";
 import { cn } from "@/lib/utils";
 
 /**
- * Phase 32 — Titles (CS2-style). Titles are derived from account status and
+ * Phase 32 — Titles. Titles are derived from account status and
  * a future-proof `profile.titles` map (owner-granted). They render as small
  * badge chips on the profile and public profile.
  */
@@ -33,7 +33,7 @@ export const TITLE_DEFS: TitleDef[] = [
     bg: "bg-gradient-to-br from-amber-500/25 via-amber-500/10 to-transparent",
     glow: "shadow-[0_0_22px_-4px_rgba(245,158,11,0.85)]",
     icon: Crown,
-    description: "Platform owner — the gold CS2-style title.",
+    description: "Platform owner — the gold-standard title.",
   },
   {
     id: "vip",
@@ -79,7 +79,7 @@ export function titlesForProfile(profile: {
   return out;
 }
 
-/** CS2-style title strip — used on ProfilePage and ProfilePresentation. */
+/** Title strip — used on ProfilePage and ProfilePresentation. */
 export function TitleStrip({ titles, size = "md" }: { titles: TitleDef[]; size?: "sm" | "md" }) {
   if (!titles.length) return null;
   return (
@@ -115,7 +115,7 @@ export default function TitlesPage() {
           <Award className="h-6 w-6 text-amber-400" />
           {t("titles")}
         </h1>
-        <p className="text-sm text-muted-foreground">Your titles shine on your profile — CS2-style.</p>
+        <p className="text-sm text-muted-foreground">Your titles shine on your profile.</p>
       </div>
 
       <Card className="glass-panel border-amber-500/25">

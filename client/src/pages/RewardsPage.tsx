@@ -360,6 +360,18 @@ export default function RewardsPage() {
                       {claimMutation.isPending ? t("claiming") : <><Crown className="mr-2 h-5 w-5" />{t("claimReward")}</>}
                     </Button>
                   )}
+                  {/* Phase 35: compact claimed chip — the VIP card must not
+                      grow just to fit it (user request) */}
+                  {claimedToday && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-fit rounded-lg border-emerald-500/40 bg-emerald-500/10 font-semibold text-emerald-300"
+                      disabled
+                    >
+                      <BadgeCheck className="mr-1.5 h-4 w-4" />{t("claimedToday")}
+                    </Button>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     {claimedToday ? t("dailyComeBackTomorrow") : t("vipRewardNote")}
                   </p>

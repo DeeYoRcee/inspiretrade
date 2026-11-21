@@ -243,7 +243,7 @@ export default function TerminalPage() {
           activePanel={rightPanel}
           onPanelSelect={selectPanel}
           panel={
-            rightPanel === "watchlist" ? <Watchlist symbol={symbol} onSymbolChange={setSymbol} className="h-full w-full" />
+            rightPanel === "watchlist" ? <Watchlist symbol={symbol} onSymbolChange={setSymbol} onBrowse={() => setExplorerOpen(true)} className="h-full w-full" />
               : rightPanel === "ticket" ? (
                 <TradingPanel
                   symbol={symbol}

@@ -149,6 +149,17 @@ class BinanceProvider {
     return out;
   }
 
+  /** Daily closes for watchlist sparklines — one small REST call, no side
+   *  effects on the series store (Phase 35). */
+  async dailyCloses(symbol: string, limit = 30): Promise<number[]> {
+    const inst = getInstrument(symbol);
+    if (!inst?.binance) return [];
+    try {
+      const raw: any[] = await this.restGet(`/api/v3/klines?symbol=${inst.binance}&interval=1d&limit=${limit}`);
+      return raw.map((k) => +k[4]).filter((c) => Number.isFinite(c) && c > 0);
+    } catch { return []; }
+  }
+
   /** REST klines fetch — used for history AND for gap-fill / safety polling. */
   private async fetchRecent(symbol: string, tf: Timeframe, limit: number, endTime?: number): Promise<Bar[]> {
     const inst = getInstrument(symbol)!;
@@ -1466,6 +1477,7 @@ export interface LoadResult {
  * a retry button. No generated/random prices, ever.
  */
 import { assertPriceIdentity } from "@shared/feed-validation";
+import { extractSpark } from "@/lib/sparkline";
 export { assertPriceIdentity };
 
 export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResult> {
@@ -1588,6 +1600,9 @@ export async function fetchWatchlistQuotes(): Promise<Record<string, WatchlistQu
  */
 export interface QuoteRow {
   symbol: string;
+  /** recent daily closes for the watchlist sparkline — real provider data
+   *  only; undefined = not enough history (rows show a loading placeholder) */
+  spark?: number[];
   price: number | null;
   changeAbs: number | null;
   changePct: number | null;
@@ -1599,6 +1614,23 @@ export interface QuoteRow {
   source: "binance" | "yahoo" | "stooq-spot";
 }
 
+// ---- sparkline series cache (crypto only) -------------------------------
+// Non-crypto sparks ride free on the snapshot's own daily-bar fetch. Crypto
+// has no daily-bar source in that cycle (ticker24h is a single snapshot), so
+// their sparkline comes from one small klines call per symbol, cached for 30
+// minutes — never a per-row request per refresh (Phase 35 §6).
+const SPARK_TTL = 30 * 60_000;
+const sparkCache = new Map<string, { points: number[]; at: number }>();
+
+async function cryptoSpark(symbol: string): Promise<number[] | undefined> {
+  const hit = sparkCache.get(symbol);
+  const now = Date.now();
+  if (hit && now - hit.at < SPARK_TTL && hit.points.length >= 2) return hit.points;
+  const points = await binanceProvider.dailyCloses(symbol);
+  if (points.length >= 2) sparkCache.set(symbol, { points, at: now });
+  return points.length >= 2 ? points : hit?.points;
+}
+
 export async function fetchQuotesSnapshot(): Promise<Record<string, QuoteRow>> {
   const out: Record<string, QuoteRow> = {};
   const crypto = INSTRUMENTS.filter((i) => i.feed === "binance" && i.binance);
@@ -1606,28 +1638,31 @@ export async function fetchQuotesSnapshot(): Promise<Record<string, QuoteRow>> {
   const now = Date.now();
 
   const tasks: Promise<void>[] = [
-    binanceProvider
-      .ticker24h(crypto.map((i) => i.binance!))
-      .then((snap) => {
-        for (const i of crypto) {
-          const s = snap[i.binance!];
-          if (!s) continue;
-          const prevClose = s.open && s.open > 0 ? s.open : null;
-          out[i.symbol] = {
-            symbol: i.symbol,
-            price: s.price,
-            changeAbs: prevClose ? s.price - prevClose : (s.changePct ? (s.price * s.changePct) / (100 + s.changePct) : null),
-            changePct: s.changePct || null,
-            open: s.open,
-            high: s.high,
-            low: s.low,
-            prevClose,
-            at: now,
-            source: "binance",
-          };
-        }
-      })
-      .catch(() => { /* transient — next refresh retries */ }),
+    (async () => {
+      const [snap, sparks] = await Promise.all([
+        binanceProvider.ticker24h(crypto.map((i) => i.binance!)),
+        Promise.all(crypto.map((i) => cryptoSpark(i.symbol))),
+      ]);
+      for (const [idx, i] of crypto.entries()) {
+        const s = snap[i.binance!];
+        if (!s) continue;
+        const prevClose = s.open && s.open > 0 ? s.open : null;
+        out[i.symbol] = {
+          symbol: i.symbol,
+          price: s.price,
+          changeAbs: prevClose ? s.price - prevClose : (s.changePct ? (s.price * s.changePct) / (100 + s.changePct) : null),
+          changePct: s.changePct || null,
+          open: s.open,
+          high: s.high,
+          low: s.low,
+          prevClose,
+          at: now,
+          source: "binance",
+        };
+        const sp = sparks[idx];
+        if (sp && sp.length >= 2) out[i.symbol].spark = sp;
+      }
+    })().catch(() => { /* transient — next refresh retries */ }),
   ];
 
   for (const i of quoted) {
@@ -1651,7 +1686,9 @@ export async function fetchQuotesSnapshot(): Promise<Record<string, QuoteRow>> {
           }
         }
         if (bars.length < 2) {
-          const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(i.yahoo!)}&range=5d&interval=1d`);
+          // 1mo daily bars: same single request as before, but it also feeds
+          // the watchlist sparkline (Phase 35 — no extra requests per row)
+          const res: any = await authedFetch(`/api/quotes?symbol=${encodeURIComponent(i.yahoo!)}&range=1mo&interval=1d`);
           bars = res?.bars || [];
         }
         if (bars.length < 1) return;
@@ -1669,6 +1706,7 @@ export async function fetchQuotesSnapshot(): Promise<Record<string, QuoteRow>> {
           prevClose: prev && prev.close > 0 ? prev.close : null,
           at: now,
           source,
+          spark: extractSpark(bars),
         };
       })().catch(() => { /* transient — next refresh retries */ }),
     );
