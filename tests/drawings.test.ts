@@ -49,12 +49,12 @@ test("every tool has a point count; pattern tools have labels", () => {
 test("Fibonacci defaults per tool and per-drawing overrides", () => {
   assert.deepEqual(FIB_DEFAULT_LEVELS["fib-retracement"], [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618, 2.618], "P27 §5: full standard level set");
   const d = makeDrawing("fib-retracement", [{ time: 0, price: 100 }, { time: 60, price: 200 }]);
-  assert.equal(levelsFor(d).length, 7);
+  assert.equal(levelsFor(d).length, 10, "P27 §5: retracement carries the full standard set");
   // customize: disable 0.5, keep the rest
   const custom = levelsFor(d).map((l) => (l.ratio === 0.5 ? { ...l, show: false } : l));
   d.levels = custom;
   const eff = levelsFor(d).filter((l) => l.show);
-  assert.equal(eff.length, 6);
+  assert.equal(eff.length, 9);
   assert.ok(!eff.some((l) => l.ratio === 0.5), "disabled level is not rendered");
   assert.ok(eff.some((l) => l.ratio === 0.618));
 });
