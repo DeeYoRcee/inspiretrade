@@ -84,9 +84,12 @@ export default function RewardsPage() {
     mutationFn: async () => authedFetch("/api/rewards/claim", {}) as Promise<ClaimResponse>,
     onSuccess: (data) => {
       invalidate();
+      // one press advances BOTH tracks — say so when a VIP reward came too
       toast({
         title: t("claimSuccess"),
-        description: t("claimSuccessCase").replace("{case}", data.reward.caseName),
+        description: data.vipReward
+          ? t("claimSuccessCase").replace("{case}", `${data.reward.caseName} + ${data.vipReward.caseName} (VIP)`)
+          : t("claimSuccessCase").replace("{case}", data.reward.caseName),
       });
     },
     onError: (error: any) => {
@@ -212,14 +215,15 @@ export default function RewardsPage() {
           </Card>
         </motion.div>
 
-        {/* Cases — Inspire + Gold */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }} className="lg:row-span-2">
+        {/* Cases — Phase 34b: natural height; VIP Reward fills the space under
+            it on the right (the user wanted the right column filled, not an
+            extra-tall Cases card) */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }}>
           <Card className="glass-panel h-full border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-lg"><PackageOpen className="h-5 w-5 text-primary" />{t("casesTitle")}</CardTitle>
             </CardHeader>
-            {/* Phase 34: content spreads across the full stretched height */}
-            <CardContent className="flex flex-1 flex-col justify-between gap-5">
+            <CardContent className="space-y-5">
               {/* Inspire Case */}
               <div className="flex items-center gap-4">
                 <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent shadow-[0_0_24px_-6px_hsl(var(--primary)/0.5)]">
@@ -343,6 +347,19 @@ export default function RewardsPage() {
                       );
                     })}
                   </div>
+                  {/* Phase 34c: explicit VIP claim — one press advances BOTH
+                      tracks (server design), so pressing here also claims the
+                      normal daily reward when it is still pending */}
+                  {!claimedToday && (
+                    <Button
+                      size="lg"
+                      className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 font-semibold text-black hover:from-emerald-400 hover:to-teal-300"
+                      disabled={claimMutation.isPending}
+                      onClick={() => claimMutation.mutate()}
+                    >
+                      {claimMutation.isPending ? t("claiming") : <><Crown className="mr-2 h-5 w-5" />{t("claimReward")}</>}
+                    </Button>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     {claimedToday ? t("dailyComeBackTomorrow") : t("vipRewardNote")}
                   </p>

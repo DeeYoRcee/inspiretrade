@@ -181,8 +181,8 @@ var list_default = handle(async (req, res) => {
   let listingItem;
   if (kind === "case") {
     const id = String(caseId || "");
-    if (id === "inspire" || id === "gold") {
-      escrowRef = id === "gold" ? rtdb().ref(`economy/${user.uid}/goldCases`) : rtdb().ref(`economy/${user.uid}/cases`);
+    if (id === "inspire" || id === "gold" || id === "trading") {
+      escrowRef = id === "gold" ? rtdb().ref(`economy/${user.uid}/goldCases`) : id === "trading" ? rtdb().ref(`economy/${user.uid}/tradingCases`) : rtdb().ref(`economy/${user.uid}/cases`);
       itemName = CASES[id].name;
       insufficientError = new HttpError(400, "NO_CASES", "You don't own this case");
       listingItem = { kind: "case", caseId: id };
@@ -298,8 +298,8 @@ var buy_default = handle(async (req, res) => {
   if (listing.kind === "case") {
     const caseId = String(listing.caseId || "");
     let deliverRef;
-    if (caseId === "inspire" || caseId === "gold") {
-      deliverRef = caseId === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : db.ref(`economy/${user.uid}/cases`);
+    if (caseId === "inspire" || caseId === "gold" || caseId === "trading") {
+      deliverRef = caseId === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : caseId === "trading" ? db.ref(`economy/${user.uid}/tradingCases`) : db.ref(`economy/${user.uid}/cases`);
     } else if (CASE_ID_RE2.test(caseId) && (await db.ref(`economyConfig/cases/${caseId}`).get()).exists()) {
       deliverRef = db.ref(`economy/${user.uid}/customCases/${caseId}`);
     } else {

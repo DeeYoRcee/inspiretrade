@@ -68,6 +68,7 @@ const CASE_SKIN: Record<CaseType, { border: string; glow: string; iconTint: stri
 export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, caseName, onClose }: CaseOpeningDialogProps) {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
+  const timersRef = useRef<number[]>([]);
   const [stage, setStage] = useState<Stage>("case");
   const [offset, setOffset] = useState<number | null>(null);
 
@@ -92,12 +93,22 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
     setStage("case");
     setOffset(null);
     caseRattle();
-    const timers = [
+    timersRef.current = [
       window.setTimeout(() => { setStage("reel"); casePop(); caseSpin(SPIN_MS); }, SHAKE_MS),
       window.setTimeout(() => { setStage("result"); caseReveal(result.rarity); }, SHAKE_MS + SPIN_MS + 600),
     ];
-    return () => timers.forEach((tid) => window.clearTimeout(tid));
+    return () => { timersRef.current.forEach((tid) => window.clearTimeout(tid)); timersRef.current = []; };
   }, [open, result]);
+
+  /** Click-to-skip: jump straight to the reveal (the drop is already decided
+   * and credited server-side, skipping only shortens the show). */
+  const skipToResult = () => {
+    if (!open || !result || stage === "result") return;
+    timersRef.current.forEach((tid) => window.clearTimeout(tid));
+    timersRef.current = [];
+    setStage("result");
+    caseReveal(result.rarity);
+  };
 
   // kick off the reel scroll once the reel stage mounts
   useEffect(() => {
@@ -125,7 +136,7 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
   const meta = RARITY_META[result.rarity];
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next && stage === "result") onClose(); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent className="glass-panel max-w-3xl overflow-hidden border-border/60 p-5 sm:p-6">
         <DialogTitle className="sr-only">{t("caseOpeningTitle")}</DialogTitle>
 
@@ -185,7 +196,9 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
                   initial={{ opacity: 0, y: -28 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.35, ease: "easeOut" }}
-                  className="w-full min-w-0"
+                  className="w-full min-w-0 cursor-pointer select-none"
+                  onClick={skipToResult}
+                  title="Click to skip"
                 >
                   <div className="relative">
                     <div
@@ -248,9 +261,14 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
               </div>
               <div className="relative z-10 flex flex-col items-center gap-2">
                 <p className="text-sm text-muted-foreground">{t("fragmentCollected")}</p>
-                <Button onClick={onClose} className="rounded-xl font-semibold" style={{ backgroundColor: `${meta.color}26`, color: meta.color, border: `1px solid ${meta.color}55` }}>
-                  {t("addToCollection")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button onClick={onClose} className="rounded-xl font-semibold" style={{ backgroundColor: `${meta.color}26`, color: meta.color, border: `1px solid ${meta.color}55` }}>
+                    {t("addToCollection")}
+                  </Button>
+                  <Button variant="ghost" onClick={onClose} className="rounded-xl text-muted-foreground">
+                    {t("notNow")}
+                  </Button>
+                </div>
               </div>
             </motion.div>
           )}

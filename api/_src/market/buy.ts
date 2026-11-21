@@ -84,10 +84,12 @@ export default handle(async (req, res) => {
     // whose definition was deleted by the owner is undeliverable: revert.
     const caseId = String(listing.caseId || "");
     let deliverRef: any;
-    if (caseId === "inspire" || caseId === "gold") {
+    if (caseId === "inspire" || caseId === "gold" || caseId === "trading") {
       deliverRef = caseId === "gold"
         ? db.ref(`economy/${user.uid}/goldCases`)
-        : db.ref(`economy/${user.uid}/cases`);
+        : caseId === "trading"
+          ? db.ref(`economy/${user.uid}/tradingCases`)
+          : db.ref(`economy/${user.uid}/cases`);
     } else if (CASE_ID_RE.test(caseId) && (await db.ref(`economyConfig/cases/${caseId}`).get()).exists()) {
       deliverRef = db.ref(`economy/${user.uid}/customCases/${caseId}`);
     } else {

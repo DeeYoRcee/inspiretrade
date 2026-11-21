@@ -24,10 +24,12 @@ export default handle(async (req, res) => {
 
   if (kind === "case") {
     const id = String(caseId || "");
-    if (id === "inspire" || id === "gold") {
+    if (id === "inspire" || id === "gold" || id === "trading") {
       escrowRef = id === "gold"
         ? rtdb().ref(`economy/${user.uid}/goldCases`)
-        : rtdb().ref(`economy/${user.uid}/cases`);
+        : id === "trading"
+          ? rtdb().ref(`economy/${user.uid}/tradingCases`)
+          : rtdb().ref(`economy/${user.uid}/cases`);
       itemName = CASES[id].name;
       insufficientError = new HttpError(400, "NO_CASES", "You don't own this case");
       listingItem = { kind: "case", caseId: id };

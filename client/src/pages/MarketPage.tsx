@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AtSign, Coins, Crown, Store, Tag, XCircle, ShoppingBag, Info, Gem, Box } from "lucide-react";
+import { AtSign, Briefcase, Coins, Crown, Store, Tag, XCircle, ShoppingBag, Info, Gem, Box } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +47,7 @@ export default function MarketPage() {
     const list: { caseId: string; name: string; count: number; isGold: boolean; def?: CustomCaseDef }[] = [];
     if ((economy?.cases ?? 0) > 0) list.push({ caseId: "inspire", name: CASES.inspire.name, count: economy!.cases, isGold: false });
     if ((economy?.goldCases ?? 0) > 0) list.push({ caseId: "gold", name: CASES.gold.name, count: economy!.goldCases, isGold: true });
+    if ((economy?.tradingCases ?? 0) > 0) list.push({ caseId: "trading", name: CASES.trading.name, count: economy!.tradingCases ?? 0, isGold: false });
     for (const def of customCases ?? []) {
       const count = economy?.customCases?.[def.caseId] ?? 0;
       if (count > 0) list.push({ caseId: def.caseId, name: def.name, count, isGold: false, def });
@@ -422,28 +423,31 @@ function CaseListCard({ listing, customCases, children }: {
 }) {
   const { t } = useLanguage();
   const isGold = listing.caseId === "gold";
-  const isBuiltin = listing.caseId === "inspire" || listing.caseId === "gold";
+  const isTrading = listing.caseId === "trading";
+  const isBuiltin = listing.caseId === "inspire" || isGold || isTrading;
   const def = customCases?.find((c) => c.caseId === listing.caseId);
   const name = listing.itemName
-    || (isBuiltin ? CASES[listing.caseId as "inspire" | "gold"].name : def?.name || listing.caseId || "");
+    || (isBuiltin ? CASES[listing.caseId as "inspire" | "gold" | "trading"].name : def?.name || listing.caseId || "");
   const fragmentCount = isBuiltin
-    ? CASES[listing.caseId as "inspire" | "gold"].fragments.length
+    ? CASES[listing.caseId as "inspire" | "gold" | "trading"].fragments.length
     : def?.fragments.length;
   return (
     <Card className={cn(
       "glass-panel flex flex-1 flex-col items-center justify-center gap-2 border py-6",
-      isGold ? "border-amber-500/40" : listing.caseId === "inspire" ? "border-primary/30" : "border-sky-500/40",
+      isTrading ? "border-emerald-500/40" : isGold ? "border-amber-500/40" : listing.caseId === "inspire" ? "border-primary/30" : "border-sky-500/40",
     )}>
       <CardContent className="flex flex-col items-center gap-2 py-0">
         <div className={cn(
           "flex h-16 w-16 items-center justify-center rounded-2xl border",
-          isGold
-            ? "border-amber-500/40 bg-gradient-to-br from-amber-500/25 via-amber-500/5 to-transparent"
-            : listing.caseId === "inspire"
-              ? "border-primary/30 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent"
-              : "border-sky-500/40 bg-gradient-to-br from-sky-500/25 via-sky-500/5 to-transparent",
+          isTrading
+            ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/25 via-emerald-500/5 to-transparent"
+            : isGold
+              ? "border-amber-500/40 bg-gradient-to-br from-amber-500/25 via-amber-500/5 to-transparent"
+              : listing.caseId === "inspire"
+                ? "border-primary/30 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent"
+                : "border-sky-500/40 bg-gradient-to-br from-sky-500/25 via-sky-500/5 to-transparent",
         )}>
-          {isGold ? <Crown className="h-7 w-7 text-amber-400" /> : listing.caseId === "inspire" ? <Gem className="h-7 w-7 text-primary" /> : <Box className="h-7 w-7 text-sky-400" />}
+          {isTrading ? <Briefcase className="h-7 w-7 text-emerald-400" /> : isGold ? <Crown className="h-7 w-7 text-amber-400" /> : listing.caseId === "inspire" ? <Gem className="h-7 w-7 text-primary" /> : <Box className="h-7 w-7 text-sky-400" />}
         </div>
         <p className="max-w-[180px] truncate text-sm font-semibold">{name}</p>
         <Badge variant="outline" className="rounded-full border-border/60 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
