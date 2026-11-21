@@ -32,7 +32,7 @@ const ECOSYSTEM = [
 const SYMBOLS = [
   { name: "XAUUSD", price: "4,391.20", delta: "+0.84%", up: true, top: "12%", left: "8%", dur: 7 },
   { name: "EURUSD", price: "1.0842", delta: "-0.12%", up: false, top: "30%", left: "58%", dur: 8.5 },
-  { name: "BTCUSD", price: "96,410", delta: "+2.31%", up: true, top: "62%", left: "14%", dur: 9.5 },
+  { name: "BTCUSD", price: "96,410", delta: "+2.31%", up: true, top: "70%", left: "55%", dur: 9.5 },
 ];
 
 /** Floating candlestick cluster — lightweight SVG + transform animations. */

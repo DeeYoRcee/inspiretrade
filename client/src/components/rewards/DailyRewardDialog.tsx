@@ -57,7 +57,10 @@ export function DailyRewardDialog() {
   }, [dismissedKey]);
 
   const claimedToday = economy?.lastClaimDate === today;
-  const open = !!user && !isLoading && !claimedToday && !dismissed;
+  // Phase 32: unverified accounts see the verification gate first — the
+  // reward dialog waits until the email is confirmed (user.emailVerified is
+  // undefined for loading states, so only an explicit false blocks it).
+  const open = !!user && user.emailVerified !== false && !isLoading && !claimedToday && !dismissed;
 
   // Number() guard — a streak stored as a string would break the cycle math
   const streak = Number(economy?.streak) || 0;
