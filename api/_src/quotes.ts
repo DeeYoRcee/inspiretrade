@@ -221,10 +221,10 @@ import {
   flatShare, repairOutlierExtremes, staleRunFilter,
   type RawBar,
 } from "../../shared/feed-validation";
-import { aggregateBars, SPOT_PRICE_BANDS } from "../../shared/terminal";
+import { aggregateBars, SPOT_PRICE_BANDS, normalizeDailyAnchors, mergeFxStoreDaily } from "../../shared/terminal";
 import { marketHours, filterClosedCandles, closedIntervals } from "../../shared/market-hours";
 import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
-import { runBackfillStep, readRange, coverageReport, writeShards } from "./lib/hist";
+import { runBackfillStep, readRange, coverageReport, writeShards, fetchStooqBars, HIST_STOOQ } from "./lib/hist";
 import type { BackfillResult, RangeResult, CoverageRow } from "./lib/hist";
 
 /**
@@ -1259,16 +1259,29 @@ export default handle(async (req, res) => {
   // period mode (replay/backtest) it answers first when the window is stored;
   // in live range mode it is the primary FX intraday source — Yahoo's 1m FX
   // is close-only (FLAT_FX_OHLC) and Twelve Data is budget-limited.
+  // Phase 29 — range → days for the DAILY store fold. The intraday path
+  // keeps its old 5-day default (working timeframes stay untouched); daily
+  // views need the real requested depth, bounded to keep the fxBars subtree
+  // query in the same cost class as the spotTicks read the quotes route
+  // already performs per request (~65d of minutes ≈ 90k keys).
+  const RANGE_DAILY_DAYS: Record<string, number> = { "1d": 2, "5d": 7, "1M": 32, "3M": 95, "6M": 190, "1y": 370, "5y": 1830, All: 1830, YTD: Math.max(10, Math.ceil((Date.now() - Date.UTC(new Date().getUTCFullYear(), 0, 1)) / 86400) + 10) };
+  const DAILY_STORE_WINDOW_DAYS = 65;
   const fromFxStore = async () => {
     if (!DUKA_MAP[bareCode]) throw new Error("NO_FX_STORE");
     const sec = INTERVAL_SECONDS[interval];
-    if (!sec || sec > 3600) throw new Error("FX_STORE_INTRADAY_ONLY");
+    if (!sec) throw new Error("FX_STORE_INTRADAY_ONLY");
+    const daily = sec === 86400;
+    if (!daily && sec > 3600) throw new Error("FX_STORE_INTRADAY_ONLY");
     const meta = (await rtdb().ref(`fxMeta/${bareCode}`).once("value")).val() || {};
     const nowSec = Math.floor(Date.now() / 1000);
     let t1: number, t2: number;
     if (periodMode) {
       t1 = period1 as number;
       t2 = period2 as number;
+    } else if (daily) {
+      const days = Math.min(RANGE_DAILY_DAYS[range] ?? DAILY_STORE_WINDOW_DAYS, DAILY_STORE_WINDOW_DAYS);
+      t1 = nowSec - days * 86400;
+      t2 = nowSec;
     } else {
       const days = range.endsWith("d") ? Number(range.slice(0, -1)) || 5 : 5;
       t1 = nowSec - days * 86400;
@@ -1294,7 +1307,7 @@ export default handle(async (req, res) => {
       byTime.set(time, { time, open: m.o, high: m.h, low: m.l, close: m.c, volume: m.s });
     }
     const raw = [...byTime.values()].sort((a, b) => a.time - b.time);
-    if (raw.length < 200) throw new Error("FX_STORE_THIN");
+    if (raw.length < 200 && !daily) throw new Error("FX_STORE_THIN");
     // Phase 20: stuck-price glitch islands (a provider serving a stale price
     // with a fresh stamp) are rejected before they can reach a chart
     const island = minuteIslandFilter(raw);
@@ -1309,18 +1322,46 @@ export default handle(async (req, res) => {
     // filter the metals recorder uses.
     const stale = staleRunFilter(repairOutlierExtremes(deduped.bars).bars);
     const m1 = stale.bars;
-    if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
-    const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
-    const newest = bars[bars.length - 1].time;
+    if (!m1.length && !daily) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    let bars = (sec === 60 ? m1 : aggregateBars(m1, sec / 60)) as { time: number; open: number; high: number; low: number; close: number; volume?: number }[];
+    // Phase 29 Issue 2 — DAILY consistency: aggregate the store's BID minutes
+    // into UTC-day bars (the SAME engine and session boundary as M1/M5/H1/H4
+    // folds), then let stooq's date-stamped dailies (noon-snapped to UTC days)
+    // provide the DEPTH behind it. Store wins the overlap — one price side
+    // (BID), one boundary (UTC), no more duplicate-day pairs at the junction.
+    // Stooq alone remains the honest answer when the store is thin.
+    let dailyDeep = false;
+    if (daily) {
+      let deep: { time: number; open: number; high: number; low: number; close: number; volume?: number }[] = [];
+      const sq = HIST_STOOQ[bareCode];
+      if (sq) {
+        try {
+          const deepFrom = periodMode ? (period1 as number) : nowSec - Math.min(RANGE_DAILY_DAYS[range] ?? 1830, 1830) * 86400;
+          deep = normalizeDailyAnchors((await fetchStooqBars(sq, "d")).filter((b) => b.time >= deepFrom - 86400))
+            .map((b) => ({ ...b, time: Math.floor((b.time + 12 * 3600) / 86400) * 86400 }))
+            .filter((b) => b.time <= t2);
+        } catch { /* stooq unreachable → store-only daily (65d window) */ }
+      }
+      bars = mergeFxStoreDaily(deep, bars);
+      dailyDeep = deep.length > 0;
+      if (!periodMode) {
+        const minT = nowSec - Math.min(RANGE_DAILY_DAYS[range] ?? 1830, 1830) * 86400;
+        bars = bars.filter((b) => b.time >= minT);
+      }
+    }
+    const newest = bars.length ? bars[bars.length - 1].time : 0;
     // Live range mode: a stale union must NEVER become the primary chart —
     // a tail a day old looks broken. The recorder keeps the union fresh
     // whenever any user is polling; a truly dead session errors honestly.
-    if (!periodMode && newest < nowSec - 90 * 60) {
+    // DAILY gets a 5-day bound instead: a weekend view legitimately ends at
+    // Friday's bar (the Phase 28 session gates keep the store weekend-clean).
+    if (!periodMode && newest < nowSec - (daily ? 5 * 86400 : 90 * 60)) {
       throw new Error("FX_STORE_STALE");
     }
+    if (!bars.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     const last = bars[bars.length - 1];
     return {
-      source: "fx-store+live",
+      source: daily ? (dailyDeep ? "fx-store-daily+stooq-deep" : "stooq-deep") : "fx-store+live",
       delayed: newest < nowSec - 300,
       delaySec: Math.max(0, nowSec - newest),
       identity: "spot",
@@ -1371,7 +1412,7 @@ export default handle(async (req, res) => {
           : fxIntraday
             ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq]
             : interval === "1d"
-              ? [fromStooq, fromYahoo, fromTwelveData, fromYahooFutures, fromFxStore]
+              ? [fromFxStore, fromStooq, fromYahoo, fromTwelveData, fromYahooFutures]
               : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr: unknown = null;
       // staleness-aware chain (Phase 18): a source can SUCCEED while serving

@@ -904,7 +904,10 @@ class QuotesProvider {
     try {
       const inst = getInstrument(symbol);
       if (!inst) return;
-      const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 45;
+      // Phase 29: minute window 45 → 65 days — matches the spot-history serve
+      // window (payload class already accepted there), so once the Duka
+      // backfill deepens the shards the chart actually REQUESTS them
+      const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 65;
       const [hist, serverAgg, stooqDaily] = await Promise.all([
         fetchHistRange(symbol, sec >= 3600 ? tf : ("1m" as Timeframe), now - histWinDays * 86400, now)
           .catch(() => ({ bars: [] as Bar[], note: "" })),

@@ -39,6 +39,7 @@ import { aggregateBars } from "../../../shared/terminal";
 import { fetchDukaDay, decodeDukaDay, DUKA_MAP, DUKA_METALS } from "./duka";
 import { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC, type AssetClass } from "./hist-sessions";
 import { bucketStart } from "../../../shared/feed-validation";
+import { normalizeDailyAnchors } from "../../../shared/terminal";
 
 export { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, backfillWindowFrom, READ_AGG_CHAIN, MAX_1M_FOLD_WINDOW_SEC };
 
@@ -47,7 +48,7 @@ export { inMarketHours, missingIntervals, HIST_MONTHS_CAP, clampBackfillMonths, 
 /** Terminal symbol → stooq ticker (genuine SPOT for metals, cash index for
  * indices, direct pair for forex). Mirrors quotes.ts STOOQ_MAP keyed on the
  * bare terminal code instead of the yahoo identifier. */
-const HIST_STOOQ: Record<string, string> = {
+export const HIST_STOOQ: Record<string, string> = {
   XAUUSD: "xauusd", XAGUSD: "xagusd",
   EURUSD: "eurusd", GBPUSD: "gbpusd", USDJPY: "usdjpy", AUDUSD: "audusd",
   NZDUSD: "nzdusd", USDCAD: "usdcad", USDCHF: "usdchf",
@@ -151,6 +152,12 @@ export async function readShards(symbol: string, tf: string, fromSec: number, to
       }
     }
   }
+  // Phase 29 Issue 2: daily shards written by the older stooq ingest carry
+  // Europe/Berlin midnights (22:00/23:00 UTC of the previous day) while the
+  // quotes route and the fold engine anchor UTC — folding both produced the
+  // same day twice, one bar shifted half a day left. Re-anchor at READ time
+  // (idempotent for UTC rows; only 1d granularity is touched).
+  if (tf === "1d") return { bars: normalizeDailyAnchors(bars) as RawBar[], providers };
   bars.sort((a, b) => a.time - b.time);
   return { bars, providers };
 }
@@ -364,6 +371,10 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         });
         if (sh.written > 0 || done) {
           return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " · wall-clock budget reached — resume to continue" : ""}` };
+        }
+        if (walk.files === 0) {
+          // honest surfacing: depth will not grow while the CDN is unreachable
+          return { ...base, ok: false, provider: "dukascopy-bid", error: "CDN_UNREACHABLE", note: "Dukascopy returned 0 day files (429/503 rate-limit or network block) — depth resumes when the CDN answers; TwelveData fallback needs a stored key" };
         }
         // feed skipped this window (or CDN down) → fall through to TwelveData
       }

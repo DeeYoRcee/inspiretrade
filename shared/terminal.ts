@@ -224,6 +224,41 @@ export interface Bar {
 }
 
 /** Aggregate 1m bars into N-minute bars (for 3m / 2h / 4h from proxy data). */
+/**
+ * Phase 29 — daily-bar timestamp normalization. The Dukascopy/stooq hybrid
+ * store produced two anchor conventions for the SAME market day: the quotes
+ * route stamps stooq dailies at UTC midnight while the hist backfill stored
+ * them at Europe/Berlin midnight (= 22:00/23:00 UTC of the previous day).
+ * A chart folding both layers then rendered the same day twice, one bar
+ * shifted half a day left — the "D1 candles have a different shape" defect.
+ * Noon-snap re-anchors any daily bar that is NOT on a UTC midnight into the
+ * UTC day it belongs to (idempotent for already-UTC rows). Only ever applied
+ * to 1d bars — intraday granularity must stay untouched.
+ */
+export function normalizeDailyAnchors(bars: { time: number; open: number; high: number; low: number; close: number; volume?: number }[]): { time: number; open: number; high: number; low: number; close: number; volume?: number }[] {
+  return bars.map((b) => {
+    if (b.time % 86400 === 0) return b;
+    return { ...b, time: Math.floor((b.time + 12 * 3600) / 86400) * 86400 };
+  });
+}
+
+/**
+ * Phase 29 — EURUSD D1 (and every FX daily): the store's own BID-minute fold
+ * (UTC days, same engine as M1/M5/H1/H4) must win the recent window, while
+ * stooq's date-stamped dailies carry the DEPTH. `deep` = stooq rows already
+ * noon-snapped to UTC days; `recent` = the store fold. Store wins overlap —
+ * one convention, one price side, no duplicate-day pairs.
+ */
+export function mergeFxStoreDaily(
+  deep: { time: number; open: number; high: number; low: number; close: number; volume?: number }[],
+  recent: { time: number; open: number; high: number; low: number; close: number; volume?: number }[],
+): { time: number; open: number; high: number; low: number; close: number; volume?: number }[] {
+  const byTime = new Map<number, { time: number; open: number; high: number; low: number; close: number; volume?: number }>();
+  for (const b of deep) byTime.set(b.time, b);
+  for (const b of recent) byTime.set(b.time, b); // store wins the overlap
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
 export function aggregateBars(bars: Bar[], factorMinutes: number): Bar[] {
   const bucket = factorMinutes * 60;
   const out: Bar[] = [];

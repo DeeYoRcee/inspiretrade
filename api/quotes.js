@@ -369,6 +369,18 @@ var INSTRUMENTS = [
 function getInstrument(symbol) {
   return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
 }
+function normalizeDailyAnchors(bars) {
+  return bars.map((b) => {
+    if (b.time % 86400 === 0) return b;
+    return { ...b, time: Math.floor((b.time + 12 * 3600) / 86400) * 86400 };
+  });
+}
+function mergeFxStoreDaily(deep, recent) {
+  const byTime = /* @__PURE__ */ new Map();
+  for (const b of deep) byTime.set(b.time, b);
+  for (const b of recent) byTime.set(b.time, b);
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
 function aggregateBars(bars, factorMinutes) {
   const bucket = factorMinutes * 60;
   const out = [];
@@ -616,20 +628,22 @@ async function fetchDukaDay(dukaSym, day) {
   const m = day.getUTCMonth();
   const d = day.getUTCDate();
   const url = `https://datafeed.dukascopy.com/datafeed/${dukaSym}/${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/BID_candles_min_1.bi5`;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2e4);
+    let rateLimited = false;
     try {
       const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer());
         if (buf.length > 100) return buf;
       }
+      if (res.status === 429 || res.status === 503) rateLimited = true;
     } catch {
     } finally {
       clearTimeout(timer);
     }
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, rateLimited ? 1200 + attempt * 1800 : 400));
   }
   return null;
 }
@@ -827,6 +841,7 @@ async function readShards(symbol, tf, fromSec, toSec) {
       }
     }
   }
+  if (tf === "1d") return { bars: normalizeDailyAnchors(bars), providers };
   bars.sort((a, b) => a.time - b.time);
   return { bars, providers };
 }
@@ -1002,6 +1017,9 @@ async function runBackfillStep(req) {
         });
         if (sh2.written > 0 || done) {
           return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}` };
+        }
+        if (walk.files === 0) {
+          return { ...base, ok: false, provider: "dukascopy-bid", error: "CDN_UNREACHABLE", note: "Dukascopy returned 0 day files (429/503 rate-limit or network block) \u2014 depth resumes when the CDN answers; TwelveData fallback needs a stored key" };
         }
       }
       const tdSym = HIST_TD[symbol];
@@ -2193,16 +2211,24 @@ var quotes_default = handle(async (req, res) => {
       bars
     };
   };
+  const RANGE_DAILY_DAYS = { "1d": 2, "5d": 7, "1M": 32, "3M": 95, "6M": 190, "1y": 370, "5y": 1830, All: 1830, YTD: Math.max(10, Math.ceil((Date.now() - Date.UTC((/* @__PURE__ */ new Date()).getUTCFullYear(), 0, 1)) / 86400) + 10) };
+  const DAILY_STORE_WINDOW_DAYS = 65;
   const fromFxStore = async () => {
     if (!DUKA_MAP[bareCode]) throw new Error("NO_FX_STORE");
     const sec = INTERVAL_SECONDS[interval];
-    if (!sec || sec > 3600) throw new Error("FX_STORE_INTRADAY_ONLY");
+    if (!sec) throw new Error("FX_STORE_INTRADAY_ONLY");
+    const daily = sec === 86400;
+    if (!daily && sec > 3600) throw new Error("FX_STORE_INTRADAY_ONLY");
     const meta = (await rtdb().ref(`fxMeta/${bareCode}`).once("value")).val() || {};
     const nowSec = Math.floor(Date.now() / 1e3);
     let t1, t2;
     if (periodMode) {
       t1 = period1;
       t2 = period2;
+    } else if (daily) {
+      const days = Math.min(RANGE_DAILY_DAYS[range] ?? DAILY_STORE_WINDOW_DAYS, DAILY_STORE_WINDOW_DAYS);
+      t1 = nowSec - days * 86400;
+      t2 = nowSec;
     } else {
       const days = range.endsWith("d") ? Number(range.slice(0, -1)) || 5 : 5;
       t1 = nowSec - days * 86400;
@@ -2224,21 +2250,40 @@ var quotes_default = handle(async (req, res) => {
       byTime.set(time, { time, open: m.o, high: m.h, low: m.l, close: m.c, volume: m.s });
     }
     const raw = [...byTime.values()].sort((a, b) => a.time - b.time);
-    if (raw.length < 200) throw new Error("FX_STORE_THIN");
+    if (raw.length < 200 && !daily) throw new Error("FX_STORE_THIN");
     const island = minuteIslandFilter(raw);
     const checked = validateBars(island.bars);
     const deduped = alignAndDedupe(checked.bars, 60);
     const stale = staleRunFilter(repairOutlierExtremes(deduped.bars).bars);
     const m1 = stale.bars;
-    if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
-    const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
-    const newest = bars[bars.length - 1].time;
-    if (!periodMode && newest < nowSec - 90 * 60) {
+    if (!m1.length && !daily) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
+    let bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
+    let dailyDeep = false;
+    if (daily) {
+      let deep = [];
+      const sq = HIST_STOOQ[bareCode];
+      if (sq) {
+        try {
+          const deepFrom = periodMode ? period1 : nowSec - Math.min(RANGE_DAILY_DAYS[range] ?? 1830, 1830) * 86400;
+          deep = normalizeDailyAnchors((await fetchStooqBars(sq, "d")).filter((b) => b.time >= deepFrom - 86400)).map((b) => ({ ...b, time: Math.floor((b.time + 12 * 3600) / 86400) * 86400 })).filter((b) => b.time <= t2);
+        } catch {
+        }
+      }
+      bars = mergeFxStoreDaily(deep, bars);
+      dailyDeep = deep.length > 0;
+      if (!periodMode) {
+        const minT = nowSec - Math.min(RANGE_DAILY_DAYS[range] ?? 1830, 1830) * 86400;
+        bars = bars.filter((b) => b.time >= minT);
+      }
+    }
+    const newest = bars.length ? bars[bars.length - 1].time : 0;
+    if (!periodMode && newest < nowSec - (daily ? 5 * 86400 : 90 * 60)) {
       throw new Error("FX_STORE_STALE");
     }
+    if (!bars.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     const last = bars[bars.length - 1];
     return {
-      source: "fx-store+live",
+      source: daily ? dailyDeep ? "fx-store-daily+stooq-deep" : "stooq-deep" : "fx-store+live",
       delayed: newest < nowSec - 300,
       delaySec: Math.max(0, nowSec - newest),
       identity: "spot",
@@ -2255,7 +2300,7 @@ var quotes_default = handle(async (req, res) => {
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const fxIntraday = !!DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday && interval === "1m" ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : interval === "1d" ? [fromStooq, fromYahoo, fromTwelveData, fromYahooFutures, fromFxStore] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday && interval === "1m" ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : interval === "1d" ? [fromFxStore, fromStooq, fromYahoo, fromTwelveData, fromYahooFutures] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr = null;
       let staleResult = null;
       const annotateCloseOnly = (r) => {

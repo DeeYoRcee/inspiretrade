@@ -22,6 +22,8 @@ import deposits from "./deposits";
 import chatDelete from "./chat-delete";
 import chatSend from "./chat-send";
 import setUsername from "./set-username";
+import { mediaUpload, mediaGet } from "./media";
+import publishProfile from "./publish-profile";
 import profileRepair from "./profile-repair";
 import usernameMarket from "./username-market";
 import caseAdmin from "./cases";
@@ -68,6 +70,10 @@ const PLATFORM_ACTIONS: Record<string, { GET: boolean; run: (req: any, res: any,
 export default async function handler(req: any, res: any) {
   const action = getAction(req);
 
+  // Phase 29-UI: the ONLY pre-auth action — profile background media streams
+  // to signed-out visitors on /@username pages (hash-addressed, admin-write)
+  if (action === "media-get" && req.method === "GET") return mediaGet(req, res);
+
   // Phase 7 platform surface — auth + role resolution + per-action matrix
   const platformEntry = PLATFORM_ACTIONS[action];
   if (platformEntry) {
@@ -103,6 +109,13 @@ export default async function handler(req: any, res: any) {
       return chatSend(req, res);
     case "set-username":
       return setUsername(req, res);
+    case "media-upload":
+      return mediaUpload(req, res);
+    case "publish-profile":
+      // Phase 29-UI escape hatch: the CEO/owner could not ENABLE a public
+      // profile — the per-user rules rejected ceo/vip snapshots. The admin
+      // SDK write bypasses them; ownership is verified server-side.
+      return publishProfile(req, res);
     case "repair-profile-stub":
       // Phase 19: self-service stub repair for ANY authenticated user whose
       // handle is provably theirs — the admin purge endpoint needs an admin

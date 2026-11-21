@@ -192,7 +192,21 @@ export function useSavePublicProfile() {
         }
       }
 
-      await update(ref(db), updates);
+      try {
+        await update(ref(db), updates);
+      } catch (err) {
+        // Phase 29-UI: the per-user rules rejected ceo/vip snapshots (no vip
+        // rule + the ceo first-publish rule) — exactly the owner/CEO account
+        // could not ENABLE a public profile. Fallback: the admin SDK publish
+        // endpoint (server-side ownership check) writes the same payload.
+        // If this also fails, surface the original error.
+        const fb = await authedFetch<{ ok?: boolean; error?: string }>("/api/admin?action=publish-profile", {
+          key: saveKey,
+          snapshot: settings.enabled ? updates[`publicProfiles/${saveKey}`] : { uid: user.uid, enabled: false },
+          settings,
+        });
+        if (!fb?.ok) throw err;
+      }
       return { usernameKey: saveKey, enabled: settings.enabled };
     },
     onSuccess: async ({ usernameKey }) => {

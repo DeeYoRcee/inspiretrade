@@ -23,12 +23,26 @@ export const PROFILE_BACKGROUNDS: ProfileBackground[] = [
   { id: "storm", name: "Storm", src: "/videos/storm.mp4", tint: "linear-gradient(140deg, #0a0a10, #262838 55%, #1c2a52)" },
   { id: "embers", name: "Embers", src: "/videos/embers.mp4", tint: "linear-gradient(140deg, #0c0503, #301006 55%, #7a3008)" },
   { id: "frost", name: "Frost", src: "/videos/frost.mp4", tint: "linear-gradient(140deg, #061018, #1c3a54 55%, #0e6e78)" },
+  // Phase 29-UI request: a Formula-1 and a sword/knight pick for the gallery
+  { id: "f1", name: "Formula 1", src: "/videos/f1.mp4", tint: "linear-gradient(140deg, #120404, #7a1414 55%, #b3270f)" },
+  { id: "sword", name: "Sword", src: "/videos/sword.mp4", tint: "linear-gradient(140deg, #07090d, #232c3d 55%, #584317)" },
 ];
 
 export function getProfileBackground(id: string | null | undefined): ProfileBackground | null {
   if (!id) return null;
   const hit = PROFILE_BACKGROUNDS.find((b) => b.id === id);
   if (hit) return hit;
+  // owner UPLOAD: `media:{hash}` streams from the content-addressed store —
+  // public (no auth) so signed-out visitors on /@username see it too
+  const mediaMatch = /^media:([a-f0-9]{8,64})$/i.exec(id);
+  if (mediaMatch) {
+    return {
+      id,
+      name: "Upload",
+      src: `/api/admin?action=media-get&id=${mediaMatch[1]}`,
+      tint: "linear-gradient(140deg, #0b0d12, #23262e 60%, #14161c)",
+    };
+  }
   // owner custom background: a direct image/video URL stored instead of a catalog id
   if (/^https?:\/\//i.test(id)) {
     return { id, name: "Custom", src: id, tint: "linear-gradient(140deg, #0b0d12, #23262e 60%, #14161c)" };

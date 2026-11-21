@@ -9,6 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marketHours, nextOpen, marketOpenOrThrow, closedIntervals, filterClosedCandles, isClosedAt } from "../shared/market-hours.ts";
+import { normalizeDailyAnchors, mergeFxStoreDaily, aggregateBars } from "../shared/terminal.ts";
 
 const T = (isoUtc: string) => Date.parse(isoUtc);
 
@@ -197,4 +198,47 @@ test("§9 genuine open-session corrections are never dropped", () => {
     T("2026-11-22T23:00:00Z"), // metals Sunday reopen minute (18:00 NY)
   ].map(SC);
   assert.equal(filterClosedCandles("XAUUSD", edge).length, 2);
+});
+
+// ---- Phase 29 — D1 boundary consistency -------------------------------------
+const day = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d) / 1000;
+const bar = (t: number, o: number, h = o + 1, l = o - 1, c = o) => ({ time: t, open: o, high: h, low: l, close: c });
+
+test("§Issue2 normalizeDailyAnchors: Berlin-anchored daily rows snap to their UTC day", () => {
+  // stooq "2026-11-16" row stored by the older ingest = Monday Berlin midnight
+  // = Sunday 23:00 UTC (CET) — the fold engine anchors UTC midnights
+  const berlinMonday = day(2026, 11, 15) + 23 * 3600; // Sunday 23:00 UTC
+  const out = normalizeDailyAnchors([bar(berlinMonday, 1.08)]);
+  assert.equal(out[0].time, day(2026, 11, 16)); // Monday 00:00 UTC
+  // CEST summer date: Monday Berlin midnight = Sunday 22:00 UTC
+  const berlinSummerMonday = day(2026, 7, 12) + 22 * 3600;
+  assert.equal(normalizeDailyAnchors([bar(berlinSummerMonday, 1.17)])[0].time, day(2026, 7, 13));
+  // already-UTC rows pass through untouched (idempotent)
+  const utc = bar(day(2026, 11, 16), 1.08);
+  assert.equal(normalizeDailyAnchors([utc])[0].time, utc.time);
+});
+
+test("§Issue2 mergeFxStoreDaily: store wins overlap, stooq carries depth, no duplicate days", () => {
+  // stooq deep: Friday + Monday rows (Berlin-anchored, noon-snapped upstream)
+  const deep = [bar(day(2026, 11, 13), 1.081), bar(day(2026, 11, 16), 1.085)];
+  // store fold: Monday UTC bar with the BID convention — same day, must win
+  const recent = [bar(day(2026, 11, 16), 1.0871), bar(day(2026, 11, 17), 1.0894)];
+  const merged = mergeFxStoreDaily(deep, recent);
+  assert.deepEqual(merged.map((b) => b.time), [day(2026, 11, 13), day(2026, 11, 16), day(2026, 11, 17)]);
+  assert.equal(merged[1].open, 1.0871); // store's BID day, not stooq's
+});
+
+test("§Issue2 store D1 fold matches the intraday engine's UTC buckets", () => {
+  // Sun-evening session (Sun 23:00 UTC, FX already reopened) belongs to
+  // SUNDAY in the fold engine — stooq's Berlin convention put it into
+  // Monday's row, which is exactly the shape mismatch the user saw
+  const sunEvening = day(2026, 11, 15) + 23 * 3600;
+  const m1 = [
+    bar(sunEvening, 1.082),
+    bar(sunEvening + 60, 1.0821, 1.0826, 1.0819, 1.0824),
+    bar(day(2026, 11, 16) + 9 * 3600, 1.083),
+  ];
+  const agg = aggregateBars(m1 as any, 1440) as any[];
+  assert.deepEqual(agg.map((b: any) => b.time), [day(2026, 11, 15), day(2026, 11, 16)]);
+  assert.equal(agg[0].open, 1.082); // the Sunday bar's open = the first reopen minute
 });

@@ -59,23 +59,27 @@ export async function fetchDukaDay(dukaSym: string, day: Date): Promise<Buffer |
   const m = day.getUTCMonth(); // datafeed months are 0-indexed in the path
   const d = day.getUTCDate();
   const url = `https://datafeed.dukascopy.com/datafeed/${dukaSym}/${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/BID_candles_min_1.bi5`;
-  // the datafeed CDN is notoriously flaky per connection — two attempts with
-  // a generous timeout beat one hard failure
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // the datafeed CDN is notoriously flaky per connection AND rate-limits
+  // datacenter IPs in bursts (429/503) — three attempts with growing waits
+  // beat one hard failure; a rate-limited attempt waits longer so a whole
+  // walk step doesn't burn every file into a burst of rejections
+  for (let attempt = 0; attempt < 3; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
+    let rateLimited = false;
     try {
       const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer());
         if (buf.length > 100) return buf; // tiny bodies are error pages
       }
+      if (res.status === 429 || res.status === 503) rateLimited = true;
     } catch {
       // fall through to the retry
     } finally {
       clearTimeout(timer);
     }
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, rateLimited ? 1200 + attempt * 1800 : 400));
   }
   return null;
 }

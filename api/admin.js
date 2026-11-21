@@ -392,12 +392,105 @@ function safeParse6(raw) {
   }
 }
 
+// api/_src/admin/media.ts
+import { createHash } from "crypto";
+var MAX_BYTES = 6 * 1024 * 1024;
+var MIME_ALLOWED = /* @__PURE__ */ new Set(["video/mp4", "image/png", "image/jpeg", "image/webp", "image/gif"]);
+var DATAURL_RE = /^data:([a-z0-9/+.-]+);base64,([A-Za-z0-9+/=\s]+)$/i;
+function safeParse7(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+async function mediaUpload(req, res) {
+  await requireAdmin(req);
+  assertPost(req);
+  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
+  const data = String(body?.data || "");
+  const m = DATAURL_RE.exec(data);
+  if (!m) return res.status(400).json({ ok: false, error: "BAD_DATA_URL" });
+  const mime = m[1].toLowerCase();
+  if (!MIME_ALLOWED.has(mime)) return res.status(400).json({ ok: false, error: "UNSUPPORTED_TYPE", mime });
+  const buf = Buffer.from(m[2].replace(/\s+/g, ""), "base64");
+  if (!buf.length) return res.status(400).json({ ok: false, error: "EMPTY" });
+  if (buf.length > MAX_BYTES) return res.status(413).json({ ok: false, error: "TOO_LARGE", max: MAX_BYTES });
+  const hash = createHash("sha256").update(buf).digest("hex").slice(0, 32);
+  await rtdb().ref(`publicMedia/${hash}`).set(`data:${mime};base64,${buf.toString("base64")}`);
+  await rtdb().ref(`publicMediaIndex/${hash}`).set({
+    mime,
+    bytes: buf.length,
+    by: String(body?.by || ""),
+    at: Date.now()
+  });
+  res.status(200).json({ ok: true, id: hash, mime, bytes: buf.length });
+}
+async function mediaGet(req, res) {
+  const id = String(new URL(req.url || "/", "http://localhost").searchParams.get("id") || "");
+  if (!/^[a-f0-9]{8,64}$/.test(id)) return res.status(400).json({ ok: false, error: "BAD_ID" });
+  const dataUrl = (await rtdb().ref(`publicMedia/${id}`).once("value")).val();
+  if (typeof dataUrl !== "string") return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+  const m = DATAURL_RE.exec(dataUrl);
+  if (!m) return res.status(500).json({ ok: false, error: "CORRUPT" });
+  const buf = Buffer.from(m[2].replace(/\s+/g, ""), "base64");
+  res.setHeader("Content-Type", m[1]);
+  res.setHeader("Content-Length", String(buf.length));
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.status(200).send(buf);
+}
+
+// api/_src/admin/publish-profile.ts
+var USERNAME_RE2 = /^[a-zA-Z0-9_]{3,20}$/;
+function safeParse8(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+var publish_profile_default = handle(async (req, res) => {
+  assertPost(req);
+  const admin2 = await requireAdmin(req);
+  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body || {};
+  const key = String(body?.key || "").toLowerCase();
+  const snapshot = body?.snapshot || {};
+  const settings = body?.settings || {};
+  if (!USERNAME_RE2.test(key)) return res.status(400).json({ ok: false, error: "BAD_KEY" });
+  if (snapshot.uid !== admin2.uid) return res.status(403).json({ ok: false, error: "NOT_YOUR_SNAPSHOT" });
+  if (snapshot.usernameKey !== key || String(snapshot.username).toLowerCase() !== key) {
+    return res.status(400).json({ ok: false, error: "KEY_MISMATCH" });
+  }
+  const profile = (await rtdb().ref(`users/${admin2.uid}/profile`).once("value")).val() || {};
+  const primary = String(profile.username || "").toLowerCase();
+  const held = profile.usernames && typeof profile.usernames === "object" ? Object.keys(profile.usernames) : [];
+  if (primary !== key && !held.includes(key)) {
+    return res.status(403).json({ ok: false, error: "HANDLE_NOT_OWNED" });
+  }
+  const now = Date.now();
+  const updates = {
+    [`privatePublicProfileSettings/${admin2.uid}`]: {
+      ...typeof settings === "object" ? settings : {},
+      publishedUsername: snapshot.enabled === false ? null : key,
+      updatedAt: now
+    }
+  };
+  if (snapshot.enabled === false) {
+    updates[`publicProfiles/${key}`] = null;
+  } else {
+    updates[`publicProfiles/${key}`] = { ...snapshot, updatedAt: now };
+  }
+  await rtdb().ref().update(updates);
+  await logLedger({ type: "admin_publish_profile", target: admin2.uid, username: key, by: admin2.email || admin2.uid });
+  res.status(200).json({ ok: true, key, enabled: snapshot.enabled !== false });
+});
+
 // api/_src/admin/profile-repair.ts
 var KEY_RE = /^[a-z0-9_]{3,20}$/;
 var profile_repair_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
-  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse9(req.body) : req.body || {};
   const uid = user.uid;
   const db3 = rtdb();
   const requested = String(body?.key || "").toLowerCase();
@@ -453,7 +546,7 @@ var profile_repair_default = handle(async (req, res) => {
   await logLedger({ type: "profile_stub_repair", target: uid, purged, by: user.email || uid });
   res.status(200).json({ ok: true, uid, purged });
 });
-function safeParse7(raw) {
+function safeParse9(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -496,11 +589,11 @@ var MIN_LISTING_PRICE = 0.01;
 var MAX_LISTING_PRICE = 1e6;
 
 // api/_src/admin/username-market.ts
-var USERNAME_RE2 = /^[a-zA-Z0-9_]{3,20}$/;
+var USERNAME_RE3 = /^[a-zA-Z0-9_]{3,20}$/;
 var username_market_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse10(req.body) : req.body || {};
   const action = new URL(req.url || "/", "http://localhost").searchParams.get("action") || "";
   const db3 = rtdb();
   if (action === "usernameUnlist") {
@@ -514,7 +607,7 @@ var username_market_default = handle(async (req, res) => {
     return;
   }
   const username = String(body.username || "").trim();
-  if (!USERNAME_RE2.test(username)) {
+  if (!USERNAME_RE3.test(username)) {
     throw new HttpError(400, "INVALID_USERNAME", "3-20 chars: letters, digits, underscore");
   }
   const key = username.toLowerCase();
@@ -556,7 +649,7 @@ var username_market_default = handle(async (req, res) => {
   await logLedger({ type: "username_list", listingId: listingRef.key, usernameKey: key, price, by: admin2.email || admin2.uid });
   res.status(200).json({ ok: true, listing });
 });
-function safeParse8(raw) {
+function safeParse10(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -566,7 +659,7 @@ function safeParse8(raw) {
 
 // api/_src/admin/cases.ts
 var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
-function safeParse9(raw) {
+function safeParse11(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -574,7 +667,7 @@ function safeParse9(raw) {
   }
 }
 function getBody(req) {
-  const body = typeof req.body === "string" ? safeParse9(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse11(req.body) : req.body;
   return body || {};
 }
 function getAction(req) {
@@ -1807,7 +1900,7 @@ async function setRole(admin2, role, body) {
 }
 
 // api/_src/admin/index.ts
-function safeParse10(raw) {
+function safeParse12(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -1821,7 +1914,7 @@ function getAction2(req) {
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse10(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse12(req.body) : req.body;
   return String(body?.action || "");
 }
 var PLATFORM_ACTIONS = {
@@ -1842,6 +1935,7 @@ var PLATFORM_ACTIONS = {
 };
 async function handler(req, res) {
   const action = getAction2(req);
+  if (action === "media-get" && req.method === "GET") return mediaGet(req, res);
   const platformEntry = PLATFORM_ACTIONS[action];
   if (platformEntry) {
     try {
@@ -1852,7 +1946,7 @@ async function handler(req, res) {
         const url = new URL(req.url || "/", "http://localhost");
         body = Object.fromEntries(url.searchParams.entries());
       } else {
-        body = typeof req.body === "string" ? safeParse10(req.body) : req.body || {};
+        body = typeof req.body === "string" ? safeParse12(req.body) : req.body || {};
       }
       return await platformEntry.run(req, res, admin2, role, body);
     } catch (e) {
@@ -1873,6 +1967,10 @@ async function handler(req, res) {
       return chat_send_default(req, res);
     case "set-username":
       return set_username_default(req, res);
+    case "media-upload":
+      return mediaUpload(req, res);
+    case "publish-profile":
+      return publish_profile_default(req, res);
     case "repair-profile-stub":
       return profile_repair_default(req, res);
     case "usernameList":
