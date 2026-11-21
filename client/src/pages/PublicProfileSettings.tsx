@@ -6,7 +6,7 @@ import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
 import { useAuth } from "@/hooks/use-auth";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
-import { useTrades } from "@/hooks/use-trades";
+import { useTradesForProfile } from "@/hooks/use-trades";
 import { useUserProfile } from "@/hooks/use-premium";
 import {
   createDefaultPublicProfileSettings,
@@ -22,7 +22,10 @@ export default function PublicProfileSettingsPage() {
   const { toast } = useToast();
   const profileQuery = useUserProfile();
   const settingsQuery = usePublicProfileSettings();
-  const tradesQuery = useTrades();
+  // Phase 30: bounded read (last 1200 trades) — the owner account's full
+  // trades node timed out and left this page permanently on the load-error
+  // panel; the snapshot only needs the recent window anyway.
+  const tradesQuery = useTradesForProfile();
   const saveProfile = useSavePublicProfile();
   const [draft, setDraft] = useState(createDefaultPublicProfileSettings);
   const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);

@@ -223,8 +223,8 @@ import {
 } from "../../shared/feed-validation";
 import { aggregateBars, SPOT_PRICE_BANDS, normalizeDailyAnchors, mergeFxStoreDaily } from "../../shared/terminal";
 import { marketHours, filterClosedCandles, closedIntervals } from "../../shared/market-hours";
-import { DUKA_MAP, fetchDukaDay, decodeDukaDay } from "./lib/duka";
-import { runBackfillStep, readRange, coverageReport, writeShards, fetchStooqBars, HIST_STOOQ } from "./lib/hist";
+import { DUKA_MAP, DUKA_METALS, fetchDukaDay, decodeDukaDay } from "./lib/duka";
+import { runBackfillStep, readRange, coverageReport, writeShards, fetchStooqBars, HIST_STOOQ, HIST_MONTHS_CAP } from "./lib/hist";
 import type { BackfillResult, RangeResult, CoverageRow } from "./lib/hist";
 
 /**
@@ -858,6 +858,58 @@ export default handle(async (req, res) => {
     return res.json({ ok: true, report, at: Date.now() });
   }
 
+  // ---- Phase 30: DEEP-history shard ingest (admin) --------------------------
+  // The Vercel functions live behind datacenter IPs that Dukascopy's CDN
+  // rate-limits (429/503 — the backfill-metals walk never advanced, which is
+  // the Oct-22 wall). The repository's own ingest contract (Phase 17) already
+  // solved this for forex minutes: decode on a CLEAN network, push the
+  // decoded bars. import-fx only writes the recent fxBars minute store and
+  // caps depth at 400 days — deep XAUUSD history needs the hist DAY-SHARD
+  // store instead. import-hist writes validated shards for any hist symbol
+  // (metals/forex/indices), resumable (day-shard dedupe), ≤50k bars per call,
+  // admin-only, provider-stamped. Depth bound = the same HIST_MONTHS_CAP the
+  // backfill engine uses — no synthetic rows, every bar is genuine provider
+  // OHLC decoded from the provider's own files.
+  if (action === "import-hist" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
+    const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
+    const code = String(raw?.symbol || "").toUpperCase().replace(/=X$/i, "");
+    const tf = String(raw?.tf || "");
+    if (!code || !tf) return res.json({ ok: false, error: "symbol+tf required" });
+    if (!DUKA_MAP[code] && !DUKA_METALS[code]) return res.json({ ok: false, error: "unknown-symbol" });
+    const validTfs = new Set(["1m", "5m", "15m", "30m", "1h", "1d"]);
+    if (!validTfs.has(tf)) return res.json({ ok: false, error: "unsupported-tf" });
+    const bands: Record<string, [number, number]> = { XAUUSD: [100, 12000], XAGUSD: [5, 200] };
+    const [bandLo, bandHi] = bands[code] ?? [0.2, 600];
+    const barsIn: any[] = Array.isArray(raw?.bars) ? raw.bars : [];
+    const nowSec = Math.floor(Date.now() / 1000);
+    const depthFrom = nowSec - Number(HIST_MONTHS_CAP) * 30 * 86400;
+    const tfSec = tf === "1m" ? 60 : tf === "5m" ? 300 : tf === "15m" ? 900 : tf === "30m" ? 1800 : tf === "1h" ? 3600 : 86400;
+    const clean: any[] = [];
+    let rejected = 0;
+    for (const b of barsIn.slice(0, 50000)) {
+      const t = Math.floor(Number(b?.time ?? b?.t));
+      const o = Number(b?.open ?? b?.o), h = Number(b?.high ?? b?.h), l = Number(b?.low ?? b?.l), c = Number(b?.close ?? b?.c);
+      const v = Number(b?.volume ?? b?.v ?? 0);
+      if (![t, o, h, l, c].every((x: number) => Number.isFinite(x)) || t <= 0) { rejected++; continue; }
+      if (t % tfSec !== 0 || t > nowSec || t < depthFrom) { rejected++; continue; }
+      if (h < Math.max(o, c) || l > Math.min(o, c) || h < l || l <= 0) { rejected++; continue; }
+      if (o < bandLo || o > bandHi) { rejected++; continue; }
+      clean.push({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
+    }
+    clean.sort((a, b) => a.time - b.time);
+    if (!clean.length) return res.json({ ok: false, error: "no-valid-bars", rejected });
+    const provider = String(raw?.provider || "import").slice(0, 40);
+    const sh = await writeShards(code, tf, clean as any, provider, { force: false });
+    return res.json({
+      ok: true, symbol: code, tf, provider,
+      received: barsIn.length, accepted: clean.length, rejected,
+      written: sh.written, skipped: sh.skipped, shardDays: sh.days.length,
+      oldest: clean[0].time, newest: clean[clean.length - 1].time,
+      note: sh.skipped > 0 ? `${sh.skipped} bars skipped — those day shards already exist (resume cursor continues deeper)` : undefined,
+    });
+  }
   if (action === "import-fx" && req.method === "POST") {
     // Phase 26 §S4: this writes SHARED chart history from client-supplied
     // bars (50k per call) — it must never be an anonymous-user write path.
@@ -867,7 +919,12 @@ export default handle(async (req, res) => {
     if (!adminUser) return res.status(403).json({ ok: false, reason: "admin-only" });
     const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});
     const code = String(raw?.code || "").toUpperCase();
-    if (!DUKA_MAP[code]) return res.json({ ok: false, reason: "not-on-duka" });
+    // Phase 30: metals were REJECTED here twice — not on DUKA_MAP (forex-only
+    // whitelist) and then by the forex price band (o > 600 dropped every gold
+    // bar at ~$2,600). Both fixed: metals are ingestable now, bands per asset.
+    if (!DUKA_MAP[code] && !DUKA_METALS[code]) return res.json({ ok: false, reason: "not-on-duka" });
+    const bands: Record<string, [number, number]> = { XAUUSD: [100, 12000], XAGUSD: [5, 200] };
+    const [bandLo, bandHi] = bands[code] ?? [0.2, 600];
     const barsIn: any[] = Array.isArray(raw?.bars) ? raw.bars : [];
     const nowSec = Math.floor(Date.now() / 1000);
     const update: Record<string, { o: number; h: number; l: number; c: number; v: number }> = {};
@@ -877,7 +934,7 @@ export default handle(async (req, res) => {
       if (!Number.isFinite(t) || t % 60 !== 0 || t > Math.floor(nowSec / 60) * 60 || t < nowSec - 400 * 86400) continue;
       if (![o, h, l, c].every((x: number) => Number.isFinite(x) && x > 0)) continue;
       if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
-      if (o < 0.2 || o > 600) continue; // forex band identity
+      if (o < bandLo || o > bandHi) continue; // per-asset band identity
       update[String(t)] = { o, h, l, c, v: Math.round(v * 100) / 100 };
     }
     const entries = Object.entries(update);

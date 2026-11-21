@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ref, get, set, remove, push, runTransaction } from "firebase/database";
+import { ref, get, set, remove, push, runTransaction, query, limitToLast } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "./use-auth";
 import { z } from "zod";
@@ -67,6 +67,36 @@ export function useTrades() {
         id: key,
       }));
 
+      return trades.sort((a, b) => b.timestamp - a.timestamp);
+    },
+    enabled: !!user,
+  });
+}
+
+/**
+ * Phase 30 — bounded trades read for the PUBLIC-PROFILE page. The full
+ * `useTrades()` read loads the ENTIRE trades node; for the owner/CEO account
+ * that node is huge (months of spawn/test history), the read times out and
+ * the page lands on "Could not load this public profile". The profile
+ * snapshot needs at most ~1200 recent trades (statistics + visible history),
+ * so this variant reads `limitToLast(1200)` — same data shape, a fraction of
+ * the payload. The full hook stays untouched for the trading pages.
+ */
+export function useTradesForProfile() {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ["tradesForProfile", user?.uid],
+    queryFn: async () => {
+      if (!user) return [];
+      const tradesRef = query(ref(db, `trades/${user.uid}`), limitToLast(1200));
+      const snapshot = await get(tradesRef);
+      if (!snapshot.exists()) return [];
+      const data = snapshot.val();
+      const trades: Trade[] = Object.keys(data).map((key) => ({
+        ...data[key],
+        id: key,
+      }));
       return trades.sort((a, b) => b.timestamp - a.timestamp);
     },
     enabled: !!user,

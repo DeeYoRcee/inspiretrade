@@ -350,7 +350,11 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
       // candles (years deep, keyless). Dukascopy is primary (deep, free);
       // TwelveData stays as the keyed fallback for windows the feed skips.
       if (DUKA_METALS[symbol] || DUKA_MAP[symbol]) {
-        const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
+        // Phase 30: metals get a DEDICATED daily file budget — the old shared
+        // config/dukaUsage counter meant any busy forex self-heal consumed the
+        // whole 600/day cap and the metals walk never advanced (the Oct-22
+        // wall). Same abuse-guard total, separate counters per purpose.
+        const usageRef = rtdb().ref(`config/dukaUsage/${DUKA_METALS[symbol] ? "metals" : "fx"}/${new Date().toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         // Phase 26 RESUME FIX: the walk must continue BELOW the oldest stored
@@ -361,6 +365,20 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 50000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
+        // Phase 30: fold the step's own minute bars into 1h/1d shards NOW —
+        // deep hourly/daily chart layers then serve from shards without any
+        // giant read-time 1m fold (MAX_1M_FOLD_WINDOW_SEC used to skip those
+        // windows entirely, so H4/1D showed nothing old even WITH deep 1m).
+        let foldedNote = "";
+        try {
+          if (walk.bars.length) {
+            const hourBars = aggregateBars(walk.bars, 60) as RawBar[];
+            const dayBars = aggregateBars(walk.bars, 1440) as RawBar[];
+            const hs = await writeShards(symbol, "1h", hourBars, "dukascopy-bid-fold", { force: req.force });
+            const ds = await writeShards(symbol, "1d", dayBars, "dukascopy-bid-fold", { force: req.force });
+            foldedNote = ` · folds 1h+${hs.written}/1d+${ds.written}`;
+          }
+        } catch { /* fold is best-effort — the 1m shards are the source of truth */ }
         const newOldest = walk.oldest ?? state.oldest ?? null;
         const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
@@ -370,7 +388,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
           rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null,
         });
         if (sh.written > 0 || done) {
-          return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " · wall-clock budget reached — resume to continue" : ""}` };
+          return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " · wall-clock budget reached — resume to continue" : ""}${foldedNote}` };
         }
         if (walk.files === 0) {
           // honest surfacing: depth will not grow while the CDN is unreachable
@@ -409,6 +427,20 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 50000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
+        // Phase 30: fold the step's own minute bars into 1h/1d shards NOW —
+        // deep hourly/daily chart layers then serve from shards without any
+        // giant read-time 1m fold (MAX_1M_FOLD_WINDOW_SEC used to skip those
+        // windows entirely, so H4/1D showed nothing old even WITH deep 1m).
+        let foldedNote = "";
+        try {
+          if (walk.bars.length) {
+            const hourBars = aggregateBars(walk.bars, 60) as RawBar[];
+            const dayBars = aggregateBars(walk.bars, 1440) as RawBar[];
+            const hs = await writeShards(symbol, "1h", hourBars, "dukascopy-bid-fold", { force: req.force });
+            const ds = await writeShards(symbol, "1d", dayBars, "dukascopy-bid-fold", { force: req.force });
+            foldedNote = ` · folds 1h+${hs.written}/1d+${ds.written}`;
+          }
+        } catch { /* fold is best-effort — the 1m shards are the source of truth */ }
         const newOldest = walk.oldest ?? state.oldest ?? null;
         const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
@@ -417,7 +449,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
           files: (state.files ?? 0) + walk.files, written: (state.written ?? 0) + sh.written,
           rejected: (state.rejected ?? 0) + sh.rejected, updatedAt: Date.now(), error: null,
         });
-        return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " · wall-clock budget reached — resume to continue" : ""}` };
+        return { ...base, provider: "dukascopy-bid", written: sh.written, skipped: sh.skipped, rejected: sh.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " · wall-clock budget reached — resume to continue" : ""}${foldedNote}` };
       }
       // metals with no TD key: honest refusal — stooq has no 1m
       return { ...base, ok: false, provider: "none", error: "NO_1M_SOURCE (stooq refuses 1m; metals are not on the Dukascopy feed; TwelveData key missing)" };

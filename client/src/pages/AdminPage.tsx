@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen, Box, Trash2, Briefcase, LayoutDashboard,
-} from "lucide-react";
+  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen, Box, Trash2, Briefcase, LayoutDashboard, History } from "lucide-react";
 import { PropFirmAdmin } from "@/components/admin/PropFirmAdmin";
 import { PlatformAdmin } from "@/components/admin/PlatformAdmin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +61,9 @@ export default function AdminPage() {
   const [spawnCases, setSpawnCases] = useState("");
   const [spawnGold, setSpawnGold] = useState("");
   const [claimName, setClaimName] = useState("");
+  const [histBusy, setHistBusy] = useState(false);
+  const [histLog, setHistLog] = useState("");
+  const [histCoverage, setHistCoverage] = useState("");
 
   // Case factory — create custom cases, grant cases of any type
   const { data: customCases } = useCustomCases();
@@ -339,6 +341,48 @@ export default function AdminPage() {
                   {claimMutation.isPending ? t("sending") : <><Crown className="mr-2 h-5 w-5" />{t("ownerClaimButton")}</>}
                 </Button>
                 <p className="text-[11px] leading-relaxed text-muted-foreground">{t("ownerCeoNote")}</p>
+              </CardContent>
+            </Card>
+
+            {/* Phase 30 — XAUUSD history deep fill: ONE resumable
+                backfill-metals step per click + live coverage readout
+                (earliest candle, count, providers). The browser self-heal
+                advances the store too; this button is the manual trigger. */}
+            <Card className="glass-panel border-amber-500/30 lg:col-span-2">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg"><History className="h-5 w-5 text-amber-400" />History deep fill (XAUUSD / XAGUSD)</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Runs one resumable Dukascopy backfill step (up to ~240 day files, 60 s budget) for the shared store, then shows live coverage. Repeat clicks (or simply leaving a chart open) keep walking deeper — progress is never restarted.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    className="rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-semibold text-black hover:from-amber-400 hover:to-yellow-300"
+                    disabled={histBusy}
+                    onClick={async () => {
+                      setHistBusy(true);
+                      setHistLog("Running backfill step…");
+                      try {
+                        const step = await authedFetch<any>("/api/quotes?action=backfill-metals", { symbol: "XAUUSD", tf: "1m" });
+                        setHistLog(`Step: ${step?.ok ? "ok" : "failed"} · provider ${step?.provider || "?"} · written ${step?.written ?? 0} · skipped ${step?.skipped ?? 0} · oldest ${step?.oldest ? new Date(step.oldest * 1000).toISOString().slice(0, 10) : "?"}${step?.error ? ` · ${step.error}` : ""}${step?.note ? ` · ${step.note}` : ""}`);
+                      } catch (e) {
+                        setHistLog(`Step failed: ${e instanceof Error ? e.message : "network"}`);
+                      }
+                      try {
+                        const cov = await authedFetch<any>("/api/quotes?action=hist-status&symbol=XAUUSD&tfs=1m,1h,1d");
+                        const rows = (cov?.rows || []).map((r: any) => `${r.tf}: ${r.candleCount} candles, earliest ${r.earliest ? new Date(r.earliest * 1000).toISOString().slice(0, 10) : "—"}`).join(" · ");
+                        setHistCoverage(rows || "no coverage rows");
+                      } catch { /* keep previous */ }
+                      setHistBusy(false);
+                    }}
+                  >
+                    {histBusy ? "Working…" : "Run deep-fill step + check coverage"}
+                  </Button>
+                </div>
+                {histLog && <p className="text-[11px] font-mono leading-relaxed text-emerald-400">{histLog}</p>}
+                {histCoverage && <p className="text-[11px] font-mono leading-relaxed text-amber-300">{histCoverage}</p>}
               </CardContent>
             </Card>
           </div>

@@ -993,13 +993,24 @@ async function runBackfillStep(req) {
     }
     if (tf === "1m") {
       if (DUKA_METALS[symbol] || DUKA_MAP[symbol]) {
-        const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
+        const usageRef = rtdb().ref(`config/dukaUsage/${DUKA_METALS[symbol] ? "metals" : "fx"}/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
         const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 5e4);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
+        let foldedNote = "";
+        try {
+          if (walk.bars.length) {
+            const hourBars = aggregateBars(walk.bars, 60);
+            const dayBars = aggregateBars(walk.bars, 1440);
+            const hs = await writeShards(symbol, "1h", hourBars, "dukascopy-bid-fold", { force: req.force });
+            const ds = await writeShards(symbol, "1d", dayBars, "dukascopy-bid-fold", { force: req.force });
+            foldedNote = ` \xB7 folds 1h+${hs.written}/1d+${ds.written}`;
+          }
+        } catch {
+        }
         const newOldest = walk.oldest ?? state.oldest ?? null;
         const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
@@ -1016,7 +1027,7 @@ async function runBackfillStep(req) {
           error: null
         });
         if (sh2.written > 0 || done) {
-          return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}` };
+          return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}${foldedNote}` };
         }
         if (walk.files === 0) {
           return { ...base, ok: false, provider: "dukascopy-bid", error: "CDN_UNREACHABLE", note: "Dukascopy returned 0 day files (429/503 rate-limit or network block) \u2014 depth resumes when the CDN answers; TwelveData fallback needs a stored key" };
@@ -1054,6 +1065,17 @@ async function runBackfillStep(req) {
         const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 5e4);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
+        let foldedNote = "";
+        try {
+          if (walk.bars.length) {
+            const hourBars = aggregateBars(walk.bars, 60);
+            const dayBars = aggregateBars(walk.bars, 1440);
+            const hs = await writeShards(symbol, "1h", hourBars, "dukascopy-bid-fold", { force: req.force });
+            const ds = await writeShards(symbol, "1d", dayBars, "dukascopy-bid-fold", { force: req.force });
+            foldedNote = ` \xB7 folds 1h+${hs.written}/1d+${ds.written}`;
+          }
+        } catch {
+        }
         const newOldest = walk.oldest ?? state.oldest ?? null;
         const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
@@ -1069,7 +1091,7 @@ async function runBackfillStep(req) {
           updatedAt: Date.now(),
           error: null
         });
-        return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}` };
+        return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}${foldedNote}` };
       }
       return { ...base, ok: false, provider: "none", error: "NO_1M_SOURCE (stooq refuses 1m; metals are not on the Dukascopy feed; TwelveData key missing)" };
     }
@@ -1866,12 +1888,74 @@ var quotes_default = handle(async (req, res) => {
     }
     return res.json({ ok: true, report, at: Date.now() });
   }
+  if (action === "import-hist" && req.method === "POST") {
+    const adminUser = await requireAdmin(req);
+    if (!adminUser) return res.status(403).json({ ok: false, error: "admin-only" });
+    const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const code = String(raw?.symbol || "").toUpperCase().replace(/=X$/i, "");
+    const tf = String(raw?.tf || "");
+    if (!code || !tf) return res.json({ ok: false, error: "symbol+tf required" });
+    if (!DUKA_MAP[code] && !DUKA_METALS[code]) return res.json({ ok: false, error: "unknown-symbol" });
+    const validTfs = /* @__PURE__ */ new Set(["1m", "5m", "15m", "30m", "1h", "1d"]);
+    if (!validTfs.has(tf)) return res.json({ ok: false, error: "unsupported-tf" });
+    const bands = { XAUUSD: [100, 12e3], XAGUSD: [5, 200] };
+    const [bandLo, bandHi] = bands[code] ?? [0.2, 600];
+    const barsIn = Array.isArray(raw?.bars) ? raw.bars : [];
+    const nowSec = Math.floor(Date.now() / 1e3);
+    const depthFrom = nowSec - Number(HIST_MONTHS_CAP) * 30 * 86400;
+    const tfSec = tf === "1m" ? 60 : tf === "5m" ? 300 : tf === "15m" ? 900 : tf === "30m" ? 1800 : tf === "1h" ? 3600 : 86400;
+    const clean = [];
+    let rejected = 0;
+    for (const b of barsIn.slice(0, 5e4)) {
+      const t = Math.floor(Number(b?.time ?? b?.t));
+      const o = Number(b?.open ?? b?.o), h = Number(b?.high ?? b?.h), l = Number(b?.low ?? b?.l), c = Number(b?.close ?? b?.c);
+      const v = Number(b?.volume ?? b?.v ?? 0);
+      if (![t, o, h, l, c].every((x) => Number.isFinite(x)) || t <= 0) {
+        rejected++;
+        continue;
+      }
+      if (t % tfSec !== 0 || t > nowSec || t < depthFrom) {
+        rejected++;
+        continue;
+      }
+      if (h < Math.max(o, c) || l > Math.min(o, c) || h < l || l <= 0) {
+        rejected++;
+        continue;
+      }
+      if (o < bandLo || o > bandHi) {
+        rejected++;
+        continue;
+      }
+      clean.push({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
+    }
+    clean.sort((a, b) => a.time - b.time);
+    if (!clean.length) return res.json({ ok: false, error: "no-valid-bars", rejected });
+    const provider = String(raw?.provider || "import").slice(0, 40);
+    const sh = await writeShards(code, tf, clean, provider, { force: false });
+    return res.json({
+      ok: true,
+      symbol: code,
+      tf,
+      provider,
+      received: barsIn.length,
+      accepted: clean.length,
+      rejected,
+      written: sh.written,
+      skipped: sh.skipped,
+      shardDays: sh.days.length,
+      oldest: clean[0].time,
+      newest: clean[clean.length - 1].time,
+      note: sh.skipped > 0 ? `${sh.skipped} bars skipped \u2014 those day shards already exist (resume cursor continues deeper)` : void 0
+    });
+  }
   if (action === "import-fx" && req.method === "POST") {
     const adminUser = await requireAdmin(req);
     if (!adminUser) return res.status(403).json({ ok: false, reason: "admin-only" });
     const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
     const code = String(raw?.code || "").toUpperCase();
-    if (!DUKA_MAP[code]) return res.json({ ok: false, reason: "not-on-duka" });
+    if (!DUKA_MAP[code] && !DUKA_METALS[code]) return res.json({ ok: false, reason: "not-on-duka" });
+    const bands = { XAUUSD: [100, 12e3], XAGUSD: [5, 200] };
+    const [bandLo, bandHi] = bands[code] ?? [0.2, 600];
     const barsIn = Array.isArray(raw?.bars) ? raw.bars : [];
     const nowSec = Math.floor(Date.now() / 1e3);
     const update = {};
@@ -1881,7 +1965,7 @@ var quotes_default = handle(async (req, res) => {
       if (!Number.isFinite(t) || t % 60 !== 0 || t > Math.floor(nowSec / 60) * 60 || t < nowSec - 400 * 86400) continue;
       if (![o, h, l, c].every((x) => Number.isFinite(x) && x > 0)) continue;
       if (h < Math.max(o, c) || l > Math.min(o, c) || h < l) continue;
-      if (o < 0.2 || o > 600) continue;
+      if (o < bandLo || o > bandHi) continue;
       update[String(t)] = { o, h, l, c, v: Math.round(v * 100) / 100 };
     }
     const entries = Object.entries(update);
