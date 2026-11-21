@@ -17,11 +17,8 @@ export default handle(async (req, res) => {
   // Phase 32: the Trading Case ($25,000 account puzzle) is grantable too.
   const tradingCases = Math.floor(Number(body.tradingCases) || 0);
   const note = String(body.note || "").slice(0, 200);
-  if (coins <= 0 && cases <= 0 && goldCases <= 0 && tradingCases <= 0) {
+  if (coins === 0 && cases <= 0 && goldCases <= 0 && tradingCases <= 0) {
     throw new HttpError(400, "INVALID_AMOUNT", "Provide a positive coins and/or cases amount");
-  }
-  if (coins > 100000 || cases > 1000 || goldCases > 1000 || tradingCases > 1000) {
-    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000, goldCases<=1000, tradingCases<=1000)");
   }
 
   // Resolve target: direct uid or username key from the usernames map.
@@ -36,13 +33,25 @@ export default handle(async (req, res) => {
     targetUid = resolved;
   }
 
+  // Phase 34: the OWNER can top up their own INSP freely ("tashla olsin") —
+  // higher cap and negative amounts allowed (floor at zero in the tx below).
+  // Everyone else keeps the add-only caps.
+  const self = targetUid === admin.uid;
+  if (!self && coins < 0) throw new HttpError(400, "INVALID_AMOUNT", "Coins must be positive for other users");
+  if (coins > (self ? 2_000_000 : 100000)) {
+    throw new HttpError(400, "AMOUNT_TOO_LARGE", self ? "Self-gift cap is 2,000,000" : "Gift exceeds limits (coins<=100000)");
+  }
+  if (cases > 1000 || goldCases > 1000 || tradingCases > 1000) {
+    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (cases<=1000, goldCases<=1000, tradingCases<=1000)");
+  }
+
   const tx = await rtdb()
     .ref(`economy/${targetUid}`)
     .transaction((current: any) => {
       const eco = current || { coins: 0, cases: 0, streak: 0, totalClaimed: 0 };
       return {
         ...eco,
-        coins: (eco.coins || 0) + coins,
+        coins: Math.max(0, (eco.coins || 0) + coins), // never negative
         cases: (eco.cases || 0) + cases,
         goldCases: (eco.goldCases || 0) + goldCases,
         tradingCases: (eco.tradingCases || 0) + tradingCases,

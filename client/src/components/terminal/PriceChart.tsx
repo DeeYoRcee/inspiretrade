@@ -75,6 +75,14 @@ export interface PriceMark {
   dashed?: boolean;
 }
 
+// ---- Phase 34: chart timezone (per-instrument, instrument settings panel) ----
+// "" = viewer locale; bar timestamps stay UNIX UTC under the hood.
+let tzCurrent = "";
+const tzOpt = () => (tzCurrent || undefined) as (Intl.DateTimeFormatOptions["timeZone"]);
+const fmtHM = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tzOpt() });
+const fmtDM = (d: Date) => d.toLocaleDateString([], { day: "2-digit", month: "short", timeZone: tzOpt() });
+const fmtMY = (d: Date) => d.toLocaleDateString([], { month: "short", year: "numeric", timeZone: tzOpt() });
+
 const COLORS = {
   bg: "#0b1220",
   text: "#94a3b8",
@@ -88,7 +96,7 @@ const SUB_PANE_HEIGHT = 110;
 const PANE_BG = "#0a101f";
 
 // ---- main-series abstraction: candlestick / hollow / line / area -------------
-type MainKind = "candle" | "hollow" | "line" | "area";
+type MainKind = "candle" | "hollow" | "line" | "area" | "bars" | "baseline" | "heikin";
 type MainSeriesApi = ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Area">;
 
 function hexAlpha(hex: string, a: number): string {
@@ -112,9 +120,31 @@ function createMainSeries(chart: IChartApi, type: ChartType, s: { upColor: strin
       }) as MainSeriesApi,
     };
   }
+  if (type === "bars") {
+    // Phase 34: OHLC bars — native v4 series, genuine OHLC preserved
+    return {
+      kind: "bars",
+      series: chart.addBarSeries({
+        upColor: s.upColor, downColor: s.downColor, thinBars: false,
+        priceLineVisible: true, lastValueVisible: true,
+      }) as unknown as MainSeriesApi,
+    };
+  }
+  if (type === "baseline") {
+    // base value is re-anchored to the first loaded close in setMainData
+    return {
+      kind: "baseline",
+      series: chart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: s.upColor, topFillColor1: hexAlpha(s.upColor, 0.28), topFillColor2: hexAlpha(s.upColor, 0.05),
+        bottomLineColor: s.downColor, bottomFillColor1: "rgba(0,0,0,0)", bottomFillColor2: hexAlpha(s.downColor, 0.22),
+        lineWidth: 2, priceLineVisible: true, lastValueVisible: true,
+      }) as unknown as MainSeriesApi,
+    };
+  }
   const hollow = type === "hollow";
   return {
-    kind: hollow ? "hollow" : "candle",
+    kind: type === "heikin" ? "heikin" : hollow ? "hollow" : "candle",
     series: chart.addCandlestickSeries({
       // hollow: rising candles transparent with a colored border, falling filled
       upColor: hollow ? "rgba(0,0,0,0)" : s.upColor,
@@ -142,24 +172,88 @@ function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: str
     });
   } else if (kind === "line") {
     (series as ISeriesApi<"Line">).applyOptions({ color: s.upColor, lineWidth: 2 });
-  } else {
+  } else if (kind === "area") {
     (series as ISeriesApi<"Area">).applyOptions({ lineColor: s.upColor, topColor: hexAlpha(s.upColor, 0.26), bottomColor: "rgba(0,0,0,0)", lineWidth: 2 });
+  } else if (kind === "bars") {
+    (series as unknown as ISeriesApi<"Bar">).applyOptions({ upColor: s.upColor, downColor: s.downColor } as any);
+  } else if (kind === "baseline") {
+    (series as unknown as ISeriesApi<"Baseline">).applyOptions({
+      topLineColor: s.upColor, topFillColor1: hexAlpha(s.upColor, 0.28), topFillColor2: hexAlpha(s.upColor, 0.05),
+      bottomLineColor: s.downColor, bottomFillColor1: "rgba(0,0,0,0)", bottomFillColor2: hexAlpha(s.downColor, 0.22),
+    } as any);
+  } else if (kind === "heikin") {
+    (series as ISeriesApi<"Candlestick">).applyOptions({
+      upColor: s.upColor, downColor: s.downColor,
+      borderUpColor: s.upColor, borderDownColor: s.downColor,
+      wickUpColor: s.upColor, wickDownColor: s.downColor,
+    });
   }
+}
+
+/** Heikin-Ashi incremental state: HA of the bar BEFORE the last painted one,
+ * the last painted HA, and its time — ticks repaint the last bar without
+ * corrupting the recursive anchor. */
+interface HaState { prev: { open: number; close: number }; last: { open: number; close: number } | null; lastTime: number }
+const haState: { current: HaState | null } = { current: null };
+
+function haBar(prev: { open: number; close: number } | null, b: Bar) {
+  const close = (b.open + b.high + b.low + b.close) / 4;
+  const open = prev ? (prev.open + prev.close) / 2 : (b.open + b.close) / 2;
+  return { time: b.time, open, close, high: Math.max(b.high, open, close), low: Math.min(b.low, open, close) };
 }
 
 function setMainData(series: MainSeriesApi, kind: MainKind, data: Bar[]): void {
   if (kind === "line" || kind === "area") {
     (series as ISeriesApi<"Line">).setData(data.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
+  } else if (kind === "baseline") {
+    // anchor the baseline to the first loaded close (else everything reads "below")
+    const base = data.length ? data[0].close : 0;
+    (series as unknown as ISeriesApi<"Baseline">).applyOptions({ baseValue: { type: "price", price: base } } as any);
+    (series as unknown as ISeriesApi<"Baseline">).setData(data.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
+  } else if (kind === "heikin") {
+    // full recursive conversion; remember the tail for incremental live updates
+    let prevHa: { open: number; close: number } | null = null;
+    const out: any[] = [];
+    for (const b of data) {
+      const bar = haBar(prevHa, b);
+      prevHa = { open: bar.open, close: bar.close };
+      out.push(bar);
+    }
+    const n = out.length;
+    const tail = n ? (out[n - 1] as { open: number; close: number; time: number }) : null;
+    const beforeTail = n > 1 ? (out[n - 2] as { open: number; close: number }) : null;
+    haState.current = tail
+      ? { prev: beforeTail ?? { open: tail.open, close: tail.close }, last: { open: tail.open, close: tail.close }, lastTime: tail.time }
+      : null;
+    (series as ISeriesApi<"Candlestick">).setData(out.map((c) => ({ ...c, time: c.time as UTCTimestamp })));
   } else {
-    (series as ISeriesApi<"Candlestick">).setData(data.map(toCandle));
+    (series as ISeriesApi<"Candlestick" | "Bar">).setData(data.map(toCandle) as any);
   }
 }
 
 function updateMain(series: MainSeriesApi, kind: MainKind, b: Bar): void {
   if (kind === "line" || kind === "area") {
     (series as ISeriesApi<"Line">).update({ time: b.time as UTCTimestamp, value: b.close });
+  } else if (kind === "baseline") {
+    (series as unknown as ISeriesApi<"Baseline">).update({ time: b.time as UTCTimestamp, value: b.close });
+  } else if (kind === "heikin") {
+    const st = haState.current;
+    if (!st) {
+      const bar = haBar(null, b);
+      haState.current = { prev: bar, last: { open: bar.open, close: bar.close }, lastTime: b.time };
+      (series as ISeriesApi<"Candlestick">).update({ ...bar, time: bar.time as UTCTimestamp });
+      return;
+    }
+    if (st.lastTime !== b.time) {
+      // genuinely new bar: the previous painted HA becomes the anchor
+      st.prev = st.last ? { open: st.last.open, close: st.last.close } : st.prev;
+    }
+    const bar = haBar(st.prev, b);
+    st.last = { open: bar.open, close: bar.close };
+    st.lastTime = b.time;
+    (series as ISeriesApi<"Candlestick">).update({ ...bar, time: bar.time as UTCTimestamp });
   } else {
-    (series as ISeriesApi<"Candlestick">).update(toCandle(b));
+    (series as ISeriesApi<"Candlestick" | "Bar">).update(toCandle(b) as any);
   }
 }
 
@@ -229,6 +323,8 @@ export function PriceChart({
   // bid/ask price lines (engine-consistent spread around the mid)
   const bidLineRef = useRef<IPriceLine | null>(null);
   const askLineRef = useRef<IPriceLine | null>(null);
+  // Phase 34: previous-day-close dotted line (per-instrument toggle)
+  const pdcLineRef = useRef<IPriceLine | null>(null);
   const lastMidRef = useRef<number | null>(null);
   const overlayRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const paneRef = useRef<Map<string, PaneHandle>>(new Map());
@@ -298,6 +394,12 @@ export function PriceChart({
     bidAsk: perInstrument.bidAsk ?? settings.bidAsk,
     upColor: perInstrument.upColor ?? settings.upColor,
     downColor: perInstrument.downColor ?? settings.downColor,
+    // Phase 34 per-instrument overrides (instrument settings panel)
+    precision: (perInstrument as { precision?: number }).precision,
+    lastPrice: (perInstrument as { lastPrice?: boolean }).lastPrice,
+    prevClose: (perInstrument as { prevClose?: boolean }).prevClose,
+    priceScaleSide: (perInstrument as { priceScaleSide?: "right" | "left" }).priceScaleSide,
+    timezone: (perInstrument as { timezone?: string }).timezone || "",
   }), [settings, perInstrument]);
   // an instrument's own default chart type applies when its chart opens
   // (the toolbar type button keeps setting the global default)
@@ -306,6 +408,11 @@ export function PriceChart({
     if (per) setChartTypeState(per as ChartType);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
+  // Phase 34: live type change from the instrument settings panel
+  useEffect(() => {
+    const per = (perInstrument as { chartType?: ChartType } | undefined)?.chartType;
+    if (per) setChartTypeState(per);
+  }, [perInstrument]);
   // Terminal Settings dialog edits the same store — pick up its changes live
   useEffect(() => {
     const h = (e: Event) => {
@@ -332,6 +439,23 @@ export function PriceChart({
     if (!candle) return;
     const s = settingsRef.current;
     const inst = getInstrument(symbolRef.current);
+    // Phase 34: previous-day-close dotted line — anchored to the instrument's
+    // OWN loaded daily history (never invented). Runs even when bid/ask is off.
+    {
+      const wantPdc = (s as { prevClose?: boolean }).prevClose === true;
+      if (!wantPdc) {
+        try { if (pdcLineRef.current) candle.removePriceLine(pdcLineRef.current); } catch { /* gone */ }
+        pdcLineRef.current = null;
+      } else {
+        const todayStart = Math.floor(Date.now() / 1000 / 86400) * 86400;
+        const d1 = quotesSnapshotBars(symbolRef.current, "1d") || [];
+        const prev = d1.filter((b) => b.time < todayStart).pop();
+        if (prev && prev.close > 0) {
+          if (pdcLineRef.current) pdcLineRef.current.applyOptions({ price: prev.close });
+          else pdcLineRef.current = candle.createPriceLine({ price: prev.close, color: "rgba(148,163,184,0.75)", lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: "PDC" });
+        }
+      }
+    }
     if (!s.bidAsk || mid == null || !Number.isFinite(mid) || mid <= 0 || !inst) {
       try { if (bidLineRef.current) candle.removePriceLine(bidLineRef.current); } catch { /* gone */ }
       try { if (askLineRef.current) candle.removePriceLine(askLineRef.current); } catch { /* gone */ }
@@ -355,9 +479,12 @@ export function PriceChart({
   const uid = user?.uid ?? null;
   const inst = useMemo(() => getInstrument(symbol), [symbol]);
   const digits = inst?.digits ?? 2;
+  // Phase 34: per-instrument decimal override (instrument settings panel)
+  const precisionOverride = (perInstrument as { precision?: number } | undefined)?.precision;
+  const effDigits = precisionOverride ?? digits;
   const priceFormat = useMemo(
-    () => ({ type: "price" as const, precision: digits, minMove: Math.pow(10, -digits) }),
-    [digits],
+    () => ({ type: "price" as const, precision: effDigits, minMove: Math.pow(10, -effDigits) }),
+    [effDigits],
   );
 
   // Defensive normalization: a stale/hybrid deploy or an RTDB-shaped payload can
@@ -419,22 +546,30 @@ export function PriceChart({
     const candle = candleRef.current;
     if (!chart || !candle) return;
     chart.applyOptions({
+      // Phase 34: appearance (background / grid / crosshair) now user-settable
+      layout: { background: { type: ColorType.Solid, color: mergedSettings.bgColor ?? COLORS.bg }, textColor: COLORS.text, fontSize: 11 },
       grid: mergedSettings.grid
-        ? { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } }
+        ? { vertLines: { color: mergedSettings.gridColor ?? COLORS.grid }, horzLines: { color: mergedSettings.gridColor ?? COLORS.grid } }
         : { vertLines: { visible: false }, horzLines: { visible: false } },
       crosshair: {
         mode: mergedSettings.magnet ? CrosshairMode.Magnet : CrosshairMode.Normal,
-        vertLine: { visible: true, labelVisible: true, color: "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
-        horzLine: { visible: true, labelVisible: true, color: "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
+        vertLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
+        horzLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
       },
     });
     candle.applyOptions({
       upColor: mergedSettings.upColor, downColor: mergedSettings.downColor,
       borderUpColor: mergedSettings.upColor, borderDownColor: mergedSettings.downColor,
       wickUpColor: mergedSettings.upColor, wickDownColor: mergedSettings.downColor,
-    });
+    } as any);
+    // every main-series kind gets its theme + last-price visibility override
+    applyMainTheme(candle, mainKindRef.current, mergedSettings);
+    const lp = mergedSettings.lastPrice ?? true;
+    (candle as unknown as { applyOptions: (o: Record<string, unknown>) => void }).applyOptions({ priceLineVisible: lp, lastValueVisible: lp });
     canvasRef.current?.redraw();
   }, [settings, mergedSettings]);
+
+
 
   // ---- Volume is a real indicator now (Phase 20) -----------------------------
   // The histogram is driven by a visible "volume" indicator config (Indicators
@@ -502,14 +637,13 @@ export function PriceChart({
         borderVisible: false, timeVisible: true, secondsVisible: TF_SECONDS[timeframe] < 60, visible: true, rightOffset: 8,
         tickMarkFormatter: (t: number, kind: number) => {
           const d = new Date(t * 1000);
-          const hm = () => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-          if (kind <= 1) return d.toLocaleDateString([], { month: "short", year: "numeric" });
-          if (kind === 2) return d.toLocaleDateString([], { day: "2-digit", month: "short" });
-          return hm();
+          if (kind <= 1) return fmtMY(d);
+          if (kind === 2) return fmtDM(d);
+          return fmtHM(d);
         },
       },
       localization: {
-        timeFormatter: (t: number) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+        timeFormatter: (t: number) => fmtHM(new Date(t * 1000)),
       },
       // TradingView-style crosshair: labels on BOTH axes snap to the hovered
       // candle, axis labels match the dark theme
@@ -1251,6 +1385,37 @@ export function PriceChart({
 
   // ---- pending-order price lines (re-hung after every main-series swap) --------
   const [seriesEpoch, setSeriesEpoch] = useState(0);
+
+  // Phase 34: price-scale side (per instrument, survives series rebuilds)
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candle = candleRef.current;
+    const side = mergedSettings.priceScaleSide ?? "right";
+    if (!chart || !candle) return;
+    chart.applyOptions({
+      rightPriceScale: { visible: side === "right", borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
+      leftPriceScale: { visible: side === "left", borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
+    });
+    (candle as unknown as { applyOptions: (o: Record<string, unknown>) => void }).applyOptions({ priceScaleId: side });
+  }, [mergedSettings.priceScaleSide, seriesEpoch]);
+
+  // Phase 34: chart timezone (per instrument) — re-register the formatters
+  useEffect(() => {
+    tzCurrent = mergedSettings.timezone || "";
+    const chart = chartRef.current;
+    if (!chart) return;
+    try {
+      chart.applyOptions({
+        timeScale: { tickMarkFormatter: (t: number, kind: number) => {
+          const d = new Date(t * 1000);
+          if (kind <= 1) return fmtMY(d);
+          if (kind === 2) return fmtDM(d);
+          return fmtHM(d);
+        } },
+        localization: { timeFormatter: (t: number) => fmtHM(new Date(t * 1000)) },
+      });
+    } catch { /* invalid tz — viewer locale keeps rendering */ }
+  }, [mergedSettings.timezone, seriesEpoch]);
   useEffect(() => {
     const candle = candleRef.current;
     if (!candle) return;

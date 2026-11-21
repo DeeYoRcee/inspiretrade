@@ -24,6 +24,16 @@ export interface ChartSettings {
   bidAsk: boolean;
   upColor: string;
   downColor: string;
+  // ---- Phase 34 appearance section (instrument settings panel) ----
+  bgColor: string;
+  gridColor: string;
+  crosshairColor: string;
+  // Phase 34: per-instrument override shadows merged from instrument settings
+  precision?: number;
+  lastPrice?: boolean;
+  prevClose?: boolean;
+  priceScaleSide?: "right" | "left";
+  timezone?: string;
   // ---- drawing defaults (new objects take these) ----
   drawColor: string;
   drawWidth: number;
@@ -38,8 +48,17 @@ export interface ChartSettings {
 export const DEFAULT_SETTINGS: ChartSettings = {
   grid: true, countdown: true, legend: true, magnet: true, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
+  bgColor: "#0b1220", gridColor: "#16213a", crosshairColor: "rgba(224,229,237,0.35)",
   drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
 };
+
+/** Phase 34: professional appearance presets — one click re-styles the chart. */
+export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSettings> }[] = [
+  { id: "inspire", label: "InspireTrade", s: { bgColor: "#0b1220", gridColor: "#16213a", crosshairColor: "rgba(224,229,237,0.35)", upColor: "#e9edf4", downColor: "#9598a1" } },
+  { id: "classic", label: "Classic Green", s: { bgColor: "#0b1220", gridColor: "#16213a", crosshairColor: "rgba(224,229,237,0.35)", upColor: "#22c55e", downColor: "#ef4444" } },
+  { id: "midnight", label: "Midnight", s: { bgColor: "#05070d", gridColor: "#101827", crosshairColor: "rgba(148,163,184,0.4)", upColor: "#26a69a", downColor: "#ef5350" } },
+  { id: "contrast", label: "High Contrast", s: { bgColor: "#000000", gridColor: "#22262e", crosshairColor: "rgba(255,255,255,0.5)", upColor: "#4ade80", downColor: "#f87171" } },
+];
 
 export function SettingsDialog({
   open, settings, onClose, onSave,

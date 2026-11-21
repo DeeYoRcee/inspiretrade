@@ -442,7 +442,7 @@ function InstrumentSection({ instrSymbol, setInstrSymbol, matches, onReset }: {
         <>
           <Show label="Default chart type">
             <Select label="Chart type" value={per.chartType || ""}
-              options={[{ value: "", label: "Global default" }, { value: "candles", label: "Candles" }, { value: "hollow", label: "Hollow" }, { value: "line", label: "Line" }, { value: "area", label: "Area" }, { value: "heikin", label: "Heikin Ashi" }, { value: "renko", label: "Renko" }]}
+              options={[{ value: "", label: "Global default" }, { value: "candles", label: "Candles" }, { value: "hollow", label: "Hollow" }, { value: "bars", label: "Bars" }, { value: "baseline", label: "Baseline" }, { value: "line", label: "Line" }, { value: "area", label: "Area" }, { value: "heikin", label: "Heikin Ashi" }]}
               onChange={(v) => set({ chartType: (v || undefined) as InstrumentSettings["chartType"] })} />
           </Show>
           <Show label="Default timeframe" hint="Applied whenever this instrument's chart opens — only genuinely supported TFs are listed">

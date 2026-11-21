@@ -13,7 +13,7 @@
 import { useSyncExternalStore } from "react";
 import { getDatabase, ref, get, update, remove } from "firebase/database";
 
-export type InstrumentChartType = "candles" | "hollow" | "line" | "area" | "heikin" | "renko";
+export type InstrumentChartType = "candles" | "hollow" | "bars" | "baseline" | "line" | "area" | "heikin";
 
 export interface InstrumentSettings {
   chartType?: InstrumentChartType;
@@ -23,6 +23,16 @@ export interface InstrumentSettings {
   downColor?: string;
   grid?: boolean;
   bidAsk?: boolean;
+  /** Phase 34: price-axis decimal override (undefined = instrument default) */
+  precision?: number;
+  /** last-price line + axis label on the main series */
+  lastPrice?: boolean;
+  /** previous-day-close dotted line (from the instrument's own daily history) */
+  prevClose?: boolean;
+  /** which side the price axis sits on */
+  priceScaleSide?: "right" | "left";
+  /** IANA timezone for the time axis / crosshair ("" = viewer locale) */
+  timezone?: string;
   /** trading defaults that only make sense per instrument */
   defaultLot?: string;
   defaultRisk?: string;
@@ -33,7 +43,7 @@ export interface InstrumentSettings {
 const LS_KEY = (uid: string | null, symbol: string) => `it_instrument_settings_${uid || "anon"}_${symbol}`;
 const RTDB_PATH = (uid: string, symbol: string) => `users/${uid}/instrumentSettings/${symbol}`;
 
-const CHART_TYPES: InstrumentChartType[] = ["candles", "hollow", "line", "area", "heikin", "renko"];
+const CHART_TYPES: InstrumentChartType[] = ["candles", "hollow", "bars", "baseline", "line", "area", "heikin"];
 const TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "1W", "1M"] as const;
 
 const asColor = (v: unknown): string | undefined =>
@@ -64,6 +74,16 @@ function sanitize(raw: unknown): InstrumentSettings {
   if (grid !== undefined) out.grid = grid;
   const bidAsk = asOptBool(r.bidAsk);
   if (bidAsk !== undefined) out.bidAsk = bidAsk;
+  // Phase 34 fields
+  const prec = asOptNum(r.precision, -1, 8);
+  if (prec) out.precision = Number(prec);
+  const lastPrice = asOptBool(r.lastPrice);
+  if (lastPrice !== undefined) out.lastPrice = lastPrice;
+  const prevClose = asOptBool(r.prevClose);
+  if (prevClose !== undefined) out.prevClose = prevClose;
+  const side = asOptEnum(r.priceScaleSide, ["right", "left"] as const);
+  if (side) out.priceScaleSide = side;
+  if (typeof r.timezone === "string" && r.timezone.length <= 64) out.timezone = r.timezone;
   const lot = asOptNum(r.defaultLot, 0, 1000);
   if (lot) out.defaultLot = lot;
   const risk = asOptNum(r.defaultRisk, 0, 100);

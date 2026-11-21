@@ -45,7 +45,8 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Plus, RefreshCw, RotateCcw, Search, Settings2 } from "lucide-react";
+import { Plus, RefreshCw, RotateCcw, Search, Settings2, SlidersHorizontal } from "lucide-react";
+import { InstrumentSettingsPanel } from "@/components/terminal/InstrumentSettingsPanel";
 import { cn } from "@/lib/utils";
 import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
 import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
@@ -147,6 +148,8 @@ export default function TerminalPage() {
   // Phase 21 — the full instrument explorer + terminal settings dialog
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Phase 34: per-instrument settings sheet (chart type, price, appearance)
+  const [instSettingsOpen, setInstSettingsOpen] = useState(false);
 
   // replay state lives at the page level so the chart, ticket and book share it
   const r = useReplay();
@@ -194,7 +197,7 @@ export default function TerminalPage() {
           mode={mode} onModeChange={setMode}
           symbol={symbol} onSymbolChange={setSymbol}
           timeframe={timeframe} onTimeframeChange={setTimeframe}
-          onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)}
+          onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)} onOpenInstrumentSettings={() => setInstSettingsOpen(true)}
           accounts={[]} activeId={null} onAccountChange={setActiveId}
           metrics={null} busy={false} onRefresh={refreshNow}
           account={null} onReset={resetAccount}
@@ -226,7 +229,7 @@ export default function TerminalPage() {
         mode={mode} onModeChange={setMode}
         symbol={symbol} onSymbolChange={setSymbol}
         timeframe={timeframe} onTimeframeChange={setTimeframe}
-        onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)}
+        onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)} onOpenInstrumentSettings={() => setInstSettingsOpen(true)}
         accounts={mode === "live" ? accounts : []} activeId={account?.id ?? null} onAccountChange={setActiveId}
         metrics={mode === "live" ? metrics : null} busy={busy} onRefresh={refreshNow}
         account={mode === "live" ? account : null} onReset={resetAccount}
@@ -313,6 +316,7 @@ export default function TerminalPage() {
         onSelect={setSymbol}
       />
       <TerminalSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} symbol={symbol} />
+      <InstrumentSettingsPanel symbol={symbol} open={instSettingsOpen} onClose={() => setInstSettingsOpen(false)} />
     </div>
   );
 }
@@ -324,7 +328,7 @@ export default function TerminalPage() {
 function Toolbar({
   mode, onModeChange,
   symbol, onSymbolChange, timeframe, onTimeframeChange,
-  onOpenExplorer, onOpenSettings,
+  onOpenExplorer, onOpenSettings, onOpenInstrumentSettings,
   accounts, activeId, onAccountChange,
   metrics, busy, onRefresh, account, onReset, onNewAccount,
 }: {
@@ -332,6 +336,7 @@ function Toolbar({
   symbol: string; onSymbolChange: (s: string) => void;
   timeframe: Timeframe; onTimeframeChange: (tf: Timeframe) => void;
   onOpenExplorer: () => void; onOpenSettings: () => void;
+  onOpenInstrumentSettings: () => void;
   accounts: { id: string; label: string; type: string }[];
   activeId: string | null; onAccountChange: (id: string) => void;
   metrics: { balance: number; equity: number; floatingPnl: number; usedMargin: number; freeMargin: number; marginLevel: number | null } | null;
@@ -392,6 +397,15 @@ function Toolbar({
               </button>
             ))}
           </div>
+
+          {/* Phase 34 — per-instrument settings */}
+          <button
+            onClick={onOpenInstrumentSettings}
+            title={`Instrument settings · ${symbol}`}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/70 text-slate-400 transition-colors hover:border-primary/60 hover:text-primary"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+          </button>
 
           {/* Phase 21 — unified terminal settings */}
           <button

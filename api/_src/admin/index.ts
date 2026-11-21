@@ -17,6 +17,7 @@
  *                             (self-service fix for PERMISSION_DENIED saves)
  */
 import gift from "./gift";
+import grantVip from "./grant-vip";
 import withdrawals from "./withdrawals";
 import deposits from "./deposits";
 import chatDelete from "./chat-delete";
@@ -97,6 +98,8 @@ export default async function handler(req: any, res: any) {
   switch (action) {
     case "gift":
       return gift(req, res);
+    case "grant-vip":
+      return grantVip(req, res);
     case "withdrawals":
       // GET lists requests, POST marks one paid/rejected (handled inside).
       return withdrawals(req, res);

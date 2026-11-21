@@ -7,7 +7,7 @@ import { ref, getDatabase } from "firebase/database";
 import { MediaLightbox } from "@/components/media-lightbox";
 import type { PublicProfileSettings } from "@/lib/public-profile";
 import {
-  Award, Camera, Clapperboard, Copy, Crown, Globe2, Instagram, Loader2, Package, Pencil, Send, Trash2, Twitter, Video,
+  Award, Camera, Clapperboard, Copy, Crown, Globe2, Instagram, Loader2, Package, Pencil, Send, Trash2, Twitter, Video, Activity, Target, TrendingUp, TrendingDown, CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -110,11 +110,37 @@ function InfoRow({
   );
 }
 
-function StatCell({ label, value, tone }: { label: string; value: string; tone?: string }) {
+/** Phase 34: graphical stat card — icon, gradient wash and a mini progress
+ * bar (win rate) while keeping the exact same position in the layout. */
+function StatCell({
+  label, value, tone, icon: Icon, iconTone, ring, ringTone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  icon?: typeof Crown;
+  iconTone?: string;
+  /** 0..1 — renders a mini progress bar under the value */
+  ring?: number;
+  ringTone?: string;
+}) {
   return (
-    <div className="rounded-2xl border border-border/50 bg-card/60 px-2 py-3 text-center">
+    <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-gradient-to-b from-primary/[0.06] to-transparent px-2 py-3 text-center transition-colors hover:border-primary/40">
+      {Icon && (
+        <div className="mx-auto mb-1 flex h-7 w-7 items-center justify-center rounded-lg border border-border/50 bg-card/70">
+          <Icon className={cn("h-3.5 w-3.5", iconTone)} />
+        </div>
+      )}
       <p className={cn("font-number text-lg font-bold leading-tight", tone)}>{value}</p>
       <p className="mt-0.5 truncate text-[10px] font-medium text-muted-foreground">{label}</p>
+      {ring != null && (
+        <div className="mx-auto mt-1.5 h-1 w-4/5 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full transition-[width] duration-700"
+            style={{ width: `${Math.round(Math.min(1, Math.max(0, ring)) * 100)}%`, background: ringTone || "hsl(var(--primary))" }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -235,6 +261,7 @@ export default function ProfilePage() {
       total: list.length,
       winRate: list.length ? `${Math.round((wins / list.length) * 100)}%` : "—",
       netPnl,
+      wins, // Phase 34: win-rate mini bar
     };
   }, [trades]);
 
@@ -670,10 +697,25 @@ export default function ProfilePage() {
         transition={{ duration: 0.3, delay: 0.05 }}
         className="grid grid-cols-4 gap-2"
       >
-        <StatCell label={t("totalTrades")} value={String(stats.total)} />
-        <StatCell label={t("winRate")} value={stats.winRate} />
-        <StatCell label={t("netPnl")} value={pnlText} tone={pnlTone} />
-        <StatCell label={t("profileMemberSince")} value={memberSince} />
+        <StatCell label={t("totalTrades")} value={String(stats.total)} icon={Activity} iconTone="text-sky-400" />
+        <StatCell
+          label={t("winRate")}
+          value={stats.winRate}
+          icon={Target}
+          iconTone="text-emerald-400"
+          ring={stats.total ? stats.wins / stats.total : 0}
+          ringTone="hsl(var(--success))"
+        />
+        <StatCell
+          label={t("netPnl")}
+          value={pnlText}
+          tone={pnlTone}
+          icon={stats.netPnl >= 0 ? TrendingUp : TrendingDown}
+          iconTone={stats.netPnl >= 0 ? "text-emerald-400" : "text-red-400"}
+          ring={stats.total ? Math.min(1, Math.abs(stats.netPnl) / Math.max(1, Math.abs(stats.netPnl))) : 0}
+          ringTone={stats.netPnl >= 0 ? "hsl(var(--success))" : "hsl(var(--destructive))"}
+        />
+        <StatCell label={t("profileMemberSince")} value={memberSince} icon={CalendarDays} iconTone="text-violet-400" />
       </motion.div>
 
       {/* Phase 31: Telegram-style public-profile mirror — when the public

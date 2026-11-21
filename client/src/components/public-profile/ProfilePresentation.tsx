@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter , Crown } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter, Crown, Activity, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
@@ -164,16 +164,18 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         {stats && (
           <div className="relative mt-4 flex flex-wrap items-center justify-center gap-2 text-sm font-semibold">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+              <Activity className="h-3.5 w-3.5 text-sky-300/80" />
               <span className="font-number">{stats.totalTrades}</span>
               <span className="text-[11px] font-normal text-white/55">{t("publicProfileTotalTrades")}</span>
             </span>
             {profile.winRate && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-emerald-300">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-emerald-300">
                 <span className="font-number">{profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) ? `${profile.winRate.rate.toFixed(0)}%` : "—"}</span>
                 <span className="text-[11px] font-normal text-white/55">{t("winRate")}</span>
               </span>
             )}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+              {stats.netPnl >= 0 ? <TrendingUp className="h-3.5 w-3.5 text-emerald-300/80" /> : <TrendingDown className="h-3.5 w-3.5 text-rose-300/80" />}
               <span className={`font-number ${stats.netPnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                 {formatPublicMoney(stats.netPnl)}
               </span>
@@ -204,11 +206,16 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
                 {stats.maxDrawdown > 0 ? formatPublicMoney(-stats.maxDrawdown) : "$0"}
               </p>
             </div>
-            <div className="rounded-2xl border border-border/60 bg-background/45 p-3.5 text-center">
+            <div className="rounded-2xl border border-border/60 bg-gradient-to-b from-emerald-400/[0.08] to-transparent p-3.5 text-center">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("publicProfileWinRate")}</p>
               <p className="mt-1 text-lg font-bold text-emerald-300">
                 {profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) ? `${profile.winRate.rate.toFixed(1)}%` : "—"}
               </p>
+              {profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) && (
+                <div className="mx-auto mt-2 h-1 w-4/5 overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.round(Math.min(100, profile.winRate.rate))}%` }} />
+                </div>
+              )}
             </div>
           </section>
         )}

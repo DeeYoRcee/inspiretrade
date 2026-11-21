@@ -130,11 +130,8 @@ var gift_default = handle(async (req, res) => {
   const goldCases = Math.floor(Number(body.goldCases) || 0);
   const tradingCases = Math.floor(Number(body.tradingCases) || 0);
   const note = String(body.note || "").slice(0, 200);
-  if (coins <= 0 && cases <= 0 && goldCases <= 0 && tradingCases <= 0) {
+  if (coins === 0 && cases <= 0 && goldCases <= 0 && tradingCases <= 0) {
     throw new HttpError(400, "INVALID_AMOUNT", "Provide a positive coins and/or cases amount");
-  }
-  if (coins > 1e5 || cases > 1e3 || goldCases > 1e3 || tradingCases > 1e3) {
-    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (coins<=100000, cases<=1000, goldCases<=1000, tradingCases<=1000)");
   }
   let targetUid = String(body.uid || "").trim();
   if (!targetUid) {
@@ -146,11 +143,20 @@ var gift_default = handle(async (req, res) => {
     }
     targetUid = resolved;
   }
+  const self = targetUid === admin2.uid;
+  if (!self && coins < 0) throw new HttpError(400, "INVALID_AMOUNT", "Coins must be positive for other users");
+  if (coins > (self ? 2e6 : 1e5)) {
+    throw new HttpError(400, "AMOUNT_TOO_LARGE", self ? "Self-gift cap is 2,000,000" : "Gift exceeds limits (coins<=100000)");
+  }
+  if (cases > 1e3 || goldCases > 1e3 || tradingCases > 1e3) {
+    throw new HttpError(400, "AMOUNT_TOO_LARGE", "Gift exceeds limits (cases<=1000, goldCases<=1000, tradingCases<=1000)");
+  }
   const tx = await rtdb().ref(`economy/${targetUid}`).transaction((current) => {
     const eco = current || { coins: 0, cases: 0, streak: 0, totalClaimed: 0 };
     return {
       ...eco,
-      coins: (eco.coins || 0) + coins,
+      coins: Math.max(0, (eco.coins || 0) + coins),
+      // never negative
       cases: (eco.cases || 0) + cases,
       goldCases: (eco.goldCases || 0) + goldCases,
       tradingCases: (eco.tradingCases || 0) + tradingCases,
@@ -178,6 +184,51 @@ function safeParse(raw) {
   }
 }
 
+// api/_src/admin/grant-vip.ts
+var grant_vip_default = handle(async (req, res) => {
+  assertPost(req);
+  const admin2 = await requireAdmin(req);
+  const body = typeof req.body === "string" ? safeParse2(req.body) : req.body || {};
+  const vip = body.vip === true || body.vip === "true";
+  const plan = String(body.plan || "").trim().slice(0, 40) || (vip ? "owner-grant" : "");
+  let targetUid = String(body.uid || "").trim();
+  let targetEmail = "";
+  if (!targetUid) {
+    const username = String(body.username || "").trim().toLowerCase();
+    if (!username) throw new HttpError(400, "MISSING_TARGET", "Provide uid or username");
+    const resolved = (await rtdb().ref(`usernames/${username}`).once("value")).val();
+    if (typeof resolved !== "string" || !resolved) {
+      throw new HttpError(404, "USER_NOT_FOUND", `No user with username "${username}"`);
+    }
+    targetUid = resolved;
+  }
+  try {
+    targetEmail = String((await rtdb().ref(`users/${targetUid}/email`).once("value")).val() || "");
+  } catch {
+  }
+  await rtdb().ref(`users/${targetUid}/profile`).update({
+    isPremium: vip,
+    premiumPlan: vip ? plan : null,
+    vip
+  });
+  await logLedger({
+    type: "admin_grant_vip",
+    target: targetUid,
+    email: targetEmail,
+    vip,
+    plan,
+    by: admin2.email || admin2.uid
+  });
+  res.status(200).json({ ok: true, targetUid, vip, plan });
+});
+function safeParse2(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
 // api/_src/admin/withdrawals.ts
 var withdrawals_default = handle(async (req, res) => {
   const admin2 = await requireAdmin(req);
@@ -194,7 +245,7 @@ var withdrawals_default = handle(async (req, res) => {
     list.sort((a, b) => (b.at || 0) - (a.at || 0));
     return res.status(200).json({ ok: true, withdrawals: list.slice(0, 100) });
   }
-  const body = typeof req.body === "string" ? safeParse2(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse3(req.body) : req.body || {};
   const targetUid = String(body.uid || "");
   const id = String(body.id || "");
   const action = String(body.action || "");
@@ -227,7 +278,7 @@ var withdrawals_default = handle(async (req, res) => {
   });
   res.status(200).json({ ok: true, status: action });
 });
-function safeParse2(raw) {
+function safeParse3(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -251,7 +302,7 @@ var deposits_default = handle(async (req, res) => {
     list.sort((a, b) => (b.at || 0) - (a.at || 0));
     return res.status(200).json({ ok: true, deposits: list.slice(0, 100) });
   }
-  const body = typeof req.body === "string" ? safeParse3(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse4(req.body) : req.body || {};
   const targetUid = String(body.uid || "");
   const id = String(body.id || "");
   const action = String(body.action || "");
@@ -284,7 +335,7 @@ var deposits_default = handle(async (req, res) => {
   });
   res.status(200).json({ ok: true, status: action });
 });
-function safeParse3(raw) {
+function safeParse4(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -296,7 +347,7 @@ function safeParse3(raw) {
 var chat_delete_default = handle(async (req, res) => {
   assertPost(req);
   await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse4(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse5(req.body) : req.body || {};
   const messageId = String(body.messageId || "").trim();
   if (!messageId || !/^[A-Za-z0-9_-]{1,64}$/.test(messageId)) {
     throw new HttpError(400, "INVALID_ID", "Provide a valid messageId");
@@ -304,7 +355,7 @@ var chat_delete_default = handle(async (req, res) => {
   await rtdb().ref(`chat/global/${messageId}`).remove();
   res.status(200).json({ ok: true });
 });
-function safeParse4(raw) {
+function safeParse5(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -316,7 +367,7 @@ function safeParse4(raw) {
 var chat_send_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse5(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse6(req.body) : req.body || {};
   const text = String(body.text || "").trim().slice(0, 300);
   if (!text) throw new HttpError(400, "EMPTY_TEXT", "Provide a message text");
   await rtdb().ref(`users/${admin2.uid}/profile`).transaction((profile) => ({
@@ -335,7 +386,7 @@ var chat_send_default = handle(async (req, res) => {
   await rtdb().ref("chat/global").push(message);
   res.status(200).json({ ok: true, message });
 });
-function safeParse5(raw) {
+function safeParse6(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -348,7 +399,7 @@ var USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 var set_username_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse6(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
   const username = String(body.username || "").trim();
   if (!USERNAME_RE.test(username)) {
     throw new HttpError(400, "INVALID_USERNAME", "3-20 chars: letters, digits, underscore");
@@ -387,7 +438,7 @@ var set_username_default = handle(async (req, res) => {
   await logLedger({ type: "owner_set_username", target: admin2.uid, username, by: admin2.email || admin2.uid });
   res.status(200).json({ ok: true, username, key });
 });
-function safeParse6(raw) {
+function safeParse7(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -400,7 +451,7 @@ import { createHash } from "crypto";
 var MAX_BYTES = 6 * 1024 * 1024;
 var MIME_ALLOWED = /* @__PURE__ */ new Set(["video/mp4", "image/png", "image/jpeg", "image/webp", "image/gif"]);
 var DATAURL_RE = /^data:([a-z0-9/+.-]+);base64,([A-Za-z0-9+/=\s]+)$/i;
-function safeParse7(raw) {
+function safeParse8(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -424,7 +475,7 @@ async function mediaUpload(req, res) {
     if (!isVip) throw new HttpError(403, "VIP_ONLY", "Profile media upload is a VIP feature");
     uploader = user.uid;
   }
-  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body || {};
   const data = String(body?.data || "");
   const m = DATAURL_RE.exec(data);
   if (!m) return res.status(400).json({ ok: false, error: "BAD_DATA_URL" });
@@ -459,7 +510,7 @@ async function mediaGet(req, res) {
 
 // api/_src/admin/publish-profile.ts
 var USERNAME_RE2 = /^[a-zA-Z0-9_]{3,20}$/;
-function safeParse8(raw) {
+function safeParse9(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -469,7 +520,7 @@ function safeParse8(raw) {
 var publish_profile_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse9(req.body) : req.body || {};
   const key = String(body?.key || "").toLowerCase();
   const snapshot = body?.snapshot || {};
   const settings = body?.settings || {};
@@ -507,7 +558,7 @@ var KEY_RE = /^[a-z0-9_]{3,20}$/;
 var profile_repair_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
-  const body = typeof req.body === "string" ? safeParse9(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse10(req.body) : req.body || {};
   const uid = user.uid;
   const db3 = rtdb();
   const requested = String(body?.key || "").toLowerCase();
@@ -563,7 +614,7 @@ var profile_repair_default = handle(async (req, res) => {
   await logLedger({ type: "profile_stub_repair", target: uid, purged, by: user.email || uid });
   res.status(200).json({ ok: true, uid, purged });
 });
-function safeParse9(raw) {
+function safeParse10(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -623,7 +674,7 @@ var USERNAME_RE3 = /^[a-zA-Z0-9_]{3,20}$/;
 var username_market_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse10(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse11(req.body) : req.body || {};
   const action = new URL(req.url || "/", "http://localhost").searchParams.get("action") || "";
   const db3 = rtdb();
   if (action === "usernameUnlist") {
@@ -679,7 +730,7 @@ var username_market_default = handle(async (req, res) => {
   await logLedger({ type: "username_list", listingId: listingRef.key, usernameKey: key, price, by: admin2.email || admin2.uid });
   res.status(200).json({ ok: true, listing });
 });
-function safeParse10(raw) {
+function safeParse11(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -689,7 +740,7 @@ function safeParse10(raw) {
 
 // api/_src/admin/cases.ts
 var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
-function safeParse11(raw) {
+function safeParse12(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -697,7 +748,7 @@ function safeParse11(raw) {
   }
 }
 function getBody(req) {
-  const body = typeof req.body === "string" ? safeParse11(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse12(req.body) : req.body;
   return body || {};
 }
 function getAction(req) {
@@ -1931,7 +1982,7 @@ async function setRole(admin2, role, body) {
 }
 
 // api/_src/admin/index.ts
-function safeParse12(raw) {
+function safeParse13(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -1945,7 +1996,7 @@ function getAction2(req) {
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse12(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse13(req.body) : req.body;
   return String(body?.action || "");
 }
 var PLATFORM_ACTIONS = {
@@ -1977,7 +2028,7 @@ async function handler(req, res) {
         const url = new URL(req.url || "/", "http://localhost");
         body = Object.fromEntries(url.searchParams.entries());
       } else {
-        body = typeof req.body === "string" ? safeParse12(req.body) : req.body || {};
+        body = typeof req.body === "string" ? safeParse13(req.body) : req.body || {};
       }
       return await platformEntry.run(req, res, admin2, role, body);
     } catch (e) {
@@ -1988,6 +2039,8 @@ async function handler(req, res) {
   switch (action) {
     case "gift":
       return gift_default(req, res);
+    case "grant-vip":
+      return grant_vip_default(req, res);
     case "withdrawals":
       return withdrawals_default(req, res);
     case "deposits":

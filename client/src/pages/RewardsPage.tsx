@@ -212,12 +212,13 @@ export default function RewardsPage() {
         </motion.div>
 
         {/* Cases — Inspire + Gold */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }}>
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }} className="lg:row-span-2">
           <Card className="glass-panel h-full border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-lg"><PackageOpen className="h-5 w-5 text-primary" />{t("casesTitle")}</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-5">
+            {/* Phase 34: content spreads across the full stretched height */}
+            <CardContent className="flex flex-1 flex-col justify-between gap-5">
               {/* Inspire Case */}
               <div className="flex items-center gap-4">
                 <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent shadow-[0_0_24px_-6px_hsl(var(--primary)/0.5)]">

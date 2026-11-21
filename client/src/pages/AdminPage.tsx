@@ -61,6 +61,8 @@ export default function AdminPage() {
   const [spawnCases, setSpawnCases] = useState("");
   const [spawnGold, setSpawnGold] = useState("");
   const [spawnTrading, setSpawnTrading] = useState("");
+  const [spawnCoins, setSpawnCoins] = useState("");
+  const [vipTarget, setVipTarget] = useState("");
   const [claimName, setClaimName] = useState("");
   const [histBusy, setHistBusy] = useState(false);
   const [histLog, setHistLog] = useState("");
@@ -219,6 +221,7 @@ export default function AdminPage() {
     mutationFn: async () =>
       authedFetch("/api/admin?action=gift", {
         uid: user!.uid,
+        coins: Math.floor(Number(spawnCoins) || 0),
         cases: Number(spawnCases) || 0,
         goldCases: Number(spawnGold) || 0,
         tradingCases: Number(spawnTrading) || 0,
@@ -229,6 +232,7 @@ export default function AdminPage() {
       setSpawnCases("");
       setSpawnGold("");
       setSpawnTrading("");
+      setSpawnCoins("");
     },
     onError: (error: any) => {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
@@ -242,6 +246,25 @@ export default function AdminPage() {
       toast({ title: t("ownerClaimDone"), description: `@${claimName.trim().toLowerCase()}` });
       setClaimName("");
       refetchOwnerProfile();
+    },
+    onError: (error: any) => {
+      toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
+    },
+  });
+
+  // Phase 34: the owner grants/revokes VIP membership to ANY user (username
+  // or uid) — sets profile.isPremium/premiumPlan/vip server-side.
+  const vipMutation = useMutation({
+    mutationFn: async ({ vip }: { vip: boolean }) => {
+      const trimmed = vipTarget.trim();
+      const payload: Record<string, unknown> = { vip };
+      if (trimmed.includes("@")) payload.username = trimmed.replace("@", "").toLowerCase();
+      else payload.uid = trimmed;
+      return authedFetch("/api/admin?action=grant-vip", payload);
+    },
+    onSuccess: (_d, vars) => {
+      toast({ title: vars.vip ? t("grantVipDone") : t("grantVipRevokedDone") });
+      setVipTarget("");
     },
     onError: (error: any) => {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
@@ -278,7 +301,13 @@ export default function AdminPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-xs leading-relaxed text-muted-foreground">{t("ownerSpawnHint")}</p>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <Coins className="h-3.5 w-3.5 text-yellow-500" />INSP
+                    </label>
+                    <Input type="number" min={-2000000} max={2000000} value={spawnCoins} onChange={(e) => setSpawnCoins(e.target.value)} placeholder="±INSP" className="h-11 rounded-xl" />
+                  </div>
                   <div className="space-y-1.5">
                     <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                       <PackageOpen className="h-3.5 w-3.5 text-primary" />{t("giftCases")}
@@ -301,11 +330,46 @@ export default function AdminPage() {
                 <Button
                   size="lg"
                   className="w-full rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-semibold text-black hover:from-amber-400 hover:to-yellow-300"
-                  disabled={spawnMutation.isPending || (!Number(spawnCases) && !Number(spawnGold) && !Number(spawnTrading))}
+                  disabled={spawnMutation.isPending || (!Number(spawnCoins) && !Number(spawnCases) && !Number(spawnGold) && !Number(spawnTrading))}
                   onClick={() => spawnMutation.mutate()}
                 >
                   {spawnMutation.isPending ? t("sending") : <><PackageOpen className="mr-2 h-5 w-5" />{t("ownerSpawnButton")}</>}
                 </Button>
+              </CardContent>
+            </Card>
+
+            {/* Phase 34: grant VIP to any user */}
+            <Card className="glass-panel border-violet-500/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg"><Crown className="h-5 w-5 text-violet-400" />{t("grantVipTitle")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs leading-relaxed text-muted-foreground">{t("grantVipHint")}</p>
+                <Input
+                  value={vipTarget}
+                  onChange={(e) => setVipTarget(e.target.value)}
+                  placeholder="username or firebase-uid"
+                  className="h-11 rounded-xl"
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    size="lg"
+                    className="rounded-xl bg-gradient-to-r from-violet-500 to-purple-400 font-semibold text-white hover:from-violet-400 hover:to-purple-300"
+                    disabled={vipMutation.isPending || !vipTarget.trim()}
+                    onClick={() => vipMutation.mutate({ vip: true })}
+                  >
+                    {vipMutation.isPending ? t("sending") : <><Crown className="mr-2 h-5 w-5" />{t("grantVipButton")}</>}
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="rounded-xl border-violet-500/40 text-violet-300 hover:bg-violet-500/10"
+                    disabled={vipMutation.isPending || !vipTarget.trim()}
+                    onClick={() => vipMutation.mutate({ vip: false })}
+                  >
+                    {t("grantVipRevoke")}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
