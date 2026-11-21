@@ -287,7 +287,7 @@ export async function dukaWalkM1(code: string, fromSec: number, toSec: number, m
   for (let i = 0; i < days.length && fileUsed + files < fileBudget; i += 5) {
     if (Date.now() - startedAt > deadlineMs) { timedOut = true; break; }
     const chunk = days.slice(i, i + 5);
-    const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
+    const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d, 14000)));
     if (oldest == null && files === 0 && bufs.every((b) => b == null) && i >= 5) break; // CDN unreachable
     for (let k = 0; k < chunk.length; k++) {
       const buf = bufs[k];
@@ -388,7 +388,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         // Phase 30b: deadline 22s — the old 50s walk + shard/fold writes blew
         // past the serverless wall clock (FUNCTION_INVOCATION_TIMEOUT, hkg1),
         // so the step died BEFORE its state write and progress never stuck.
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22000);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         // Phase 30: fold the step's own minute bars into 1h/1d shards NOW —
@@ -459,7 +459,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         // Phase 30b: deadline 22s — the old 50s walk + shard/fold writes blew
         // past the serverless wall clock (FUNCTION_INVOCATION_TIMEOUT, hkg1),
         // so the step died BEFORE its state write and progress never stuck.
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22000);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         // Phase 30: fold the step's own minute bars into 1h/1d shards NOW —

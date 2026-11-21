@@ -54,7 +54,13 @@ const DUKA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (K
 
 /** Fetch one UTC day of BID 1m candles; null when the day has no file yet
  * (weekends, holidays, or the 1–2 day publication lag). */
-export async function fetchDukaDay(dukaSym: string, day: Date): Promise<Buffer | null> {
+export async function fetchDukaDay(dukaSym: string, day: Date, budgetMs = 30000): Promise<Buffer | null> {
+  // Phase 30b: a per-file BUDGET — the old 3×20s retries meant a single
+  // hanging CDN connection could cost 60s+ PER CHUNK, blowing the walk
+  // deadline and then the serverless wall clock (live: repeated
+  // FUNCTION_INVOCATION_TIMEOUT). 429/503 still fast-fail; hangs abort
+  // within the budget.
+  const startedAt = Date.now();
   const y = day.getUTCFullYear();
   const m = day.getUTCMonth(); // datafeed months are 0-indexed in the path
   const d = day.getUTCDate();
@@ -63,9 +69,9 @@ export async function fetchDukaDay(dukaSym: string, day: Date): Promise<Buffer |
   // datacenter IPs in bursts (429/503) — three attempts with growing waits
   // beat one hard failure; a rate-limited attempt waits longer so a whole
   // walk step doesn't burn every file into a burst of rejections
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 3 && Date.now() - startedAt < budgetMs; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
+    const timer = setTimeout(() => controller.abort(), Math.max(3000, Math.min(20000, budgetMs - (Date.now() - startedAt))));
     let rateLimited = false;
     try {
       const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
@@ -79,7 +85,9 @@ export async function fetchDukaDay(dukaSym: string, day: Date): Promise<Buffer |
     } finally {
       clearTimeout(timer);
     }
-    await new Promise((r) => setTimeout(r, rateLimited ? 1200 + attempt * 1800 : 400));
+    const wait = rateLimited ? 1200 + attempt * 1800 : 400;
+    if (Date.now() - startedAt + wait >= budgetMs) return null;
+    await new Promise((r) => setTimeout(r, wait));
   }
   return null;
 }

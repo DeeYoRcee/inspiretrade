@@ -643,14 +643,15 @@ function dukaPoints(code) {
 }
 var DUKA_METALS = { XAUUSD: "XAUUSD", XAGUSD: "XAGUSD" };
 var DUKA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
-async function fetchDukaDay(dukaSym, day) {
+async function fetchDukaDay(dukaSym, day, budgetMs = 3e4) {
+  const startedAt = Date.now();
   const y = day.getUTCFullYear();
   const m = day.getUTCMonth();
   const d = day.getUTCDate();
   const url = `https://datafeed.dukascopy.com/datafeed/${dukaSym}/${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/BID_candles_min_1.bi5`;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 3 && Date.now() - startedAt < budgetMs; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2e4);
+    const timer = setTimeout(() => controller.abort(), Math.max(3e3, Math.min(2e4, budgetMs - (Date.now() - startedAt))));
     let rateLimited = false;
     try {
       const res = await fetch(url, { headers: { "User-Agent": DUKA_UA }, signal: controller.signal });
@@ -663,7 +664,9 @@ async function fetchDukaDay(dukaSym, day) {
     } finally {
       clearTimeout(timer);
     }
-    await new Promise((r) => setTimeout(r, rateLimited ? 1200 + attempt * 1800 : 400));
+    const wait = rateLimited ? 1200 + attempt * 1800 : 400;
+    if (Date.now() - startedAt + wait >= budgetMs) return null;
+    await new Promise((r) => setTimeout(r, wait));
   }
   return null;
 }
@@ -982,7 +985,7 @@ async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed, d
       break;
     }
     const chunk = days.slice(i, i + 5);
-    const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d)));
+    const bufs = await Promise.all(chunk.map((d) => fetchDukaDay(dukaSym, d, 14e3)));
     if (oldest == null && files === 0 && bufs.every((b) => b == null) && i >= 5) break;
     for (let k = 0; k < chunk.length; k++) {
       const buf = bufs[k];
@@ -1029,7 +1032,7 @@ async function runBackfillStep(req) {
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22e3);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         let foldedNote = "";
@@ -1095,7 +1098,7 @@ async function runBackfillStep(req) {
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 22e3);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         let foldedNote = "";
