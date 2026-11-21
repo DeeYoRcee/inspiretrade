@@ -814,6 +814,7 @@ async function writeShards(symbol, tf, raw, provider, opts) {
   const out = { written: 0, skipped: 0, days: [], rejected };
   const metaRef = rtdb().ref(`histMeta/${symbol}/${tf}`);
   const dataRef = rtdb().ref(`hist/${symbol}/${tf}`);
+  const dayMap = /* @__PURE__ */ new Map();
   for (const [day, rows] of groupByDay(bars)) {
     const t0 = rows[0][0];
     if (opts?.before != null && t0 >= opts.before) {
@@ -824,16 +825,30 @@ async function writeShards(symbol, tf, raw, provider, opts) {
       out.skipped++;
       continue;
     }
+    dayMap.set(day, rows);
+  }
+  const days = [...dayMap.keys()].sort();
+  let existing = /* @__PURE__ */ new Set();
+  if (!opts?.force && days.length) {
+    const span = await metaRef.orderByKey().startAt(days[0]).endAt(days[days.length - 1]).once("value");
+    existing = new Set(Object.keys(span.val() || {}));
+  }
+  const pending = days.filter((d) => opts?.force || !existing.has(d));
+  out.skipped += days.length - pending.length;
+  for (let i = 0; i < pending.length; i += 25) {
+    const chunk = pending.slice(i, i + 25);
+    const dataPatch = {};
+    const metaPatch = {};
+    for (const day of chunk) {
+      const rows = dayMap.get(day);
+      dataPatch[day] = rows.map((r) => JSON.stringify(r)).join("|");
+      metaPatch[day] = provider;
+    }
     try {
-      const existingTag = (await metaRef.child(day).once("value")).val();
-      if (existingTag && !opts?.force) {
-        out.skipped++;
-        continue;
-      }
-      await dataRef.child(day).set(rows.map((r) => JSON.stringify(r)).join("|"));
-      await metaRef.child(day).set(provider);
-      out.written++;
-      out.days.push(day);
+      await dataRef.update(dataPatch);
+      await metaRef.update(metaPatch);
+      out.written += chunk.length;
+      out.days.push(...chunk);
     } catch (e) {
       break;
     }

@@ -108,20 +108,43 @@ export async function writeShards(
   const out: ShardsWritten = { written: 0, skipped: 0, days: [], rejected };
   const metaRef = rtdb().ref(`histMeta/${symbol}/${tf}`);
   const dataRef = rtdb().ref(`hist/${symbol}/${tf}`);
+  // Phase 30b BATCHED: per-day set() ops (3 RTDB round-trips × up to 240
+  // days) blew the serverless wall clock — FUNCTION_INVOCATION_TIMEOUT, so
+  // whole steps died after the CDN burst. One range read for dedupe +
+  // multi-path update() chunks (25 days/call) collapse ~720 round-trips
+  // into ~20. Idempotency and provider stamping unchanged.
+  const dayMap = new Map<string, ShardBar[]>();
   for (const [day, rows] of groupByDay(bars)) {
     // optional window filter (resume cursors write only their slice)
     const t0 = rows[0][0];
     if (opts?.before != null && t0 >= opts.before) { out.skipped++; continue; }
     if (opts?.after != null && t0 < opts.after) { out.skipped++; continue; }
+    dayMap.set(day, rows);
+  }
+  const days = [...dayMap.keys()].sort();
+  let existing: Set<string> = new Set();
+  if (!opts?.force && days.length) {
+    const span = await metaRef.orderByKey().startAt(days[0]).endAt(days[days.length - 1]).once("value");
+    existing = new Set(Object.keys(span.val() || {}));
+  }
+  const pending = days.filter((d) => opts?.force || !existing.has(d));
+  out.skipped += days.length - pending.length;
+  for (let i = 0; i < pending.length; i += 25) {
+    const chunk = pending.slice(i, i + 25);
+    const dataPatch: Record<string, string> = {};
+    const metaPatch: Record<string, string> = {};
+    for (const day of chunk) {
+      const rows = dayMap.get(day)!;
+      dataPatch[day] = rows.map((r) => JSON.stringify(r)).join("|");
+      metaPatch[day] = provider;
+    }
     try {
-      const existingTag = (await metaRef.child(day).once("value")).val();
-      if (existingTag && !opts?.force) { out.skipped++; continue; }
-      await dataRef.child(day).set(rows.map((r) => JSON.stringify(r)).join("|"));
-      await metaRef.child(day).set(provider);
-      out.written++;
-      out.days.push(day);
+      await dataRef.update(dataPatch);
+      await metaRef.update(metaPatch);
+      out.written += chunk.length;
+      out.days.push(...chunk);
     } catch (e) {
-      // a single shard failure must not abort the run — the cursor allows retry
+      // a chunk failure must not abort the run — the cursor allows retry
       break;
     }
   }
