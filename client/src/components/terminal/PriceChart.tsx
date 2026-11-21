@@ -42,7 +42,8 @@ import {
 import {
   INDICATOR_CATALOG, newIndicatorConfig, type IndicatorConfig, type IndicatorType,
 } from "@/lib/indicators-config";
-import { effectiveName, isVisibleOnTf, type Drawing, type DrawingType } from "@/lib/drawings";
+import {
+  reorderDrawing, effectiveName, isVisibleOnTf, type Drawing, type DrawingType } from "@/lib/drawings";
 import {
   subscribeDrawings, saveDrawings, clearDrawings as clearDrawingsRemote,
   subscribeIndicators, saveIndicators,
@@ -1651,6 +1652,7 @@ export function PriceChart({
           }}
           activeTool={activeTool === "cursor" ? null : activeTool}
           onToolCommitted={() => { if (settingsRef.current.oneShot) setActiveTool("cursor"); }}
+          magnet={settings.magnet}
           toolDefaults={{
             color: settingsRef.current.drawColor,
             width: settingsRef.current.drawWidth,
@@ -1701,6 +1703,7 @@ export function PriceChart({
                 setSelectedDrawingId(copy.id);
               }}
               onDelete={() => { commitDrawings(drawingsRef.current.filter((d) => d.id !== sel.id)); setSelectedDrawingId(null); }}
+              onReorder={(action) => commitDrawings(reorderDrawing(drawingsRef.current, sel.id, action))}
               onEditText={() => {
                 const text = window.prompt("Text", sel.text || "") ?? "";
                 if (!text.trim()) return;

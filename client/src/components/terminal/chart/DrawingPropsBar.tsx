@@ -5,7 +5,7 @@
  * TIMEFRAME VISIBILITY grid, per-anchor coordinate editing, and object
  * actions (duplicate / lock / hide / delete).
  */
-import { Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine } from "lucide-react";
+import { Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from "lucide-react";
 import {
   FIB_TOOLS, levelsFor, FIB_DEFAULT_LEVELS,
   type Drawing, type DrawingType, type FibLevel,
@@ -23,12 +23,14 @@ const SHAPE_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
 const tfLabel = (tf: Timeframe) => (tf === "1W" ? "W1" : tf === "1M" ? "MN" : tf.toUpperCase());
 
 export function DrawingPropsBar({
-  drawing, onChange, onDuplicate, onDelete, onEditText,
+  drawing, onChange, onDuplicate, onDelete, onEditText, onReorder,
 }: {
   drawing: Drawing;
   onChange: (patch: Partial<Drawing>) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Phase 27 §4 — bring forward / send backward (render stack z-order) */
+  onReorder?: (action: "front" | "back" | "forward" | "backward") => void;
   onEditText: () => void;
 }) {
   const isFib = FIB_TOOLS.has(drawing.type);
@@ -336,6 +338,39 @@ export function DrawingPropsBar({
         >
           {drawing.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
         </button>
+        {onReorder && (
+          <>
+            <button
+              title="Bring forward"
+              onClick={() => onReorder("forward")}
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              title="Send backward"
+              onClick={() => onReorder("backward")}
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            <button
+              title="Bring to front"
+              onClick={() => onReorder("front")}
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            >
+              <ChevronsUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              title="Send to back"
+              onClick={() => onReorder("back")}
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            >
+              <ChevronsDown className="h-3.5 w-3.5" />
+            </button>
+            <span className="h-4 w-px bg-slate-700" />
+          </>
+        )}
         <button title="Delete" onClick={onDelete} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-red-500/15 hover:text-red-400">
           <Trash2 className="h-3.5 w-3.5" />
         </button>

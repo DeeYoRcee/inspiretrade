@@ -1393,3 +1393,65 @@ export function renderDrawing(
     for (const p of pts) drawHandle(ctx, p, false);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 27 — z-order + magnet snap (pure, unit-tested)
+// ---------------------------------------------------------------------------
+
+/** Z-order action for the selected drawing. Render order = array order, so
+ * "front" = last (topmost), "back" = first (bottom-most). */
+export type ZOrderAction = "front" | "back" | "forward" | "backward";
+
+/** Phase 27 §4 — bring forward / send backward / to front / to back. Pure:
+ * returns a NEW array, the input is untouched; unknown ids return the list
+ * unchanged so a stale UI action can never corrupt the stack. */
+export function reorderDrawing<T extends { id: string }>(list: T[], id: string, action: ZOrderAction): T[] {
+  const idx = list.findIndex((d) => d.id === id);
+  if (idx < 0) return list;
+  const out = [...list];
+  const [d] = out.splice(idx, 1);
+  if (action === "front") out.push(d);
+  else if (action === "back") out.unshift(d);
+  else if (action === "forward") out.splice(Math.min(idx + 1, out.length), 0, d);
+  else out.splice(Math.max(idx - 1, 0), 0, d);
+  return out;
+}
+
+/** Phase 27 §7 — magnet snap: pull a pending anchor to the nearest bar OHLC
+ * value whose pixel distance is within `thresholdPx` (TradingView magnet
+ * behaviour — the crosshair magnet already snaps the CURSOR, this snaps the
+ * ANCHOR the drawing actually stores). Pure; returns the original price when
+ * nothing is in range. */
+export function magnetSnapPrice(
+  price: number,
+  bar: { open: number; high: number; low: number; close: number } | null | undefined,
+  priceToY: (p: number) => number | null,
+  thresholdPx = 12,
+): number {
+  if (!bar || !Number.isFinite(price) || price <= 0) return price;
+  const py = priceToY(price);
+  if (py == null) return price;
+  let best = price;
+  let bestDist = thresholdPx;
+  for (const c of [bar.open, bar.high, bar.low, bar.close]) {
+    if (!Number.isFinite(c) || c <= 0) continue;
+    const y = priceToY(c);
+    if (y == null) continue;
+    const dist = Math.abs(y - py);
+    if (dist <= bestDist) { bestDist = dist; best = c; }
+  }
+  return best;
+}
+
+/** Magnet time snap: the anchor lands exactly on the containing bar's open
+ * time (drawings must stay glued to their candle, not to a pixel column). */
+export function magnetSnapTime(time: number, tfSec: number | null | undefined): number {
+  if (!tfSec || tfSec <= 0 || !Number.isFinite(time) || time <= 0) return time;
+  // weekly anchors to Monday 00:00 UTC (epoch 0 is a Thursday — the plain
+  // floor would glue weekly drawings to Thursday, off every real bar)
+  if (tfSec === 604800) {
+    const MONDAY_ANCHOR = 345600;
+    return Math.floor((time - MONDAY_ANCHOR) / tfSec) * tfSec + MONDAY_ANCHOR;
+  }
+  return Math.floor(time / tfSec) * tfSec;
+}

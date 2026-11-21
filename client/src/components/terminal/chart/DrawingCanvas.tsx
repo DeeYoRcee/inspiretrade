@@ -11,10 +11,11 @@
  * Anchors are market coordinates (time/price) via the parent-provided
  * converter, so drawings survive timeframe switches and prepended history.
  */
-import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
 import {
   hitTest, makeDrawing, renderDrawing, setupCanvas, regressionLine,
   TEXT_TOOLS, CLICK_COLLECT_TOOLS, TOOL_POINT_COUNT, TOOL_LABELS, drawHandle,
+  magnetSnapPrice, magnetSnapTime,
   type Drawing, type DrawingPoint, type DrawingType, type XY,
 } from "@/lib/drawings";
 
@@ -88,11 +89,13 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   locked?: boolean;
   /** global visibility toggle — hides every drawing (render + hit-test) */
   hiddenAll?: boolean;
+  /** Phase 27 §7 magnet: snap NEW anchors to the nearest bar OHLC/time */
+  magnet?: boolean;
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
   onSelect, onDelete, onDeleteMany, onEdit, onContextMenu, tradeLines, onTradeLineMove,
   tfSeconds = 0, digits = 2, locked = false, hiddenAll = false, getBars, cursorFallback = "default",
-  selectedIds, onSelectIds, toolDefaults,
+  selectedIds, onSelectIds, toolDefaults, magnet = false,
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -107,6 +110,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   toolRef.current = activeTool;
   const drawingsRef = useRef(drawings);
   drawingsRef.current = drawings;
+  const magnetRef = useRef(magnet);
+  magnetRef.current = magnet;
+  const getBarsRef = useRef(getBars);
+  getBarsRef.current = getBars;
+  /** Phase 27 §7: inline text editor draft (replaces window.prompt) */
+  const [textDraft, setTextDraft] = useState<{ drawing: Drawing; x: number; y: number } | null>(null);
   const tradeRef = useRef(tradeLines);
   tradeRef.current = tradeLines;
   const selectedRef = useRef(selectedId);
@@ -133,6 +142,25 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   const groupOrigRef = useRef<Map<string, DrawingPoint[]> | null>(null);
   const toolDefaultsRef = useRef(toolDefaults);
   toolDefaultsRef.current = toolDefaults;
+
+  /** Phase 27 §7 — magnet: a NEW anchor snaps to the containing bar's open
+   * time and to the nearest bar OHLC within a 12px radius (TradingView
+   * magnet). Creation-time only — dragging existing drawings never snaps,
+   * so the user can always place a drawing exactly where they want it. */
+  const snapPoint = (time: number, price: number): { time: number; price: number } => {
+    if (!magnetRef.current) return { time, price };
+    const t = magnetSnapTime(time, tfRef.current);
+    const bars = getBarsRef.current?.() ?? [];
+    let bar: { open: number; high: number; low: number; close: number } | null = null;
+    if (bars.length) {
+      let lo = 0, hi = bars.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if ((bars[mid] as any).time < t) lo = mid + 1; else hi = mid; }
+      const cand = bars[lo] as any;
+      if (cand) bar = cand;
+    }
+    const price2 = magnetSnapPrice(price, bar, (pp) => converterRef.current?.y(pp) ?? null);
+    return { time: t, price: price2 };
+  };
 
   /** measure tool summary: Δprice (Δ%) over N bars — computed in MARKET space */
   const measureLabel = (a: DrawingPoint, b: DrawingPoint): string => {
@@ -307,6 +335,26 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     try { target.setPointerCapture(pointerId); } catch { /* synthetic or already-released pointer */ }
   };
 
+  /** Phase 27 §7 — commit the pending text annotation from the inline editor */
+  const commitTextDrawing = (text: string) => {
+    const drag = dragRef.current;
+    const drawing = drag?.mode === "draw" ? drag.drawing : null;
+    setTextDraft(null);
+    dragRef.current = null;
+    if (!drawing) return;
+    if (text.trim()) drawing.text = text.trim().slice(0, 200);
+    cbRef.current.onChange([...drawingsRef.current, drawing]);
+    cbRef.current.onToolCommitted();
+    cbRef.current.onSelect(drawing.id);
+    redraw();
+  };
+  const cancelTextDrawing = () => {
+    setTextDraft(null);
+    dragRef.current = null;
+    cbRef.current.onToolCommitted();
+    redraw();
+  };
+
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return; // right button → context menu path
     const conv = converterRef.current;
@@ -350,7 +398,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
             d.style = { ...d.style, ...toolDefaultsRef.current };
             return d;
           })();
-      drawing.points = [...drawing.points, { time, price }];
+      const snapped = snapPoint(time, price);
+      drawing.points = [...drawing.points, snapped];
       const wanted = TOOL_POINT_COUNT[tool];
       // click-collected tools (path/polyline) wait for double-click / Enter
       if (CLICK_COLLECT_TOOLS.has(tool)) {
@@ -359,11 +408,15 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         return;
       }
       if (wanted >= 0 && drawing.points.length >= wanted) {
-        // annotation tools ask for their content immediately after the last click
+        // annotation tools ask for their content via an INLINE editor at the
+        // anchor (Phase 27 §7 — window.prompt was a browser modal: it froze
+        // the whole window and looked nothing like charting software). The
+        // pending drawing stays in dragRef; commitTextDrawing finalises it.
         if (TEXT_TOOLS.has(tool)) {
-          const text = window.prompt("Text", drawing.text || "") ?? "";
-          if (!text.trim()) { dragRef.current = null; cbRef.current.onToolCommitted(); redraw(); return; }
-          drawing.text = text.trim().slice(0, 200);
+          dragRef.current = { mode: "draw", drawing };
+          setTextDraft({ drawing, x: p.x, y: p.y });
+          redraw();
+          return;
         }
         if (tool === "measure") {
           drawing.text = measureLabel(drawing.points[0], drawing.points[1]);
@@ -758,6 +811,39 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     // above the lightweight-charts layers but below the legend/status chips.
     <div ref={hostRef} className="pointer-events-none absolute inset-0 z-[5]">
       <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+      {textDraft && (
+        <div
+          className="pointer-events-auto absolute z-30 flex items-center gap-1 rounded-md border border-slate-600 bg-slate-900/95 px-1.5 py-1 shadow-xl"
+          style={{
+            left: Math.min(Math.max(4, textDraft.x), (converterRef.current?.paneW ?? textDraft.x) - 140),
+            top: Math.min(Math.max(4, textDraft.y + 12), (converterRef.current?.paneH ?? textDraft.y) - 36),
+          }}
+        >
+          <input
+            autoFocus
+            defaultValue=""
+            placeholder="Text…"
+            className="h-6 w-36 rounded bg-slate-800 px-2 text-xs text-slate-100 outline-none placeholder:text-slate-500"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitTextDrawing((e.target as HTMLInputElement).value);
+              else if (e.key === "Escape") { e.preventDefault(); cancelTextDrawing(); }
+              e.stopPropagation();
+            }}
+            onBlur={(e) => {
+              if ((e.target as HTMLInputElement).value.trim()) commitTextDrawing((e.target as HTMLInputElement).value);
+              else cancelTextDrawing();
+            }}
+          />
+          <button
+            title="Commit (Enter)"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => commitTextDrawing(((e.currentTarget.previousSibling as HTMLInputElement) ?? { value: "" } as HTMLInputElement).value)}
+            className="flex h-6 w-6 items-center justify-center rounded bg-emerald-600/80 text-xs text-white hover:bg-emerald-600"
+          >
+            ✓
+          </button>
+        </div>
+      )}
     </div>
   );
 });

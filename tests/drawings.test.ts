@@ -9,6 +9,7 @@ import {
   extendedToEdge, hitTest, levelsFor, makeDrawing, pointInEllipse, pointInTri,
   rayToEdge, regressionLine, riskReward, isVisibleOnTf, effectiveName,
   FIB_DEFAULT_LEVELS, TOOL_POINT_COUNT, TOOL_LABELS, TEXT_TOOLS, CLICK_COLLECT_TOOLS,
+  reorderDrawing, magnetSnapPrice, magnetSnapTime,
   type Drawing, type DrawingType, type XY,
 } from "../client/src/lib/drawings.ts";
 
@@ -194,4 +195,36 @@ test("attached text / label / extension style fields round-trip", () => {
   assert.equal(d.style.extend, "both");
   assert.equal(d.style.showLabels, true);
   assert.equal(d.style.showTimeLabels, false);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 27 — z-order + magnet snap
+// ---------------------------------------------------------------------------
+test("P27 z-order: forward/backward/front/back reorder the render stack", () => {
+  const mk = (id: string) => ({ id, points: [] });
+  const list = [mk("a"), mk("b"), mk("c")];
+  assert.deepEqual(reorderDrawing(list, "a", "front").map((d) => d.id), ["b", "c", "a"]);
+  assert.deepEqual(reorderDrawing(list, "c", "back").map((d) => d.id), ["c", "a", "b"]);
+  assert.deepEqual(reorderDrawing(list, "b", "forward").map((d) => d.id), ["a", "c", "b"]);
+  assert.deepEqual(reorderDrawing(list, "b", "backward").map((d) => d.id), ["b", "a", "c"]);
+  // unknown id → unchanged; the input list is never mutated
+  assert.deepEqual(reorderDrawing(list, "zz", "front").map((d) => d.id), ["a", "b", "c"]);
+  assert.deepEqual(list.map((d) => d.id), ["a", "b", "c"]);
+});
+
+test("P27 magnet: anchor snaps to the nearest OHLC within the pixel radius", () => {
+  const bar = { open: 100, high: 102, low: 98, close: 101 };
+  // linear scale: 1 unit = 10px
+  const y = (p: number) => 1000 - p * 10;
+  assert.equal(magnetSnapPrice(99.95, bar, y, 12), 100, "0.5 units (5px) from the open → snaps to open");
+  assert.equal(magnetSnapPrice(101.9, bar, y, 12), 102, "1px from the high → snaps to high");
+  assert.equal(magnetSnapPrice(100.5, bar, y, 2), 100.5, "3 units (30px) from every level beyond a 2px radius → stays");
+  assert.equal(magnetSnapPrice(100, null, y, 12), 100, "no bar → untouched");
+  assert.equal(magnetSnapPrice(100, bar, () => null, 12), 100, "unprojectable scale → untouched");
+});
+
+test("P27 magnet: anchor time snaps to the containing bar's open time", () => {
+  assert.equal(magnetSnapTime(1763688034, 60), 1763688000, "34s into a minute → bar open time");
+  assert.equal(magnetSnapTime(1763688034, null), 1763688034, "no tf → untouched");
+  assert.equal(magnetSnapTime(1763241600 + 3 * 86400 + 1800, 604800), 1763241600, "mid-week stamp → Monday bucket");
 });
