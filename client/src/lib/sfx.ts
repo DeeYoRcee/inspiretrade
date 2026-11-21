@@ -22,7 +22,7 @@ function audio(): AudioContext | null {
 }
 
 /** one filtered noise burst — the "thud" of the case rattling */
-function thud(c: AudioContext, at: number, gain = 0.5) {
+function thud(c: AudioContext, at: number, gain = 0.5, out?: AudioNode) {
   const len = 0.09;
   const buf = c.createBuffer(1, Math.ceil(c.sampleRate * len), c.sampleRate);
   const data = buf.getChannelData(0);
@@ -35,13 +35,13 @@ function thud(c: AudioContext, at: number, gain = 0.5) {
   const g = c.createGain();
   g.gain.setValueAtTime(gain, at);
   g.gain.exponentialRampToValueAtTime(0.001, at + len);
-  src.connect(filter).connect(g).connect(c.destination);
+  src.connect(filter).connect(g).connect(out || c.destination);
   src.start(at);
   src.stop(at + len);
 }
 
 /** short metallic tick — one reel item flying past the pointer line */
-function tick(c: AudioContext, at: number, pitch = 1500, gain = 0.12) {
+function tick(c: AudioContext, at: number, pitch = 1500, gain = 0.12, out?: AudioNode) {
   const osc = c.createOscillator();
   const g = c.createGain();
   osc.type = "square";
@@ -49,7 +49,7 @@ function tick(c: AudioContext, at: number, pitch = 1500, gain = 0.12) {
   osc.frequency.exponentialRampToValueAtTime(pitch * 0.55, at + 0.035);
   g.gain.setValueAtTime(gain, at);
   g.gain.exponentialRampToValueAtTime(0.001, at + 0.05);
-  osc.connect(g).connect(c.destination);
+  osc.connect(g).connect(out || c.destination);
   osc.start(at);
   osc.stop(at + 0.06);
 }
@@ -92,6 +92,8 @@ function note(c: AudioContext, at: number, freq: number, dur = 0.32, gain = 0.2,
 const RATTLE_MS = 1300; // SHAKE_MS in CaseOpeningDialog
 const SPIN_MS = 5100; // SPIN_MS in CaseOpeningDialog
 
+let spinBus: GainNode | null = null; // pending reel-sound bus (see caseSpinStop)
+
 /** the case rattles before it pops — five thuds over the shake phase */
 export function caseRattle(): void {
   const c = audio();
@@ -117,6 +119,14 @@ export function casePop(): void {
 export function caseSpin(durationMs = SPIN_MS): void {
   const c = audio();
   if (!c) return;
+  caseSpinStop(); // a fresh spin replaces any leftover bus
+  // every tick is scheduled on the Web Audio timeline up front — routing the
+  // whole reel through a dedicated gain node lets caseSpinStop() silence the
+  // tail when the dialog is closed or skipped mid-spin
+  const bus = c.createGain();
+  bus.gain.value = 1;
+  bus.connect(c.destination);
+  spinBus = bus;
   const t0 = c.currentTime + 0.02;
   const total = durationMs / 1000;
   // ease-out curve for the gaps: 38ms at the start → ~340ms at the end
@@ -124,11 +134,22 @@ export function caseSpin(durationMs = SPIN_MS): void {
   for (let i = 0; t < total - 0.05; i++) {
     const p = i / 42;
     const gap = 0.038 + 0.3 * Math.min(1, p) ** 2.2;
-    tick(c, t0 + t, 1500 - i * 8, 0.1 + 0.04 * Math.min(1, p));
+    tick(c, t0 + t, 1500 - i * 8, 0.1 + 0.04 * Math.min(1, p), bus);
     t += gap;
   }
   // final settle thud when the reel stops
-  thud(c, t0 + total, 0.45);
+  thud(c, t0 + total, 0.45, bus);
+}
+
+/** silence all pending reel-tick sounds (dialog closed / skipped) */
+export function caseSpinStop(): void {
+  if (!spinBus) return;
+  try {
+    const now = spinBus.context.currentTime;
+    spinBus.gain.cancelScheduledValues(now);
+    spinBus.gain.setValueAtTime(0, now);
+  } catch { /* context already closed */ }
+  spinBus = null;
 }
 
 /** winner reveal — arpeggio; mythic gets a longer, richer fanfare */

@@ -6,7 +6,7 @@ import { CASES, FRAGMENTS, RARITY_META, type CaseType, type FragmentDef } from "
 import { FragmentCard, FragmentIcon } from "./FragmentCard";
 import { Gem, Sparkles, Crown } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
-import { casePop, caseRattle, caseReveal, caseSpin } from "@/lib/sfx";
+import { casePop, caseRattle, caseReveal, caseSpin, caseSpinStop } from "@/lib/sfx";
 import { cn } from "@/lib/utils";
 
 const STEP = 120; // px per reel item (w-[112px] + 8px gap)
@@ -97,7 +97,7 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
       window.setTimeout(() => { setStage("reel"); casePop(); caseSpin(SPIN_MS); }, SHAKE_MS),
       window.setTimeout(() => { setStage("result"); caseReveal(result.rarity); }, SHAKE_MS + SPIN_MS + 600),
     ];
-    return () => { timersRef.current.forEach((tid) => window.clearTimeout(tid)); timersRef.current = []; };
+    return () => { timersRef.current.forEach((tid) => window.clearTimeout(tid)); timersRef.current = []; caseSpinStop(); };
   }, [open, result]);
 
   /** Click-to-skip: jump straight to the reveal (the drop is already decided
@@ -106,6 +106,7 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
     if (!open || !result || stage === "result") return;
     timersRef.current.forEach((tid) => window.clearTimeout(tid));
     timersRef.current = [];
+    caseSpinStop();
     setStage("result");
     caseReveal(result.rarity);
   };
@@ -136,7 +137,7 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
   const meta = RARITY_META[result.rarity];
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) { caseSpinStop(); onClose(); } }}>
       <DialogContent className="glass-panel max-w-3xl overflow-hidden border-border/60 p-5 sm:p-6">
         <DialogTitle className="sr-only">{t("caseOpeningTitle")}</DialogTitle>
 
