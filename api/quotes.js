@@ -809,7 +809,7 @@ async function runBackfillStep(req) {
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 5e4);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -860,7 +860,7 @@ async function runBackfillStep(req) {
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 600) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45e3);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 5e4);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -1515,7 +1515,7 @@ var quotes_default = handle(async (req, res) => {
     const gate = rtdb().ref(`config/dukaBackfillAt/${code}`);
     const lastAt = Number((await gate.once("value")).val() || 0);
     const nowMs = Date.now();
-    if (nowMs - lastAt < 9e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((9e4 - (nowMs - lastAt)) / 1e3) });
+    if (nowMs - lastAt < 3e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((3e4 - (nowMs - lastAt)) / 1e3) });
     await gate.set(nowMs);
     const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
     let filesUsed = Number((await usageRef.once("value")).val() || 0);
@@ -1577,14 +1577,15 @@ var quotes_default = handle(async (req, res) => {
     const gateRef = rtdb().ref(`config/metalsBackfillAt/${symbol}/${tf}`);
     const lastAt = Number((await gateRef.once("value")).val() || 0);
     const nowMs = Date.now();
-    if (nowMs - lastAt < 9e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((9e4 - (nowMs - lastAt)) / 1e3) });
+    if (nowMs - lastAt < 3e4) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((3e4 - (nowMs - lastAt)) / 1e3) });
     await gateRef.set(nowMs);
     const step = await runBackfillStep({
       symbol,
       tf,
       months: raw?.months != null ? Number(raw.months) : 240,
       // full genuine Dukascopy depth
-      maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 90
+      maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 240
+      // Phase 28: deeper per step
     });
     return res.json(step);
   }
@@ -2029,7 +2030,7 @@ var quotes_default = handle(async (req, res) => {
     const METALS_FIRST = symbols in SPOT_API_MAP;
     const fxIntraday = !!DUKA_MAP[bareCode] && (INTERVAL_SECONDS[interval] ?? 60) <= 3600;
     const payload = await cachedPayload(barsCache, cacheKey, BARS_FRESH_MS, BARS_STALE_MS, async () => {
-      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday && interval === "1m" ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
+      const chain = METALS_FIRST ? [fromStooq, fromYahoo] : fxIntraday && interval === "1m" ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq] : fxIntraday ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq] : interval === "1d" ? [fromStooq, fromYahoo, fromTwelveData, fromYahooFutures, fromFxStore] : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr = null;
       let staleResult = null;
       const annotateCloseOnly = (r) => {

@@ -447,7 +447,7 @@ const deepHealAt = new Map<string, number>();
 
 export function maybeFireDeepHeal(symbol: string, tf: Timeframe): void {
   const ck = `${symbol}:${tf}`;
-  if (Date.now() - (deepHealAt.get(ck) || 0) < 600000) return;
+  if (Date.now() - (deepHealAt.get(ck) || 0) < 120000) return; // Phase 28: every 2 min
   deepHealAt.set(ck, Date.now());
   if (symbol === "XAUUSD" || symbol === "XAGUSD") {
     authedFetch("/api/quotes?action=backfill-metals", { symbol, tf }).catch(() => { /* best-effort — resume cursor continues later */ });
@@ -960,6 +960,7 @@ class QuotesProvider {
 // Live spot tail — see client/src/lib/spot-tail.ts (pure, unit-tested module).
 // ---------------------------------------------------------------------------
 import { mergeSpotTail, recordSpotTick, mergeSpotSeries, validSpotCandle, type SpotCandle } from "@/lib/spot-tail";
+import { marketHours } from "@shared/market-hours";
 export { mergeSpotTail };
 
 // ---- Phase 22: shared spot ticker (one 1s poll per code, N subscribers) ----
@@ -1068,7 +1069,16 @@ async function spotPoll(code: string): Promise<void> {
     const providerAt = Date.parse(data?.updatedAt || "") || 0;
     if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
     const providerDelaySec = providerAt ? Math.max(0, Math.round((Date.now() - providerAt) / 1000)) : null;
-    if (providerDelaySec != null && providerDelaySec > 600) throw new Error("STALE_SPOT"); // market closed
+    if (providerDelaySec != null && providerDelaySec > 600) {
+      // Phase 27 §4: the provider stamp is minutes/hours old — the market is
+      // CLOSED (weekend FX/metals). The feed is reachable, so the badge state
+      // is "live" with the honest delay (the chart appends "MARKET CLOSED"),
+      // but this is NOT a market update: nothing is recorded, no candle and
+      // no handler sees the frozen price again.
+      e.fails = 0;
+      setSpotState({ state: "live", lastTickAt: Date.now(), providerDelaySec });
+      return;
+    }
     const now = Date.now();
     if (e.lastPrice && price !== e.lastPrice && e.lastChangeAt) {
       e.intervals.push(now - e.lastChangeAt);
@@ -1143,8 +1153,17 @@ function saveLocalSpot(code: string, candles: SpotCandle[]) {
 const spotAnchor = new Map<string, { close: number; at: number }>();
 const SPOT_GLITCH_REJECT_MS = 30 * 60000; // a stale anchor never blocks fresh truth
 
+// Phase 27 §4: spotCodes map back to terminal symbols for the market-hours
+// gate — crypto never flows through this recorder, so the gate only ever
+// pauses FX/metals during closed sessions.
+const SPOT_SYMBOL_OF: Record<string, string> = { XAU: "XAUUSD", XAG: "XAGUSD" };
+
 function recordSpot(code: string, price: number) {
   if (!(price > 0)) return;
+  {
+    const sym = SPOT_SYMBOL_OF[code];
+    if (sym && !marketHours(sym).open) return; // closed market — keep the last valid candle
+  }
   const anchor = spotAnchor.get(code);
   if (anchor && anchor.close > 0 && Date.now() - anchor.at < SPOT_GLITCH_REJECT_MS
     && Math.abs(price / anchor.close - 1) > 0.02) {

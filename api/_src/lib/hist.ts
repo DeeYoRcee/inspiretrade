@@ -351,7 +351,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         // step re-download the same recent ~90 day files (all skipped at write
         // time) so repeated deep-fill runs never got past ~90 days of depth.
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 50000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;
@@ -395,7 +395,7 @@ export async function runBackfillStep(req: BackfillRequest): Promise<BackfillRes
         // continue BELOW the oldest stored day on every subsequent run
         const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
         // walk from two days ago backwards
-        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 90, 600, used, req.deadlineMs ?? 45000);
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 50000);
         const sh = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         const newOldest = walk.oldest ?? state.oldest ?? null;

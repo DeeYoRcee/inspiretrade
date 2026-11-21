@@ -9,6 +9,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { marketHoursInfo } from "@/lib/market-status";
 import { useLanguage } from "@/lib/language-context";
 import { getInstrument } from "@shared/terminal";
 import { SPREAD_PIPS, type OrderKind } from "@shared/trading-engine";
@@ -137,8 +138,28 @@ export function TradingPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayEntry, symbol]);
 
+  // Phase 27 §3: market-session awareness — a 1s tick re-evaluates the
+  // shared authoritative hours; when closed, BUY/SELL/pending creation is
+  // disabled with a banner (reason + next opening in the user's local time
+  // + countdown). Reopening re-enables automatically; the backend guard
+  // stays the authoritative block regardless of what this UI shows.
+  const [mhTick, setMhTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setMhTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const mh = useMemo(() => marketHoursInfo(symbol), [symbol, mhTick]);
+  const marketClosed = !mh.open;
+  const countdown = mh.nextOpenMs != null
+    ? (() => {
+        const left = Math.max(0, mh.nextOpenMs! - Date.now());
+        const hh = Math.floor(left / 3600000), mm = Math.floor((left % 3600000) / 60000), ss = Math.floor((left % 60000) / 1000);
+        return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+      })()
+    : null;
+
   const doSubmit = async () => {
-    if (busy || locked) return;
+    if (busy || locked || marketClosed) return;
     const kind: OrderKind = orderKind;
     const res = await placeOrder({
       symbol, side, lots: lotsNum, kind,
@@ -194,12 +215,31 @@ export function TradingPanel({
               ⚠ SIMULATED — server-side virtual execution, no broker, no real money
             </div>
           )}
+          {marketClosed && (
+            <div className="rounded-lg border border-slate-500/40 bg-slate-800/60 px-2 py-1.5">
+              <p className="text-[11px] font-bold tracking-wide text-slate-200">MARKET CLOSED</p>
+              <p className="mt-0.5 text-[10px] leading-snug text-slate-400">
+                {mh.reason === "weekend"
+                  ? "The market is closed for the weekend."
+                  : mh.reason === "daily-break"
+                    ? "Daily maintenance break (17:00–18:00 New York)."
+                    : mh.reason === "holiday"
+                      ? "Market holiday — today differs from the regular schedule."
+                      : "Trading is unavailable for this instrument at the moment."}
+                {mh.nextOpenMs != null && (
+                  <span className="block font-number text-slate-300">
+                    Reopens {new Date(mh.nextOpenMs).toLocaleTimeString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })} · in {countdown}
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-1.5">
-            <button onClick={() => setSide("buy")} disabled={locked} className={cn("rounded-lg py-1.5 font-bold transition-colors disabled:opacity-40", side === "buy" ? "bg-emerald-500 text-black" : "bg-emerald-500/10 text-emerald-400")}>
+            <button onClick={() => setSide("buy")} disabled={locked || marketClosed} className={cn("rounded-lg py-1.5 font-bold transition-colors disabled:opacity-40", side === "buy" ? "bg-emerald-500 text-black" : "bg-emerald-500/10 text-emerald-400")}>
               <span className="block text-[11px] leading-tight">BUY</span>
               <span className="block font-number text-[10px] leading-tight opacity-80">{ask != null ? ask.toFixed(d) : "—"}</span>
             </button>
-            <button onClick={() => setSide("sell")} disabled={locked} className={cn("rounded-lg py-1.5 font-bold transition-colors disabled:opacity-40", side === "sell" ? "bg-red-500 text-black" : "bg-red-500/10 text-red-400")}>
+            <button onClick={() => setSide("sell")} disabled={locked || marketClosed} className={cn("rounded-lg py-1.5 font-bold transition-colors disabled:opacity-40", side === "sell" ? "bg-red-500 text-black" : "bg-red-500/10 text-red-400")}>
               <span className="block text-[11px] leading-tight">SELL</span>
               <span className="block font-number text-[10px] leading-tight opacity-80">{bid != null ? bid.toFixed(d) : "—"}</span>
             </button>
@@ -210,7 +250,7 @@ export function TradingPanel({
           </p>
           <div className="flex gap-1.5">
             {(["market", "limit", "stop"] as const).map((k) => (
-              <button key={k} onClick={() => setOrderKind(k)} disabled={locked} className={cn("flex-1 rounded-lg border px-2 py-1 text-[11px] font-semibold capitalize disabled:opacity-40", orderKind === k ? "border-emerald-500/50 text-emerald-400" : "border-border/60 text-muted-foreground")}>{k}</button>
+              <button key={k} onClick={() => setOrderKind(k)} disabled={locked || marketClosed} className={cn("flex-1 rounded-lg border px-2 py-1 text-[11px] font-semibold capitalize disabled:opacity-40", orderKind === k ? "border-emerald-500/50 text-emerald-400" : "border-border/60 text-muted-foreground")}>{k}</button>
             ))}
           </div>
           {orderKind !== "market" && (

@@ -394,6 +394,108 @@ var SPOT_PRICE_BANDS = {
   XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
 };
 
+// shared/sessions.ts
+var SESSIONS = [
+  { id: "sydney", city: "Sydney", tz: "Australia/Sydney", flag: "\u{1F1E6}\u{1F1FA}", openMin: 7 * 60, closeMin: 16 * 60 },
+  { id: "tokyo", city: "Tokyo", tz: "Asia/Tokyo", flag: "\u{1F1EF}\u{1F1F5}", openMin: 9 * 60, closeMin: 18 * 60 },
+  { id: "london", city: "London", tz: "Europe/London", flag: "\u{1F1EC}\u{1F1E7}", openMin: 8 * 60, closeMin: 17 * 60 },
+  { id: "newyork", city: "New York", tz: "America/New_York", flag: "\u{1F1FA}\u{1F1F8}", openMin: 8 * 60, closeMin: 17 * 60 }
+];
+var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function tzWallClock(tz, instant) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short"
+  });
+  const parts = dtf.formatToParts(new Date(instant));
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  const h = Number(get("hour")) % 24;
+  return {
+    y: Number(get("year")),
+    mo: Number(get("month")),
+    d: Number(get("day")),
+    h,
+    mi: Number(get("minute")),
+    s: Number(get("second")),
+    weekday: Math.max(0, WEEKDAYS.indexOf(get("weekday")))
+  };
+}
+
+// shared/market-hours.ts
+var HOLIDAYS = {};
+var NY = "America/New_York";
+var FX_OPEN_DOW = 0;
+var FX_OPEN_MIN = 17 * 60;
+var FX_CLOSE_DOW = 5;
+var FX_CLOSE_MIN = 17 * 60;
+var METAL_OPEN_MIN = 18 * 60;
+var METAL_BREAK_FROM = 17 * 60;
+var METAL_BREAK_TO = 18 * 60;
+var INDEX_SESSIONS = {
+  NAS100: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  US30: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  SPX500: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  GER40: { tz: "Europe/Berlin", fromMin: 9 * 60, toMin: 17 * 60 + 30 },
+  UK100: { tz: "Europe/London", fromMin: 8 * 60, toMin: 16 * 60 + 30 }
+};
+function isHoliday(symbol, at) {
+  const days = HOLIDAYS[symbol];
+  if (!days || !days.length) return false;
+  const d = tzWallClock("UTC", at);
+  const iso = `${String(d.y).padStart(4, "0")}-${String(d.mo).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+  return days.includes(iso);
+}
+function fxWindow(inst, at) {
+  const w = tzWallClock(NY, at);
+  const mins = w.h * 60 + w.mi;
+  const metal = inst.assetClass === "metal";
+  if (w.weekday === 6) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_CLOSE_DOW && mins >= FX_CLOSE_MIN) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_OPEN_DOW && mins < (metal ? METAL_OPEN_MIN : FX_OPEN_MIN)) {
+    return { open: false, reason: "weekend" };
+  }
+  if (metal && w.weekday >= 1 && w.weekday <= 4 && mins >= METAL_BREAK_FROM && mins < METAL_BREAK_TO) {
+    return { open: false, reason: "daily-break" };
+  }
+  return { open: true, reason: "open" };
+}
+function windowAt(symbol, inst, at) {
+  if (!inst) return { open: true, reason: "open" };
+  if (inst.assetClass === "crypto") return { open: true, reason: "open" };
+  if (isHoliday(symbol, at)) return { open: false, reason: "holiday" };
+  if (inst.assetClass === "index") {
+    const s = INDEX_SESSIONS[symbol];
+    if (!s) return { open: true, reason: "open" };
+    const w = tzWallClock(s.tz, at);
+    const mins = w.h * 60 + w.mi;
+    const open = w.weekday >= 1 && w.weekday <= 5 && mins >= s.fromMin && mins < s.toMin;
+    return { open, reason: open ? "open" : "weekend" };
+  }
+  if (inst.assetClass === "forex" || inst.assetClass === "metal") return fxWindow(inst, at);
+  return { open: true, reason: "open" };
+}
+function marketHours(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  const w = windowAt(symbol, inst, at);
+  return { ...w, nextOpenMs: w.open ? null : nextOpen(symbol, at) };
+}
+function nextOpen(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  if (windowAt(symbol, inst, at).open) return null;
+  const step = 15 * 6e4;
+  for (let t = Math.ceil(at / step) * step, n = 0; n < 9 * 96; n++, t += step) {
+    if (windowAt(symbol, inst, t).open) return t;
+  }
+  return null;
+}
+
 // shared/trading-engine.ts
 var SPREAD_PIPS = {
   XAUUSD: 2.5,
@@ -1069,6 +1171,11 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
   for (const o of closed) {
     recordClose(state, tx, uid, aid, o);
   }
+  result.fills = result.fills.filter((f) => {
+    const order = state.orders.find((o) => o.id === f.orderId);
+    if (!order) return false;
+    return marketHours(order.symbol).open;
+  });
   for (const f of result.fills) {
     const order = state.orders.find((o) => o.id === f.orderId);
     if (!order) continue;
@@ -1396,6 +1503,10 @@ async function placeOrder(uid, req) {
   const spec = getInstrument(req.symbol || "");
   if (!spec) throw new HttpError(400, "BAD_SYMBOL", `Unknown instrument: ${req.symbol}`);
   if (req.side !== "buy" && req.side !== "sell") throw new HttpError(400, "BAD_SIDE", "side must be buy or sell");
+  const mh = marketHours(spec.symbol);
+  if (!mh.open) {
+    throw new HttpError(422, "MARKET_CLOSED", "MARKET_CLOSED: Trading is unavailable for this instrument at the moment.");
+  }
   const kind = req.kind === "limit" || req.kind === "stop" ? req.kind : "market";
   const dbRef = db();
   const accRef = accountsCol(uid).doc(req.accountId);

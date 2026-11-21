@@ -914,6 +914,28 @@ var SPOT_PRICE_BANDS = {
   XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
 };
 
+// shared/sessions.ts
+var SESSIONS = [
+  { id: "sydney", city: "Sydney", tz: "Australia/Sydney", flag: "\u{1F1E6}\u{1F1FA}", openMin: 7 * 60, closeMin: 16 * 60 },
+  { id: "tokyo", city: "Tokyo", tz: "Asia/Tokyo", flag: "\u{1F1EF}\u{1F1F5}", openMin: 9 * 60, closeMin: 18 * 60 },
+  { id: "london", city: "London", tz: "Europe/London", flag: "\u{1F1EC}\u{1F1E7}", openMin: 8 * 60, closeMin: 17 * 60 },
+  { id: "newyork", city: "New York", tz: "America/New_York", flag: "\u{1F1FA}\u{1F1F8}", openMin: 8 * 60, closeMin: 17 * 60 }
+];
+
+// shared/market-hours.ts
+var FX_OPEN_MIN = 17 * 60;
+var FX_CLOSE_MIN = 17 * 60;
+var METAL_OPEN_MIN = 18 * 60;
+var METAL_BREAK_FROM = 17 * 60;
+var METAL_BREAK_TO = 18 * 60;
+var INDEX_SESSIONS = {
+  NAS100: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  US30: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  SPX500: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  GER40: { tz: "Europe/Berlin", fromMin: 9 * 60, toMin: 17 * 60 + 30 },
+  UK100: { tz: "Europe/London", fromMin: 8 * 60, toMin: 16 * 60 + 30 }
+};
+
 // shared/trading-engine.ts
 var SPREAD_PIPS = {
   XAUUSD: 2.5,

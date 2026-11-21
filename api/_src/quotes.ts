@@ -662,7 +662,7 @@ export default handle(async (req, res) => {
     const gate = rtdb().ref(`config/dukaBackfillAt/${code}`);
     const lastAt = Number((await gate.once("value")).val() || 0);
     const nowMs = Date.now();
-    if (nowMs - lastAt < 90000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((90000 - (nowMs - lastAt)) / 1000) });
+    if (nowMs - lastAt < 30000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((30000 - (nowMs - lastAt)) / 1000) });
     await gate.set(nowMs);
     const usageRef = rtdb().ref(`config/dukaUsage/${new Date().toISOString().slice(0, 10)}`);
     let filesUsed = Number((await usageRef.once("value")).val() || 0);
@@ -736,13 +736,13 @@ export default handle(async (req, res) => {
     const gateRef = rtdb().ref(`config/metalsBackfillAt/${symbol}/${tf}`);
     const lastAt = Number((await gateRef.once("value")).val() || 0);
     const nowMs = Date.now();
-    if (nowMs - lastAt < 90000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((90000 - (nowMs - lastAt)) / 1000) });
+    if (nowMs - lastAt < 30000) return res.json({ ok: false, reason: "cooldown", retryInSec: Math.ceil((30000 - (nowMs - lastAt)) / 1000) });
     await gateRef.set(nowMs);
     const step = await runBackfillStep({
       symbol,
       tf,
       months: raw?.months != null ? Number(raw.months) : 240, // full genuine Dukascopy depth
-      maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 90,
+      maxDays: raw?.maxDays != null ? Number(raw.maxDays) : 240, // Phase 28: deeper per step
     });
     return res.json(step as BackfillResult);
   }
@@ -1289,13 +1289,20 @@ export default handle(async (req, res) => {
       // The store (genuine full-tick OHLC ∪ the live TrueFX recorder the 2s
       // poll feeds) is now the PRIMARY source for FX 1m; Yahoo only answers
       // when the store is thin/stale (quiet pair, dead session).
+      // Phase 28: DAILY bars must come from stooq FIRST for FX/metals —
+      // Yahoo's *X dailies carry erratic bid-sampled wicks and Sunday
+      // duplicate rows whose 22:00-UTC stamps fold into the wrong day bucket
+      // (the "wrong-looking candles on EURUSD 1d" defect). stooq daily CSV is
+      // clean date-stamped genuine OHLC; Yahoo remains the fallback.
       const chain = METALS_FIRST
         ? [fromStooq, fromYahoo]
         : fxIntraday && interval === "1m"
           ? [fromFxStore, fromYahoo, fromTwelveData, fromYahooFutures, fromStooq]
           : fxIntraday
             ? [fromYahoo, fromFxStore, fromTwelveData, fromYahooFutures, fromStooq]
-            : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
+            : interval === "1d"
+              ? [fromStooq, fromYahoo, fromTwelveData, fromYahooFutures, fromFxStore]
+              : [fromYahoo, fromTwelveData, fromYahooFutures, fromStooq, fromFxStore];
       let firstErr: unknown = null;
       // staleness-aware chain (Phase 18): a source can SUCCEED while serving
       // day-old bars (Yahoo's cash-index feed does exactly that for ^NDX from

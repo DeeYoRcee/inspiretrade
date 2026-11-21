@@ -11,6 +11,7 @@
 import { HttpError, firestore, rtdb } from "../lib/firebase";
 import { getPlatformSettings, writeAdminAlert } from "../lib/platform";
 import { getInstrument } from "../../../shared/terminal";
+import { marketHours } from "../../../shared/market-hours";
 import {
   DEFAULT_LEVERAGE, MIN_LOTS, MAX_LOTS, computeMetrics, evaluateAccount, exitPriceFor,
   positionPnlUsd, validateNewOrder, dayKey, evaluatePropRules, swapForPosition, nightsHeld,
@@ -220,6 +221,14 @@ function applyEvaluationTx(
   }
 
   // ---- pending fills -------------------------------------------------------
+  // Phase 27 §6: a pending order NEVER triggers against a frozen closed-market
+  // quote (weekend FX/metals). The order stays armed and fills at the reopen —
+  // no false executions while the provider has not actually updated.
+  result.fills = result.fills.filter((f: any) => {
+    const order = state.orders.find((o) => o.id === f.orderId);
+    if (!order) return false;
+    return marketHours(order.symbol).open;
+  });
   for (const f of result.fills) {
     const order = state.orders.find((o) => o.id === f.orderId);
     if (!order) continue;
@@ -584,6 +593,15 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
   const spec = getInstrument(req.symbol || "");
   if (!spec) throw new HttpError(400, "BAD_SYMBOL", `Unknown instrument: ${req.symbol}`);
   if (req.side !== "buy" && req.side !== "sell") throw new HttpError(400, "BAD_SIDE", "side must be buy or sell");
+  // Phase 27 §2: authoritative market-session gate — the BACKEND blocks
+  // market AND pending orders for closed instruments (weekend FX/metals),
+  // independent of any frontend state. No order, no balance change, no
+  // margin reservation is created when this rejects. Cancellation of
+  // pending orders stays allowed (see cancelOrder — deliberately not gated).
+  const mh = marketHours(spec.symbol);
+  if (!mh.open) {
+    throw new HttpError(422, "MARKET_CLOSED", "MARKET_CLOSED: Trading is unavailable for this instrument at the moment.");
+  }
   const kind: OrderKind = req.kind === "limit" || req.kind === "stop" ? req.kind : "market";
   const dbRef = db();
   const accRef = accountsCol(uid).doc(req.accountId);
