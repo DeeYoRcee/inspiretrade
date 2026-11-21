@@ -58,6 +58,13 @@ export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSe
   { id: "classic", label: "Classic Green", s: { bgColor: "#0b1220", gridColor: "#16213a", crosshairColor: "rgba(224,229,237,0.35)", upColor: "#22c55e", downColor: "#ef4444" } },
   { id: "midnight", label: "Midnight", s: { bgColor: "#05070d", gridColor: "#101827", crosshairColor: "rgba(148,163,184,0.4)", upColor: "#26a69a", downColor: "#ef5350" } },
   { id: "contrast", label: "High Contrast", s: { bgColor: "#000000", gridColor: "#22262e", crosshairColor: "rgba(255,255,255,0.5)", upColor: "#4ade80", downColor: "#f87171" } },
+  // Phase 34b — the five minimal TradingView-style themes from the reference
+  // collection: pure black background, one accent bullish color, gray bearish.
+  { id: "neon-lime", label: "Neon Lime", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#9afc41", downColor: "#9c9c9c" } },
+  { id: "dusty-rose", label: "Dusty Rose", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#dd8ca0", downColor: "#9c9c9c" } },
+  { id: "amber", label: "Amber", s: { bgColor: "#0c0c0c", gridColor: "#171717", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#ffd63d", downColor: "#9c9c9c" } },
+  { id: "steel-blue", label: "Steel Blue", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#738bae", downColor: "#9c9c9c" } },
+  { id: "deep-forest", label: "Deep Forest", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(219,219,219,0.4)", upColor: "#16302b", downColor: "#dbdbdb" } },
 ];
 
 export function SettingsDialog({

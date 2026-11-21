@@ -1703,6 +1703,10 @@ export function PriceChart({
           return;
         }
       }
+      // Any Ctrl/Alt/Meta combo (Ctrl+R, Ctrl+Shift+R reload, Ctrl+S, Ctrl+T…)
+      // stays NATIVE — the plain-letter drawing shortcuts must never swallow
+      // browser shortcuts (r used to activate the rect tool on Ctrl+Shift+R).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const map: Record<string, DrawingType> = { t: "trend", h: "hline", v: "vline", r: "rect", f: "fib-retracement", x: "text", p: "channel", e: "fib-extension", i: "extended", m: "measure" };
       const k = map[e.key.toLowerCase()];
       if (k) { setActiveTool(k); e.preventDefault(); }

@@ -13,6 +13,13 @@ import { useIsAdmin } from "@/hooks/use-admin";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
+/** Phase 34b: compact balance — 12 340 → 12.3K, 1 250 000 → 1.3M. */
+function compactINSP(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M`;
+  if (n >= 10_000) return `${(n / 1_000).toFixed(n % 1_000 ? 1 : 0)}K`;
+  return String(n);
+}
+
 export function Navbar() {
   const { logout, user } = useAuth();
   const { theme, setTheme } = useTheme();
@@ -59,10 +66,12 @@ export function Navbar() {
           {user && <div className="order-2 ms-auto flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-card/60 p-1 sm:gap-1 xl:order-3">
             {economy && (
               <>
-                <button onClick={() => navigate("/wallet")} className="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold text-amber-400 transition-colors hover:bg-amber-400/10 sm:text-sm" aria-label={t("inspireBalance")}>
-                  <Coins className="h-4 w-4" />
-                  <span className="font-number">{economy.coins}</span>
-                  <span className="hidden sm:inline">INSP</span>
+                {/* Phase 34b: compact capsule — the raw balance pushed the
+                    header pill wider on every claim; icon + compact number
+                    (full value in the tooltip / wallet page) keeps it fixed */}
+                <button onClick={() => navigate("/wallet")} className="flex h-8 items-center gap-1 rounded-full px-2 text-xs font-bold text-amber-400 transition-colors hover:bg-amber-400/10" aria-label={t("inspireBalance")} title={`${economy.coins.toLocaleString("en-US")} INSP`}>
+                  <Coins className="h-3.5 w-3.5 shrink-0" />
+                  <span className="font-number whitespace-nowrap tabular-nums">{compactINSP(economy.coins)}</span>
                 </button>
               </>
             )}

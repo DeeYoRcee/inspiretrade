@@ -5,13 +5,15 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
-  Bell, Camera, ChevronDown, Eye, EyeOff, LayoutTemplate, Maximize2, Plus, Redo2, RotateCcw, Rewind,
+  Bell, Camera, ChevronDown, Eye, EyeOff, LayoutTemplate, Maximize2, Palette, Plus, Redo2, RotateCcw, Rewind,
   Search, Settings, Undo2, X, SlidersHorizontal, Waves,
 } from "lucide-react";
 import type { ChartType } from "@/lib/chart-types";
 import type { DrawingType } from "@/lib/drawings";
 import { INDICATOR_CATALOG, indicatorLabel, type IndicatorConfig, type IndicatorType } from "@/lib/indicators-config";
 import { cn } from "@/lib/utils";
+import { APPEARANCE_PRESETS, type ChartSettings } from "@/components/terminal/chart/dialogs";
+import { updateInstrumentSettings } from "@/lib/instrument-settings";
 
 
 
@@ -48,16 +50,31 @@ export function ChartToolbar({
   const indRef = useRef<HTMLDivElement | null>(null);
   const [typeOpen, setTypeOpen] = useState(false);
   const typeRef = useRef<HTMLDivElement | null>(null);
+  // Phase 34b: chart theme dropdown (minimal preset collection)
+  const [themeOpen, setThemeOpen] = useState(false);
+  const themeRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!indOpen && !typeOpen) return;
+    if (!indOpen && !typeOpen && !themeOpen) return;
     const close = (e: MouseEvent) => {
       if (indRef.current && !indRef.current.contains(e.target as Node)) setIndOpen(false);
       if (typeRef.current && !typeRef.current.contains(e.target as Node)) setTypeOpen(false);
+      if (themeRef.current && !themeRef.current.contains(e.target as Node)) setThemeOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, [indOpen, typeOpen]);
+  }, [indOpen, typeOpen, themeOpen]);
+
+  /** Apply an appearance preset globally; per-instrument color overrides are
+   * cleared so the theme is never masked by an instrument's saved colors. */
+  const applyPreset = (s: Partial<ChartSettings>) => {
+    try {
+      const next = { ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}"), ...s };
+      localStorage.setItem("it_chart_settings", JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: next }));
+    } catch { /* private mode */ }
+    updateInstrumentSettings(symbol, { upColor: undefined, downColor: undefined });
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 bg-slate-900/80 px-1.5 py-1">
@@ -152,8 +169,28 @@ export function ChartToolbar({
       <ToolButton title="Undo drawing (Ctrl+Z)" onClick={onUndo} disabled={!canUndo}><Undo2 className="h-3.5 w-3.5" /></ToolButton>
       <ToolButton title="Redo drawing (Ctrl+Y)" onClick={onRedo} disabled={!canRedo}><Redo2 className="h-3.5 w-3.5" /></ToolButton>
 
-      {/* right cluster */}
+      {/* right cluster — Phase 34b: chart theme dropdown leads it */}
       <div className="ml-auto flex items-center gap-0.5">
+        <div ref={themeRef} className="relative">
+          <ToolButton title="Chart theme" onClick={() => setThemeOpen((v) => !v)}><Palette className="h-3.5 w-3.5" /></ToolButton>
+          {themeOpen && (
+            <div className="absolute right-0 top-7 z-40 w-44 rounded-lg border border-slate-700 bg-slate-900 p-1 shadow-xl">
+              {APPEARANCE_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { applyPreset(p.s); setThemeOpen(false); }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-slate-300 hover:bg-slate-800"
+                >
+                  <span className="flex h-4 w-7 shrink-0 overflow-hidden rounded-sm border border-slate-700" style={{ background: p.s.bgColor }}>
+                    <span className="h-full w-1/2" style={{ background: p.s.upColor }} />
+                    <span className="h-full w-1/2" style={{ background: p.s.downColor }} />
+                  </span>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <ToolButton title="Screenshot (PNG)" onClick={onScreenshot}><Camera className="h-3.5 w-3.5" /></ToolButton>
         <ToolButton title="Chart settings" onClick={onOpenSettings}><Settings className="h-3.5 w-3.5" /></ToolButton>
         <ToolButton title="Chart layouts" onClick={onOpenLayouts}><LayoutTemplate className="h-3.5 w-3.5" /></ToolButton>

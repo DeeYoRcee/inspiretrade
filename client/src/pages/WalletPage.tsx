@@ -360,11 +360,14 @@ export default function WalletPage() {
           </Card>
         </motion.div>
 
-      {/* Referral — moved to the bottom (Phase 32) + milestone rewards */}
+      </div>
+
+      {/* Referral — Phase 34b: full-width page-level section. It used to sit
+          INSIDE the deposit/withdraw grid above, which squeezed both cards
+          into one half-width column on desktop (looked stacked and broken). */}
       <div className="grid gap-6 lg:grid-cols-2">
         <ReferralCard />
         <ReferralMilestones />
-      </div>
       </div>
 
       {/* History */}

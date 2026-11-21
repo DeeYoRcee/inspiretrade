@@ -145,8 +145,9 @@ export default function RewardsPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Daily claim — 7-day cycle, day 7 = Gold Case (streak flame intentionally not shown) */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+        {/* Daily claim — spans both rows on desktop: the left column is one
+            tall card, Cases + VIP stack on the right */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="lg:row-span-2">
           <Card className="glass-panel h-full border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-lg"><Gift className="h-5 w-5 text-primary" />{t("dailyReward")}</CardTitle>
@@ -282,8 +283,9 @@ export default function RewardsPage() {
           </Card>
         </motion.div>
 
-        {/* VIP Reward — Phase 32: second 7-day track, premium members only (owner included) */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.06 }}>
+        {/* VIP Reward — Phase 34b: moved to the RIGHT column (under Cases)
+            to fill the empty area the user pointed at */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.06 }} className="lg:col-start-2">
           <Card className={cn("glass-panel h-full border-emerald-500/25", !isVip && "opacity-80")}>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center justify-between gap-2 text-lg">
