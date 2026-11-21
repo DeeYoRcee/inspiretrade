@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShardRow } from "../shared/feed-validation";
+import { parseShardRow } from "../shared/feed-validation.ts";
 
 const BAR = [1795267200, 2671.4, 2680.2, 2668.9, 2675.5, 12.34];
 
