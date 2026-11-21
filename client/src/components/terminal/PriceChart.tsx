@@ -929,6 +929,9 @@ export function PriceChart({
             // structural change (prepend / big resync) — full rebuild
             barsRef.current = bars;
             applyBarsToSeries("set");
+            // Phase 30 §5: the requested range follows the series when deep
+            // history extends it (All / 5Y keep showing the full depth)
+            if (lastRangeKeyRef.current) queueMicrotask(() => applyRange(lastRangeKeyRef.current!));
           } else {
             barsRef.current = upsertLocal(prev, lastBar);
             applyBarsToSeries("update");
@@ -1177,7 +1180,16 @@ export function PriceChart({
   }, [scaleMode]);
 
   // ---- historical range shortcuts ---------------------------------------------
+  // Phase 30 §5: remember the requested range so it RE-APPLIES when deeper
+  // history lands in the background (metals deep layers load async), and
+  // wake the feed again when the loaded series does not reach the requested
+  // window yet.
+  const lastRangeKeyRef = useRef<string | null>(null);
+  const rangeRefireAtRef = useRef(0);
+  const tfForRangeRef = useRef(timeframe);
+  tfForRangeRef.current = timeframe;
   const applyRange = useCallback((key: string) => {
+    lastRangeKeyRef.current = key;
     const ts = chartRef.current?.timeScale();
     const data = barsRef.current;
     if (!ts || !data.length) return;
@@ -1191,7 +1203,19 @@ export function PriceChart({
       const days: Record<string, number> = { "1d": 1, "5d": 5, "1mo": 30, "3mo": 91, "6mo": 182, "1y": 365, "5y": 1825 };
       cutoff = now - (days[key] ?? 30) * 86400;
     }
-    if (data[0].time > cutoff) { ts.fitContent(); ts.scrollToRealTime(); return; } // history doesn't reach that far — show everything we have
+    if (data[0].time > cutoff) {
+      // history doesn't reach that far — show everything we have, and (once
+      // per 3s) re-fire the loader so background deep layers (metals) or a
+      // fresh fetch can extend the series; the structural-change branch
+      // re-applies this range when the older candles arrive.
+      ts.fitContent();
+      ts.scrollToRealTime();
+      if (Date.now() - rangeRefireAtRef.current > 3000) {
+        rangeRefireAtRef.current = Date.now();
+        void loadFeed(symbolRef.current, tfForRangeRef.current).catch(() => { /* transient — the next click retries */ });
+      }
+      return;
+    }
     let lo = 0;
     let hi = data.length - 1;
     while (lo < hi) { const mid = (lo + hi) >> 1; if (data[mid].time >= cutoff) hi = mid; else lo = mid + 1; }

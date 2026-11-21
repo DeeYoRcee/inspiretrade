@@ -851,6 +851,10 @@ class QuotesProvider {
     this.loadedAt.set(key, Date.now());
     this.source.set(key, tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`);
     this.identity.set(key, "spot");
+    // Phase 30 §5: a re-load (e.g. the range buttons asking for deeper
+    // history) must repaint a LIVE chart even though the caller may still
+    // be between loadFeed and subscribe — notify active subscribers here.
+    this.listeners.get(key)?.forEach((c) => c({ bars: fast, lastBar: fast[fast.length - 1], isRealtime: false }));
     void this.deepenSpotHistory(symbol, tf, key, code, now, m1, sec);
     return fast;
   }

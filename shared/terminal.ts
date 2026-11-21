@@ -138,7 +138,9 @@ export const YAHOO_INTERVAL: Partial<Record<Timeframe, { range: string; interval
   "1h": { range: "3mo", interval: "60m" },
   "2h": { range: "3mo", interval: "60m" },
   "4h": { range: "1y", interval: "60m" },
-  "1d": { range: "2y", interval: "1d" },
+  // Phase 30 §5: 5y — the range buttons expose 5Y/All on the daily chart;
+  // Yahoo daily handles it fine (~1250 bars) and stooq supplements deeper
+  "1d": { range: "5y", interval: "1d" },
   "1W": { range: "5y", interval: "1wk" },
   "1M": { range: "10y", interval: "1mo" },
 };
