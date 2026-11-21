@@ -218,7 +218,7 @@ async function fetchSpot(code: string): Promise<number | null> {
 
 import {
   validateBars, alignAndDedupe, spotMergeGuard, bucketStart, minuteIslandFilter,
-  flatShare, repairOutlierExtremes,
+  flatShare, repairOutlierExtremes, staleRunFilter,
   type RawBar,
 } from "../../shared/feed-validation";
 import { aggregateBars, SPOT_PRICE_BANDS } from "../../shared/terminal";
@@ -1234,8 +1234,11 @@ export default handle(async (req, res) => {
     // minutes written BEFORE the guards keep their poisoned extremes — a
     // foreign-price wick must not fold into higher timeframes (max() is
     // monotonic: one bad high rides into H1/H4/D1 forever).
-    const repairedM1 = repairOutlierExtremes(deduped.bars).bars;
-    const m1 = repairedM1;
+    // Phase 29: frozen-provider runs (the TrueFX recorder's dot-plateaus —
+    // flat dotted lines on the M1/M15 charts) go through the same shared
+    // filter the metals recorder uses.
+    const stale = staleRunFilter(repairOutlierExtremes(deduped.bars).bars);
+    const m1 = stale.bars;
     if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
     const newest = bars[bars.length - 1].time;

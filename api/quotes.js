@@ -265,6 +265,71 @@ function repairOutlierExtremes(bars, minBars = 5) {
   }
   return { bars: out, repairedHigh, repairedLow };
 }
+function staleRunFilter(bars, opts) {
+  const minRunSec = opts?.minRunSec ?? 45 * 60;
+  const flatPct = opts?.flatPct ?? 5e-4;
+  const stepPct = opts?.stepPct ?? 1e-3;
+  const confirmSec = opts?.confirmSec ?? 30 * 60;
+  const sorted = [...bars].sort((a, b) => a.time - b.time);
+  const ranges = [];
+  let rejected = 0;
+  const n = sorted.length;
+  if (n < 8) return { bars: sorted, rejected, ranges };
+  const drop = /* @__PURE__ */ new Set();
+  let i = 1;
+  while (i < n) {
+    const stepIn = sorted[i - 1].close > 0 ? Math.abs(sorted[i].close / sorted[i - 1].close - 1) : 0;
+    const rngIn = sorted[i].close > 0 ? (sorted[i].high - sorted[i].low) / sorted[i].close : 0;
+    if (stepIn > flatPct || rngIn > flatPct) {
+      i++;
+      continue;
+    }
+    const start = i;
+    let j = i + 1;
+    while (j < n) {
+      const prev = sorted[j - 1];
+      const cur = sorted[j];
+      const step = prev.close > 0 ? Math.abs(cur.close / prev.close - 1) : 0;
+      const rng = cur.close > 0 ? (cur.high - cur.low) / cur.close : 0;
+      if (step > flatPct || rng > flatPct) break;
+      j++;
+    }
+    const runSec = j - 1 > start ? sorted[j - 1].time - sorted[start].time : 0;
+    if (runSec >= minRunSec && j < n) {
+      const run = sorted.slice(start, j);
+      const runMean = run.reduce((s, x) => s + x.close, 0) / run.length;
+      const exitStep = sorted[j - 1].close > 0 ? Math.abs(sorted[j].close / sorted[j - 1].close - 1) : 0;
+      let aliveBefore = false;
+      for (let k = start; k > 0 && sorted[start].time - sorted[k - 1].time <= 3600; k--) {
+        const a = sorted[k - 1].close;
+        const b = sorted[k].close;
+        if (a > 0 && Math.abs(b / a - 1) > flatPct * 2) {
+          aliveBefore = true;
+          break;
+        }
+      }
+      const band = runMean * flatPct;
+      let returned = false;
+      for (let k = j; k < n && sorted[k].time - sorted[j - 1].time <= confirmSec; k++) {
+        if (Math.abs(sorted[k].close - runMean) <= band) {
+          returned = true;
+          break;
+        }
+      }
+      const postShift = runMean > 0 ? Math.abs(sorted[n - 1].close / runMean - 1) : 0;
+      if (aliveBefore && exitStep >= stepPct && !returned && postShift >= stepPct) {
+        for (let k = start; k < j; k++) drop.add(k);
+        rejected += run.length;
+        ranges.push({ from: run[0].time, to: run[run.length - 1].time });
+        i = j + 1;
+        continue;
+      }
+    }
+    i = j > i ? j + 1 : i + 1;
+  }
+  if (!rejected) return { bars: sorted, rejected, ranges };
+  return { bars: sorted.filter((_, k) => !drop.has(k)), rejected, ranges };
+}
 
 // shared/terminal.ts
 var INSTRUMENTS = [
@@ -1937,8 +2002,8 @@ var quotes_default = handle(async (req, res) => {
     const island = minuteIslandFilter(raw);
     const checked = validateBars(island.bars);
     const deduped = alignAndDedupe(checked.bars, 60);
-    const repairedM1 = repairOutlierExtremes(deduped.bars).bars;
-    const m1 = repairedM1;
+    const stale = staleRunFilter(repairOutlierExtremes(deduped.bars).bars);
+    const m1 = stale.bars;
     if (!m1.length) throw new Error("FX_STORE_EMPTY_AFTER_VALIDATE");
     const bars = sec === 60 ? m1 : aggregateBars(m1, sec / 60);
     const newest = bars[bars.length - 1].time;

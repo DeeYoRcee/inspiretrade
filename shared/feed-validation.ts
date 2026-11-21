@@ -414,3 +414,110 @@ export function repairOutlierExtremes(bars: RawBar[], minBars = 5): OutlierRepai
   }
   return { bars: out, repairedHigh, repairedLow };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 29 — "frozen provider" run filter (the XAUUSD 1H/1M plateaus).
+//
+// REAL-WORLD FAILURE (verified 2026-11-21, user screenshots): gold-api froze
+// at one level with a FRESH stamp for hours (a 3875 plateau on the 1H chart,
+// a whole-day dot band on 1M). The Phase 20 island filter can't catch this
+// shape: the provider froze AT the true level and the market LEFT — the run
+// never "returns" to its anchor, which is that filter's core condition.
+//
+// The frozen run's shape (recorded-dot data): every bar near-zero range AND
+// every per-bar step near-zero (the provider publishes one constant price),
+// the run is LONG (≥ minRunSec — a real market never sits perfectly still
+// that long), and it ENDS with a single-minute STEP (≥ stepPct) after which
+// the price never comes back to the run's level within confirmSec. A smooth
+// dot-drift day never produces the exit step, a provider-OHLC series never
+// produces the flat run — both pass untouched. Rejecting the run leaves an
+// honest gap where the provider lied, instead of a flat line that never
+// happened.
+// ---------------------------------------------------------------------------
+
+export interface StaleRunResult {
+  bars: RawBar[];
+  /** bars dropped as frozen-provider runs */
+  rejected: number;
+  /** [from, to] epoch-second ranges of every dropped run — diagnostics */
+  ranges: { from: number; to: number }[];
+}
+
+export interface StaleRunOpts {
+  /** minimum run duration in seconds to qualify (default 45 min) */
+  minRunSec?: number;
+  /** per-bar range AND per-bar step bound that keeps a run "flat" (default 0.05%) */
+  flatPct?: number;
+  /** single-minute exit step that ends the run (default 0.1%) */
+  stepPct?: number;
+  /** after the exit step, the price must stay away this long (default 30 min) */
+  confirmSec?: number;
+}
+
+export function staleRunFilter(bars: RawBar[], opts?: StaleRunOpts): StaleRunResult {
+  const minRunSec = opts?.minRunSec ?? 45 * 60;
+  const flatPct = opts?.flatPct ?? 0.0005;
+  const stepPct = opts?.stepPct ?? 0.001;
+  const confirmSec = opts?.confirmSec ?? 30 * 60;
+  const sorted = [...bars].sort((a, b) => a.time - b.time);
+  const ranges: { from: number; to: number }[] = [];
+  let rejected = 0;
+  const n = sorted.length;
+  if (n < 8) return { bars: sorted, rejected, ranges };
+  const drop = new Set<number>();
+  let i = 1;
+  while (i < n) {
+    // A run starts at i only if i is itself flat (its STEP-IN from the
+    // previous bar and its own range are ≤ flatPct) — a moving bar that
+    // merely precedes the freeze is genuine data and stays in the chart.
+    const stepIn = sorted[i - 1].close > 0 ? Math.abs(sorted[i].close / sorted[i - 1].close - 1) : 0;
+    const rngIn = sorted[i].close > 0 ? (sorted[i].high - sorted[i].low) / sorted[i].close : 0;
+    if (stepIn > flatPct || rngIn > flatPct) { i++; continue; }
+    const start = i;
+    let j = i + 1;
+    while (j < n) {
+      const prev = sorted[j - 1];
+      const cur = sorted[j];
+      const step = prev.close > 0 ? Math.abs(cur.close / prev.close - 1) : 0;
+      const rng = cur.close > 0 ? (cur.high - cur.low) / cur.close : 0;
+      if (step > flatPct || rng > flatPct) break;
+      j++;
+    }
+    const runSec = j - 1 > start ? sorted[j - 1].time - sorted[start].time : 0;
+
+    if (runSec >= minRunSec && j < n) {
+      const run = sorted.slice(start, j);
+      const runMean = run.reduce((s, x) => s + x.close, 0) / run.length;
+      // the exit STEP that ends the run
+      const exitStep = sorted[j - 1].close > 0
+        ? Math.abs(sorted[j].close / sorted[j - 1].close - 1)
+        : 0;
+      // the market must have been ALIVE shortly before the freeze (a real
+      // market moves around a genuine quiet stretch; a frozen feed replaces
+      // a moving one) — some pre-run step within 60 min > 2×flatPct
+      let aliveBefore = false;
+      for (let k = start; k > 0 && sorted[start].time - sorted[k - 1].time <= 3600; k--) {
+        const a = sorted[k - 1].close;
+        const b = sorted[k].close;
+        if (a > 0 && Math.abs(b / a - 1) > flatPct * 2) { aliveBefore = true; break; }
+      }
+      // the price must NOT return to the run's level within the confirm window
+      const band = runMean * flatPct;
+      let returned = false;
+      for (let k = j; k < n && sorted[k].time - sorted[j - 1].time <= confirmSec; k++) {
+        if (Math.abs(sorted[k].close - runMean) <= band) { returned = true; break; }
+      }
+      const postShift = runMean > 0 ? Math.abs(sorted[n - 1].close / runMean - 1) : 0;
+      if (aliveBefore && exitStep >= stepPct && !returned && postShift >= stepPct) {
+        for (let k = start; k < j; k++) drop.add(k);
+        rejected += run.length;
+        ranges.push({ from: run[0].time, to: run[run.length - 1].time });
+        i = j + 1;
+        continue;
+      }
+    }
+    i = j > i ? j + 1 : i + 1;
+  }
+  if (!rejected) return { bars: sorted, rejected, ranges };
+  return { bars: sorted.filter((_, k) => !drop.has(k)), rejected, ranges };
+}

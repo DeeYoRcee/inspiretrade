@@ -15,7 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  repairOutlierExtremes, bucketStart, type RawBar,
+  repairOutlierExtremes, staleRunFilter, bucketStart, type RawBar,
 } from "../shared/feed-validation.ts";
 import { parseTrueFxRow, TRUEFX_BIG_FIGURE_RE } from "../api/_src/lib/truefx.ts";
 
@@ -182,4 +182,70 @@ test("P28 layer priority: later layers win per bucket without duplication", () =
   const merged = [...byTime.values()].sort((a, b) => a.time - b.time);
   assert.equal(merged.length, 2, "conflicting timestamps collapse into one bar");
   assert.equal(merged[1].open, 2.1, "the later layer wins the bucket");
+});
+
+
+// ---------------------------------------------------------------------------
+// Phase 29 — frozen-provider run filter (the 1H/1M flat plateaus)
+// ---------------------------------------------------------------------------
+
+// helper: one recorded minute (dot candle — O=H=L=C, the normal recorder
+// output when gold-api publishes fewer than one distinct price per minute)
+const dot = (t: number, price: number): RawBar => ({ time: t, open: price, high: price, low: price, close: price });
+
+test("P29 stale-run: the freeze-and-left plateau (3875/3533 defect) is rejected", () => {
+  const bars: RawBar[] = [];
+  let t = 0;
+  // 20 moving minutes (the market is alive — steps 0.1-0.3%)
+  let px = 3550;
+  for (let k = 0; k < 20; k++) { px *= 1 + (k % 2 ? 0.002 : -0.0015); bars.push(dot(t, px)); t += 60; }
+  // 60 minutes FROZEN at one level (gold-api stuck, fresh stamp)
+  const frozen = px;
+  for (let k = 0; k < 60; k++) { bars.push(dot(t, frozen)); t += 60; }
+  // exit step +0.17%, never returns within 30+ min
+  const live = frozen * 1.0017;
+  for (let k = 0; k < 40; k++) { bars.push(dot(t, live)); t += 60; }
+  const r = staleRunFilter(bars);
+  assert.equal(r.rejected, 60, "the whole frozen run is dropped");
+  assert.equal(r.ranges.length, 1);
+  assert.equal(r.bars.length, bars.length - 60);
+  // the moving bars and the live tail survive
+  assert.equal(r.bars[0].close, bars[0].close);
+  assert.equal(r.bars[r.bars.length - 1].close, live);
+});
+
+test("P29 stale-run: smooth recorded-dot drift is NEVER rejected", () => {
+  const bars: RawBar[] = [];
+  let t = 0;
+  let px = 3530;
+  for (let k = 0; k < 200; k++) { px *= 1 + 0.0003; bars.push(dot(t, px)); t += 60; } // drift ≤ flatPct
+  const r = staleRunFilter(bars);
+  assert.equal(r.rejected, 0, "no exit step, no aliveness — nothing to reject");
+});
+
+test("P29 stale-run: provider-OHLC minutes (real ranges) never match the flat run", () => {
+  const bars: RawBar[] = [];
+  let t = 0;
+  let px = 1.095;
+  for (let k = 0; k < 150; k++) {
+    px *= 1 + (k % 5 === 0 ? 0.0012 : 0.0001);
+    bars.push({ time: t, open: px, high: px * 1.0006, low: px * 0.9994, close: px * (1 + (k % 3 - 1) * 0.0002) });
+    t += 60;
+  }
+  const r = staleRunFilter(bars);
+  assert.equal(r.rejected, 0);
+});
+
+test("P29 stale-run: a run whose level is revisited within the confirm window is kept", () => {
+  const bars: RawBar[] = [];
+  let t = 0;
+  let px = 100;
+  for (let k = 0; k < 20; k++) { px *= 1 + 0.003; bars.push(dot(t, px)); t += 60; }
+  const frozen = px;
+  for (let k = 0; k < 50; k++) { bars.push(dot(t, frozen)); t += 60; }
+  const up = frozen * 1.002;
+  for (let k = 0; k < 10; k++) { bars.push(dot(t, up)); t += 60; }       // exit step
+  for (let k = 0; k < 40; k++) { bars.push(dot(t, frozen)); t += 60; }   // RETURNS to the level
+  const r = staleRunFilter(bars);
+  assert.equal(r.rejected, 0, "a revisited level is a real market, not a frozen feed");
 });
