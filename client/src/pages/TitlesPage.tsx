@@ -71,7 +71,9 @@ export function titlesForProfile(profile: {
   if (profile.ceo) out.push(TITLE_DEFS[0]);
   if (profile.isPremium || profile.premiumPlan) out.push(TITLE_DEFS[1]);
   const held = profile.usernames ? Object.keys(profile.usernames as Record<string, unknown>).length : 0;
-  if (held > 0) out.push(TITLE_DEFS[3]);
+  // Phase 33: find by id — TITLE_DEFS[3] broke when the Verified title was removed
+  const collector = TITLE_DEFS.find((tt) => tt.id === "collector");
+  if (held > 0 && collector) out.push(collector);
   // owner-granted custom titles (profile.titles) render as neutral gold chips
   void profile.titles;
   return out;

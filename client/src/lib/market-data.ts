@@ -893,7 +893,10 @@ class QuotesProvider {
     // history) must repaint a LIVE chart even though the caller may still
     // be between loadFeed and subscribe — notify active subscribers here.
     this.listeners.get(key)?.forEach((c) => c({ bars: fast, lastBar: fast[fast.length - 1], isRealtime: false }));
-    void this.deepenSpotHistory(symbol, tf, key, code, now, m1, sec);
+    // Phase 33: keep the promise — the chart awaits it for the first-visit repaint
+    const deep = this.deepenSpotHistory(symbol, tf, key, code, now, m1, sec);
+    this.deepPending.set(key, deep);
+    void deep.catch(() => { /* deep layers are best-effort */ });
     return fast;
   }
 
@@ -903,6 +906,18 @@ class QuotesProvider {
    * day shards → server-folded recorded store → the recorded aggregate.
    * Nothing fabricated; every layer passed validateBars on both sides.
    */
+  /** Phase 33: in-flight deep merges per symbol:tf — the chart awaits them
+   * so the FIRST visit repaints the full history without a tf round-trip. */
+  private deepPending = new Map<string, Promise<void>>();
+
+  whenDeep(symbol: string, tf: Timeframe): Promise<void> {
+    return this.deepPending.get(`${symbol}:${tf}`) ?? Promise.resolve();
+  }
+
+  snapshotBars(symbol: string, tf: Timeframe): Bar[] | undefined {
+    return this.history.get(`${symbol}:${tf}`);
+  }
+
   private async deepenSpotHistory(
     symbol: string, tf: Timeframe, key: string, code: string,
     now: number, m1: Bar[], sec: number,
@@ -913,7 +928,9 @@ class QuotesProvider {
       // Phase 29: minute window 45 → 65 days — matches the spot-history serve
       // window (payload class already accepted there), so once the Duka
       // backfill deepens the shards the chart actually REQUESTS them
-      const histWinDays = sec >= 86400 ? 365 : sec >= 3600 ? 90 : 65;
+      // Phase 33: 90/65-day windows stopped at the store's first month while
+      // the shared 1m store reaches months deeper — request the full depth.
+      const histWinDays = sec >= 86400 ? 365 : 200;
       const [hist, serverAgg, stooqDaily] = await Promise.all([
         fetchHistRange(symbol, sec >= 3600 ? tf : ("1m" as Timeframe), now - histWinDays * 86400, now)
           .catch(() => ({ bars: [] as Bar[], note: "" })),
@@ -963,6 +980,18 @@ class QuotesProvider {
           target.set(t, ex ? foldPair(ex, b, t) : { ...b, time: t });
         }
         final = [...target.values()].sort((a, b) => a.time - b.time);
+      } else if (sec >= 86400) {
+        // Phase 33 BUG FIX: the daily class previously DROPPED stooqDaily —
+        // it was fetched but never merged, so D1 stopped at the store start
+        // while W1 (which folds stooq) reached years back. Fold every daily
+        // layer onto one UTC-day anchor, deepest source first, recorded wins.
+        const dailyByTime = new Map<number, Bar>();
+        for (const b of [...stooqDaily, ...deepBars, ...serverAgg, ...recAgg]) {
+          const t = bucketStart(b.time, 86400);
+          const ex = dailyByTime.get(t);
+          dailyByTime.set(t, ex ? foldPair(ex, b, t) : { ...b, time: t });
+        }
+        final = repairOutlierExtremes([...dailyByTime.values()].sort((a, b) => a.time - b.time)).bars;
       } else {
         // hourly class: hist shards → server-folded store → recorded
         // aggregate (later wins; stooq has no genuine metals intraday)
@@ -1051,7 +1080,7 @@ async function loadServerAggCached(code: string, tfSec: number, now: number): Pr
     const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}&tf=${tfSec}`);
     const out: Bar[] = [];
     if (res?.ok && Array.isArray(res.bars)) {
-      const win = tfSec >= 86400 ? 400 : 130;
+      const win = tfSec >= 86400 ? 400 : 200;
       for (const b of res.bars as any[]) {
         const t = Number(b?.time);
         const o = Number(b?.open), h = Number(b?.high), l = Number(b?.low), c = Number(b?.close);
@@ -1300,6 +1329,18 @@ export function subscribeSpot(cb: () => void): () => void {
 
 export const binanceProvider = new BinanceProvider();
 export const quotesProvider = new QuotesProvider();
+
+/** Phase 33: resolves when the background deep-history merge for this
+ * symbol:timeframe has settled (immediately if none is running). */
+export function quotesWhenDeep(symbol: string, tf: Timeframe): Promise<void> {
+  return quotesProvider.whenDeep(symbol, tf);
+}
+
+/** Phase 33: current merged history for symbol:timeframe (undefined if the
+ * provider has never loaded it — the chart uses this after whenDeep). */
+export function quotesSnapshotBars(symbol: string, tf: Timeframe): Bar[] | undefined {
+  return quotesProvider.snapshotBars(symbol, tf);
+}
 
 /** Phase 24 D3: chart scroll-back persists at the provider level (see
  * QuotesProvider.prependHistory) — exposed without leaking the instance. */

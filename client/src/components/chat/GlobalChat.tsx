@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Crown, MessageCircle, Send, Trash2, X } from "lucide-react";
+import { usePublicProfile } from "@/hooks/use-public-profile";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/lib/language-context";
@@ -27,6 +28,55 @@ interface ChatMessage {
 
 const MAX_LEN = 300;
 const COOLDOWN_MS = 2000;
+
+/** Resolve `media:{hash}` ids (and pass through URLs / data URLs) to a src. */
+function mediaSrc(v: string | null | undefined): string | null {
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  const m = /^media:([a-f0-9]{8,64})$/.exec(v);
+  if (m) return `/api/admin?action=media-get&id=${m[1]}`;
+  return v;
+}
+
+/**
+ * Phase 33: avatar circle for a chat message. CEO/VIP senders show their REAL
+ * profile photo or looping avatar video (from the public profile snapshot) —
+ * the crown/star is only the fallback when they have no media set.
+ */
+function ChatAvatar({ m, onOpen }: { m: ChatMessage; onOpen: () => void }) {
+  const isSpecial = !!(m.ceo || m.vip) && !!m.username;
+  const { data: pub } = usePublicProfile(isSpecial ? m.username! : "");
+  const videoSrc = mediaSrc(isSpecial ? pub?.avatarVideo : null);
+  const photoSrc = mediaSrc(isSpecial ? pub?.avatar : null);
+  return (
+    <button
+      onClick={onOpen}
+      className={cn(
+        "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-[11px] font-bold text-white",
+        m.ceo
+          ? "bg-gradient-to-br from-red-500 to-red-700 text-white ring-1 ring-red-300/50"
+          : m.vip
+            ? "bg-gradient-to-br from-amber-400 to-yellow-600 text-black"
+            : "",
+        m.username && "cursor-pointer hover:opacity-85",
+      )}
+      style={m.ceo || m.vip ? undefined : { backgroundColor: uidColor(m.uid) }}
+      title={m.username ? `@${m.username}` : undefined}
+    >
+      {videoSrc ? (
+        <video src={videoSrc} autoPlay loop muted playsInline preload="metadata" className="h-full w-full object-cover" />
+      ) : photoSrc ? (
+        <img src={photoSrc} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+      ) : m.ceo ? (
+        <Crown className="h-3.5 w-3.5" />
+      ) : m.vip ? (
+        "★"
+      ) : (
+        (m.name || "?").replace("@", "").slice(0, 2).toUpperCase()
+      )}
+    </button>
+  );
+}
 
 /** Small deterministic color per uid for the avatar circle. */
 function uidColor(uid: string): string {
@@ -178,22 +228,7 @@ export function GlobalChat() {
             )}
             {messages.map((m) => (
               <div key={m.id} className={cn("group flex gap-2", m.uid === user.uid && "flex-row-reverse")}>
-                <button
-                  onClick={() => m.username && navigate(`/@${m.username}`)}
-                  className={cn(
-                    "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white",
-                    m.ceo
-                      ? "bg-gradient-to-br from-red-500 to-red-700 text-white ring-1 ring-red-300/50"
-                      : m.vip
-                        ? "bg-gradient-to-br from-amber-400 to-yellow-600 text-black"
-                        : "",
-                    m.username && "cursor-pointer hover:opacity-85",
-                  )}
-                  style={m.ceo || m.vip ? undefined : { backgroundColor: uidColor(m.uid) }}
-                  title={m.username ? `@${m.username}` : undefined}
-                >
-                  {m.ceo ? <Crown className="h-3.5 w-3.5" /> : m.vip ? "★" : (m.name || "?").replace("@", "").slice(0, 2).toUpperCase()}
-                </button>
+                <ChatAvatar m={m} onOpen={() => m.username && navigate(`/@${m.username}`)} />
                 <div className={cn("min-w-0 max-w-[75%]", m.uid === user.uid && "text-right")}>
                   <div className={cn("flex items-center gap-1.5", m.uid === user.uid && "flex-row-reverse")}>
                     {m.ceo ? (

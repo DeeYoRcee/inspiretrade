@@ -169,7 +169,7 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
             </span>
             {profile.winRate && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-emerald-300">
-                <span className="font-number">{profile.winRate.total > 0 ? `${profile.winRate.rate.toFixed(0)}%` : "—"}</span>
+                <span className="font-number">{profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) ? `${profile.winRate.rate.toFixed(0)}%` : "—"}</span>
                 <span className="text-[11px] font-normal text-white/55">{t("winRate")}</span>
               </span>
             )}
@@ -196,7 +196,7 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
           <section className="grid grid-cols-3 gap-3">
             <div className="rounded-2xl border border-border/60 bg-background/45 p-3.5 text-center">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("publicProfileProfitFactor")}</p>
-              <p className="mt-1 text-lg font-bold">{stats.profitFactor === null ? "—" : stats.profitFactor.toFixed(2)}</p>
+              <p className="mt-1 text-lg font-bold">{stats.profitFactor != null && Number.isFinite(stats.profitFactor) ? stats.profitFactor.toFixed(2) : "—"}</p>
             </div>
             <div className="rounded-2xl border border-border/60 bg-background/45 p-3.5 text-center">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("publicProfileDrawdown")}</p>
@@ -207,7 +207,7 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
             <div className="rounded-2xl border border-border/60 bg-background/45 p-3.5 text-center">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("publicProfileWinRate")}</p>
               <p className="mt-1 text-lg font-bold text-emerald-300">
-                {profile.winRate && profile.winRate.total > 0 ? `${profile.winRate.rate.toFixed(1)}%` : "—"}
+                {profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) ? `${profile.winRate.rate.toFixed(1)}%` : "—"}
               </p>
             </div>
           </section>

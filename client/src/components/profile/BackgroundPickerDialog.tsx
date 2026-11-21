@@ -39,6 +39,8 @@ export function BackgroundPickerDialog({
   const { t } = useLanguage();
   const { toast } = useToast();
   const isAdmin = useIsAdmin();
+  // Phase 33: VIP members get the file upload too (server allows admin or VIP)
+  const isVip = isAdmin || !!(profile?.isPremium || (profile as unknown as { ceo?: boolean })?.ceo);
   const [busy, setBusy] = useState<string | null>(null);
   const [customUrl, setCustomUrl] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -138,9 +140,9 @@ export function BackgroundPickerDialog({
 
         {/* owner-only: upload a real video/image FILE (stored content-addressed
             server-side, served publicly) — the old link-only flow stays too */}
-        {isAdmin && (
+        {(isAdmin || isVip) && (
           <div className="mt-4 space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-            <div className="text-xs font-bold uppercase tracking-widest text-amber-400">Owner — upload video / image</div>
+            <div className="text-xs font-bold uppercase tracking-widest text-amber-400">{isAdmin ? "Owner" : "VIP"} — upload video / image</div>
             <p className="text-[11px] text-muted-foreground">
               Pick an MP4 video or image (up to 6 MB) — it uploads to the site and becomes your profile background. No link needed.
             </p>

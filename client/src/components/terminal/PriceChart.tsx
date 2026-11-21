@@ -28,7 +28,7 @@ import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/ter
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
-import { spotMeasuredUpdateSec, quotesHistOlder, quotesPrependHistory } from "@/lib/market-data";
+import { spotMeasuredUpdateSec, quotesHistOlder, quotesPrependHistory, quotesWhenDeep, quotesSnapshotBars } from "@/lib/market-data";
 import { marketStatus } from "@/lib/market-status";
 import { authedFetch } from "@/lib/api";
 import { priceBusUpdate } from "@/lib/price-store";
@@ -889,6 +889,32 @@ export function PriceChart({
           }
         } catch { /* race — fallback scroll */ }
         setLoaded({ status, message });
+
+        // Phase 33: FIRST-VISIT FULL HISTORY — the deep layers (hist shards ∪
+        // store fold ∪ stooq archive) merge in the background. On a cold first
+        // visit that merge could land before the subscription attached (or its
+        // repaint was swallowed on a weekend with no live ticks), leaving the
+        // short fast window on screen — the "switch tf away and back"
+        // workaround. Await the merge and repaint once; idempotent when the
+        // provider has no pending deep load (crypto / replay paths).
+        void (async () => {
+          try { await quotesWhenDeep(symbol, timeframe); } catch { return; }
+          if (disposed) return;
+          const deep = quotesSnapshotBars(symbol, timeframe);
+          if (!deep || !deep.length || deep.length <= barsRef.current.length) return;
+          barsRef.current = deep;
+          applyBarsToSeries("set");
+          applyMarkers();
+          updateLegend(null);
+          updateBidAsk(deep[deep.length - 1].close);
+          canvasRef.current?.redraw();
+          try {
+            chartRef.current?.timeScale().setVisibleLogicalRange({
+              from: Math.max(0, deep.length - 130),
+              to: deep.length + 8,
+            });
+          } catch { /* keep the current viewport */ }
+        })();
 
         unsub = subscribeFeed(symbol, timeframe, ({ bars, lastBar }) => {
           const prev = barsRef.current;

@@ -140,14 +140,7 @@ export default function RewardsPage() {
           <Badge variant="outline" className="gap-1.5 rounded-full border-border/60 bg-card/60 px-3 py-1.5 text-sm font-bold text-amber-400">
             <Coins className="h-4 w-4" /> {coins} INSP
           </Badge>
-          <Badge variant="outline" className="gap-1.5 rounded-full border-border/60 bg-card/60 px-3 py-1.5 text-sm font-bold">
-            <PackageOpen className="h-4 w-4 text-primary" /> {cases}
-          </Badge>
-          {goldCases > 0 && (
-            <Badge variant="outline" className="gap-1.5 rounded-full border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm font-bold text-amber-400">
-              <Crown className="h-4 w-4" /> {goldCases}
-            </Badge>
-          )}
+          {/* Phase 33: only the INSP balance stays here — per-case counts live in the Cases card below */}
         </div>
       </div>
 
@@ -304,7 +297,8 @@ export default function RewardsPage() {
             <CardContent className="space-y-4">
               {isVip ? (
                 <>
-                  <div className="grid grid-cols-4 gap-2">
+                  {/* Phase 33: one row of seven so the card never wraps */}
+                  <div className="grid grid-cols-7 gap-1.5">
                     {Array.from({ length: REWARD_CYCLE_DAYS }, (_, i) => i + 1).map((day) => {
                       const isTradingDay = day === REWARD_CYCLE_DAYS;
                       const vipDay = claimedToday ? cycleDayOf(Math.max(1, Number(economy?.vipStreak) || 1)) : cycleDayOf((Number(economy?.vipStreak) || 0) + 1);
@@ -314,7 +308,7 @@ export default function RewardsPage() {
                         <div
                           key={`vip-${day}`}
                           className={cn(
-                            "relative flex flex-col items-center justify-center gap-1 rounded-xl border px-1 py-3",
+                            "relative flex flex-col items-center justify-center gap-1 rounded-xl border px-0.5 py-2",
                             isTradingDay ? "border-emerald-500/50" : "border-amber-500/40",
                             vipClaimed && "bg-muted/40 opacity-55",
                             vipNext && (isTradingDay ? "bg-emerald-500/15 shadow-[0_0_22px_-4px_rgba(16,185,129,0.7)]" : "bg-amber-500/15"),
@@ -322,15 +316,15 @@ export default function RewardsPage() {
                           )}
                         >
                           {vipClaimed ? (
-                            <span className={cn("flex h-9 w-9 items-center justify-center rounded-full", isTradingDay ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-400")}>
+                            <span className={cn("flex h-7 w-7 items-center justify-center rounded-full", isTradingDay ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-400")}>
                               <Check className="h-5 w-5" />
                             </span>
                           ) : isTradingDay ? (
-                            <Briefcase className="h-8 w-8 text-emerald-400" />
+                            <Briefcase className="h-6 w-6 text-emerald-400" />
                           ) : (
-                            <Crown className={cn("h-8 w-8", vipNext ? "text-amber-400" : "text-amber-400/60")} />
+                            <Crown className={cn("h-6 w-6", vipNext ? "text-amber-400" : "text-amber-400/60")} />
                           )}
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("dayN").replace("{n}", String(day))}</span>
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{t("dayN").replace("{n}", String(day))}</span>
                           <span className={cn("max-w-full truncate px-1 text-[9px] font-semibold leading-tight", isTradingDay ? "text-emerald-400" : "text-amber-400")}>
                             {isTradingDay ? "Trading Case" : t("goldCase")}
                           </span>

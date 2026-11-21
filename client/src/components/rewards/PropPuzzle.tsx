@@ -112,6 +112,7 @@ export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzl
   const { t } = useLanguage();
   const caseDef = CASES[set];
   const isGold = set === "gold";
+  const isTrading = set === "trading"; // Phase 33: the $25,000 puzzle has its own labels
   const fragmentList = caseDef.fragments;
   const unlocked = fragmentList.map((f) => (inventory?.[f.id] || 0) >= 1);
   const unlockedCount = unlocked.filter(Boolean).length;
@@ -125,21 +126,23 @@ export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzl
         <div>
           <h3 className={cn("flex items-center gap-2 font-semibold", isGold && "text-amber-400")}>
             {isGold ? <Crown className="h-4 w-4 text-amber-400" /> : <Building2 className="h-4 w-4 text-amber-400" />}
-            {isGold ? t("goldPuzzleTitle") : t("puzzleTitle")}
+            {isTrading ? t("tradingPuzzleTitle") : isGold ? t("goldPuzzleTitle") : t("puzzleTitle")}
           </h3>
-          <p className="text-xs text-muted-foreground">{isGold ? t("goldPuzzleSubtitle") : t("puzzleSubtitle")}</p>
+          <p className="text-xs text-muted-foreground">{isTrading ? t("tradingPuzzleSubtitle") : isGold ? t("goldPuzzleSubtitle") : t("puzzleSubtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
           {/* which prop account this puzzle builds: 5k$ or 10k$ */}
           <span
             className={cn(
               "rounded-full border px-3 py-1 text-xs font-bold",
-              isGold
-                ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-                : "border-primary/40 bg-primary/10 text-primary",
+              isTrading
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                : isGold
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                  : "border-primary/40 bg-primary/10 text-primary",
             )}
           >
-            {isGold ? "10k$" : "5k$"} {t("propAccount")}
+            {isTrading ? "25k$" : isGold ? "10k$" : "5k$"} {t("propAccount")}
           </span>
           <span
             className={cn(
@@ -258,7 +261,7 @@ export function PropPuzzle({ inventory, set, onComplete, completing }: PropPuzzl
               className="w-full max-w-md rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 font-bold text-black shadow-[0_0_24px_-4px_rgba(245,158,11,0.6)] hover:from-amber-400 hover:to-yellow-300"
             >
               <Crown className="mr-2 h-5 w-5" />
-              {completing ? t("combining") : isGold ? t("claimGoldPropAccount") : t("claimPropAccount")}
+              {completing ? t("combining") : isTrading ? t("claimTradingPropAccount") : isGold ? t("claimGoldPropAccount") : t("claimPropAccount")}
             </Button>
             <p className="text-xs font-medium text-amber-400">{t("puzzleComplete")}</p>
           </>

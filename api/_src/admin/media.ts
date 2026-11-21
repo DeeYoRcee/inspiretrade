@@ -14,7 +14,7 @@
  *   and write-access is admin-only).
  */
 import { createHash } from "crypto";
-import { handle, assertPost, requireAdmin, rtdb } from "../lib/firebase";
+import { handle, assertPost, requireAdmin, requireUser, rtdb, HttpError } from "../lib/firebase";
 
 const MAX_BYTES = 6 * 1024 * 1024;
 const MIME_ALLOWED = new Set(["video/mp4", "image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -24,10 +24,28 @@ function safeParse(raw: string): any {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-/** Admin upload — content-addressed, idempotent (same bytes → same hash). */
+/**
+ * Phase 33: profile media upload — the OWNER (admin) or a VIP member.
+ * VIP check mirrors rewards/claim.ts: profile.isPremium / premiumPlan / ceo
+ * or the admins/{uid} flag.
+ */
 export async function mediaUpload(req: any, res: any): Promise<void> {
-  await requireAdmin(req);
   assertPost(req);
+  let uploader: string = "admin";
+  try {
+    const admin = await requireAdmin(req);
+    uploader = String(admin?.uid || "admin");
+  } catch {
+    const user = await requireUser(req);
+    const [profile, adminFlag] = await Promise.all([
+      rtdb().ref(`users/${user.uid}/profile`).get(),
+      rtdb().ref(`admins/${user.uid}`).get(),
+    ]);
+    const p = profile.val() || {};
+    const isVip = p.isPremium === true || !!p.premiumPlan || p.ceo === true || adminFlag.val() === true;
+    if (!isVip) throw new HttpError(403, "VIP_ONLY", "Profile media upload is a VIP feature");
+    uploader = user.uid;
+  }
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   const data = String(body?.data || "");
   const m = DATAURL_RE.exec(data);
@@ -42,7 +60,7 @@ export async function mediaUpload(req: any, res: any): Promise<void> {
   await rtdb().ref(`publicMediaIndex/${hash}`).set({
     mime,
     bytes: buf.length,
-    by: String(body?.by || ""),
+    by: uploader,
     at: Date.now(),
   });
   res.status(200).json({ ok: true, id: hash, mime, bytes: buf.length });

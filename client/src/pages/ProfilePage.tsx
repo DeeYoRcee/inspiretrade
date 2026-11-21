@@ -20,6 +20,7 @@ import { useEconomy, useInventory } from "@/hooks/use-economy";
 import { ALL_FRAGMENTS } from "@shared/fragments";
 import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
+import { authedFetch } from "@/lib/api";
 import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createPublicProfileSnapshot, createDefaultPublicProfileSettings } from "@/lib/public-profile";
@@ -191,8 +192,18 @@ export default function ProfilePage() {
   const gradient = useMemo(() => gradientFor(user?.uid || displayName), [user?.uid, displayName]);
   const initials = useMemo(() => initialsOf(displayName), [displayName]);
   const avatarSrc = profile?.avatar || user?.photoURL || null;
-  // uploaded looping avatar video (Telegram-style) — wins over everything
-  const avatarVideoSrc = profile?.avatarVideo || null;
+  // uploaded looping avatar video (Telegram-style) — wins over everything.
+  // Phase 33: `media:{hash}` ids (VIP uploads) resolve to the public media endpoint.
+  const avatarVideoSrc = useMemo(() => {
+    const v = profile?.avatarVideo;
+    if (!v) return null;
+    if (/^https?:\/\//i.test(v)) return v;
+    const m = /^media:([a-f0-9]{8,64})$/.exec(v);
+    if (m) return `/api/admin?action=media-get&id=${m[1]}`;
+    return v; // legacy data URL
+  }, [profile?.avatarVideo]);
+  // Phase 33: video avatars are a VIP feature (server-enforced on media-upload)
+  const canUploadVideo = !!(profile?.ceo || profile?.isPremium || profile?.premiumPlan);
   // Telegram-collectible style: every handle this account holds
   const heldUsernames = useMemo(
     () => Object.entries(profile?.usernames || {})
@@ -260,7 +271,11 @@ export default function ProfilePage() {
     // Telegram-style avatar: the SAME picker accepts a photo OR a short
     // looping video — the video plays muted inside the avatar circle.
     if (file.type.startsWith("video/")) {
-      if (file.size > 4 * 1024 * 1024) {
+      if (!canUploadVideo) {
+        toast({ title: t("profileVideoVipOnly"), variant: "destructive" });
+        return;
+      }
+      if (file.size > 6 * 1024 * 1024) {
         toast({ title: t("fileTooLarge"), description: t("profileVideoTooLarge"), variant: "destructive" });
         return;
       }
@@ -272,8 +287,17 @@ export default function ProfilePage() {
           reader.onerror = () => reject(new Error("read-failed"));
           reader.readAsDataURL(file);
         });
-        // avatar and avatarVideo are mutually exclusive — a video replaces the photo
-        await saveUserProfile(user.uid, { avatarVideo: dataUrl, avatar: null });
+        // avatar and avatarVideo are mutually exclusive — a video replaces the photo.
+        // Phase 33: CEO/VIP upload content-addressed (media:{hash}) — RTDB rules
+        // cap avatarVideo at 300 chars, so data URLs only work for tiny files.
+        let stored: string = dataUrl;
+        try {
+          const res = await authedFetch<{ ok?: boolean; id?: string; error?: string }>("/api/admin?action=media-upload", { data: dataUrl });
+          if (res?.ok && res.id) stored = `media:${res.id}`;
+        } catch {
+          // not VIP-shaped / network — fall back to the direct write (rules decide)
+        }
+        await saveUserProfile(user.uid, { avatarVideo: stored, avatar: null });
         queryClient.invalidateQueries({ queryKey: ["userProfile", user.uid] });
         await republishIfEnabled();
         toast({ title: t("profileSaved") });
@@ -784,7 +808,7 @@ export default function ProfilePage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,video/*"
+              accept={canUploadVideo ? "image/*,video/mp4,image/gif" : "image/*"}
               className="hidden"
               onChange={(e) => {
                 onAvatarPicked(e.target.files?.[0]);

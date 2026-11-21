@@ -408,8 +408,22 @@ function safeParse7(raw) {
   }
 }
 async function mediaUpload(req, res) {
-  await requireAdmin(req);
   assertPost(req);
+  let uploader = "admin";
+  try {
+    const admin2 = await requireAdmin(req);
+    uploader = String(admin2?.uid || "admin");
+  } catch {
+    const user = await requireUser(req);
+    const [profile, adminFlag] = await Promise.all([
+      rtdb().ref(`users/${user.uid}/profile`).get(),
+      rtdb().ref(`admins/${user.uid}`).get()
+    ]);
+    const p = profile.val() || {};
+    const isVip = p.isPremium === true || !!p.premiumPlan || p.ceo === true || adminFlag.val() === true;
+    if (!isVip) throw new HttpError(403, "VIP_ONLY", "Profile media upload is a VIP feature");
+    uploader = user.uid;
+  }
   const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
   const data = String(body?.data || "");
   const m = DATAURL_RE.exec(data);
@@ -424,7 +438,7 @@ async function mediaUpload(req, res) {
   await rtdb().ref(`publicMediaIndex/${hash}`).set({
     mime,
     bytes: buf.length,
-    by: String(body?.by || ""),
+    by: uploader,
     at: Date.now()
   });
   res.status(200).json({ ok: true, id: hash, mime, bytes: buf.length });

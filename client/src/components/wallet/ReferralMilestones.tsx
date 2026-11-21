@@ -65,55 +65,60 @@ export function ReferralMilestones() {
           One-time rewards for every referral milestone — invited so far: <span className="font-semibold text-foreground">{invited}</span>
         </p>
       </CardHeader>
-      <CardContent className="space-y-2">
-        {tiers.map((tier, i) => {
-          const reached = invited >= tier.invited;
-          const isClaimed = claimed.has(i);
-          return (
-            <div
-              key={tier.invited}
-              className={cn(
-                "flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 transition-all",
-                isClaimed ? "border-success/40 bg-success/5"
-                  : reached ? "border-primary/40 bg-primary/5"
-                  : "border-border/50 bg-card/40",
-              )}
-            >
-              <div className="flex items-center gap-3 min-w-0">
+      <CardContent className="space-y-2.5">
+        {/* Phase 33: compact — five tiles in one row on desktop, 2-3 on mobile */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          {tiers.map((tier, i) => {
+            const reached = invited >= tier.invited;
+            const isClaimed = claimed.has(i);
+            return (
+              <div
+                key={tier.invited}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center transition-all",
+                  isClaimed ? "border-success/40 bg-success/5"
+                    : reached ? "border-primary/40 bg-primary/5"
+                    : "border-border/50 bg-card/40",
+                )}
+              >
                 <div className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-number text-sm font-bold",
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border font-number text-sm font-bold",
                   isClaimed ? "border-success/50 text-success" : reached ? "border-primary/50 text-primary" : "border-border/60 text-muted-foreground",
                 )}>
                   {tier.invited}
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1 flex-wrap text-xs font-medium">
-                    <span className="inline-flex items-center gap-1"><Users className="h-3 w-3 text-muted-foreground" />{tier.invited} referrals</span>
-                    <span className="text-muted-foreground">→</span>
-                    {tier.cases > 0 && <span className="inline-flex items-center gap-1"><Package className="h-3 w-3 text-sky-400" />{tier.cases} InspireCase</span>}
-                    {tier.goldCases > 0 && <span className="inline-flex items-center gap-1"><Gem className="h-3 w-3 text-amber-400" />{tier.goldCases} GoldCase</span>}
-                    {tier.insp > 0 && <span className="inline-flex items-center gap-1"><Coins className="h-3 w-3 text-yellow-500" />{tier.insp} INSP</span>}
-                  </div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">referrals</p>
+                <div className="flex flex-wrap items-center justify-center gap-1">
+                  {tier.cases > 0 && (
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold text-sky-400">
+                      <Package className="h-2.5 w-2.5" />{tier.cases}
+                    </span>
+                  )}
+                  {tier.goldCases > 0 && (
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">
+                      <Gem className="h-2.5 w-2.5" />{tier.goldCases}
+                    </span>
+                  )}
+                  {tier.insp > 0 && (
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-bold text-yellow-500">
+                      <Coins className="h-2.5 w-2.5" />{tier.insp}
+                    </span>
+                  )}
                 </div>
+                {isClaimed ? (
+                  <Badge variant="outline" className="gap-1 border-success/50 text-success">
+                    <CheckCircle2 className="h-3 w-3" /> Claimed
+                  </Badge>
+                ) : (
+                  <Button size="sm" className="h-7 px-3 text-xs" disabled={!reached || claim.isPending} onClick={() => claim.mutate(i)}>
+                    {claim.isPending && claim.variables === i ? "…" : "Claim"}
+                  </Button>
+                )}
               </div>
-              {isClaimed ? (
-                <Badge variant="outline" className="gap-1 border-success/50 text-success shrink-0">
-                  <CheckCircle2 className="h-3 w-3" /> Claimed
-                </Badge>
-              ) : (
-                <Button
-                  size="sm"
-                  className="shrink-0 h-8"
-                  disabled={!reached || claim.isPending}
-                  onClick={() => claim.mutate(i)}
-                >
-                  {claim.isPending && claim.variables === i ? "…" : "Claim"}
-                </Button>
-              )}
-            </div>
-          );
-        })}
-        <p className="text-[11px] text-muted-foreground pt-1">
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
           Share your referral link (left) — when friends join with it, the counter grows and milestones unlock.
         </p>
       </CardContent>
