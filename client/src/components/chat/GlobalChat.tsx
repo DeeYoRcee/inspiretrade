@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Crown, MessageCircle, Send, Trash2, X } from "lucide-react";
+import { Crown, MessageCircle, Reply, Send, Trash2, X } from "lucide-react";
 import { usePublicProfile } from "@/hooks/use-public-profile";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -22,9 +22,11 @@ interface ChatMessage {
   /** Phase 30: paid VIP (premium) member — gold VIP badge (stamped from the
    *  sender's own premium flag; cosmetic only, CEO stays server-stamped) */
   vip?: boolean;
-  text: string;
-  at: number;
-}
+    text: string;
+    at: number;
+    /** P39 — Telegram-style reply quote (optional) */
+    replyTo?: { id: string; author: string; text: string };
+  }
 
 const MAX_LEN = 300;
 const COOLDOWN_MS = 2000;
@@ -155,6 +157,8 @@ export function GlobalChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState("");
   const [cooldown, setCooldown] = useState(false);
+  // P39 — the message currently being replied to
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [, navigate] = useLocation();
@@ -198,11 +202,16 @@ export function GlobalChat() {
     setText("");
     setCooldown(true);
     setTimeout(() => setCooldown(false), COOLDOWN_MS);
+    // P39 — Telegram-style reply quote travels with the message
+    const replyPayload = replyTo
+      ? { id: replyTo.id, author: replyTo.name, text: replyTo.text.slice(0, 120) }
+      : null;
     try {
       if (isAdmin) {
         // the owner posts AS the CEO — the badge is stamped server-side so
         // nobody can fake it by writing to RTDB directly
-        await authedFetch("/api/admin?action=chat-send", { text: value });
+        await authedFetch("/api/admin?action=chat-send", { text: value, replyTo: replyPayload });
+        setReplyTo(null);
       } else {
         const base = {
           uid: user.uid,
@@ -210,15 +219,25 @@ export function GlobalChat() {
           ...(profile?.username ? { username: profile.username } : {}),
           text: value,
           at: serverTimestamp(),
+          ...(replyPayload ? { replyTo: replyPayload } : {}),
         };
         try {
           // VIP badge mirrors the paid premium flag on the sender's profile
           await push(ref(db, "chat/global"),
             profile?.isPremium || profile?.premiumPlan ? { ...base, vip: true } : base);
+          setReplyTo(null);
         } catch {
-          // older published rules reject the vip field — fall back to the bare
-          // message instead of failing the whole send for premium members
-          await push(ref(db, "chat/global"), base);
+          // older published rules reject vip/replyTo — retry progressively
+          // barer payloads instead of failing the whole send
+          const bare: Record<string, unknown> = { ...base };
+          delete bare.vip;
+          try {
+            await push(ref(db, "chat/global"), bare);
+            setReplyTo(null);
+          } catch {
+            delete bare.replyTo; // rules still without replyTo: send unquoted
+            await push(ref(db, "chat/global"), bare);
+          }
         }
       }
     } catch (e: any) {
@@ -290,7 +309,7 @@ export function GlobalChat() {
               </div>
             )}
             {messages.map((m) => (
-              <div key={m.id} className={cn("group flex gap-2", m.uid === user.uid && "flex-row-reverse")}>
+              <div key={m.id} id={`chat-msg-${m.id}`} className={cn("group flex gap-2", m.uid === user.uid && "flex-row-reverse")}>
                 <ChatAvatar m={m} onOpen={() => openProfile(m)} />
                 <div className={cn("min-w-0 max-w-[75%]", m.uid === user.uid && "text-right")}>
                   <div className={cn("flex items-center gap-1.5", m.uid === user.uid && "flex-row-reverse")}>
@@ -333,6 +352,14 @@ export function GlobalChat() {
                         {m.name}
                       </button>
                     )}
+                    <button
+                      onClick={() => setReplyTo(m)}
+                      aria-label="reply"
+                      title="Reply"
+                      className="opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
+                    >
+                      <Reply className="h-3 w-3" />
+                    </button>
                     {isAdmin && (
                       <button
                         onClick={() => deleteMessage(m.id)}
@@ -343,6 +370,20 @@ export function GlobalChat() {
                       </button>
                     )}
                   </div>
+                  {m.replyTo && (
+                    <button
+                      onClick={() => document.getElementById(`chat-msg-${m.replyTo!.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })}
+                      className={cn(
+                        "mt-0.5 flex w-full max-w-full items-start gap-1.5 rounded-lg border-l-2 border-primary/60 bg-muted/40 px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-muted/70",
+                        m.uid === user.uid && "flex-row-reverse text-right",
+                      )}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="font-semibold text-foreground/80">{m.replyTo.author}: </span>
+                        <span className="break-words">{m.replyTo.text}</span>
+                      </span>
+                    </button>
+                  )}
                   <div
                     className={cn(
                       "mt-0.5 inline-block w-fit max-w-full break-words rounded-2xl px-3 py-1.5 text-sm leading-snug",
@@ -359,6 +400,17 @@ export function GlobalChat() {
             <div ref={bottomRef} />
           </div>
 
+          {replyTo && (
+            <div className="flex items-center gap-2 border-t border-border/50 bg-card/80 px-3 py-1.5">
+              <div className="min-w-0 flex-1 rounded-lg border-l-2 border-primary/60 bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+                <span className="font-semibold text-foreground/80">{replyTo.name}: </span>
+                <span className="break-words">{replyTo.text.slice(0, 80)}{replyTo.text.length > 80 ? "…" : ""}</span>
+              </div>
+              <button onClick={() => setReplyTo(null)} aria-label="cancel reply" className="shrink-0 text-muted-foreground hover:text-destructive">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <div className="border-t border-border/50 bg-card/80 p-2.5">
             <div className="flex items-center gap-2">
               <input

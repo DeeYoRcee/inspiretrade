@@ -5,11 +5,10 @@
  * TIMEFRAME VISIBILITY grid, per-anchor coordinate editing, and object
  * actions (duplicate / lock / hide / delete).
  */
-import { Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from "lucide-react";
-import {
+import { RotateCcw, Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from "lucide-react";
+import { DEFAULT_STYLE,
   FIB_TOOLS, levelsFor, FIB_DEFAULT_LEVELS,
-  type Drawing, type DrawingType, type FibLevel,
-} from "@/lib/drawings";
+  type Drawing, type DrawingType, type FibLevel} from "@/lib/drawings";
 import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import type { FibPreset } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
@@ -17,8 +16,10 @@ import { cn } from "@/lib/utils";
 const COLORS = ["#38bdf8", "#22c55e", "#f59e0b", "#ef4444", "#a78bfa", "#e2e8f0", "#14b8a6", "#f472b6"];
 
 const SHAPE_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
+  // P39 §9 — ONLY tools whose renderer actually applies style.fill; the fill
+  // slider used to show for long/short/polyline where it did nothing
   "rect", "rrect", "triangle", "circle", "ellipse", "channel", "hchannel", "dchannel",
-  "price-range", "date-range", "datetime-range", "long-position", "short-position", "polyline",
+  "price-range", "date-range", "datetime-range",
 ]);
 
 const tfLabel = (tf: Timeframe) => (tf === "1W" ? "W1" : tf === "1M" ? "MN" : tf.toUpperCase());
@@ -75,7 +76,7 @@ export function DrawingPropsBar({
   };
 
   return (
-    <div className="pointer-events-auto absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-900/95 px-2 py-1.5 shadow-2xl backdrop-blur">
+    <div data-chart-ui className="pointer-events-auto absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-900/95 px-2 py-1.5 shadow-2xl backdrop-blur">
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         {/* color swatches */}
         <div className="flex items-center gap-1">
@@ -133,6 +134,24 @@ export function DrawingPropsBar({
             </button>
           ))}
         </div>
+        {/* P39 §1 — per-drawing transparency, honored by every renderer */}
+        <label className="flex items-center gap-1 text-slate-400" title="Transparency">
+          <span>Op</span>
+          <input
+            type="range" min={0.15} max={1} step={0.05}
+            value={style.opacity ?? 1}
+            onChange={(e) => setStyle({ opacity: Number(e.target.value) })}
+            className="h-3 w-14 accent-sky-500"
+          />
+        </label>
+        {/* P39 §9 — reset to defaults */}
+        <button
+          title="Reset style to defaults"
+          onClick={() => setStyle({ ...DEFAULT_STYLE })}
+          className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+        </button>
         {/* fill for shapes */}
         {SHAPE_TOOLS.has(drawing.type) && (
           <>
@@ -223,6 +242,32 @@ export function DrawingPropsBar({
           <option value="above">Above middle</option>
           <option value="below">Below middle</option>
         </select>
+        <select
+          title="Text weight"
+          value={style.fontWeight || "normal"}
+          onChange={(e) => setStyle({ fontWeight: e.target.value as "normal" | "bold" })}
+          className="h-5 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200"
+        >
+          <option value="normal">Normal</option>
+          <option value="bold">Bold</option>
+        </select>
+        <select
+          title="Text alignment"
+          value={style.textAlign || "left"}
+          onChange={(e) => setStyle({ textAlign: e.target.value as "left" | "center" | "right" })}
+          className="h-5 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200"
+        >
+          <option value="left">Left</option>
+          <option value="center">Center</option>
+          <option value="right">Right</option>
+        </select>
+        <input
+          type="color"
+          title="Text background"
+          value={style.textBg || "#0f172a"}
+          onChange={(e) => setStyle({ textBg: e.target.value })}
+          className="h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+        />
         <button title="Edit text" onClick={onEditText} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
           <PenLine className="h-3.5 w-3.5" />
         </button>

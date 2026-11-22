@@ -51,6 +51,14 @@ export interface DrawingStyle {
   showPrices?: boolean;
   /** Phase 37 §2 — measure fib levels from the second anchor (reversed) */
   reverse?: boolean;
+  /** P39 §1 — per-drawing transparency (1 = full). Multiplied with the
+   *  selection alpha at render time, so EVERY tool honors it. */
+  opacity?: number;
+  /** P39 §7 — text formatting for attached text and text tools */
+  fontWeight?: "normal" | "bold";
+  textAlign?: "left" | "center" | "right";
+  /** background chip behind text (color string) */
+  textBg?: string;
 }
 
 /** one configurable Fibonacci level (ratio is the multiple of the measured span).
@@ -756,10 +764,31 @@ function drawAttachedText(ctx: CanvasRenderingContext2D, d: Drawing, pts: XY[]):
   ctx.save();
   ctx.setLineDash([]);
   ctx.globalAlpha = 1;
-  ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+  ctx.font = `${d.style.fontWeight === "bold" ? "bold " : ""}${d.style.fontSize}px ui-sans-serif, system-ui`;
+  ctx.textAlign = d.style.textAlign === "center" ? "center" : d.style.textAlign === "right" ? "right" : "left";
+  if (d.style.textBg) {
+    // P39 §7 — background chip sized from the actual text metrics
+    const w2 = ctx.measureText(d.text).width + 6;
+    const bx = ctx.textAlign === "center" ? at.x + 4 - w2 / 2 : ctx.textAlign === "right" ? at.x + 4 - w2 + 3 : at.x + 1;
+    ctx.fillStyle = d.style.textBg;
+    ctx.globalAlpha = 0.8 * (d.style.opacity ?? 1);
+    ctx.fillRect(bx, at.y + dy - d.style.fontSize, w2, d.style.fontSize + 5);
+    ctx.globalAlpha = 1;
+  }
   ctx.fillStyle = d.style.textColor || d.style.color;
   ctx.fillText(d.text, at.x + 4, at.y + dy);
   ctx.restore();
+}
+
+/** P39 §2 — human duration for the trend Δ label (m / h / d) */
+function fmtDur(secs: number): string {
+  if (!Number.isFinite(secs) || secs <= 0) return "";
+  const days = secs / 86400;
+  if (days >= 1) return `${days >= 10 ? Math.round(days) : Math.round(days * 10) / 10}d`;
+  const hours = secs / 3600;
+  if (hours >= 1) return `${Math.round(hours * 10) / 10}h`;
+  const mins = Math.round(secs / 60);
+  return mins > 0 ? `${mins}m` : "";
 }
 
 /** Endpoint price/time labels for line tools (both toggleable). */
@@ -791,7 +820,7 @@ export function renderDrawing(
   selected: boolean,
 ): void {
   if (!pts.length || d.hidden) return;
-  applyStyle(ctx, d.style, selected ? 1 : 0.92);
+  applyStyle(ctx, d.style, (selected ? 1 : 0.92) * (d.style.opacity ?? 1));
 
   switch (d.type) {
     case "trend": {
@@ -814,13 +843,14 @@ export function renderDrawing(
       if (d.style.showPrices && d.points.length >= 2) {
         const dp = d.points[1].price - d.points[0].price;
         const pct = d.points[0].price ? (dp / d.points[0].price) * 100 : 0;
+        const dur = fmtDur(Math.abs(d.points[1].time - d.points[0].time));
         ctx.save();
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
         ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
         ctx.fillStyle = d.style.textColor || d.style.color;
         const sign = dp >= 0 ? "+" : "";
-        ctx.fillText(`${sign}${fmtDrawingPrice(dp)} (${sign}${pct.toFixed(2)}%)`, pts[1].x + 6, pts[1].y + d.style.fontSize + 4);
+        ctx.fillText(`${sign}${fmtDrawingPrice(dp)} (${sign}${pct.toFixed(2)}%)${dur ? ` · ${dur}` : ""}`, pts[1].x + 6, pts[1].y + d.style.fontSize + 4);
         ctx.restore();
       }
       break;
@@ -846,15 +876,22 @@ export function renderDrawing(
       const y = Math.min(pts[0].y, pts[1].y);
       const w = Math.abs(pts[1].x - pts[0].x);
       const h = Math.abs(pts[1].y - pts[0].y);
-      ctx.save();
-      ctx.globalAlpha = 0.12;
-      ctx.fillRect(x, y, w, h);
-      ctx.restore();
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      applyFill(ctx, d);
       ctx.strokeRect(x, y, w, h);
       break;
     }
     case "channel": {
       const off = channelOffset(pts[0], pts[1], pts[2]);
+      // P39 §4 — the fill slider actually fills the channel body
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[1].x, pts[1].y);
+      ctx.lineTo(off.to.x, off.to.y);
+      ctx.lineTo(off.from.x, off.from.y);
+      ctx.closePath();
+      applyFill(ctx, d);
       drawSegment(ctx, pts[0], pts[1]);
       drawSegment(ctx, off.from, off.to);
       ctx.save();
@@ -961,8 +998,19 @@ export function renderDrawing(
       ctx.save();
       ctx.globalAlpha = 1;
       ctx.setLineDash([]);
-      ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
-      ctx.fillText(d.text || "Text", pts[0].x, pts[0].y);
+      const label = d.text || "Text";
+      ctx.font = `${d.style.fontWeight === "bold" ? "bold " : ""}${d.style.fontSize}px ui-sans-serif, system-ui`;
+      ctx.textAlign = d.style.textAlign === "center" ? "center" : d.style.textAlign === "right" ? "right" : "left";
+      if (d.style.textBg) {
+        const w2 = ctx.measureText(label).width + 6;
+        const bx = ctx.textAlign === "center" ? pts[0].x - w2 / 2 : ctx.textAlign === "right" ? pts[0].x - w2 + 3 : pts[0].x - 3;
+        ctx.fillStyle = d.style.textBg;
+        ctx.globalAlpha = 0.8 * (d.style.opacity ?? 1);
+        ctx.fillRect(bx, pts[0].y - d.style.fontSize, w2, d.style.fontSize + 5);
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = d.style.textColor || d.style.color;
+      ctx.fillText(label, pts[0].x, pts[0].y);
       ctx.restore();
       break;
     }
@@ -1003,6 +1051,9 @@ export function renderDrawing(
     case "hchannel": {
       const y2 = pts[2].y;
       const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x);
+      ctx.beginPath();
+      ctx.rect(x1, Math.min(pts[0].y, y2), x2 - x1, Math.abs(y2 - pts[0].y));
+      applyFill(ctx, d);
       drawSegment(ctx, { x: x1, y: pts[0].y }, { x: x2, y: pts[0].y });
       drawSegment(ctx, { x: x1, y: y2 }, { x: x2, y: y2 });
       ctx.save();
@@ -1013,6 +1064,13 @@ export function renderDrawing(
       break;
     }
     case "dchannel": {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[1].x, pts[1].y);
+      ctx.lineTo(pts[3].x, pts[3].y);
+      ctx.lineTo(pts[2].x, pts[2].y);
+      ctx.closePath();
+      applyFill(ctx, d);
       drawSegment(ctx, pts[0], pts[1]);
       drawSegment(ctx, pts[2], pts[3]);
       ctx.save();
@@ -1062,6 +1120,8 @@ export function renderDrawing(
         ctx.save();
         ctx.globalAlpha = 0.75;
         ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.lineWidth = lvl.width || d.style.width;
+        ctx.setLineDash(dashPattern(lvl.dash || d.style.dash));
         drawSegment(ctx, { x: x1, y }, { x: x2, y });
         ctx.setLineDash([]);
         ctx.globalAlpha = 0.95;
@@ -1086,6 +1146,8 @@ export function renderDrawing(
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.lineWidth = lvl.width || d.style.width;
+        ctx.setLineDash(dashPattern(lvl.dash || d.style.dash));
         drawSegment(ctx, { x: p0.x + ox * k, y: p0.y + oy * k }, { x: p1.x + ox * k, y: p1.y + oy * k });
         ctx.restore();
       }
@@ -1099,6 +1161,8 @@ export function renderDrawing(
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.lineWidth = lvl.width || d.style.width;
+        ctx.setLineDash(dashPattern(lvl.dash || d.style.dash));
         drawSegment(ctx, { x, y: 0 }, { x, y: canvasH });
         ctx.setLineDash([]);
         ctx.globalAlpha = 0.95;
@@ -1118,6 +1182,8 @@ export function renderDrawing(
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.lineWidth = lvl.width || d.style.width;
+        ctx.setLineDash(dashPattern(lvl.dash || d.style.dash));
         const seg = rayToEdge(p0, { x: p0.x + dx, y: p0.y + dy * lvl.ratio }, canvasW, canvasH);
         drawSegment(ctx, seg.a, seg.b);
         ctx.restore();
@@ -1132,6 +1198,8 @@ export function renderDrawing(
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.lineWidth = lvl.width || d.style.width;
+        ctx.setLineDash(dashPattern(lvl.dash || d.style.dash));
         ctx.beginPath();
         ctx.arc(p0.x, p0.y, dist * lvl.ratio, 0, Math.PI * 2);
         ctx.stroke();
@@ -1146,6 +1214,8 @@ export function renderDrawing(
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.lineWidth = lvl.width || d.style.width;
+        ctx.setLineDash(dashPattern(lvl.dash || d.style.dash));
         ctx.beginPath();
         ctx.arc(p0.x, p0.y, dist * lvl.ratio, 0, Math.PI * 2);
         ctx.stroke();
@@ -1183,6 +1253,8 @@ export function renderDrawing(
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = lvl.color || d.style.color;
+        ctx.lineWidth = lvl.width || d.style.width;
+        ctx.setLineDash(dashPattern(lvl.dash || d.style.dash));
         const s1 = rayToEdge(apex, { x: apex.x + dir1.x, y: apex.y + dir1.y }, canvasW, canvasH);
         const s2 = rayToEdge(apex, { x: apex.x + dir2.x, y: apex.y + dir2.y }, canvasW, canvasH);
         drawSegment(ctx, s1.a, s1.b);
@@ -1417,10 +1489,9 @@ export function renderDrawing(
     case "price-range": {
       const x = Math.min(pts[0].x, pts[1].x), w2 = Math.max(40, Math.abs(pts[1].x - pts[0].x));
       const y1 = Math.min(pts[0].y, pts[1].y), y2 = Math.max(pts[0].y, pts[1].y);
-      ctx.save();
-      ctx.globalAlpha = 0.12;
-      ctx.fillRect(x, y1, w2, y2 - y1);
-      ctx.restore();
+      ctx.beginPath();
+      ctx.rect(x, y1, w2, y2 - y1);
+      applyFill(ctx, d);
       ctx.strokeRect(x, y1, w2, y2 - y1);
       ctx.save();
       ctx.setLineDash([]);
@@ -1437,10 +1508,9 @@ export function renderDrawing(
     case "date-range": {
       const y = Math.min(pts[0].y, pts[1].y), h2 = Math.max(24, Math.abs(pts[1].y - pts[0].y));
       const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x);
-      ctx.save();
-      ctx.globalAlpha = 0.12;
-      ctx.fillRect(x1, y, x2 - x1, h2);
-      ctx.restore();
+      ctx.beginPath();
+      ctx.rect(x1, y, x2 - x1, h2);
+      applyFill(ctx, d);
       ctx.strokeRect(x1, y, x2 - x1, h2);
       ctx.save();
       ctx.setLineDash([]);
@@ -1456,10 +1526,9 @@ export function renderDrawing(
     case "datetime-range": {
       const x = Math.min(pts[0].x, pts[1].x), w2 = Math.abs(pts[1].x - pts[0].x);
       const y = Math.min(pts[0].y, pts[1].y), h2 = Math.abs(pts[1].y - pts[0].y);
-      ctx.save();
-      ctx.globalAlpha = 0.12;
-      ctx.fillRect(x, y, w2, h2);
-      ctx.restore();
+      ctx.beginPath();
+      ctx.rect(x, y, w2, h2);
+      applyFill(ctx, d);
       ctx.strokeRect(x, y, w2, h2);
       ctx.save();
       ctx.setLineDash([]);
@@ -1502,10 +1571,14 @@ export function renderDrawing(
       ctx.fillText(`Target ${fmtDrawingPrice(d.points[2]?.price ?? NaN)}`, x + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
       ctx.fillStyle = d.style.color;
       ctx.fillText(`Entry ${fmtDrawingPrice(d.points[0]?.price ?? NaN)}`, x + 4, entry.y + d.style.fontSize + 4);
-      const { rr } = riskReward(entry.y, stop.y, target.y);
-      // canvas Y is inverted: entry.y between them — invert deltas for the ratio
-      const rrCanvas = riskReward(-entry.y, -stop.y, -target.y).rr;
-      ctx.fillText(`${isLong ? "Long" : "Short"} · RR ${rrCanvas.toFixed(2)}`, x + 4, entry.y - 6);
+      // P39 §8 — RR from MARKET prices (exact on log/% scales too), not
+      // canvas pixels. Chart-measured figure — never a broker/P&L number.
+      const entryP = d.points[0]?.price ?? 0;
+      const stopP = d.points[1]?.price ?? 0;
+      const targetP = d.points[2]?.price ?? 0;
+      const riskDist = Math.abs(entryP - stopP);
+      const rr = riskDist > 0 ? Math.abs(targetP - entryP) / riskDist : 0;
+      ctx.fillText(`${isLong ? "Long" : "Short"} · RR ${rr.toFixed(2)}`, x + 4, entry.y - 6);
       ctx.restore();
       break;
     }
@@ -1599,6 +1672,10 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
         ...(st.showTimeLabels === true || st.showTimeLabels === false ? { showTimeLabels: st.showTimeLabels } : {}),
         ...(st.showPrices === true || st.showPrices === false ? { showPrices: st.showPrices } : {}),
         ...(st.reverse === true || st.reverse === false ? { reverse: st.reverse } : {}),
+        ...(typeof st.opacity === "number" && Number.isFinite(st.opacity) ? { opacity: clamp(st.opacity, 0.1, 1, 1) } : {}),
+        ...(st.fontWeight === "bold" ? { fontWeight: "bold" as const } : {}),
+        ...(st.textAlign === "left" || st.textAlign === "center" || st.textAlign === "right" ? { textAlign: st.textAlign } : {}),
+        ...(typeof st.textBg === "string" && /^#[0-9a-fA-F]{3,8}$/.test(st.textBg) ? { textBg: st.textBg } : {}),
       },
       ...(typeof r.text === "string" ? { text: r.text.slice(0, 200) } : {}),
       ...(r.locked === true ? { locked: true } : {}),

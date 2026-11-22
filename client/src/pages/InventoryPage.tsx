@@ -22,6 +22,7 @@ import {
   type FragmentDef, type CaseType,
 } from "@shared/fragments";
 import { cn } from "@/lib/utils";
+import { formatINSP } from "@/lib/number-format";
 
 export default function InventoryPage() {
   const { t } = useLanguage();
@@ -242,7 +243,7 @@ export default function InventoryPage() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="gap-1.5 rounded-full border-border/60 bg-card/60 px-3 py-1.5 text-sm font-bold text-amber-400">
-            <Coins className="h-4 w-4" /> {coins} INSP
+            <Coins className="h-4 w-4" /> {formatINSP(coins)} INSP
           </Badge>
           <Badge variant="outline" className="gap-1.5 rounded-full border-border/60 bg-card/60 px-3 py-1.5 text-sm font-bold">
             <PackageOpen className="h-4 w-4 text-primary" /> {cases}

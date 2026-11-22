@@ -26,6 +26,16 @@ export default handle(async (req, res) => {
   // without it every CEO-message click handler was a silent no-op
   const username = typeof (snap.value as any)?.username === "string" ? (snap.value as any).username : undefined;
 
+  // P39 — optional Telegram-style reply quote (sanitized; absent = plain)
+  const rtRaw = (body as any)?.replyTo;
+  const replyTo = rtRaw && typeof rtRaw === "object"
+    ? {
+        id: String(rtRaw.id ?? "").slice(0, 40),
+        author: String(rtRaw.author ?? "CEO").slice(0, 60) || "CEO",
+        text: String(rtRaw.text ?? "").slice(0, 120),
+      }
+    : null;
+
   const message = {
     uid: admin.uid,
     name: "CEO",
@@ -33,6 +43,7 @@ export default handle(async (req, res) => {
     ceo: true,
     text,
     at: Date.now(),
+    ...(replyTo && replyTo.id ? { replyTo } : {}),
   };
   await rtdb().ref("chat/global").push(message);
   res.status(200).json({ ok: true, message });

@@ -167,6 +167,22 @@ function getFragment(id) {
   return ALL_FRAGMENTS.find((f) => f.id === id);
 }
 
+// shared/roles.ts
+var ADMIN_ROLES = ["analyst", "moderator", "admin", "super_admin"];
+
+// api/_src/lib/platform.ts
+async function getAdminRole(user) {
+  try {
+    const role = (await rtdb().ref(`adminRoles/${user.uid}`).once("value")).val();
+    if (typeof role === "string" && ADMIN_ROLES.includes(role)) return role;
+  } catch {
+  }
+  const email = String(user.email || "").toLowerCase();
+  const emails = String(process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+  if (emails.includes(email)) return emails.indexOf(email) === 0 ? "super_admin" : "admin";
+  return null;
+}
+
 // api/_src/market/list.ts
 var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
 var list_default = handle(async (req, res) => {
@@ -212,11 +228,12 @@ var list_default = handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
   await decrementCounter(escrowRef, insufficientError);
+  const adminRole = await getAdminRole(user).catch(() => null);
   const allListings = (await db.ref("market").get()).val() || {};
   const activeMine = Object.values(allListings).filter(
     (l) => l && l.sellerUid === user.uid && l.status === "active"
   ).length;
-  if (activeMine >= MAX_ACTIVE_LISTINGS) {
+  if (!adminRole && activeMine >= MAX_ACTIVE_LISTINGS) {
     await escrowRef.transaction((c) => (c || 0) + 1);
     throw new HttpError(400, "TOO_MANY_LISTINGS", `You can have at most ${MAX_ACTIVE_LISTINGS} active listings`);
   }

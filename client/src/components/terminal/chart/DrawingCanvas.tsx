@@ -402,6 +402,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const conv = converterRef.current;
     const target = attachEl();
     if (!conv || !target) return;
+    // P39 — UI overlays that live INSIDE chartAreaRef (props bar, object
+    // tree, history panel) are not chart gestures. The old code fell through
+    // to the "empty space → deselect" step on their pointerdown, which
+    // UNMOUNTED the props bar before its button's click could fire — the
+    // toolbar Delete button looked completely dead.
+    if ((e.target as Element | null)?.closest?.("[data-chart-ui]")) return;
     const p = localXY(e);
     if (p.x < 0 || p.y < 0 || p.x > conv.paneW || p.y > conv.paneH) return; // price scale etc.
 

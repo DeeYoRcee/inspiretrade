@@ -13,11 +13,13 @@ import { useIsAdmin } from "@/hooks/use-admin";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
-/** Phase 34b: compact balance — 12 340 → 12.3K, 1 250 000 → 1.3M. */
+/** Phase 34b: compact balance — 12 340 → 12.3K, 1 250 000 → 1.3M.
+ *  P39: fractional balances stay visible (0.03 INSP is NOT rounded away). */
 function compactINSP(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M`;
   if (n >= 10_000) return `${(n / 1_000).toFixed(n % 1_000 ? 1 : 0)}K`;
-  return String(n);
+  const digits = n > 0 && n < 0.01 ? 4 : n > 0 && n < 1 ? 3 : 2;
+  return n.toLocaleString("en-US", { maximumFractionDigits: digits });
 }
 
 export function Navbar() {

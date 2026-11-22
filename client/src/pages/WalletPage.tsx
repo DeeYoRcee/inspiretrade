@@ -57,6 +57,7 @@ const MIN_DEPOSIT = 10;
 
 /** deposits & withdrawals are switched off until the payment flow ships */
 const WALLET_SOON = true;
+import { formatINSP } from "@/lib/number-format";
 
 export default function WalletPage() {
   const { t } = useLanguage();
@@ -179,7 +180,7 @@ export default function WalletPage() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-widest text-muted-foreground">{t("walletBalance")}</p>
-                <p className="font-number text-4xl font-black text-amber-400">{coins} <span className="text-lg">INSP</span></p>
+                <p className="font-number text-4xl font-black text-amber-400">{formatINSP(coins)} <span className="text-lg">INSP</span></p>
                 <p className="text-[11px] text-muted-foreground">1 INSP = $1</p>
               </div>
             </div>

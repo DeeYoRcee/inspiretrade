@@ -182,6 +182,9 @@
           "at": {
             ".validate": "newData.isNumber()"
           },
+          "replyTo": {
+            ".validate": "newData.hasChildren(['id', 'author', 'text']) && newData.child('id').isString() && newData.child('id').val().length <= 40 && newData.child('author').isString() && newData.child('author').val().length <= 60 && newData.child('text').isString() && newData.child('text').val().length <= 120"
+          },
           "$other": {
             ".validate": false
           }

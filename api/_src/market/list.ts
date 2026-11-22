@@ -6,6 +6,7 @@
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
 import { getFragment, CASES, MAX_ACTIVE_LISTINGS, MIN_LISTING_PRICE, MAX_LISTING_PRICE } from "../lib/fragments";
+import { getAdminRole } from "../lib/platform";
 
 const CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
 
@@ -73,11 +74,14 @@ export default handle(async (req, res) => {
   await decrementCounter(escrowRef, insufficientError);
 
   // Cap the number of active listings per user (refund escrow if exceeded).
+  // P39 — owner/admin accounts are EXEMPT: the CEO must be able to list as
+  // many cases as they want (user request). Regular users keep the cap.
+  const adminRole = await getAdminRole(user).catch(() => null);
   const allListings = (await db.ref("market").get()).val() || {};
   const activeMine = Object.values<any>(allListings).filter(
     (l) => l && l.sellerUid === user.uid && l.status === "active",
   ).length;
-  if (activeMine >= MAX_ACTIVE_LISTINGS) {
+  if (!adminRole && activeMine >= MAX_ACTIVE_LISTINGS) {
     await escrowRef.transaction((c: any) => (c || 0) + 1);
     throw new HttpError(400, "TOO_MANY_LISTINGS", `You can have at most ${MAX_ACTIVE_LISTINGS} active listings`);
   }

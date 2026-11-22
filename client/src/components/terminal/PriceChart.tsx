@@ -1784,18 +1784,11 @@ export function PriceChart({
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      // Phase 31: Delete / Backspace removes the selected drawing(s)
-      if (e.key === "Delete" || e.key === "Backspace") {
-        const ids = selectedIds.length ? selectedIds : (selectedDrawingId ? [selectedDrawingId] : []);
-        if (ids.length) {
-          e.preventDefault();
-          const drop = new Set(ids);
-          commitDrawings(drawingsRef.current.filter((d) => !drop.has(d.id)));
-          setSelectedIds([]);
-          setSelectedDrawingId(null);
-        }
-        return;
-      }
+      // P39 — Delete/Backspace is owned by DrawingCanvas's window handler
+      // (lock-aware + multi-select-aware). This branch used to run for the
+      // SAME keypress: two undo entries per delete, and it bypassed the
+      // global LOCK the rail button honors — keyboard delete while locked
+      // was possible while the button looked disabled.
       // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — drawing undo & redo
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         const k = e.key.toLowerCase();
@@ -2053,7 +2046,7 @@ export function PriceChart({
             fontSize: settingsRef.current.drawFontSize,
           }}
           selectedId={selectedDrawingId}
-          onSelect={(id) => { setSelectedDrawingId(id); if (id != null) setSelectedIds([]); }}
+          onSelect={(id) => { setSelectedDrawingId(id); setSelectedIds([]); }}
           onDelete={(id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id))}
           onEdit={(id) => setEditingDrawing(drawingsRef.current.find((d) => d.id === id) ?? null)}
           onContextMenu={(clientX, clientY, hitId) => {
@@ -2110,7 +2103,7 @@ export function PriceChart({
                 commitDrawings([...drawingsRef.current, copy]);
                 setSelectedDrawingId(copy.id);
               }}
-              onDelete={() => { commitDrawings(drawingsRef.current.filter((d) => d.id !== sel.id)); setSelectedDrawingId(null); }}
+              onDelete={() => { commitDrawings(drawingsRef.current.filter((d) => d.id !== sel.id)); setSelectedDrawingId(null); setSelectedIds([]); }}
               onReorder={(action) => commitDrawings(reorderDrawing(drawingsRef.current, sel.id, action))}
               onEditText={() => {
                 const text = window.prompt("Text", sel.text || "") ?? "";
@@ -2161,11 +2154,11 @@ export function PriceChart({
             <Database className="h-3.5 w-3.5" />
           </button>
         )}
-        {isAdmin && histOpen && <HistoryPanel symbol={symbol} />}
+        {isAdmin && histOpen && <div data-chart-ui><HistoryPanel symbol={symbol} /></div>}
 
         {/* object tree — drawings & indicators (real objects, real actions) */}
         {objectsOpen && (
-          <div className="absolute right-10 top-8 z-30 w-60 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
+          <div data-chart-ui className="absolute right-10 top-8 z-30 w-60 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
             <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Objects · {drawings.length}</p>
             <div className="max-h-40 overflow-y-auto">
               {drawings.length === 0 && <p className="py-1 text-slate-600">No drawings yet</p>}

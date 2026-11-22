@@ -376,13 +376,20 @@ var chat_send_default = handle(async (req, res) => {
     ceo: true
   }));
   const username = typeof snap.value?.username === "string" ? snap.value.username : void 0;
+  const rtRaw = body?.replyTo;
+  const replyTo = rtRaw && typeof rtRaw === "object" ? {
+    id: String(rtRaw.id ?? "").slice(0, 40),
+    author: String(rtRaw.author ?? "CEO").slice(0, 60) || "CEO",
+    text: String(rtRaw.text ?? "").slice(0, 120)
+  } : null;
   const message = {
     uid: admin2.uid,
     name: "CEO",
     ...username ? { username } : {},
     ceo: true,
     text,
-    at: Date.now()
+    at: Date.now(),
+    ...replyTo && replyTo.id ? { replyTo } : {}
   };
   await rtdb().ref("chat/global").push(message);
   res.status(200).json({ ok: true, message });

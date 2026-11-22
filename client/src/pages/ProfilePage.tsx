@@ -144,6 +144,7 @@ function StatCell({
     </div>
   );
 }
+import { formatINSP } from "@/lib/number-format";
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -772,7 +773,7 @@ export default function ProfilePage() {
         />
         <InfoRow
           label={t("inspireBalance")}
-          value={`${economy?.coins ?? 0} INSP`}
+          value={`${formatINSP(economy?.coins ?? 0)} INSP`}
           valueClass="text-amber-400"
         />
         <InfoRow

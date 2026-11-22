@@ -17,6 +17,7 @@ import { useIsAdmin } from "@/hooks/use-admin";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
 import { ALL_FRAGMENTS, getFragment, CASES, MARKET_FEE_PERCENT, MIN_LISTING_PRICE, MAX_LISTING_PRICE, sellerReceives, type FragmentDef } from "@shared/fragments";
 import { cn } from "@/lib/utils";
+import { formatINSP } from "@/lib/number-format";
 
 export default function MarketPage() {
   const { t } = useLanguage();
@@ -156,7 +157,7 @@ export default function MarketPage() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="gap-1.5 rounded-full border-border/60 bg-card/60 px-3 py-1.5 text-sm font-bold text-amber-400">
-            <Coins className="h-4 w-4" /> {coins} INSP
+            <Coins className="h-4 w-4" /> {formatINSP(coins)} INSP
           </Badge>
           <span className="text-xs text-muted-foreground">1 INSP = $1</span>
         </div>

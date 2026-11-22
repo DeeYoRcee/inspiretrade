@@ -31,6 +31,7 @@ interface ClaimResponse {
   reward: { cycleDay: number; caseType: CaseType; caseName: string };
   vipReward?: { cycleDay: number; caseType: string; caseName: string } | null;
 }
+import { formatINSP } from "@/lib/number-format";
 
 export default function RewardsPage() {
   const { t } = useLanguage();
@@ -141,7 +142,7 @@ export default function RewardsPage() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="gap-1.5 rounded-full border-border/60 bg-card/60 px-3 py-1.5 text-sm font-bold text-amber-400">
-            <Coins className="h-4 w-4" /> {coins} INSP
+            <Coins className="h-4 w-4" /> {formatINSP(coins)} INSP
           </Badge>
           {/* Phase 33: only the INSP balance stays here — per-case counts live in the Cases card below */}
         </div>
