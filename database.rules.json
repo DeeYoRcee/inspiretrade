@@ -241,6 +241,12 @@
         ".write": "$uid === auth.uid"
       }
     },
+    "chartWorkspaces": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
     "terminalDrawings": {
       "$uid": {
         ".read": "$uid === auth.uid",

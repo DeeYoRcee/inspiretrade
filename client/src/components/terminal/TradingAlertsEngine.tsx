@@ -163,16 +163,19 @@ export function TradingAlertsEngine() {
           if (!hit) continue;
           await fire(a, price, `previous-day ${a.direction === "above" ? "high" : "low"} ${a.direction === "above" ? hl.high : hl.low} — now ${price}`, barTimeRef.current.get(a.symbol) ?? null, barClosedSymbols.has(a.symbol));
         } else if (a.kind === "indicator") {
-          // needs the open terminal's real OHLC for the alert's symbol+tf
-          if (!snap || snap.replay || snap.symbol !== a.symbol || snap.timeframe !== a.timeframe) continue;
-          const res = evaluateIndicatorAlert(a, snap.bars);
+          // needs the open chart's real OHLC for the alert's symbol+tf —
+          // multi-chart workspaces publish one snapshot per panel
+          const panel = readTerminalSnapshot(a.symbol, a.timeframe);
+          if (!panel || panel.replay) continue;
+          const res = evaluateIndicatorAlert(a, panel.bars);
           if (!res?.hit) continue;
-          const newest = snap.bars[snap.bars.length - 1]?.time ?? null;
+          const newest = panel.bars[panel.bars.length - 1]?.time ?? null;
           const closed = barClosedSymbols.has(a.symbol);
           if (a.frequency === "oncePerBarClose" && !closed) continue;
           await fire(a, res.price, res.detail, newest, closed);
         } else if (a.kind === "drawing") {
-          if (!snap || snap.replay || snap.symbol !== a.symbol) continue;
+          const panel = readTerminalSnapshot(a.symbol);
+          if (!panel || panel.replay) continue;
           if (alertDrawingMissing(a, drawings)) {
             // the drawing is gone — pause the alert + a SYSTEM notification
             await recordTrigger(a.id, 0, "drawing deleted — alert paused", { previous: a }).catch(() => {});
@@ -193,11 +196,11 @@ export function TradingAlertsEngine() {
             continue;
           }
           const drawing = drawings.find((d) => d.id === a.drawing?.drawingId);
-          const price = pricesRef.current.get(a.symbol) ?? snap.bars[snap.bars.length - 1]?.close ?? null;
+          const price = pricesRef.current.get(a.symbol) ?? panel.bars[panel.bars.length - 1]?.close ?? null;
           if (price == null) continue;
           const prev = prevPriceRef.current.get(a.symbol) ?? null;
           prevPriceRef.current.set(a.symbol, price);
-          const res = evaluateDrawingAlert(a, drawing, price, prev, snap.bars[snap.bars.length - 1]?.time ?? Date.now() / 1000);
+          const res = evaluateDrawingAlert(a, drawing, price, prev, panel.bars[panel.bars.length - 1]?.time ?? Date.now() / 1000);
           if (!res?.hit) continue;
           const closed = barClosedSymbols.has(a.symbol);
           if (a.frequency === "oncePerBarClose" && !closed) continue;

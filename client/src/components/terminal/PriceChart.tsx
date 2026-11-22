@@ -74,6 +74,7 @@ import {
 } from "@/components/terminal/chart/dialogs";
 import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
 import { TradingAlertDialog } from "@/components/terminal/TradingAlertDialog";
+import { loadSyncSettings, onSyncCrosshair, onSyncRange, publishCrosshair, publishRange, isApplyingSync, markApplyingSync } from "@/lib/chart-sync";
 import { publishChartSnapshot } from "@/components/terminal/TradingAlertsEngine";
 import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -299,6 +300,9 @@ export function PriceChart({
   replayForming = null,
   replayStatus = null,
   accountBalance = null,
+  panelKey = null,
+  chartType: chartTypeProp = null,
+  onChartTypeChange = null,
 }: {
   symbol: string;
   timeframe: Timeframe;
@@ -326,6 +330,12 @@ export function PriceChart({
   replayStatus?: string | null;
   /** P41 — live account balance (live mode) for the position size calc */
   accountBalance?: number | null;
+  /** P48 — unique panel id: enables cross-chart crosshair/time sync */
+  panelKey?: string | null;
+  /** P48 — controlled chart type (multi-chart panels); null = legacy global */
+  chartType?: ChartType | null;
+  /** P48 — controlled chart-type setter (multi-chart panels) */
+  onChartTypeChange?: ((t: ChartType) => void) | null;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const mainHostRef = useRef<HTMLDivElement | null>(null);
@@ -363,6 +373,15 @@ export function PriceChart({
   const [chartType, setChartTypeState] = useState<ChartType>(() => loadChartType());
   const chartTypeRef = useRef(chartType);
   chartTypeRef.current = chartType;
+  // P48 — multi-chart panels control their type from the workspace state
+  const controlledType = chartTypeProp != null;
+  useEffect(() => {
+    if (chartTypeProp != null && chartTypeProp !== chartTypeRef.current) setChartTypeState(chartTypeProp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartTypeProp]);
+  const setChartTypePanel = (t: ChartType) => {
+    if (onChartTypeChange) onChartTypeChange(t); else setChartTypeState(t);
+  };
   // TradingView object-state controls (persisted)
   const [locked, setLocked] = useState(() => { try { return localStorage.getItem("it_chart_lock") === "1"; } catch { return false; } });
   const [hiddenAll, setHiddenAll] = useState(() => { try { return localStorage.getItem("it_chart_hideall") === "1"; } catch { return false; } });
@@ -430,17 +449,20 @@ export function PriceChart({
     timezone: (perInstrument as { timezone?: string }).timezone || "",
   }), [settings, perInstrument]);
   // an instrument's own default chart type applies when its chart opens
-  // (the toolbar type button keeps setting the global default)
+  // (the toolbar type button keeps setting the global default) — controlled
+  // multi-chart panels own their type via the workspace instead
   useEffect(() => {
+    if (controlledType) return;
     const per = getInstrumentSettings(symbol).chartType;
     if (per) setChartTypeState(per as ChartType);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+  }, [symbol, controlledType]);
   // Phase 34: live type change from the instrument settings panel
   useEffect(() => {
+    if (controlledType) return;
     const per = (perInstrument as { chartType?: ChartType } | undefined)?.chartType;
     if (per) setChartTypeState(per);
-  }, [perInstrument]);
+  }, [perInstrument, controlledType]);
   // Terminal Settings dialog edits the same store — pick up its changes live
   useEffect(() => {
     const h = (e: Event) => {
@@ -655,6 +677,9 @@ export function PriceChart({
   // raw mouse point is always the true cursor, never a pre-aligned close.
   const magnetModeRef = useRef<0 | 1 | 2>(0);
   magnetModeRef.current = magnetModeOf(mergedSettings);
+  // P48 — this chart's sync identity inside multi-chart workspaces
+  const panelKeyRef = useRef<string | null>(null);
+  panelKeyRef.current = panelKey;
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -734,7 +759,9 @@ export function PriceChart({
 
   // ---- chart type switch: rebuild the main series in place (no flicker) -------
   useEffect(() => {
-    saveChartType(chartType);
+    if (!controlledType) saveChartType(chartType); // panels keep their own type
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void controlledType;
     const chart = chartRef.current;
     const old = candleRef.current;
     if (!chart || !old) return;
@@ -866,10 +893,13 @@ export function PriceChart({
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange);
 
-    // crosshair → legend + sub-panes
+    // crosshair → legend + sub-panes (+ P48 cross-chart sync publish)
     const onCross = (param: any) => {
       if (chartRef.current !== chart) return; // teardown race — chart already removed
       updateLegend(param?.time ?? null);
+      if (panelKeyRef.current && !isApplyingSync()) {
+        publishCrosshair({ key: panelKeyRef.current, time: param?.time != null ? Number(param.time) : null, at: Date.now() });
+      }
       if (syncingRef.current) return;
       syncingRef.current = true;
       try {
@@ -900,6 +930,43 @@ export function PriceChart({
     // symbol/timeframe are handled by the feed effect — the chart instance persists
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ---- P48 Part 3 — cross-chart synchronization (crosshair + time range) ----
+  // Only participates when a panelKey is provided (multi-chart workspace).
+  // Loop guards: inbound applications set a 60ms applying window so a synced
+  // range/crosshair cannot bounce back across the bus forever.
+  useEffect(() => {
+    if (!panelKey) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const onRange = (r: { from: number; to: number } | null) => {
+      if (!r || isApplyingSync()) return;
+      publishRange({ key: panelKey, from: r.from, to: r.to, at: Date.now() });
+    };
+    const unsubRange = chart.timeScale().subscribeVisibleLogicalRangeChange(onRange as never);
+    const offRange = onSyncRange((e) => {
+      if (e.key === panelKey || !loadSyncSettings().time || isApplyingSync()) return;
+      markApplyingSync();
+      try { chart.timeScale().setVisibleLogicalRange({ from: e.from, to: e.to }); } catch { /* race */ }
+    });
+    const offCross = onSyncCrosshair((e) => {
+      if (e.key === panelKey || !loadSyncSettings().crosshair) return;
+      const s = candleRef.current;
+      if (!s) return;
+      try {
+        if (e.time == null) { chart.clearCrosshairPosition(); return; }
+        const t = Number(e.time);
+        const idx = timeIdxRef.current.get(t);
+        const close = idx != null ? barsRef.current[idx]?.close : undefined;
+        if (close != null) chart.setCrosshairPosition(close, t as UTCTimestamp, s as never);
+      } catch { /* teardown race */ }
+    });
+    return () => {
+      try { chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange as never); } catch { /* gone */ }
+      offRange();
+      offCross();
+    };
+  }, [panelKey]);
 
   // Phase 23 BUG-2 → refined by Phase 24 feedback: the site theme styles the
   // terminal CHROME (panels, toolbars, dialogs — index.css [data-term] token
@@ -2149,7 +2216,7 @@ export function PriceChart({
         onOpenAlerts={() => onOpenAlerts?.()}
         onOpenReplay={() => onOpenReplay?.()}
         chartType={chartType}
-        onChartTypeChange={setChartTypeState}
+        onChartTypeChange={setChartTypePanel}
         canUndo={histLens.u > 0}
         canRedo={histLens.r > 0}
         onUndo={undoDrawings}

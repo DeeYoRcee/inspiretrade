@@ -48,6 +48,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
 import { InstrumentSettingsPanel } from "@/components/terminal/InstrumentSettingsPanel";
+import { MultiChartWorkspace } from "@/components/terminal/MultiChartWorkspace";
 import { cn } from "@/lib/utils";
 import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
 import { getTerminalSettings } from "@/lib/terminal-settings";
@@ -261,20 +262,24 @@ export default function TerminalPage() {
               : null
           }
           chart={
-            <div ref={chartBoxRef} className="relative h-full min-h-0 w-full overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
-              <PriceChart
+            /* P48 — multi-chart workspace: layouts 1/2h/2v/3/4/6, resizable
+               panels, optional sync + saved presets. The primary panel stays
+               wired to the terminal state (ticket/blotter/watchlist), so the
+               single-chart behavior is bit-for-bit preserved. */
+            <div ref={chartBoxRef} className="h-full min-h-0 min-w-0 w-full overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
+              <MultiChartWorkspace
                 symbol={chartSymbol}
                 timeframe={chartTf}
-                marks={marks}
-                accountId={account?.id ?? null}
-                positions={chartPositions}
-                onModifyPosition={modifyPosition}
                 onSymbolChange={setSymbol}
                 onTimeframeChange={setTimeframe}
+                orders={orders}
+                positions={positions}
+                accountId={account?.id ?? null}
+                onModifyPosition={modifyPosition}
+                accountBalance={metrics?.balance ?? null}
                 onOpenAlerts={() => selectPanel("alerts")}
                 onOpenReplay={() => setMode("replay")}
-                accountBalance={mode === "live" ? metrics?.balance ?? null : null}
-        />
+              />
             </div>
           }
           blotter={<TradingBlotter symbol={symbol} className="h-full w-full" />}
