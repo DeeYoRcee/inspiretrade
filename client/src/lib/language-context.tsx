@@ -246,6 +246,7 @@ const translations: Record<Language, Record<string, string>> = {
     publicProfileSharedPage: "Shared trading profile",
     // Rewards & Market (Inspire economy)
     rewards: "Rewards",
+    more: "More",
     rewardsSubtitle: "Claim daily rewards, open cases, and complete the set for a prop account.",
     inspireBalance: "INSP balance",
     market: "Market",
@@ -630,6 +631,7 @@ alertsBrowser: "Browser notifications (while the site is open)",
     premium: "Premium", monthlyPlan: "Ежемесячно", yearlyPlan: "Ежегодно", lifetimePlan: "Навсегда", perMonth: "/ месяц", perYear: "/ год", cancelAnytime: "Отмена в любое время", yearlyDesc: "Всего $2.08 в месяц — экономия 48%", lifetimeDesc: "Одна оплата — пожизненный доступ", mostPopular: "🔥 Самый популярный", lifetimeBadge: "♾️ Навсегда", purchase: "Получить", becomeProfessional: "Станьте профессиональным трейдером", premiumDescription: "Попадите в рейтинг и выделяйтесь в сообществе с Premium.", premiumFeatures: "Возможности Premium", premiumBadge: "Значок Premium ✓ в профиле", leaderboardUsername: "Ваше имя в рейтинге", topTraderRanking: "Место среди лучших трейдеров", futureFeatures: "Все будущие Premium-функции", prioritySupport: "Приоритетная поддержка", signInFirst: "Сначала войдите в аккаунт", premiumThanks: "Спасибо! Статус Premium скоро обновится.", checkoutUnavailable: "Ссылка оплаты не получена", footerInquiries: "По вопросам рекламы", installJournal: "Установить InspireTrade", installDescription: "Добавьте приложение на главный экран", install: "Установить", notNow: "Не сейчас", shareAddHome: 'Нажмите «Поделиться», затем «На экран Домой»', backToDashboard: "Вернуться на дашборд",
     // Rewards & Market (Inspire economy)
     rewards: "Награды",
+    more: "Ещё",
     rewardsSubtitle: "Получайте ежедневные награды, открывайте кейсы и собирайте набор на проп-аккаунт.",
     inspireBalance: "Баланс INSP",
     market: "Маркет",
@@ -1082,6 +1084,7 @@ alertsBrowser: "Уведомления браузера (пока сайт от�
     publicProfilePrint: "PDF sifatida saqlash", publicProfileLoadError: "Ommaviy profilni yuklab bo‘lmadi.", publicProfileNotFound: "Bu ommaviy profil mavjud emas", publicProfileNotFoundDescription: "Treyder profilini e’lon qilmagan yoki havola endi faol emas.", publicProfileSharedPage: "Ulashilgan treyder profili",
     // Rewards & Market (Inspire economy)
     rewards: "Mukofotlar",
+    more: "Ko‘proq",
     rewardsSubtitle: "Kunlik mukofot oling, case oching va prop hisob uchun to‘plamni yig‘ing.",
     inspireBalance: "INSP balans",
     market: "Bozor",
@@ -1460,6 +1463,7 @@ alertsBrowser: "Brauzer bildirishnomalari (sayt ochiq bo‘lganda)",
     premium: "Premium", monthlyPlan: "شهري", yearlyPlan: "سنوي", lifetimePlan: "مدى الحياة", perMonth: "/ شهر", perYear: "/ سنة", cancelAnytime: "إلغاء في أي وقت", yearlyDesc: "$2.08 شهرياً فقط — توفير 48%", lifetimeDesc: "ادفع مرة واحدة واستخدمه مدى الحياة", mostPopular: "🔥 الأكثر شعبية", lifetimeBadge: "♾️ مدى الحياة", purchase: "احصل عليه", becomeProfessional: "كن متداولاً محترفاً", premiumDescription: "انضم إلى لوحة المتصدرين وتميز في المجتمع مع Premium.", premiumFeatures: "ميزات Premium", premiumBadge: "شارة Premium ✓ في ملفك", leaderboardUsername: "عرض اسمك في لوحة المتصدرين", topTraderRanking: "الظهور بين أفضل المتداولين", futureFeatures: "جميع ميزات Premium المستقبلية", prioritySupport: "دعم ذو أولوية", signInFirst: "يرجى تسجيل الدخول أولاً", premiumThanks: "شكراً لك! ستتحدث حالة Premium قريباً.", checkoutUnavailable: "لم يتم الحصول على رابط الدفع", footerInquiries: "للإعلانات والاستفسارات", installJournal: "تثبيت InspireTrade", installDescription: "أضفه إلى الشاشة الرئيسية للوصول السريع", install: "تثبيت التطبيق", notNow: "ليس الآن", shareAddHome: 'اضغط على مشاركة ثم «إضافة إلى الشاشة الرئيسية»', backToDashboard: "العودة إلى لوحة التحكم",
     // Rewards & Market (Inspire economy)
     rewards: "المكافآت",
+    more: "المزيد",
     rewardsSubtitle: "احصل على مكافآت يومية، افتح الحقائب واجمع المجموعة للحصول على حساب تداول.",
     inspireBalance: "رصيد INSP",
     market: "السوق",

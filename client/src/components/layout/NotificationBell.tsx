@@ -55,7 +55,7 @@ export function NotificationBell() {
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="glass-panel w-80 border-border/60">
+      <DropdownMenuContent align="end" className="glass-panel w-[min(20rem,calc(100vw-1.5rem))] border-border/60">
         <div className="flex items-center justify-between px-3 py-2">
           <span className="text-sm font-semibold">{t("notifications")}</span>
           {log.length > 0 && (

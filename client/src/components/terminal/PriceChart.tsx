@@ -2727,7 +2727,7 @@ function HistoryPanel({ symbol }: { symbol: string }) {
   };
   const fmtDate = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : "—");
   return (
-    <div className="absolute left-2 top-32 z-30 max-h-[26rem] w-96 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
+    <div className="absolute left-2 top-32 z-30 max-h-[26rem] w-96 max-w-[calc(100%-2.5rem)] overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
       <p className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
         <span>Historical store · {symbol}</span>
         <button onClick={() => void load()} className="text-slate-400 hover:text-slate-200" title="Refresh coverage">↻</button>

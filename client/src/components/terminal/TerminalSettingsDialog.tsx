@@ -209,7 +209,7 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onPointerDown={onClose}>
       <div
-        className="flex h-[560px] max-h-[94vh] w-[860px] max-w-[96vw] overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-2xl"
+        className="flex h-[min(560px,92dvh)] w-[min(860px,96vw)] overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-2xl"
         onPointerDown={(e) => e.stopPropagation()}
       >
         {/* left nav */}

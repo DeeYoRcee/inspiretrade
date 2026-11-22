@@ -190,7 +190,7 @@ export default function TerminalPage() {
   // ---- backtest / analytics / calendar / news: full-area workspaces ---------
   if (mode === "backtest" || mode === "calendar" || mode === "news") {
     return (
-      <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
+      <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-0 flex-col gap-2 p-2 sm:min-h-[640px]">
         <Toolbar
           mode={mode} onModeChange={setMode}
           symbol={symbol} onSymbolChange={setSymbol}
@@ -376,7 +376,7 @@ function Toolbar({
                 explorer (search, categories, favorites, live prices) */}
             <button
               onClick={onOpenExplorer}
-              className="flex h-9 w-[210px] items-center justify-between rounded-md border border-slate-700/70 px-3 text-sm font-semibold text-slate-100 transition-colors hover:border-slate-500"
+              className="flex h-9 w-[150px] items-center justify-between rounded-md border border-slate-700/70 px-2 text-sm font-semibold sm:w-[210px] sm:px-3 text-slate-100 transition-colors hover:border-slate-500"
             >
               <span className="min-w-0 truncate">
                 {symbol} <span className="ml-1 text-xs font-normal text-slate-400">{getInstrument(symbol)?.name}</span>
@@ -385,13 +385,13 @@ function Toolbar({
             </button>
           </div>
 
-          <div className={cn("flex items-center gap-0.5 rounded-md border border-slate-700/70 p-0.5", mode === "replay" && "pointer-events-none opacity-60")}>
+          <div className={cn("flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-slate-700/70 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", mode === "replay" && "pointer-events-none opacity-60")}>
             {availableTimeframes(symbol).map((tf) => (
               <button
                 key={tf}
                 onClick={() => onTimeframeChange(tf)}
                 className={cn(
-                  "rounded px-2 py-1 text-xs font-medium transition-colors",
+                  "shrink-0 rounded px-2 py-1 text-xs font-medium transition-colors",
                   tf === timeframe ? "bg-sky-600 text-white" : "text-slate-400 hover:text-slate-200",
                 )}
               >
@@ -425,7 +425,7 @@ function Toolbar({
       {/* Account strip — server metrics, refreshed by the 10s heartbeat (live only) */}
       {liveOnly && account && (
         <Select value={activeId ?? undefined} onValueChange={onAccountChange}>
-          <SelectTrigger className="w-[150px]">
+          <SelectTrigger className="w-[120px] sm:w-[150px]">
             <SelectValue placeholder="Account" />
           </SelectTrigger>
           <SelectContent>

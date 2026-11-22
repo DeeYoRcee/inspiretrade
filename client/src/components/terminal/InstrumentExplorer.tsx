@@ -102,7 +102,7 @@ export function InstrumentExplorer({
       }}
     >
       <div
-        className="flex h-[520px] max-h-[92vh] w-[620px] max-w-[94vw] flex-col rounded-xl border border-slate-700 bg-slate-900 p-3 shadow-2xl"
+        className="flex h-[min(520px,92dvh)] w-[min(620px,94vw)] flex-col rounded-xl border border-slate-700 bg-slate-900 p-3 shadow-2xl"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="mb-2 flex items-center gap-2">

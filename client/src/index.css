@@ -562,3 +562,20 @@ html.density-cozy .wl-row { padding-top: 0.4rem; padding-bottom: 0.4rem; }
 @media (prefers-reduced-motion: reduce) {
   .hero-dash { animation: none; }
 }
+
+/* P43 — mobile experience ---------------------------------------------------
+   The root causes of sideways drift (fixed min-w tables, fixed dialog px
+   widths) are fixed at the component level; `overflow-x: clip` on small
+   viewports is the final safety net — unlike `hidden` it does NOT create a
+   scroll container, so sticky/fixed children keep working. */
+@media (max-width: 640px) {
+  body { overflow-x: clip; }
+}
+/* safe-area helpers (viewport-fit=cover devices — iPhone notch / gesture bar) */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+/* P43 — respect reduced motion for the always-on theme background layers
+   (aurora/neon/cosmos/knight/vader had no guard; money/f1 already did) */
+@media (prefers-reduced-motion: reduce) {
+  body::before, body::after { animation: none !important; }
+}

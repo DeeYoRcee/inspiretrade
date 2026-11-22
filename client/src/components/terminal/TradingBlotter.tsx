@@ -250,7 +250,7 @@ function PositionsTable({
   const { t } = useLanguage();
   if (!positions.length) return <div className="py-8 text-center text-muted-foreground">{t("noOpenPositions")}</div>;
   return (
-    <table className="w-full min-w-[720px] border-collapse text-[11px]">
+    <div className="overflow-x-auto"><table className="w-full min-w-[720px] border-collapse text-[11px]">
       <thead className="sticky top-0 bg-slate-900/95 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
         <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-semibold">
           <th>Symbol</th><th>Side</th><th className="text-right">Volume</th>
@@ -315,7 +315,7 @@ function PositionsTable({
           );
         })}
       </tbody>
-    </table>
+    </table></div>
   );
 }
 
@@ -333,7 +333,7 @@ function OrdersTable({
 }) {
   if (!orders.length) return <div className="py-8 text-center text-muted-foreground">No pending orders.</div>;
   return (
-    <table className="w-full min-w-[640px] border-collapse text-[11px]">
+    <div className="overflow-x-auto"><table className="w-full min-w-[720px] border-collapse text-[11px]">
       <thead className="sticky top-0 bg-slate-900/95 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
         <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-semibold">
           <th>Symbol</th><th>Side</th><th>Type</th><th className="text-right">Volume</th>
@@ -363,7 +363,7 @@ function OrdersTable({
           );
         })}
       </tbody>
-    </table>
+    </table></div>
   );
 }
 
@@ -424,7 +424,7 @@ function HistoryTable({ q, onJournal }: { q: { isLoading: boolean; data?: Server
   if (q.isLoading) return <div className="py-8 text-center text-muted-foreground">Loading…</div>;
   if (!q.data?.length) return <div className="py-8 text-center text-muted-foreground">{t("noHistory")}</div>;
   return (
-    <table className="w-full min-w-[640px] border-collapse text-[11px]">
+    <div className="overflow-x-auto"><table className="w-full min-w-[720px] border-collapse text-[11px]">
       <thead className="sticky top-0 bg-slate-900/95 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
         <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-semibold">
           <th>Closed</th><th>Symbol</th><th>Side</th><th className="text-right">Volume</th>
@@ -453,7 +453,7 @@ function HistoryTable({ q, onJournal }: { q: { isLoading: boolean; data?: Server
           );
         })}
       </tbody>
-    </table>
+    </table></div>
   );
 }
 

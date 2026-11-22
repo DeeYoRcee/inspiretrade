@@ -119,7 +119,7 @@ export function DailyRewardDialog() {
           if (!o) dismiss();
         }}
       >
-        <DialogContent className="glass-panel max-w-md border-primary/30 overflow-hidden text-center">
+        <DialogContent className="glass-panel max-h-[calc(100dvh-1.5rem)] max-w-md overflow-x-hidden overflow-y-auto border-primary/30 p-4 text-center sm:p-6">
           <button
             onClick={dismiss}
             aria-label={t("later")}

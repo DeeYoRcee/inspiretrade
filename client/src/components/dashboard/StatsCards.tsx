@@ -48,7 +48,7 @@ export function StatsCards({ category = "ALL" }: { category?: string }) {
       className="grid grid-cols-1 md:grid-cols-3 gap-6"
     >
       <motion.div variants={item}>
-        <Card className="p-6 glass-panel relative overflow-hidden group">
+        <Card className="p-6 relative overflow-hidden group rounded-2xl border border-border/25 bg-card/[0.08]">
           <div className={`absolute top-0 right-0 p-4 opacity-10 transition-transform duration-500 group-hover:scale-110 ${isProfitable ? "text-success" : "text-destructive"}`} aria-hidden>
             {isProfitable ? <TrendingUp className="w-24 h-24" /> : <TrendingDown className="w-24 h-24" />}
           </div>
@@ -64,7 +64,7 @@ export function StatsCards({ category = "ALL" }: { category?: string }) {
       </motion.div>
 
       <motion.div variants={item}>
-        <Card className="p-6 glass-panel relative overflow-hidden group">
+        <Card className="p-6 relative overflow-hidden group rounded-2xl border border-border/25 bg-card/[0.08]">
           <div className="absolute top-0 right-0 p-4 opacity-10 transition-transform duration-500 group-hover:scale-110 text-primary" aria-hidden>
             <Target className="w-24 h-24" />
           </div>
@@ -83,7 +83,7 @@ export function StatsCards({ category = "ALL" }: { category?: string }) {
       </motion.div>
 
       <motion.div variants={item}>
-        <Card className="p-6 glass-panel relative overflow-hidden group">
+        <Card className="p-6 relative overflow-hidden group rounded-2xl border border-border/25 bg-card/[0.08]">
           <div className="absolute top-0 right-0 p-4 opacity-10 transition-transform duration-500 group-hover:scale-110 text-primary" aria-hidden>
             <ActivitySquare className="w-24 h-24" />
           </div>

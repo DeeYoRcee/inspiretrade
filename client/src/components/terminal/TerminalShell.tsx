@@ -123,13 +123,49 @@ export function TerminalShell({
 
   const patch = useCallback((p: Partial<ShellState>) => setShell((s) => ({ ...s, ...p })), []);
 
+  // P43 — mobile: which docked panel is open below the chart (one at a time)
+  const [mTab, setMTab] = useState<Exclude<ShellPanel, null> | "blotter" | null>("watchlist");
+  useEffect(() => {
+    // keep the parent's activePanel in sync with the mobile tab on layout switches
+    if (!wide && mTab && mTab !== "blotter" && activePanel !== mTab) onPanelSelect(mTab);
+  }, [wide]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!wide) {
-    // stacked mobile/tablet layout
+    // P43 — stacked mobile/tablet layout: the chart stays the primary
+    // surface; panels dock into a touch-sized tab strip below it, one at a
+    // time. No desktop pixel widths leak into this branch.
+    const tabs: { id: Exclude<ShellPanel, null> | "blotter"; label: string }[] = [
+      { id: "watchlist", label: "Watchlist" },
+      { id: "ticket", label: "Trade" },
+      { id: "alerts", label: "Alerts" },
+      { id: "info", label: "Info" },
+      { id: "blotter", label: "Positions" },
+    ];
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
-        {chart}
-        {panel}
-        {blotter}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-[220px] flex-1">{chart}</div>
+        <div className="flex shrink-0 items-stretch gap-0.5 overflow-x-auto rounded-t-lg border border-b-0 border-slate-800 bg-slate-900/80 px-1 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {tabs.map((tb) => (
+            <button
+              key={tb.id}
+              onClick={() => {
+                setMTab((cur) => (cur === tb.id ? null : tb.id));
+                if (tb.id !== "blotter") onPanelSelect(tb.id);
+              }}
+              className={cn(
+                "relative flex h-11 min-w-[68px] flex-1 items-center justify-center whitespace-nowrap rounded-t-md px-2 text-xs font-semibold transition-colors",
+                mTab === tb.id ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800",
+              )}
+            >
+              {tb.label}
+            </button>
+          ))}
+        </div>
+        {mTab && (
+          <div className="h-[min(45dvh,380px)] shrink-0 overflow-auto rounded-b-lg border border-t-0 border-slate-800 bg-[#0b1220]">
+            {mTab === "blotter" ? blotter : panel}
+          </div>
+        )}
       </div>
     );
   }
@@ -145,7 +181,7 @@ export function TerminalShell({
               <button
                 title="Collapse bottom panel"
                 onClick={() => patch({ bottomOpen: false })}
-                className="opacity-0 transition-opacity group-hover:opacity-100"
+                className="opacity-60 transition-opacity md:opacity-0 md:group-hover:opacity-100"
               >
                 <ChevronLeft className="h-3.5 w-3.5 rotate-90 text-slate-400 hover:text-sky-300" />
               </button>
