@@ -33,9 +33,29 @@
           },
           "premiumSince": {
             ".validate": "newData.val() === data.val() || !newData.exists()"
+          },
+          "premiumSource": {
+            ".validate": "newData.val() === data.val() || !newData.exists()"
+          },
+          "whopMembershipId": {
+            ".validate": "newData.val() === data.val() || !newData.exists()"
           }
         }
       }
+    },
+    "whopMemberships": {
+      "$uid": {
+        ".read": "auth !== null && auth.uid === $uid",
+        ".write": false
+      }
+    },
+    "whopEvents": {
+      ".read": false,
+      ".write": false
+    },
+    "whopUnlinked": {
+      ".read": false,
+      ".write": false
     },
     "privatePublicProfileSettings": {
       "$uid": {

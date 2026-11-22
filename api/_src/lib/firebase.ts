@@ -227,3 +227,9 @@ export function firestore(): any {
   ensureApp();
   return admin.firestore();
 }
+
+/** Admin Auth handle (P45 §4 — payer email → Firebase user mapping). */
+export function adminAuth(): any {
+  ensureApp();
+  return admin.auth();
+}

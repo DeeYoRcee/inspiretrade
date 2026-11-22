@@ -1,11 +1,11 @@
 import Whop from "@whop/sdk";
+import { PUBLIC_PLANS } from "./plans";
 
 const COMPANY_ID = process.env.WHOP_COMPANY_ID || "biz_lYc5Z0SFSvie4m";
-const PLANS = {
-  monthly: { id: "plan_uAJSe5gvChYEy", price: 3.99, label: "Monthly", period: "/ mo" },
-  yearly: { id: "plan_s3vO6JEWy2ruA", price: 24.99, label: "Yearly", period: "/ yr" },
-  lifetime: { id: "plan_OloGrVT1gLT5y", price: 109.99, label: "Lifetime", period: "" },
-};
+// P45 §1/§2 — the ONLY purchasable plans: official Monthly ($4.99) and
+// Yearly ($49.99). Lifetime is no longer sold (§2); its memberships keep
+// working for existing users.
+const PLANS = Object.fromEntries(PUBLIC_PLANS.map((p) => [p.key, { id: p.id, price: p.price, label: p.label, period: p.period }]));
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {

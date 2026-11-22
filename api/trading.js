@@ -14,6 +14,7 @@ var __export = (target, all) => {
 var firebase_exports = {};
 __export(firebase_exports, {
   HttpError: () => HttpError,
+  adminAuth: () => adminAuth,
   assertPost: () => assertPost,
   decrementAmount: () => decrementAmount,
   decrementCounter: () => decrementCounter,
@@ -169,6 +170,10 @@ async function logLedger(entry) {
 function firestore() {
   ensureApp();
   return admin.firestore();
+}
+function adminAuth() {
+  ensureApp();
+  return admin.auth();
 }
 var admin, HttpError, app;
 var init_firebase = __esm({

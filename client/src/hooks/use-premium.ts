@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ref, get, set } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "./use-auth";
+import { parseWhopSubscription, type WhopSubscription } from "@/lib/whop";
 
 export interface UserProfile {
   uid: string;
@@ -45,24 +46,55 @@ export function useUserProfile() {
   });
 }
 
-export function usePremiumStatus() {
+/** P45 §5/§6 — full subscription detail from the server-side verify endpoint.
+ *  The server matches Whop memberships by verified ID-token identity and
+ *  persists/syncs the Firebase entitlement; the client NEVER self-declares. */
+export function useWhopSubscription() {
   const { user } = useAuth();
   return useQuery({
     queryKey: ["premiumStatus", user?.uid],
-    queryFn: async (): Promise<boolean> => {
-      if (!user) return false;
+    queryFn: async (): Promise<WhopSubscription> => {
+      if (!user) return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
       const res = await fetch("/api/whop?action=verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ firebaseUid: user.uid }),
       });
+      if (res.status === 401) {
+        return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
+      }
       if (!res.ok) throw new Error("Premium status request failed");
-      const data = await res.json();
-      return data?.isPremium === true;
+      return parseWhopSubscription(await res.json());
     },
     enabled: !!user,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 60 * 1000,
     retry: 1,
+  });
+}
+
+/** boolean premium gate (same cache as useWhopSubscription) — the signature
+ *  every existing consumer relies on stays a plain boolean */
+export function usePremiumStatus() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["premiumStatus", user?.uid],
+    queryFn: async (): Promise<WhopSubscription> => {
+      if (!user) return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
+      const res = await fetch("/api/whop?action=verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firebaseUid: user.uid }),
+      });
+      if (res.status === 401) {
+        return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
+      }
+      if (!res.ok) throw new Error("Premium status request failed");
+      return parseWhopSubscription(await res.json());
+    },
+    enabled: !!user,
+    staleTime: 60 * 1000,
+    retry: 1,
+    select: (d: WhopSubscription) => d.isPremium === true,
   });
 }
 

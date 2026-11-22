@@ -5,16 +5,17 @@
  *
  *   ?action=plans    GET  — static plan catalog
  *   ?action=checkout POST { planKey, firebaseUid } — create checkout session
- *   ?action=verify   POST { firebaseUid } — check premium membership
+ *   ?action=verify   POST (Bearer ID token) — verify + sync premium entitlement
+ *   ?action=webhook  POST (Whop servers, HMAC-signed) — P45 §4 lifecycle events
  */
 import checkout from "./checkout";
 import verify from "./verify";
+import webhook from "./webhook";
+import { PUBLIC_PLANS } from "./plans";
 
-const PLANS = {
-  monthly: { id: "plan_uAJSe5gvChYEy", price: 3.99, label: "Monthly", period: "/ mo" },
-  yearly: { id: "plan_s3vO6JEWy2ruA", price: 24.99, label: "Yearly", period: "/ yr" },
-  lifetime: { id: "plan_OloGrVT1gLT5y", price: 109.99, label: "Lifetime", period: "" },
-};
+// P45 §1/§2 — official plans only (Monthly $4.99 / Yearly $49.99); lifetime
+// is no longer a public plan.
+const PLANS = PUBLIC_PLANS.map((p) => ({ key: p.key, id: p.id, price: p.price, label: p.label, period: p.period, checkoutUrl: p.checkoutUrl }));
 
 function safeParse(raw: string): any {
   try {
@@ -45,9 +46,11 @@ export default async function handler(req: any, res: any) {
       return checkout(req, res);
     case "verify":
       return verify(req, res);
+    case "webhook":
+      return webhook(req, res);
     default:
       return res
         .status(400)
-        .json({ error: "BAD_ACTION", message: "Unknown whop action (use ?action=plans|checkout|verify)" });
+        .json({ error: "BAD_ACTION", message: "Unknown whop action (use ?action=plans|checkout|verify|webhook)" });
   }
 }

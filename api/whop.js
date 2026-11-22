@@ -6,8 +6,15 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -668,13 +675,13 @@ var require_timing_safe_equal = __commonJS({
   "node_modules/standardwebhooks/dist/timing_safe_equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.timingSafeEqual = timingSafeEqual;
+    exports.timingSafeEqual = timingSafeEqual2;
     function assert(expr, msg = "") {
       if (!expr) {
         throw new Error(msg);
       }
     }
-    function timingSafeEqual(a, b) {
+    function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
@@ -814,6 +821,187 @@ var require_dist = __commonJS({
   }
 });
 
+// api/_src/lib/firebase.ts
+var firebase_exports = {};
+__export(firebase_exports, {
+  HttpError: () => HttpError,
+  adminAuth: () => adminAuth,
+  assertPost: () => assertPost,
+  decrementAmount: () => decrementAmount,
+  decrementCounter: () => decrementCounter,
+  firestore: () => firestore,
+  handle: () => handle,
+  json: () => json,
+  localDate: () => localDate,
+  logLedger: () => logLedger,
+  previousDate: () => previousDate,
+  requireAdmin: () => requireAdmin,
+  requireUser: () => requireUser,
+  rtdb: () => rtdb
+});
+import * as adminNamespace from "firebase-admin";
+function getServiceAccount() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.project_id && parsed.client_email && parsed.private_key) {
+        return {
+          projectId: parsed.project_id,
+          clientEmail: parsed.client_email,
+          privateKey: String(parsed.private_key).replace(/\\n/g, "\n")
+        };
+      }
+    } catch {
+      throw new Error("FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON");
+    }
+  }
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  if (projectId && clientEmail && privateKey) {
+    return {
+      projectId,
+      clientEmail,
+      privateKey: privateKey.replace(/\\n/g, "\n")
+    };
+  }
+  return null;
+}
+function ensureApp() {
+  if (app) return app;
+  const account = getServiceAccount();
+  if (!account) {
+    throw new HttpError(
+      500,
+      "SERVER_NOT_CONFIGURED",
+      "Missing FIREBASE_SERVICE_ACCOUNT (or FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY) environment variables on the server."
+    );
+  }
+  app = admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: account.projectId,
+      clientEmail: account.clientEmail,
+      privateKey: account.privateKey
+    }),
+    databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${account.projectId}-default-rtdb.firebaseio.com`
+  });
+  return app;
+}
+async function requireUser(req) {
+  const header = req.headers?.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+  if (!token) throw new HttpError(401, "MISSING_TOKEN", "Missing Authorization bearer token");
+  ensureApp();
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(token);
+  } catch {
+    throw new HttpError(401, "INVALID_TOKEN", "Invalid or expired token");
+  }
+  if (!decoded?.uid) throw new HttpError(401, "INVALID_TOKEN", "Invalid token payload");
+  return { uid: decoded.uid, email: decoded.email, name: decoded.name };
+}
+async function requireAdmin(req) {
+  const user = await requireUser(req);
+  const emails = String(process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+  let flagged = false;
+  try {
+    flagged = (await rtdb().ref(`admins/${user.uid}`).once("value")).val() === true;
+  } catch {
+  }
+  if (!emails.includes(String(user.email || "").toLowerCase()) && !flagged) {
+    throw new HttpError(403, "FORBIDDEN", "Owner access required");
+  }
+  return user;
+}
+function rtdb() {
+  ensureApp();
+  return admin.database();
+}
+function json(res, status, data) {
+  res.status(status).json(data);
+}
+function handle(fn) {
+  return async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        res.status(err.status).json({ error: err.code, message: err.message });
+      } else {
+        console.error("[api] unexpected error:", err);
+        res.status(500).json({ error: "INTERNAL", message: "Unexpected server error" });
+      }
+    }
+  };
+}
+function assertPost(req) {
+  if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
+}
+async function decrementCounter(ref, insufficientError) {
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c) => {
+    const v = c || 0;
+    return v >= 1 ? v - 1 : v;
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
+async function decrementAmount(ref, amount, insufficientError) {
+  if (!Number.isFinite(amount) || amount <= 0) throw insufficientError;
+  const before = (await ref.get()).val() || 0;
+  const tx = await ref.transaction((c) => {
+    const v = c || 0;
+    return v >= amount ? v - amount : v;
+  });
+  const after = tx?.snapshot?.val?.() ?? 0;
+  if (!tx?.committed || after >= before) {
+    throw insufficientError;
+  }
+  return after;
+}
+function localDate(offsetHours = 5, d = /* @__PURE__ */ new Date()) {
+  return new Date(d.getTime() + offsetHours * 3600 * 1e3).toISOString().slice(0, 10);
+}
+function previousDate(dateStr) {
+  const d = /* @__PURE__ */ new Date(dateStr + "T00:00:00Z");
+  return new Date(d.getTime() - 864e5).toISOString().slice(0, 10);
+}
+async function logLedger(entry) {
+  try {
+    await rtdb().ref("ledger").push({ ...entry, at: Date.now() });
+  } catch (e) {
+    console.error("[api] ledger write failed", e);
+  }
+}
+function firestore() {
+  ensureApp();
+  return admin.firestore();
+}
+function adminAuth() {
+  ensureApp();
+  return admin.auth();
+}
+var admin, HttpError, app;
+var init_firebase = __esm({
+  "api/_src/lib/firebase.ts"() {
+    "use strict";
+    admin = adminNamespace.default ?? adminNamespace;
+    HttpError = class extends Error {
+      constructor(status, code, message2) {
+        super(message2 || code);
+        this.status = status;
+        this.code = code;
+      }
+    };
+    app = null;
+  }
+});
+
 // node_modules/@whop/sdk/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
   if (kind === "m")
@@ -834,13 +1022,13 @@ function __classPrivateFieldGet(receiver, state, kind, f) {
 
 // node_modules/@whop/sdk/internal/utils/uuid.mjs
 var uuid4 = function() {
-  const { crypto: crypto2 } = globalThis;
-  if (crypto2?.randomUUID) {
-    uuid4 = crypto2.randomUUID.bind(crypto2);
-    return crypto2.randomUUID();
+  const { crypto: crypto3 } = globalThis;
+  if (crypto3?.randomUUID) {
+    uuid4 = crypto3.randomUUID.bind(crypto3);
+    return crypto3.randomUUID();
   }
   const u8 = new Uint8Array(1);
-  const randomByte = crypto2 ? () => crypto2.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
+  const randomByte = crypto3 ? () => crypto3.getRandomValues(u8)[0] : () => Math.random() * 255 & 255;
   return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (+c ^ randomByte() & 15 >> +c / 4).toString(16));
 };
 
@@ -1653,8 +1841,8 @@ async function defaultParseResponse(client, props) {
       if (contentLength === "0") {
         return void 0;
       }
-      const json = await response.json();
-      return json;
+      const json2 = await response.json();
+      return json2;
     }
     const text = await response.text();
     return text;
@@ -6783,13 +6971,13 @@ function createRemoteJWKSet(url, options) {
   }
   const reload = async () => {
     if (pendingFetch && isCloudflareWorkers() && (pendingFetch = void 0), !pendingFetch) {
-      const sequence = ++reloadSequence, current = pendingFetch = fetchJwks(href, headers, AbortSignal.timeout(timeoutDuration), fetchImpl).then((json) => {
-        const next = createLocalJWKSet(json);
+      const sequence = ++reloadSequence, current = pendingFetch = fetchJwks(href, headers, AbortSignal.timeout(timeoutDuration), fetchImpl).then((json2) => {
+        const next = createLocalJWKSet(json2);
         if (sequence <= appliedSequence)
           return;
         local = next;
         const updatedAt = Date.now();
-        cache2 && (cache2.uat = updatedAt, cache2.jwks = json), jwksTimestamp = updatedAt, appliedSequence = sequence;
+        cache2 && (cache2.uat = updatedAt, cache2.jwks = json2), jwksTimestamp = updatedAt, appliedSequence = sequence;
       }).finally(() => {
         pendingFetch === current && (pendingFetch = void 0);
       });
@@ -7490,13 +7678,109 @@ Whop.Ads = Ads;
 Whop.Conversions = Conversions;
 Whop.AdReports = AdReports;
 
+// api/_src/whop/webhook-core.ts
+import * as crypto2 from "crypto";
+var WHOP_CHECKOUT_URLS = {
+  monthly: "https://whop.com/checkout/plan_52Mtr4TTs0xit",
+  yearly: "https://whop.com/checkout/plan_NRZsRwd0VgKR4"
+};
+var PLAN_BY_ID = {
+  plan_52Mtr4TTs0xit: "monthly",
+  // official Monthly — $4.99/mo
+  plan_NRZsRwd0VgKR4: "yearly",
+  // official Yearly — $49.99/yr
+  plan_OloGrVT1gLT5y: "lifetime"
+  // LEGACY lifetime — kept for existing users only
+};
+var PUBLIC_PLANS = [
+  { key: "monthly", id: "plan_52Mtr4TTs0xit", price: 4.99, label: "Monthly", period: "/ mo", checkoutUrl: WHOP_CHECKOUT_URLS.monthly },
+  { key: "yearly", id: "plan_NRZsRwd0VgKR4", price: 49.99, label: "Yearly", period: "/ yr", checkoutUrl: WHOP_CHECKOUT_URLS.yearly }
+];
+var PREMIUM_PRODUCT_ID = "prod_cUlL0SOCTM3S7";
+var GRANT_STATUSES = /* @__PURE__ */ new Set([
+  "active",
+  "trialing",
+  "completed",
+  "canceling",
+  "past_due"
+]);
+function planKeyForPlanId(planId) {
+  if (!planId) return null;
+  return PLAN_BY_ID[planId] ?? null;
+}
+function isPremiumMembership(m) {
+  return m.product?.id === PREMIUM_PRODUCT_ID;
+}
+function decideEntitlement(m) {
+  const status = String(m.status || "");
+  const planKey = planKeyForPlanId(m.plan?.id);
+  return { grant: GRANT_STATUSES.has(status), status, planKey };
+}
+function extractUidCandidates(m) {
+  const out = [];
+  const raw = m.metadata?.firebaseUid;
+  if (typeof raw === "string" && raw.length > 0 && raw.length <= 128) out.push(raw);
+  return out;
+}
+function extractEmail(m) {
+  const e = m.user?.email;
+  return typeof e === "string" && e.includes("@") ? e.trim().toLowerCase() : null;
+}
+var TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
+function signContent(id, timestamp, body) {
+  return `${id}.${timestamp}.${body}`;
+}
+function hmacBase64(secretCandidate, content) {
+  return crypto2.createHmac("sha256", secretCandidate).update(content).digest("base64");
+}
+function secretCandidates(secret) {
+  const out = [];
+  const push = (s) => {
+    try {
+      const b = Buffer.from(s, "base64");
+      if (b.length > 0) out.push(b);
+    } catch {
+    }
+    out.push(Buffer.from(s, "utf8"));
+  };
+  push(secret);
+  if (secret.startsWith("ws_")) push(secret.slice(3));
+  if (secret.startsWith("whsec_")) push(secret.slice(6));
+  return out;
+}
+function safeEqual(a, b) {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return crypto2.timingSafeEqual(ab, bb);
+}
+function verifyWebhookSignature(body, headers, secret) {
+  if (!body || !headers || !secret) return null;
+  const id = String(headers["webhook-id"] ?? "");
+  const ts = String(headers["webhook-timestamp"] ?? "");
+  const sigHeader = String(headers["webhook-signature"] ?? "");
+  if (!id || !ts || !sigHeader) return null;
+  const tsNum = Number(ts);
+  if (!Number.isFinite(tsNum)) return null;
+  const nowSec = Math.floor(Date.now() / 1e3);
+  if (Math.abs(nowSec - tsNum) > TIMESTAMP_TOLERANCE_SECONDS) return null;
+  const expected = secretCandidates(secret).map((k) => hmacBase64(k, signContent(id, ts, body)));
+  const provided = sigHeader.split(" ").flatMap((part) => part.startsWith("v1,") ? [part.slice(3)] : []);
+  if (!provided.length || !expected.length) return null;
+  const ok = expected.some((exp) => provided.some((sig2) => safeEqual(exp, sig2)));
+  if (!ok) return null;
+  try {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed.type !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 // api/_src/whop/checkout.ts
 var COMPANY_ID = process.env.WHOP_COMPANY_ID || "biz_lYc5Z0SFSvie4m";
-var PLANS = {
-  monthly: { id: "plan_uAJSe5gvChYEy", price: 3.99, label: "Monthly", period: "/ mo" },
-  yearly: { id: "plan_s3vO6JEWy2ruA", price: 24.99, label: "Yearly", period: "/ yr" },
-  lifetime: { id: "plan_OloGrVT1gLT5y", price: 109.99, label: "Lifetime", period: "" }
-};
+var PLANS = Object.fromEntries(PUBLIC_PLANS.map((p) => [p.key, { id: p.id, price: p.price, label: p.label, period: p.period }]));
 async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -7548,40 +7832,350 @@ async function handler(req, res) {
 }
 
 // api/_src/whop/verify.ts
+init_firebase();
 var COMPANY_ID2 = process.env.WHOP_COMPANY_ID || "biz_lYc5Z0SFSvie4m";
-var PREMIUM_PRODUCT_ID = "prod_cUlL0SOCTM3S7";
+async function listValidMemberships(whop) {
+  const out = [];
+  const memberships = await whop.memberships.list({
+    company_id: COMPANY_ID2,
+    product_id: PREMIUM_PRODUCT_ID,
+    valid: true
+  });
+  for await (const m of memberships) {
+    if (m) out.push(m);
+  }
+  return out;
+}
+function matchesUser(m, uid, email) {
+  const byMeta = extractUidCandidates(m).includes(uid);
+  const byEmail = !!email && !!extractEmail(m) && extractEmail(m) === String(email).trim().toLowerCase();
+  return byMeta || byEmail;
+}
 async function handler2(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ isPremium: false });
+    return res.status(405).json({ isPremium: false, error: "Method not allowed" });
   }
-  const { firebaseUid } = req.body;
-  if (typeof firebaseUid !== "string" || !firebaseUid || firebaseUid.length > 128) {
-    return res.status(400).json({ isPremium: false });
-  }
+  const user = await requireUser(req).catch((e) => {
+    if (e instanceof HttpError) return null;
+    throw e;
+  });
+  if (!user) return res.status(401).json({ isPremium: false, error: "Auth required" });
+  const uid = user.uid;
+  const email = user.email;
+  const db = rtdb();
+  const profileSnap = await db.ref(`users/${uid}/profile`).once("value");
+  const profile = profileSnap.val() || {};
   const apiKey = process.env.WHOP_API_KEY;
-  if (!apiKey) return res.status(200).json({ isPremium: false });
+  if (!apiKey) {
+    return res.status(200).json({
+      isPremium: profile.isPremium === true,
+      plan: typeof profile.premiumPlan === "string" ? profile.premiumPlan : null,
+      status: null,
+      currentPeriodEnd: null,
+      manageUrl: null,
+      source: profile.premiumSource === "whop" ? "whop" : "admin",
+      configured: false
+    });
+  }
   try {
     const whop = new Whop({ apiKey });
-    const memberships = await whop.memberships.list({
-      company_id: COMPANY_ID2,
-      product_id: PREMIUM_PRODUCT_ID,
-      valid: true,
-      metadata: JSON.stringify({ firebaseUid })
+    const memberships = await listValidMemberships(whop);
+    const mine = memberships.filter((m) => matchesUser(m, uid, email));
+    if (mine.length > 0) {
+      const best = mine.sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")))[0];
+      const decision = decideEntitlement(best);
+      const sinceSnap = await db.ref(`users/${uid}/profile/premiumSince`).once("value");
+      const since = typeof sinceSnap.val() === "number" ? sinceSnap.val() : Date.now();
+      await db.ref(`whopMemberships/${uid}`).update({
+        membershipId: best.id,
+        planId: best.plan?.id ?? null,
+        planKey: decision.planKey,
+        status: decision.status,
+        valid: decision.grant,
+        cancelAtPeriodEnd: best.cancel_at_period_end === true,
+        canceledAt: best.canceled_at ?? null,
+        renewalPeriodStart: best.renewal_period_start ?? null,
+        renewalPeriodEnd: best.renewal_period_end ?? null,
+        manageUrl: best.manage_url ?? null,
+        email: extractEmail(best),
+        lastEvent: "verify_sync",
+        updatedAt: Date.now()
+      });
+      await db.ref(`users/${uid}/profile`).update({
+        isPremium: true,
+        premiumPlan: decision.planKey ?? "monthly",
+        premiumSince: since,
+        premiumSource: "whop",
+        whopMembershipId: best.id
+      });
+      return res.status(200).json({
+        isPremium: true,
+        plan: decision.planKey,
+        status: decision.status,
+        currentPeriodEnd: best.renewal_period_end ?? null,
+        manageUrl: best.manage_url ?? null,
+        source: "whop",
+        configured: true
+      });
+    }
+    const whopOwned = profile.premiumSource === "whop" && typeof profile.whopMembershipId === "string" && profile.whopMembershipId !== "";
+    const recurring = profile.premiumPlan === "monthly" || profile.premiumPlan === "yearly";
+    if (whopOwned && recurring && profile.isPremium === true) {
+      await db.ref(`users/${uid}/profile`).update({ isPremium: false });
+      await db.ref(`whopMemberships/${uid}`).update({ valid: false, status: "missing", lastEvent: "verify_sync_revoked", updatedAt: Date.now() });
+      await logLedger({ type: "whop_auto_revoke", uid, reason: "verify_no_valid_membership", at: Date.now() });
+    }
+    return res.status(200).json({
+      isPremium: profile.isPremium === true,
+      plan: typeof profile.premiumPlan === "string" ? profile.premiumPlan : null,
+      status: null,
+      currentPeriodEnd: null,
+      manageUrl: null,
+      source: profile.premiumSource === "whop" ? "whop" : profile.isPremium === true ? "admin" : null,
+      configured: true
     });
-    const isPremium = Array.isArray(memberships?.data) && memberships.data.length > 0;
-    return res.status(200).json({ isPremium });
   } catch (error) {
     console.error("Whop membership verification failed:", error);
-    return res.status(502).json({ isPremium: false, error: "Could not verify Whop membership." });
+    return res.status(200).json({
+      isPremium: profile.isPremium === true,
+      plan: typeof profile.premiumPlan === "string" ? profile.premiumPlan : null,
+      status: null,
+      currentPeriodEnd: null,
+      manageUrl: null,
+      source: profile.premiumSource === "whop" ? "whop" : profile.isPremium === true ? "admin" : null,
+      configured: true,
+      degraded: true
+    });
+  }
+}
+
+// api/_src/whop/webhook.ts
+init_firebase();
+var COMPANY_ID3 = process.env.WHOP_COMPANY_ID || "biz_lYc5Z0SFSvie4m";
+async function readRawBody(req) {
+  try {
+    if (typeof req.body === "string" && req.body) return req.body;
+    if (req.body === void 0 || req.body === null) {
+      if (req.readableEnded) return null;
+      const chunks = [];
+      for await (const ch of req) chunks.push(ch);
+      return Buffer.concat(chunks).toString("utf8");
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+function bodyCandidates(req, raw) {
+  const out = [];
+  if (raw) out.push(raw);
+  if (req.body && typeof req.body === "object") {
+    const s = JSON.stringify(req.body);
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+function verifyEvent(body, headers) {
+  const secret = process.env.WHOP_WEBHOOK_SECRET;
+  if (!secret) return null;
+  try {
+    const whop = new Whop({ apiKey: process.env.WHOP_API_KEY || "unset", webhookKey: secret });
+    const event = whop.webhooks.unwrap(body, {
+      headers: {
+        "webhook-id": headers["webhook-id"],
+        "webhook-timestamp": headers["webhook-timestamp"],
+        "webhook-signature": headers["webhook-signature"]
+      },
+      key: secret
+    });
+    if (event && typeof event.type === "string") return event;
+    return null;
+  } catch (primaryError) {
+    const parsed = verifyWebhookSignature(body, headers, secret);
+    if (!parsed && process.env.DEBUG) {
+      console.warn("[whop-webhook] signature verification failed:", primaryError instanceof Error ? primaryError.message : primaryError);
+    }
+    return parsed;
+  }
+}
+function webhookHeaders(req) {
+  const h = req.headers || {};
+  return {
+    "webhook-id": String(h["webhook-id"] ?? ""),
+    "webhook-timestamp": String(h["webhook-timestamp"] ?? ""),
+    "webhook-signature": String(h["webhook-signature"] ?? "")
+  };
+}
+async function resolveUid(whop, m) {
+  const db = rtdb();
+  for (const uid of extractUidCandidates(m)) {
+    try {
+      const snap = await db.ref(`users/${uid}/profile/uid`).get();
+      if (snap.exists()) return uid;
+    } catch {
+    }
+  }
+  const email = extractEmail(m);
+  if (email) {
+    try {
+      const { adminAuth: adminAuth2 } = await Promise.resolve().then(() => (init_firebase(), firebase_exports));
+      const user = await adminAuth2().getUserByEmail(email);
+      if (user?.uid) return user.uid;
+    } catch {
+    }
+  }
+  return null;
+}
+async function fetchMembership(whop, id) {
+  try {
+    const m = await whop.memberships.retrieve(id);
+    return m ?? null;
+  } catch (e) {
+    console.error("[whop-webhook] memberships.retrieve failed:", e);
+    return null;
+  }
+}
+async function applyMembership(m, uid, lastEvent) {
+  const db = rtdb();
+  const decision = decideEntitlement(m);
+  if (!uid) {
+    if (decision.grant && isPremiumMembership(m)) {
+      await db.ref(`whopUnlinked/${m.id}`).set({
+        membershipId: m.id,
+        planId: m.plan?.id ?? null,
+        status: decision.status,
+        email: extractEmail(m),
+        metadata: m.metadata ?? null,
+        lastEvent,
+        updatedAt: Date.now()
+      });
+    }
+    return;
+  }
+  const rec = {
+    membershipId: m.id,
+    planId: m.plan?.id ?? null,
+    planKey: decision.planKey,
+    status: decision.status,
+    valid: decision.grant,
+    cancelAtPeriodEnd: m.cancel_at_period_end === true,
+    canceledAt: m.canceled_at ?? null,
+    renewalPeriodStart: m.renewal_period_start ?? null,
+    renewalPeriodEnd: m.renewal_period_end ?? null,
+    manageUrl: m.manage_url ?? null,
+    email: extractEmail(m),
+    lastEvent,
+    updatedAt: Date.now()
+  };
+  await db.ref(`whopMemberships/${uid}`).update(rec);
+  if (decision.grant) {
+    const sinceSnap = await db.ref(`users/${uid}/profile/premiumSince`).get();
+    const since = typeof sinceSnap.val() === "number" ? sinceSnap.val() : Date.now();
+    await db.ref(`users/${uid}/profile`).update({
+      isPremium: true,
+      premiumPlan: decision.planKey ?? "monthly",
+      premiumSince: since,
+      premiumSource: "whop",
+      whopMembershipId: m.id
+    });
+    await logLedger({ type: "whop_entitlement", action: "grant", uid, membershipId: m.id, status: decision.status, planKey: decision.planKey, event: lastEvent, at: Date.now() });
+  } else {
+    await db.ref(`users/${uid}/profile`).update({
+      isPremium: false,
+      premiumSource: "whop",
+      whopMembershipId: m.id
+    });
+    await logLedger({ type: "whop_entitlement", action: "revoke", uid, membershipId: m.id, status: decision.status, event: lastEvent, at: Date.now() });
+  }
+}
+async function handler3(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const secret = process.env.WHOP_WEBHOOK_SECRET;
+  if (!secret) {
+    return res.status(503).json({ error: "WHOP_WEBHOOK_SECRET not configured" });
+  }
+  const raw = await readRawBody(req);
+  const candidates = bodyCandidates(req, raw);
+  const headers = webhookHeaders(req);
+  if (!headers["webhook-id"] || !headers["webhook-signature"]) {
+    return res.status(401).json({ error: "Missing webhook signature headers" });
+  }
+  let event = null;
+  let verifiedBody = null;
+  for (const body of candidates) {
+    event = verifyEvent(body, headers);
+    if (event) {
+      verifiedBody = body;
+      break;
+    }
+  }
+  if (!event) {
+    console.error("[whop-webhook] UNVERIFIED delivery rejected (headers:", headers["webhook-id"], ")");
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+  const db = rtdb();
+  const eventId = headers["webhook-id"] || event.id || `evt_${event.timestamp || Date.now()}`;
+  const evRef = db.ref(`whopEvents/${eventId}`);
+  try {
+    const dup = await evRef.once("value");
+    if (dup.exists()) return res.status(200).json({ ok: true, duplicate: true });
+  } catch {
+  }
+  const apiKey = process.env.WHOP_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "WHOP_API_KEY not configured" });
+  const whop = new Whop({ apiKey });
+  try {
+    const type = event.type;
+    const data = event.data || {};
+    if (type === "membership.activated" || type === "membership.deactivated" || type === "membership.updated" || type === "membership.cancel_at_period_end_changed") {
+      const mid = data?.id;
+      if (typeof mid === "string" && mid) {
+        const m = await fetchMembership(whop, mid);
+        if (m && isPremiumMembership(m)) {
+          const uid = await resolveUid(whop, m);
+          await applyMembership(m, uid, type);
+        }
+      }
+    } else if (type === "payment.succeeded" || type === "payment.failed" || type === "payment.pending" || type === "payment.canceled") {
+      const mid = data?.membership?.id;
+      const productId = data?.product?.id;
+      if (typeof mid === "string" && mid && (productId == null || productId === PREMIUM_PRODUCT_ID)) {
+        const m = await fetchMembership(whop, mid);
+        if (m && isPremiumMembership(m)) {
+          const uid = await resolveUid(whop, m);
+          await applyMembership(m, uid, type);
+          if (uid) {
+            await db.ref(`whopMemberships/${uid}/lastPayment`).set({
+              eventId,
+              paymentType: type,
+              amount: data.amount ?? null,
+              currency: data.currency ?? null,
+              at: Date.now()
+            }).catch(() => {
+            });
+          }
+        }
+      }
+    } else if (type === "refund.created" || type === "refund.updated") {
+      const mid = data?.membership?.id;
+      if (typeof mid === "string" && mid) {
+        const m = await fetchMembership(whop, mid);
+        if (m && isPremiumMembership(m)) {
+          const uid = await resolveUid(whop, m);
+          await applyMembership(m, uid, type);
+        }
+      }
+    }
+    await evRef.set({ type, processedAt: Date.now() });
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error("[whop-webhook] processing failed (will be retried):", error);
+    return res.status(500).json({ error: "Processing failed" });
   }
 }
 
 // api/_src/whop/index.ts
-var PLANS2 = {
-  monthly: { id: "plan_uAJSe5gvChYEy", price: 3.99, label: "Monthly", period: "/ mo" },
-  yearly: { id: "plan_s3vO6JEWy2ruA", price: 24.99, label: "Yearly", period: "/ yr" },
-  lifetime: { id: "plan_OloGrVT1gLT5y", price: 109.99, label: "Lifetime", period: "" }
-};
+var PLANS2 = PUBLIC_PLANS.map((p) => ({ key: p.key, id: p.id, price: p.price, label: p.label, period: p.period, checkoutUrl: p.checkoutUrl }));
 function safeParse(raw) {
   try {
     return JSON.parse(raw);
@@ -7599,7 +8193,7 @@ function getAction(req) {
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body;
   return String(body?.action || "");
 }
-async function handler3(req, res) {
+async function handler4(req, res) {
   const action = getAction(req);
   switch (action) {
     case "plans":
@@ -7608,10 +8202,12 @@ async function handler3(req, res) {
       return handler(req, res);
     case "verify":
       return handler2(req, res);
+    case "webhook":
+      return handler3(req, res);
     default:
-      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown whop action (use ?action=plans|checkout|verify)" });
+      return res.status(400).json({ error: "BAD_ACTION", message: "Unknown whop action (use ?action=plans|checkout|verify|webhook)" });
   }
 }
 export {
-  handler3 as default
+  handler4 as default
 };

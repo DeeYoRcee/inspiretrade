@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { ThemeProvider } from "@/lib/theme-context";
 import { LanguageProvider, useLanguage } from "@/lib/language-context";
+import { clearWhopPending } from "@/lib/whop";
 import { Navbar } from "@/components/layout/Navbar";
 import { MobileTabBar } from "@/components/layout/MobileTabBar";
 import { ThemeBackdrop } from "@/components/layout/ThemeBackdrop";
@@ -97,6 +98,10 @@ function PremiumSuccessHandler() {
   useEffect(() => {
     if (!user || !window.location.search.includes("premium=success")) return;
     window.history.replaceState(null, "", "/");
+    // P45 §6 — the payment completed on Whop; clear the pending flag and
+    // re-verify (the server verify self-heals the entitlement when the
+    // webhook has not landed yet)
+    clearWhopPending(user.uid);
     queryClient.invalidateQueries({ queryKey: ["premiumStatus", user.uid] });
     toast({ title: t("premiumThanks") });
   }, [user]);
