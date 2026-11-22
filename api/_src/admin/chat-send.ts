@@ -17,16 +17,19 @@ export default handle(async (req, res) => {
   if (!text) throw new HttpError(400, "EMPTY_TEXT", "Provide a message text");
 
   // badge the owner's profile once — the public page reads this flag
-  await rtdb().ref(`users/${admin.uid}/profile`).transaction((profile: any) => ({
-    ...(profile || {}),
+  const snap = await rtdb().ref(`users/${admin.uid}/profile`).transaction((profile: any) => ({
     ...(profile || {}),
     uid: admin.uid,
     ceo: true,
   }));
+  // stamp the claimed handle so chat rows can link to the public profile —
+  // without it every CEO-message click handler was a silent no-op
+  const username = typeof (snap.value as any)?.username === "string" ? (snap.value as any).username : undefined;
 
   const message = {
     uid: admin.uid,
     name: "CEO",
+    ...(username ? { username } : {}),
     ceo: true,
     text,
     at: Date.now(),

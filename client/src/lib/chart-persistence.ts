@@ -10,6 +10,7 @@
  */
 import { get, onValue, ref as dbRef, remove, set } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
+import { __sanitizeDrawingList } from "@/lib/drawings";
 import type { Drawing } from "@/lib/drawings";
 import type { IndicatorConfig } from "@/lib/indicators-config";
 
@@ -51,7 +52,7 @@ export function subscribeDrawings(
   cb: (drawings: Drawing[]) => void,
 ): () => void {
   const cached = localGet<Record<string, Drawing>>(uid, "drawings", symbol);
-  if (cached) cb(Object.values(cached));
+  if (cached) cb(__sanitizeDrawingList(Object.values(cached)));
   let timer: ReturnType<typeof setTimeout> | null = null;
   const push = (list: Drawing[]) => {
     const map = Object.fromEntries(list.map((d) => [d.id, d]));
@@ -66,8 +67,12 @@ export function subscribeDrawings(
     (snap) => {
       const remote = snap.val() as Record<string, Drawing> | null;
       if (remote) {
-        cb(Object.values(remote));
-        localSet(uid, "drawings", symbol, remote);
+        // Phase 35: sanitize remote snapshots — corrupted entries are dropped
+        // and duplicates collapsed. No extra RTDB write here; the healed list
+        // is persisted to RTDB with the user's next edit.
+        const list = __sanitizeDrawingList(Object.values(remote));
+        cb(list);
+        localSet(uid, "drawings", symbol, Object.fromEntries(list.map((d) => [d.id, d])));
       } else {
         // the new symbol has NO stored drawings — clear the previous
         // symbol's list instead of leaving it on the chart (isolation)

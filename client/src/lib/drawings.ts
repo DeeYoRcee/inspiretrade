@@ -1355,6 +1355,7 @@ export function renderDrawing(
       ctx.fillStyle = "#22c55e";
       ctx.fillText(`Target ${fmtDrawingPrice(d.points[2]?.price ?? NaN)}`, x + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
       ctx.fillStyle = d.style.color;
+      ctx.fillText(`Entry ${fmtDrawingPrice(d.points[0]?.price ?? NaN)}`, x + 4, entry.y + d.style.fontSize + 4);
       const { rr } = riskReward(entry.y, stop.y, target.y);
       // canvas Y is inverted: entry.y between them — invert deltas for the ratio
       const rrCanvas = riskReward(-entry.y, -stop.y, -target.y).rr;
@@ -1394,6 +1395,72 @@ export function renderDrawing(
   if (selected) {
     for (const p of pts) drawHandle(ctx, p, false);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 35 — sanitize on load. Persistence used to cast remote snapshots
+// without validation, so one corrupted entry could break rendering or spawn
+// duplicates. Invalid entries are DROPPED, fields clamped to the engine's
+// ranges, duplicate ids collapse to the newest entry. Pure + unit-tested.
+// ---------------------------------------------------------------------------
+export function __sanitizeDrawingList(list: unknown): Drawing[] {
+  if (!Array.isArray(list)) return [];
+  const out = new Map<string, Drawing>();
+  const clamp = (v: unknown, lo: number, hi: number, dflt: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+  };
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const typeKey = typeof r.type === "string" ? r.type : "";
+    const arity = (TOOL_POINT_COUNT as Record<string, number | undefined>)[typeKey];
+    if (arity === undefined) continue; // unknown tool — drop, never guess
+    const type = typeKey as DrawingType;
+    const rawPoints = Array.isArray(r.points) ? r.points : [];
+    const points: DrawingPoint[] = [];
+    for (const p of rawPoints) {
+      if (!p || typeof p !== "object") continue;
+      const time = Number((p as DrawingPoint).time);
+      const price = Number((p as DrawingPoint).price);
+      if (!Number.isFinite(time) || !Number.isFinite(price)) continue;
+      points.push({ time, price });
+      if (arity === -1 && points.length >= 800) break; // freehand cap
+    }
+    const min = arity === -1 || arity === -2 ? 2 : arity;
+    const max = arity === -1 || arity === -2 ? Infinity : arity;
+    if (points.length < min || points.length > max) continue;
+    const st = (r.style && typeof r.style === "object" ? r.style : {}) as Record<string, unknown>;
+    const fill = st.fill && typeof st.fill === "object" ? (st.fill as Record<string, unknown>) : null;
+    const tfs = Array.isArray(r.tfs)
+      ? (r.tfs.filter((t) => typeof t === "string") as Timeframe[]).slice(0, 16)
+      : undefined;
+    const d: Drawing = {
+      id: typeof r.id === "string" && r.id ? r.id.slice(0, 40) : `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+      type,
+      points,
+      style: {
+        color: typeof st.color === "string" ? st.color : DEFAULT_STYLE.color,
+        width: clamp(st.width, 1, 6, 2),
+        dash: st.dash === "dashed" || st.dash === "dotted" ? st.dash : "solid",
+        fontSize: clamp(st.fontSize, 6, 32, 12),
+        ...(fill ? { fill: { color: typeof fill.color === "string" ? fill.color : DEFAULT_STYLE.color, opacity: clamp(fill.opacity, 0, 1, 0.15) } } : {}),
+        ...(typeof st.textColor === "string" ? { textColor: st.textColor } : {}),
+        ...(st.textPos === "start" || st.textPos === "end" || st.textPos === "above" || st.textPos === "below" ? { textPos: st.textPos } : {}),
+        ...(st.extend === "right" || st.extend === "both" ? { extend: st.extend } : {}),
+        ...(st.showLabels === true || st.showLabels === false ? { showLabels: st.showLabels } : {}),
+        ...(st.showTimeLabels === true || st.showTimeLabels === false ? { showTimeLabels: st.showTimeLabels } : {}),
+      },
+      ...(typeof r.text === "string" ? { text: r.text.slice(0, 200) } : {}),
+      ...(r.locked === true ? { locked: true } : {}),
+      ...(r.hidden === true ? { hidden: true } : {}),
+      ...(typeof r.name === "string" && r.name ? { name: r.name.slice(0, 60) } : {}),
+      ...(tfs && tfs.length ? { tfs } : {}),
+      ...(Array.isArray(r.levels) ? { levels: r.levels as FibLevel[] } : {}),
+    };
+    out.set(d.id, d); // duplicate ids collapse to the newest entry
+  }
+  return [...out.values()];
 }
 
 // ---------------------------------------------------------------------------

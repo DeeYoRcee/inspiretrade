@@ -173,6 +173,9 @@
           "username": {
             ".validate": "newData.isString() && newData.val().length <= 20"
           },
+          "vip": {
+            ".validate": "newData.isBoolean()"
+          },
           "text": {
             ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 300"
           },

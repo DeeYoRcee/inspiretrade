@@ -8,7 +8,7 @@ import { useLanguage } from "@/lib/language-context";
 import { useUserProfile } from "@/hooks/use-premium";
 import { authedFetch } from "@/lib/api";
 import { db } from "@/lib/firebase";
-import { ref, push, onValue, query, limitToLast, remove, serverTimestamp } from "firebase/database";
+import { ref, push, get, onValue, query, limitToLast, remove, serverTimestamp } from "firebase/database";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +38,51 @@ function mediaSrc(v: string | null | undefined): string | null {
   return v;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 35 fix — author-profile fallback. CEO messages were historically
+// sent without a handle and may have no published snapshot yet; their photo/
+// video data URLs live in users/{uid}/profile (readable by any signed-in
+// user). One RTDB read per author per session (module cache + in-flight dedup).
+// ---------------------------------------------------------------------------
+interface AuthorMedia { avatar?: string | null; avatarVideo?: string | null; username?: string | null }
+
+const authorCache = new Map<string, AuthorMedia>();
+const authorPending = new Map<string, Promise<AuthorMedia>>();
+
+function fetchAuthor(uid: string): Promise<AuthorMedia> {
+  let pending = authorPending.get(uid);
+  if (!pending) {
+    pending = get(ref(db, `users/${uid}/profile`))
+      .then((snap) => {
+        const v = (snap.val() || {}) as AuthorMedia;
+        const media: AuthorMedia = {
+          avatar: typeof v.avatar === "string" ? v.avatar : null,
+          avatarVideo: typeof v.avatarVideo === "string" ? v.avatarVideo : null,
+          username: typeof v.username === "string" ? v.username : null,
+        };
+        authorCache.set(uid, media);
+        return media;
+      })
+      .catch(() => ({}) as AuthorMedia)
+      .finally(() => { authorPending.delete(uid); });
+    authorPending.set(uid, pending);
+  }
+  return pending;
+}
+
+function useAuthorMedia(uid: string): AuthorMedia {
+  const [media, setMedia] = useState<AuthorMedia>(() => (uid ? authorCache.get(uid) || {} : {}));
+  useEffect(() => {
+    if (!uid) return;
+    const hit = authorCache.get(uid);
+    if (hit) { setMedia(hit); return; }
+    let alive = true;
+    void fetchAuthor(uid).then((m) => { if (alive) setMedia(m); });
+    return () => { alive = false; };
+  }, [uid]);
+  return media;
+}
+
 /**
  * Phase 33: avatar circle for a chat message. CEO/VIP senders show their REAL
  * profile photo or looping avatar video (from the public profile snapshot) —
@@ -46,8 +91,11 @@ function mediaSrc(v: string | null | undefined): string | null {
 function ChatAvatar({ m, onOpen }: { m: ChatMessage; onOpen: () => void }) {
   const isSpecial = !!(m.ceo || m.vip) && !!m.username;
   const { data: pub } = usePublicProfile(isSpecial ? m.username! : "");
-  const videoSrc = mediaSrc(isSpecial ? pub?.avatarVideo : null);
-  const photoSrc = mediaSrc(isSpecial ? pub?.avatar : null);
+  // no handle / no snapshot yet → the author's own profile doc (CEO data
+  // URLs are too large for publicProfiles rules and ride the admin publish)
+  const own = useAuthorMedia(isSpecial ? "" : m.uid);
+  const videoSrc = mediaSrc(isSpecial ? pub?.avatarVideo : own.avatarVideo);
+  const photoSrc = mediaSrc(isSpecial ? pub?.avatar : own.avatar);
   return (
     <button
       onClick={onOpen}
@@ -58,7 +106,7 @@ function ChatAvatar({ m, onOpen }: { m: ChatMessage; onOpen: () => void }) {
           : m.vip
             ? "bg-gradient-to-br from-amber-400 to-yellow-600 text-black"
             : "",
-        m.username && "cursor-pointer hover:opacity-85",
+        (m.username || m.ceo) && "cursor-pointer hover:opacity-85",
       )}
       style={m.ceo || m.vip ? undefined : { backgroundColor: uidColor(m.uid) }}
       title={m.username ? `@${m.username}` : undefined}
@@ -156,20 +204,35 @@ export function GlobalChat() {
         // nobody can fake it by writing to RTDB directly
         await authedFetch("/api/admin?action=chat-send", { text: value });
       } else {
-        await push(ref(db, "chat/global"), {
+        const base = {
           uid: user.uid,
           name: displayName,
           ...(profile?.username ? { username: profile.username } : {}),
-          // VIP badge mirrors the paid premium flag on the sender's profile
-          ...(profile?.isPremium || profile?.premiumPlan ? { vip: true } : {}),
           text: value,
           at: serverTimestamp(),
-        });
+        };
+        try {
+          // VIP badge mirrors the paid premium flag on the sender's profile
+          await push(ref(db, "chat/global"),
+            profile?.isPremium || profile?.premiumPlan ? { ...base, vip: true } : base);
+        } catch {
+          // older published rules reject the vip field — fall back to the bare
+          // message instead of failing the whole send for premium members
+          await push(ref(db, "chat/global"), base);
+        }
       }
     } catch (e: any) {
       // most likely: rules not published yet
       alert(t("chatSendFailed"));
     }
+  };
+
+  // Phase 35 fix: CEO messages may lack a username — resolve the handle from
+  // the author's profile doc when the payload doesn't carry one.
+  const openProfile = async (m: ChatMessage) => {
+    if (m.username) { navigate(`/@${m.username}`); return; }
+    const media = await fetchAuthor(m.uid);
+    if (media.username) navigate(`/@${media.username}`);
   };
 
   const deleteMessage = async (messageId: string) => {
@@ -228,13 +291,13 @@ export function GlobalChat() {
             )}
             {messages.map((m) => (
               <div key={m.id} className={cn("group flex gap-2", m.uid === user.uid && "flex-row-reverse")}>
-                <ChatAvatar m={m} onOpen={() => m.username && navigate(`/@${m.username}`)} />
+                <ChatAvatar m={m} onOpen={() => openProfile(m)} />
                 <div className={cn("min-w-0 max-w-[75%]", m.uid === user.uid && "text-right")}>
                   <div className={cn("flex items-center gap-1.5", m.uid === user.uid && "flex-row-reverse")}>
                     {m.ceo ? (
                       // platform owner — RED CEO badge, links to the public profile
                       <button
-                        onClick={() => m.username && navigate(`/@${m.username}`)}
+                        onClick={() => openProfile(m)}
                         className={cn(
                           "inline-flex items-center gap-1 rounded-full border border-red-500/50 bg-red-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-red-400",
                           m.username && "hover:bg-red-500/25",
@@ -247,7 +310,7 @@ export function GlobalChat() {
                     ) : m.vip ? (
                       // Phase 30: paid VIP — gold badge, links to the public profile
                       <button
-                        onClick={() => m.username && navigate(`/@${m.username}`)}
+                        onClick={() => openProfile(m)}
                         className={cn(
                           "inline-flex items-center gap-1 rounded-full border border-amber-400/50 bg-amber-400/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-300",
                           m.username && "hover:bg-amber-400/25",
@@ -259,7 +322,7 @@ export function GlobalChat() {
                       </button>
                     ) : (
                       <button
-                        onClick={() => m.username && navigate(`/@${m.username}`)}
+                        onClick={() => openProfile(m)}
                         className={cn(
                           "text-[11px] font-bold",
                           m.uid === user.uid ? "text-primary" : "text-muted-foreground",

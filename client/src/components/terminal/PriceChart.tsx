@@ -44,7 +44,7 @@ import {
   INDICATOR_CATALOG, newIndicatorConfig, type IndicatorConfig, type IndicatorType,
 } from "@/lib/indicators-config";
 import {
-  reorderDrawing, effectiveName, isVisibleOnTf, type Drawing, type DrawingType } from "@/lib/drawings";
+  reorderDrawing, effectiveName, isVisibleOnTf, __sanitizeDrawingList, type Drawing, type DrawingType } from "@/lib/drawings";
 import {
   subscribeDrawings, saveDrawings, clearDrawings as clearDrawingsRemote,
   subscribeIndicators, saveIndicators,
@@ -63,7 +63,7 @@ import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, type ContextMenuState,
 } from "@/components/terminal/chart/dialogs";
-import { Eye, EyeOff, X, Activity, Database } from "lucide-react";
+import { Eye, EyeOff, X, Activity, Database, Lock, Unlock, Loader2 } from "lucide-react";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { cn } from "@/lib/utils";
 
@@ -1459,6 +1459,8 @@ export function PriceChart({
   // ---- drawings persistence -------------------------------------------------------
   /** timestamp of the last local drawing save — echo/merge arbitration */
   const lastDrawingsSaveAtRef = useRef(0);
+  /** Phase 35 §6 — clear loading state while per-user drawings are restored */
+  const [drawingsRestoring, setDrawingsRestoring] = useState(false);
   useEffect(() => {
     if (!uid || !symbol) return;
     // instrument switch: the undo/redo stacks belong to the OLD instrument —
@@ -1474,7 +1476,9 @@ export function PriceChart({
     // even a moment — clear synchronously, RTDB delivers the real list after
     setDrawings([]);
     setIndicators([]);
+    setDrawingsRestoring(true);
     const offD = subscribeDrawings(uid, symbol, (list) => {
+      setDrawingsRestoring(false);
       // echo/merge arbitration: a local edit from the last 15s wins over the
       // (possibly stale) remote snapshot — offline deletions can no longer
       // resurrect when RTDB answers after the fact, and we re-assert local.
@@ -1933,6 +1937,14 @@ export function PriceChart({
           cursorFallback={cursorCss(cursorMode)}
         />
 
+        {/* Phase 35 §6 — drawings restore feedback (per-user, per-instrument) */}
+        {drawingsRestoring && (
+          <div className="absolute left-2 top-2 z-10 flex items-center gap-1.5 rounded-md border border-slate-700/70 bg-slate-950/80 px-2 py-1 text-[10px] font-semibold text-slate-400">
+            <Loader2 className="h-3 w-3 animate-spin text-sky-400" />
+            Restoring drawings…
+          </div>
+        )}
+
         {/* floating properties bar for the selected drawing */}
         {(() => {
           const sel = drawings.find((d) => d.id === selectedDrawingId);
@@ -2033,7 +2045,8 @@ export function PriceChart({
                   onChange={async (e) => {
                     const tpl = templates.find((t) => t.name === e.target.value);
                     if (!tpl) return;
-                    commitDrawings(tpl.drawings.map((d) => ({ ...d, id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${d.id}` })));
+                    const suffix = `t${Date.now().toString(36)}`;
+                    commitDrawings(__sanitizeDrawingList(tpl.drawings.map((d) => ({ ...d, id: `${d.id}${suffix}` }))));
                     e.currentTarget.value = "";
                   }}
                   className="rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-[10px] text-slate-300 disabled:opacity-40"
@@ -2089,9 +2102,17 @@ export function PriceChart({
                   <button title={d.hidden ? "Show" : "Hide"} onClick={() => toggleDrawingHidden(d.id)} className="text-slate-500 hover:text-slate-200">
                     {d.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                   </button>
+                  {/* Phase 35 §5 — per-object lock/unlock from the tree */}
+                  <button
+                    title={d.locked ? "Unlock object" : "Lock object"}
+                    onClick={() => commitDrawings(drawingsRef.current.map((x) => (x.id === d.id ? { ...x, locked: !x.locked } : x)))}
+                    className={cn("text-slate-500 hover:text-slate-200", d.locked && "text-amber-400")}
+                  >
+                    {d.locked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  </button>
                   <button
                     title="Delete"
-                    disabled={locked}
+                    disabled={locked || d.locked}
                     onClick={() => commitDrawings(drawingsRef.current.filter((x) => x.id !== d.id))}
                     className="text-slate-500 hover:text-red-400 disabled:opacity-30"
                   >

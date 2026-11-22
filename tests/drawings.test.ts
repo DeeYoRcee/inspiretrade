@@ -9,7 +9,7 @@ import {
   extendedToEdge, hitTest, levelsFor, makeDrawing, pointInEllipse, pointInTri,
   rayToEdge, regressionLine, riskReward, isVisibleOnTf, effectiveName,
   FIB_DEFAULT_LEVELS, TOOL_POINT_COUNT, TOOL_LABELS, TEXT_TOOLS, CLICK_COLLECT_TOOLS,
-  reorderDrawing, magnetSnapPrice, magnetSnapTime,
+  reorderDrawing, magnetSnapPrice, magnetSnapTime, __sanitizeDrawingList,
   type Drawing, type DrawingType, type XY,
 } from "../client/src/lib/drawings.ts";
 
@@ -227,4 +227,69 @@ test("P27 magnet: anchor time snaps to the containing bar's open time", () => {
   assert.equal(magnetSnapTime(1763688034, 60), 1763688000, "34s into a minute → bar open time");
   assert.equal(magnetSnapTime(1763688034, null), 1763688034, "no tf → untouched");
   assert.equal(magnetSnapTime(1794787200 + 3 * 86400 + 1800, 604800), 1794787200, "mid-week stamp → Monday bucket");
+});
+
+// ---------------------------------------------------------------------------
+// Phase 35 — sanitize on load: corrupt remote entries must never reach the
+// canvas, duplicates collapse to the newest, engine ranges are enforced
+// ---------------------------------------------------------------------------
+const trendOk = {
+  id: "d1", type: "trend",
+  points: [{ time: 100, price: 10 }, { time: 200, price: 20 }],
+  style: { color: "#ff0000", width: 3, dash: "dashed", fontSize: 12 },
+};
+
+test("P35 sanitize: valid drawings pass through with fields preserved", () => {
+  const out = __sanitizeDrawingList([trendOk]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "trend");
+  assert.equal(out[0].points.length, 2);
+  assert.equal(out[0].style.color, "#ff0000");
+  assert.equal(out[0].style.width, 3);
+  assert.equal(out[0].style.dash, "dashed");
+});
+
+test("P35 sanitize: unknown tools and malformed entries are dropped", () => {
+  assert.deepEqual(__sanitizeDrawingList([]), []);
+  assert.deepEqual(__sanitizeDrawingList(null as any), []);
+  assert.deepEqual(__sanitizeDrawingList([null, 42, "x", { type: "not-a-tool", points: [] }]), []);
+  // trend needs exactly 2 points — one or three must not survive
+  assert.deepEqual(__sanitizeDrawingList([{ ...trendOk, id: "a", points: [trendOk.points[0]] }]), []);
+  assert.deepEqual(__sanitizeDrawingList([{ ...trendOk, id: "b", points: [...trendOk.points, { time: 300, price: 30 }] }]), []);
+  // hline takes exactly 1 point
+  assert.deepEqual(__sanitizeDrawingList([{ id: "c", type: "hline", points: [{ time: 1, price: 5 }, { time: 2, price: 5 }], style: {} }]), []);
+  // non-finite coordinates are rejected point-wise; below the minimum → drop
+  assert.deepEqual(__sanitizeDrawingList([{ ...trendOk, id: "d", points: [{ time: Number.NaN, price: 1 }, { time: 2, price: 2 }] }]), []);
+});
+
+test("P35 sanitize: style fields are clamped to engine ranges", () => {
+  const out = __sanitizeDrawingList([{
+    id: "e", type: "rect",
+    points: [{ time: 1, price: 1 }, { time: 2, price: 2 }],
+    style: { width: 99, dash: "wavy", fontSize: 2, fill: { color: "#00ff00", opacity: 5 } },
+  }]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].style.width, 6, "width clamped to 6");
+  assert.equal(out[0].style.dash, "solid", "unknown dash → solid");
+  assert.equal(out[0].style.fontSize, 6, "fontSize clamped to 6");
+  assert.equal(out[0].style.fill!.opacity, 1, "fill opacity clamped to 1");
+});
+
+test("P35 sanitize: duplicate ids collapse to the newest entry", () => {
+  const first = { ...trendOk, points: [{ time: 1, price: 1 }, { time: 2, price: 2 }] };
+  const second = { ...trendOk, id: "d1", points: [{ time: 9, price: 9 }, { time: 10, price: 10 }] };
+  const out = __sanitizeDrawingList([first, second]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].points[0].time, 9, "the LAST entry wins");
+});
+
+test("P35 sanitize: freehand capped at 800 points, flags/names preserved", () => {
+  const pts = Array.from({ length: 900 }, (_, i) => ({ time: i, price: i % 50 }));
+  const out = __sanitizeDrawingList([{ id: "f", type: "brush", points: pts, style: {}, locked: true, hidden: true, name: "x".repeat(120), text: "t".repeat(300) }]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].points.length, 800, "freehand cap enforced");
+  assert.equal(out[0].locked, true);
+  assert.equal(out[0].hidden, true);
+  assert.equal(out[0].name!.length, 60, "name truncated to 60");
+  assert.equal(out[0].text!.length, 200, "text truncated to 200");
 });

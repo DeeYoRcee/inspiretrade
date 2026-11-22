@@ -11,6 +11,22 @@ export default {
         sm: ".1875rem", /* 3px */
       },
       colors: {
+        // sky is var-driven so the terminal scope can re-accent it (Phase 35):
+        // :root keeps the stock Tailwind-blue ramp, [data-term] overrides it —
+        // see the "sky → terminal accent" block in index.css
+        sky: {
+          50: "rgb(var(--c-sky-50) / <alpha-value>)",
+          100: "rgb(var(--c-sky-100) / <alpha-value>)",
+          200: "rgb(var(--c-sky-200) / <alpha-value>)",
+          300: "rgb(var(--c-sky-300) / <alpha-value>)",
+          400: "rgb(var(--c-sky-400) / <alpha-value>)",
+          500: "rgb(var(--c-sky-500) / <alpha-value>)",
+          600: "rgb(var(--c-sky-600) / <alpha-value>)",
+          700: "rgb(var(--c-sky-700) / <alpha-value>)",
+          800: "rgb(var(--c-sky-800) / <alpha-value>)",
+          900: "rgb(var(--c-sky-900) / <alpha-value>)",
+          950: "rgb(var(--c-sky-950) / <alpha-value>)",
+        },
         // Flat / base colors (regular buttons)
         background: "hsl(var(--background) / <alpha-value>)",
         foreground: "hsl(var(--foreground) / <alpha-value>)",
