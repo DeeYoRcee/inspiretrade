@@ -90,6 +90,8 @@ export interface Drawing {
   levels?: FibLevel[];
   /** user-visible name (object tree); defaults to the tool type */
   name?: string;
+  /** P42 — object tree group id (undefined = Ungrouped root) */
+  group?: string;
   /** timeframe visibility — undefined/empty = visible on EVERY timeframe */
   tfs?: Timeframe[];
   /** P40 — LWW merge timestamp (ms) stamped on every persisted edit */
@@ -1870,6 +1872,7 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
       ...(r.locked === true ? { locked: true } : {}),
       ...(r.hidden === true ? { hidden: true } : {}),
       ...(typeof r.name === "string" && r.name ? { name: r.name.slice(0, 60) } : {}),
+      ...(typeof r.group === "string" && r.group ? { group: r.group.slice(0, 40) } : {}),
       ...(Number.isFinite(Number(r.updatedAt)) ? { updatedAt: Number(r.updatedAt) } : {}),
       ...(Number.isFinite(Number(r.riskPct)) && Number(r.riskPct) > 0
         ? { riskPct: Math.min(100, Math.max(0.01, Number(r.riskPct))) } : {}),

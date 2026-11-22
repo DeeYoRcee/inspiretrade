@@ -50,6 +50,9 @@ import {
 import { readFavoritesLocal, toggleFavorite, reorderFavorites } from "@/lib/drawing-favorites";
 import { saveFavorites, subscribeFavorites } from "@/lib/chart-persistence";
 import { FavoritesToolbar } from "@/components/terminal/chart/FavoritesToolbar";
+import { ObjectTree } from "@/components/terminal/chart/ObjectTree";
+import { newGroupId, moveToGroup, groupFlag, groupMemberIds, dissolveGroup, type DrawingGroup } from "@/lib/drawing-tree";
+import { subscribeGroups, saveGroups as persistGroups } from "@/lib/chart-persistence";
 import {
   subscribeDrawings, saveDrawings, clearDrawings as clearDrawingsRemote,
   subscribeIndicators, saveIndicators, clearIndicators as clearIndicatorsRemote,
@@ -1642,6 +1645,102 @@ export function PriceChart({
     commitDrawings(drawingsRef.current.map((d) => (d.id === id ? { ...d, hidden: !d.hidden } : d)));
   }, [commitDrawings]);
 
+  // ---- P42 — object tree: single/bulk patches, locate, duplicate, groups ----
+  const patchDrawing = useCallback((id: string, patch: Partial<Drawing>) => {
+    commitDrawings(drawingsRef.current.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  }, [commitDrawings]);
+
+  const patchManyDrawings = useCallback((ids: string[], patch: Partial<Drawing>) => {
+    const set = new Set(ids);
+    if (!set.size) return;
+    commitDrawings(drawingsRef.current.map((d) => (set.has(d.id) ? { ...d, ...patch } : d)));
+  }, [commitDrawings]);
+
+  /** bulk delete — locked objects are NEVER deleted (safe & predictable) */
+  const deleteManyTree = useCallback((ids: string[]) => {
+    const set = new Set(ids);
+    commitDrawings(drawingsRef.current.filter((d) => !set.has(d.id) || d.locked || locked));
+  }, [commitDrawings, locked]);
+
+  const duplicateDrawingById = useCallback((id: string) => {
+    const src = drawingsRef.current.find((d) => d.id === id);
+    if (!src) return;
+    // one tf-bucket to the right + a hair of price offset — clearly a
+    // separate object, immediately selectable
+    const step = TF_SECONDS[timeframeRef.current] ?? 60;
+    const copy: Drawing = {
+      ...src,
+      id: newDrawingId(),
+      points: src.points.map((q) => ({ time: q.time + step, price: q.price * 1.001 })),
+    };
+    commitDrawings([...drawingsRef.current, copy]);
+    setSelectedDrawingId(copy.id);
+  }, [commitDrawings]);
+
+  /** select + scroll the time scale to the object's first anchor */
+  const locateDrawing = useCallback((id: string) => {
+    const d = drawingsRef.current.find((x) => x.id === id);
+    if (!d) return;
+    const t0 = d.points[0]?.time;
+    if (!t0) return;
+    let idx = timeIdxRef.current.get(t0);
+    const data = barsRef.current;
+    if (idx == null && data.length) {
+      idx = data.findIndex((b) => b.time >= t0);
+      if (idx < 0) idx = data.length - 1;
+    }
+    if (idx != null && chartRef.current) {
+      try { chartRef.current.timeScale().setVisibleLogicalRange({ from: idx - 30, to: idx + 30 }); } catch { /* race */ }
+    }
+  }, []);
+
+  // groups — RTDB `chart/{uid}/groups/{symbol}` + LS mirror (LS-first paint)
+  const [groups, setGroups] = useState<Record<string, DrawingGroup>>({});
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  useEffect(() => {
+    if (!uid) { setGroups({}); return; }
+    return subscribeGroups(uid, symbol, setGroups);
+  }, [uid, symbol]);
+  const commitGroups = useCallback((next: Record<string, DrawingGroup>) => {
+    setGroups(next);
+    persistGroups(uid ?? "", symbolRef.current, next);
+  }, [uid]);
+
+  const createGroup = useCallback((name: string): string => {
+    const g: DrawingGroup = { id: newGroupId(), name: name.slice(0, 40) || "Group", createdAt: Date.now() };
+    commitGroups({ ...groupsRef.current, [g.id]: g });
+    return g.id;
+  }, [commitGroups]);
+
+  const renameGroup = useCallback((id: string, name: string) => {
+    const g = groupsRef.current[id];
+    if (!g || !name.trim()) return;
+    commitGroups({ ...groupsRef.current, [id]: { ...g, name: name.trim().slice(0, 40) } });
+  }, [commitGroups]);
+
+  const deleteGroup = useCallback((id: string) => {
+    // members return to the ungrouped root — nothing is silently deleted
+    commitDrawings(dissolveGroup(drawingsRef.current, id));
+    const next = { ...groupsRef.current };
+    delete next[id];
+    commitGroups(next);
+  }, [commitDrawings, commitGroups]);
+
+  const toggleGroupHiddenById = useCallback((id: string) => {
+    const all = groupFlag(drawingsRef.current, id, "hidden");
+    patchManyDrawings(groupMemberIds(drawingsRef.current, id), { hidden: !all });
+  }, [patchManyDrawings]);
+
+  const toggleGroupLockedById = useCallback((id: string) => {
+    const all = groupFlag(drawingsRef.current, id, "locked");
+    patchManyDrawings(groupMemberIds(drawingsRef.current, id), { locked: !all });
+  }, [patchManyDrawings]);
+
+  const moveToGroupTree = useCallback((ids: string[], groupId: string | null) => {
+    commitDrawings(moveToGroup(drawingsRef.current, ids, groupId));
+  }, [commitDrawings]);
+
   // ---- screenshot: the real rendered chart canvas → PNG download -------------
   const screenshot = useCallback(() => {
     const chart = chartRef.current;
@@ -2218,112 +2317,92 @@ export function PriceChart({
         )}
         {isAdmin && histOpen && <div data-chart-ui><HistoryPanel symbol={symbol} /></div>}
 
-        {/* object tree — drawings & indicators (real objects, real actions) */}
+        {/* P42 — Object Tree manager: grouped drawings, rename / visibility
+            / lock, two-way selection sync, bulk actions, search + category
+            filter, context menu. Templates & indicators stay PriceChart-
+            owned and render inside the same panel. */}
         {objectsOpen && (
-          <div data-chart-ui className="absolute right-10 top-8 z-30 w-60 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
-            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Objects · {drawings.length}</p>
-            <div className="max-h-40 overflow-y-auto">
-              {drawings.length === 0 && <p className="py-1 text-slate-600">No drawings yet</p>}
-              {/* drawing templates — save the current set, apply on any symbol */}
-              <div className="mb-2 flex flex-wrap items-center gap-1 border-b border-slate-800 pb-2">
+          <ObjectTree
+            drawings={drawings}
+            selectedDrawingId={selectedDrawingId}
+            selectedIds={selectedIds}
+            groups={groups}
+            onSelect={(id) => { setSelectedDrawingId(id); setSelectedIds([]); }}
+            onToggleSelect={(id) => {
+              const cur = new Set(selectedIds);
+              if (cur.has(id)) cur.delete(id); else cur.add(id);
+              const next = [...cur];
+              setSelectedIds(next);
+              setSelectedDrawingId(next[next.length - 1] ?? null);
+            }}
+            onLocate={locateDrawing}
+            onRename={(id, name) => patchDrawing(id, { name: name.trim().slice(0, 60) || undefined })}
+            onPatch={patchDrawing}
+            onPatchMany={patchManyDrawings}
+            onDelete={deleteManyTree}
+            onDuplicate={duplicateDrawingById}
+            onEditProperties={(id) => {
+              const d = drawingsRef.current.find((x) => x.id === id);
+              if (d) setEditingDrawing(d);
+            }}
+            onReorder={(id, action) => commitDrawings(reorderDrawing(drawingsRef.current, id, action))}
+            onGroupsChange={commitGroups}
+            onCreateGroup={createGroup}
+            onRenameGroup={renameGroup}
+            onDeleteGroup={deleteGroup}
+            onToggleGroupHidden={toggleGroupHiddenById}
+            onToggleGroupLocked={toggleGroupLockedById}
+            onMoveToGroup={moveToGroupTree}
+            onClose={() => setObjectsOpen(false)}
+          >
+            {/* drawing templates — save the current set, apply on any symbol */}
+            <div className="mb-2 mt-1 flex flex-wrap items-center gap-1 border-t border-slate-800 pt-2">
+              <button
+                title="Save the current drawings as a reusable template"
+                disabled={!drawings.length || !uid}
+                onClick={async () => {
+                  const name = window.prompt("Template name", `${symbolRef.current} set`)?.trim();
+                  if (!name || !uid) return;
+                  saveDrawingTemplate(uid, name, drawingsRef.current);
+                  setTemplates(await loadDrawingTemplates(uid));
+                }}
+                className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Save template
+              </button>
+              <select
+                title="Apply a saved template"
+                value=""
+                disabled={!templates.length}
+                onChange={async (e) => {
+                  const tpl = templates.find((t) => t.name === e.target.value);
+                  if (!tpl) return;
+                  const suffix = `t${Date.now().toString(36)}`;
+                  commitDrawings(__sanitizeDrawingList(tpl.drawings.map((d) => ({ ...d, id: `${d.id}${suffix}` }))));
+                  e.currentTarget.value = "";
+                }}
+                className="rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-[10px] text-slate-300 disabled:opacity-40"
+              >
+                <option value="">Apply template…</option>
+                {templates.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.drawings.length})</option>)}
+              </select>
+              {templates.length > 0 && (
                 <button
-                  title="Save the current drawings as a reusable template"
-                  disabled={!drawings.length || !uid}
+                  title="Delete the selected template — choose via prompt"
                   onClick={async () => {
-                    const name = window.prompt("Template name", `${symbolRef.current} set`)?.trim();
+                    const name = window.prompt("Template to delete", templates[0]?.name || "")?.trim();
                     if (!name || !uid) return;
-                    saveDrawingTemplate(uid, name, drawingsRef.current);
+                    deleteDrawingTemplate(uid, name);
                     setTemplates(await loadDrawingTemplates(uid));
                   }}
-                  className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                  className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-red-500/15 hover:text-red-300"
                 >
-                  Save template
+                  Del
                 </button>
-                <select
-                  title="Apply a saved template"
-                  value=""
-                  disabled={!templates.length}
-                  onChange={async (e) => {
-                    const tpl = templates.find((t) => t.name === e.target.value);
-                    if (!tpl) return;
-                    const suffix = `t${Date.now().toString(36)}`;
-                    commitDrawings(__sanitizeDrawingList(tpl.drawings.map((d) => ({ ...d, id: `${d.id}${suffix}` }))));
-                    e.currentTarget.value = "";
-                  }}
-                  className="rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-[10px] text-slate-300 disabled:opacity-40"
-                >
-                  <option value="">Apply template…</option>
-                  {templates.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.drawings.length})</option>)}
-                </select>
-                {templates.length > 0 && (
-                  <button
-                    title="Delete the selected template — choose via prompt"
-                    onClick={async () => {
-                      const name = window.prompt("Template to delete", templates[0]?.name || "")?.trim();
-                      if (!name || !uid) return;
-                      deleteDrawingTemplate(uid, name);
-                      setTemplates(await loadDrawingTemplates(uid));
-                    }}
-                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-red-500/15 hover:text-red-300"
-                  >
-                    Del
-                  </button>
-                )}
-              </div>
-              {drawings.map((d) => (
-                <div key={d.id} className={cn("flex items-center gap-1 rounded px-1 py-0.5", selectedDrawingId === d.id && "bg-sky-500/15")}>
-                  <button
-                    className="min-w-0 flex-1 truncate text-left text-slate-300 hover:text-sky-300"
-                    onClick={() => {
-                      setSelectedDrawingId(d.id);
-                      // navigate: scroll the time scale to the drawing's first anchor
-                      const t0 = d.points[0]?.time;
-                      if (t0) {
-                        const data = barsRef.current;
-                        let idx = timeIdxRef.current.get(t0);
-                        if (idx == null && data.length) {
-                          idx = data.findIndex((b) => b.time >= t0);
-                          if (idx < 0) idx = data.length - 1;
-                        }
-                        if (idx != null && chartRef.current) {
-                          try { chartRef.current.timeScale().setVisibleLogicalRange({ from: idx - 30, to: idx + 30 }); } catch { /* race */ }
-                        }
-                      }
-                    }}
-                    onDoubleClick={() => {
-                      const name = window.prompt("Rename object", effectiveName(d));
-                      if (name != null) commitDrawings(drawingsRef.current.map((x) => (x.id === d.id ? { ...x, name: name.trim().slice(0, 60) || undefined } : x)));
-                    }}
-                    title="Click to select + jump to position · double-click to rename"
-                  >
-                    {effectiveName(d)}
-                    {d.hidden ? " (hidden)" : ""}
-                    {d.tfs?.length ? <span className="ml-1 text-[9px] text-sky-400">{d.tfs.map((x) => x.toUpperCase()).join(",")}</span> : null}
-                  </button>
-                  <button title={d.hidden ? "Show" : "Hide"} onClick={() => toggleDrawingHidden(d.id)} className="text-slate-500 hover:text-slate-200">
-                    {d.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                  </button>
-                  {/* Phase 35 §5 — per-object lock/unlock from the tree */}
-                  <button
-                    title={d.locked ? "Unlock object" : "Lock object"}
-                    onClick={() => commitDrawings(drawingsRef.current.map((x) => (x.id === d.id ? { ...x, locked: !x.locked } : x)))}
-                    className={cn("text-slate-500 hover:text-slate-200", d.locked && "text-amber-400")}
-                  >
-                    {d.locked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
-                  </button>
-                  <button
-                    title="Delete"
-                    disabled={locked || d.locked}
-                    onClick={() => commitDrawings(drawingsRef.current.filter((x) => x.id !== d.id))}
-                    className="text-slate-500 hover:text-red-400 disabled:opacity-30"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
+              )}
             </div>
-            <p className="mb-1 mt-2 border-t border-slate-800 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Indicators · {indicators.length}</p>
-            <div className="max-h-32 overflow-y-auto">
+            <p className="mb-1 mt-1 border-t border-slate-800 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Indicators · {indicators.length}</p>
+            <div className="max-h-32 overflow-y-auto pb-1">
               {indicators.length === 0 && <p className="py-1 text-slate-600">No indicators</p>}
               {indicators.map((cfg) => (
                 <div key={cfg.id} className="flex items-center gap-1 rounded px-1 py-0.5">
@@ -2350,7 +2429,7 @@ export function PriceChart({
                 </div>
               ))}
             </div>
-          </div>
+          </ObjectTree>
         )}
         {loaded.status === "error" && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950/80 text-center">
@@ -2456,20 +2535,7 @@ export function PriceChart({
           addHLine: addHLineAt,
           addText: addTextAt,
           deleteDrawing: (id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id)),
-          duplicateDrawing: (id) => {
-            const src = drawingsRef.current.find((d) => d.id === id);
-            if (!src) return;
-            // one tf-bucket to the right + a hair of price offset — clearly a
-            // separate object, immediately selectable
-            const step = TF_SECONDS[timeframeRef.current] ?? 60;
-            const copy: Drawing = {
-              ...src,
-              id: newDrawingId(),
-              points: src.points.map((q) => ({ time: q.time + step, price: q.price * 1.001 })),
-            };
-            commitDrawings([...drawingsRef.current, copy]);
-            setSelectedDrawingId(copy.id);
-          },
+          duplicateDrawing: duplicateDrawingById,
           toggleHide: toggleDrawingHidden,
           clearDrawings: () => { commitDrawings([]); if (uid) clearDrawingsRemote(uid, symbolRef.current); },
           clearIndicators: clearAllIndicators,

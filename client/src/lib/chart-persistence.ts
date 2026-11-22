@@ -12,6 +12,7 @@ import { get, onValue, ref as dbRef, remove, set, update } from "firebase/databa
 import { auth, db } from "@/lib/firebase";
 import { __sanitizeDrawingList, filterTombstonedDrawings } from "@/lib/drawings";
 import { readFavoritesLocal, writeFavoritesLocal, MAX_FAVORITES } from "@/lib/drawing-favorites";
+import { sanitizeGroups, type DrawingGroup } from "@/lib/drawing-tree";
 import type { Drawing, FibLevel } from "@/lib/drawings";
 import { sanitizeFibLevels } from "@/lib/drawings";
 import { sanitizeIndicatorList } from "@/lib/indicators-config";
@@ -253,6 +254,49 @@ export function saveChartSettingsCloud(uid: string, cfg: Record<string, unknown>
     void set(rtdb(`users/${uid}/chartSettings`), { ...cfg, savedAt: Date.now() })
       .catch((err) => console.warn("[chart] settings save failed:", err));
   }, 500));
+}
+
+// ---------------------------------------------------------------------------
+// P42 — object tree GROUPS per chart: `chart/{uid}/groups/{symbol}` +
+// LS mirror (LS-first paint). Groups are metadata only — the member states
+// (hidden/locked/group id) live on the drawings themselves, so nothing here
+// needs tombstones: a stale remote just re-sends the same small record.
+// ---------------------------------------------------------------------------
+
+const pendingGroupWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function subscribeGroups(uid: string, symbol: string, cb: (groups: Record<string, DrawingGroup>) => void): () => void {
+  try {
+    const raw = localStorage.getItem(`it_chart_groups_${uid}_${symbol}`);
+    if (raw) {
+      const g = sanitizeGroups(JSON.parse(raw));
+      if (Object.keys(g).length) cb(g);
+    }
+  } catch { /* private mode */ }
+  if (!uid) return () => {};
+  return onValue(
+    rtdb(`chart/${uid}/groups/${symbol}`),
+    (snap) => {
+      const val = snap.val() as Record<string, unknown> | null;
+      const clean = val && typeof val === "object" ? sanitizeGroups(val) : {};
+      cb(clean);
+      try { localStorage.setItem(`it_chart_groups_${uid}_${symbol}`, JSON.stringify(clean)); } catch { /* private mode */ }
+    },
+    (err) => console.warn("[chart] groups listener error (LS mirror active):", err),
+  );
+}
+
+export function saveGroups(uid: string, symbol: string, groups: Record<string, DrawingGroup>): void {
+  try { localStorage.setItem(`it_chart_groups_${uid}_${symbol}`, JSON.stringify(groups)); } catch { /* private mode */ }
+  if (!uid) return;
+  const key = `groups|${uid}|${symbol}`;
+  const prev = pendingGroupWrites.get(key);
+  if (prev) clearTimeout(prev);
+  pendingGroupWrites.set(key, setTimeout(() => {
+    pendingGroupWrites.delete(key);
+    void set(rtdb(`chart/${uid}/groups/${symbol}`), groups)
+      .catch((err) => console.warn("[chart] groups save failed — kept in localStorage:", err));
+  }, 400));
 }
 
 export async function loadChartSettingsCloud(uid: string): Promise<Record<string, unknown> | null> {

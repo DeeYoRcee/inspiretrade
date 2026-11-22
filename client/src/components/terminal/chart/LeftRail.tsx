@@ -130,6 +130,14 @@ interface ToolGroup {
   tools: { id: DrawingType; label: string; hint?: string }[];
 }
 
+/** P42 — palette category of a tool, for the object tree's type filter. */
+export function toolGroupTitle(id: DrawingType): string {
+  for (const grp of GROUPS) {
+    if (grp.tools.some((t) => t.id === id)) return grp.title;
+  }
+  return "Other";
+}
+
 /** P41 — human label for tooltips (floating favorites toolbar, object tree). */
 export function toolDisplayName(id: DrawingType): string {
   for (const grp of GROUPS) {
