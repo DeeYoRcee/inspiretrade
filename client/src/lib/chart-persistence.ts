@@ -11,7 +11,8 @@
 import { get, onValue, ref as dbRef, remove, set } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
 import { __sanitizeDrawingList } from "@/lib/drawings";
-import type { Drawing } from "@/lib/drawings";
+import type { Drawing, FibLevel } from "@/lib/drawings";
+import { sanitizeFibLevels } from "@/lib/drawings";
 import { sanitizeIndicatorList } from "@/lib/indicators-config";
 import type { IndicatorConfig } from "@/lib/indicators-config";
 
@@ -85,10 +86,22 @@ export function subscribeDrawings(
   return () => { if (timer) clearTimeout(timer); off(); };
 }
 
+/** Phase 37 §5 — one RTDB write per burst: the property bar commits style
+ *  changes per slider tick, so remote writes coalesce on a 400 ms trailing
+ *  debounce. localStorage stays immediate (sync + cheap) and clearDrawings
+ *  cancels a pending save so it can never resurrect deleted drawings. */
+const pendingDrawingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
 export function saveDrawings(uid: string, symbol: string, drawings: Drawing[]): void {
   const map = Object.fromEntries(drawings.map((d) => [d.id, d]));
   localSet(uid, "drawings", symbol, map);
-  void set(rtdb(`chart/${uid}/drawings/${symbol}`), map).catch(() => { /* LS covers it */ });
+  const key = `${uid}|${symbol}`;
+  const prev = pendingDrawingWrites.get(key);
+  if (prev) clearTimeout(prev);
+  pendingDrawingWrites.set(key, setTimeout(() => {
+    pendingDrawingWrites.delete(key);
+    void set(rtdb(`chart/${uid}/drawings/${symbol}`), map).catch(() => { /* LS covers it */ });
+  }, 400));
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +147,54 @@ export function deleteDrawingTemplate(uid: string, name: string): void {
 }
 
 export function clearDrawings(uid: string, symbol: string): void {
+  const key = `${uid}|${symbol}`;
+  const prev = pendingDrawingWrites.get(key);
+  if (prev) { clearTimeout(prev); pendingDrawingWrites.delete(key); }
   localDel(uid, "drawings", symbol);
   void remove(rtdb(`chart/${uid}/drawings/${symbol}`)).catch(() => { /* ignore */ });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 37 §2/§5 — custom Fibonacci presets: a named level list reusable on
+// any fib drawing, per user, RTDB + LS mirror like drawing templates.
+// ---------------------------------------------------------------------------
+
+export interface FibPreset { name: string; tool: string; levels: FibLevel[]; savedAt: number }
+
+export function saveFibPreset(uid: string, name: string, tool: string, levels: FibLevel[]): void {
+  const preset: FibPreset = { name, tool, levels, savedAt: Date.now() };
+  try {
+    const raw = localStorage.getItem(`it_chart_fibpresets_${uid}`);
+    const map = raw ? (JSON.parse(raw) as Record<string, FibPreset>) : {};
+    map[name] = preset;
+    localStorage.setItem(`it_chart_fibpresets_${uid}`, JSON.stringify(map));
+  } catch { /* quota — RTDB still gets it */ }
+  void set(rtdb(`chart/${uid}/fib-presets/${name}`), preset).catch(() => { /* LS covers it */ });
+}
+
+export async function loadFibPresets(uid: string): Promise<FibPreset[]> {
+  try {
+    const snap = await get(rtdb(`chart/${uid}/fib-presets`));
+    const map = (snap.val() || {}) as Record<string, FibPreset>;
+    const remote = Object.values(map);
+    if (remote.length) return remote;
+  } catch { /* offline / rules — fall through to LS */ }
+  try {
+    const raw = localStorage.getItem(`it_chart_fibpresets_${uid}`);
+    return raw ? Object.values(JSON.parse(raw) as Record<string, FibPreset>) : [];
+  } catch { return []; }
+}
+
+export function deleteFibPreset(uid: string, name: string): void {
+  try {
+    const raw = localStorage.getItem(`it_chart_fibpresets_${uid}`);
+    if (raw) {
+      const map = JSON.parse(raw) as Record<string, FibPreset>;
+      delete map[name];
+      localStorage.setItem(`it_chart_fibpresets_${uid}`, JSON.stringify(map));
+    }
+  } catch { /* ignore */ }
+  void remove(rtdb(`chart/${uid}/fib-presets/${name}`)).catch(() => { /* ignore */ });
 }
 
 // ---------------------------------------------------------------------------

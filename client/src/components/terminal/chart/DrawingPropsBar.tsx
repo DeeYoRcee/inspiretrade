@@ -11,6 +11,7 @@ import {
   type Drawing, type DrawingType, type FibLevel,
 } from "@/lib/drawings";
 import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
+import type { FibPreset } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
 
 const COLORS = ["#38bdf8", "#22c55e", "#f59e0b", "#ef4444", "#a78bfa", "#e2e8f0", "#14b8a6", "#f472b6"];
@@ -22,8 +23,24 @@ const SHAPE_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
 
 const tfLabel = (tf: Timeframe) => (tf === "1W" ? "W1" : tf === "1M" ? "MN" : tf.toUpperCase());
 
+/** Phase 37 §2 — compact on/off pill for the fib display options */
+function ToggleBtn({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "rounded border px-1.5 py-0.5 text-[10px] font-semibold transition-colors",
+        on ? "border-sky-500/50 bg-sky-500/15 text-sky-300" : "border-slate-700 text-slate-400 hover:text-slate-200",
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
 export function DrawingPropsBar({
   drawing, onChange, onDuplicate, onDelete, onEditText, onReorder,
+  fibPresets, onSaveFibPreset, onDeleteFibPreset,
 }: {
   drawing: Drawing;
   onChange: (patch: Partial<Drawing>) => void;
@@ -32,6 +49,10 @@ export function DrawingPropsBar({
   /** Phase 27 §4 — bring forward / send backward (render stack z-order) */
   onReorder?: (action: "front" | "back" | "forward" | "backward") => void;
   onEditText: () => void;
+  /** Phase 37 §5 — the user's saved Fibonacci presets */
+  fibPresets?: FibPreset[];
+  onSaveFibPreset?: (name: string, levels: FibLevel[]) => void;
+  onDeleteFibPreset?: (name: string) => void;
 }) {
   const isFib = FIB_TOOLS.has(drawing.type);
   const isTrend = drawing.type === "trend";
@@ -40,6 +61,11 @@ export function DrawingPropsBar({
   const tfs = drawing.tfs ?? [];
 
   const setStyle = (patch: Partial<Drawing["style"]>) => onChange({ style: { ...style, ...patch } });
+  /** effective level list the editor works on (defaults materialized) */
+  const baseLevels: FibLevel[] = drawing.levels?.length
+    ? drawing.levels.map((x) => ({ ...x }))
+    : (FIB_DEFAULT_LEVELS[drawing.type] || [0, 0.5, 1]).map((ratio): FibLevel => ({ ratio, show: true }));
+  const setLevel = (i: number, lv: FibLevel) => onChange({ levels: baseLevels.map((x, k) => (k === i ? lv : x)) });
   const toggleTf = (tf: Timeframe) => {
     const cur = new Set(drawing.tfs ?? []);
     if (cur.has(tf)) cur.delete(tf);
@@ -199,46 +225,108 @@ export function DrawingPropsBar({
             <span className="h-4 w-px bg-slate-700" />
             <details className="relative">
               <summary className="cursor-pointer list-none rounded px-1 text-slate-400 hover:bg-slate-800" title="Fibonacci levels">Levels ({levels.filter((l) => l.show).length})</summary>
-              <div className="absolute bottom-6 left-0 z-40 w-44 rounded-lg border border-slate-700 bg-slate-900/97 p-2 shadow-2xl">
-                {(drawing.levels?.length
-                  ? drawing.levels
-                  : (FIB_DEFAULT_LEVELS[drawing.type] || [0, 0.5, 1]).map((ratio): FibLevel => ({ ratio, show: true }))
-                ).map((lvl, i) => (
-                  <label key={`${lvl.ratio}-${i}`} className="flex items-center gap-2 py-0.5 text-slate-300">
+              <div className="absolute bottom-6 left-0 z-40 w-64 rounded-lg border border-slate-700 bg-slate-900/97 p-2 shadow-2xl">
+                {/* Phase 37 §2 — display options */}
+                <div className="mb-1.5 flex flex-wrap gap-1">
+                  <ToggleBtn label="Labels" on={style.showLabels !== false} onClick={() => setStyle({ showLabels: style.showLabels === false ? undefined : false })} />
+                  <ToggleBtn label="Prices" on={style.showPrices === true} onClick={() => setStyle({ showPrices: style.showPrices === true ? undefined : true })} />
+                  <ToggleBtn label="Extend" on={style.extend === "right" || style.extend === "both"} onClick={() => setStyle({ extend: style.extend === "right" || style.extend === "both" ? undefined : "right" })} />
+                  <ToggleBtn label="Reverse" on={style.reverse === true} onClick={() => setStyle({ reverse: style.reverse === true ? undefined : true })} />
+                </div>
+                {baseLevels.map((lvl, i) => (
+                  <div key={`${lvl.ratio}-${i}`} className="flex items-center gap-1.5 py-0.5 text-slate-300">
                     <input
                       type="checkbox"
                       checked={lvl.show}
-                      onChange={(e) => {
-                        const base: FibLevel[] = drawing.levels?.length
-                          ? drawing.levels.map((x) => ({ ...x }))
-                          : (FIB_DEFAULT_LEVELS[drawing.type] || [0, 0.5, 1]).map((ratio): FibLevel => ({ ratio, show: true }));
-                        base[i] = { ...base[i], show: e.target.checked };
-                        onChange({ levels: base });
-                      }}
+                      title={lvl.show ? "Hide level" : "Show level"}
+                      onChange={(e) => setLevel(i, { ...lvl, show: e.target.checked })}
                       className="accent-sky-500"
                     />
-                    <span className="font-number">{(lvl.ratio * 100).toFixed(1)}%</span>
+                    <input
+                      type="number" step={0.001} min={-10} max={100}
+                      value={lvl.ratio}
+                      title="Level ratio — multiple of the measured span"
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v)) setLevel(i, { ...lvl, ratio: v });
+                      }}
+                      className="num-input w-14 px-1 py-0.5 text-right text-[10px]"
+                    />
+                    <select
+                      value={lvl.dash ?? ""}
+                      title="Level line style"
+                      onChange={(e) => setLevel(i, { ...lvl, dash: (e.target.value || undefined) as FibLevel["dash"] })}
+                      className="h-5 rounded border border-slate-700 bg-slate-950 text-[10px]"
+                    >
+                      <option value="">—</option>
+                      <option value="solid">solid</option>
+                      <option value="dashed">dash</option>
+                      <option value="dotted">dot</option>
+                    </select>
                     <input
                       type="color"
                       value={lvl.color || style.color}
                       title="Level color"
-                      onChange={(e) => {
-                        const base: FibLevel[] = drawing.levels?.length
-                          ? drawing.levels.map((x) => ({ ...x }))
-                          : (FIB_DEFAULT_LEVELS[drawing.type] || [0, 0.5, 1]).map((ratio): FibLevel => ({ ratio, show: true }));
-                        base[i] = { ...base[i], color: e.target.value };
-                        onChange({ levels: base });
-                      }}
-                      className="ml-auto h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+                      onChange={(e) => setLevel(i, { ...lvl, color: e.target.value })}
+                      className="h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
                     />
-                  </label>
+                    <button
+                      title="Remove level"
+                      onClick={() => onChange({ levels: baseLevels.filter((_, k) => k !== i) })}
+                      className="text-[10px] text-slate-500 hover:text-red-400"
+                    >✕</button>
+                  </div>
                 ))}
-                <button
-                  onClick={() => onChange({ levels: undefined })}
-                  className="mt-1 text-[10px] text-slate-500 hover:text-slate-300"
-                >
-                  Reset to defaults
-                </button>
+                <div className="mt-1 flex items-center justify-between">
+                  <button
+                    onClick={() => onChange({ levels: [...baseLevels, { ratio: 0.886, show: true }] })}
+                    className="text-[10px] font-semibold text-emerald-400 hover:text-emerald-300"
+                  >+ Add level</button>
+                  <button onClick={() => onChange({ levels: undefined })} className="text-[10px] text-slate-500 hover:text-slate-300">
+                    Reset to defaults
+                  </button>
+                </div>
+                {/* Phase 37 §5 — custom Fibonacci presets (per user) */}
+                {fibPresets && fibPresets.length > 0 && (
+                  <div className="mt-1.5 border-t border-slate-800 pt-1.5">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const preset = fibPresets.find((x) => x.name === e.target.value);
+                        if (preset) onChange({ levels: preset.levels.map((l) => ({ ...l })) });
+                      }}
+                      className="h-6 w-full rounded border border-slate-700 bg-slate-950 text-[10px] text-slate-300"
+                    >
+                      <option value="">Apply preset…</option>
+                      {fibPresets.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.levels.length})</option>)}
+                    </select>
+                    <div className="mt-1 flex justify-between">
+                      <button
+                        onClick={() => {
+                          const name = window.prompt("Preset name", drawing.type);
+                          if (name?.trim()) onSaveFibPreset?.(name.trim(), baseLevels);
+                        }}
+                        className="text-[10px] font-semibold text-sky-400 hover:text-sky-300"
+                      >Save current as preset</button>
+                      <button
+                        onClick={() => {
+                          const name = window.prompt("Delete which preset?", fibPresets[0]?.name || "");
+                          if (name?.trim()) onDeleteFibPreset?.(name.trim());
+                        }}
+                        className="text-[10px] text-red-400 hover:text-red-300"
+                      >Delete preset</button>
+                    </div>
+                  </div>
+                )}
+                {(!fibPresets || fibPresets.length === 0) && onSaveFibPreset && (
+                  <button
+                    onClick={() => {
+                      const name = window.prompt("Preset name", drawing.type);
+                      if (name?.trim()) onSaveFibPreset(name.trim(), baseLevels);
+                    }}
+                    className="mt-1.5 block text-[10px] font-semibold text-sky-400 hover:text-sky-300"
+                  >Save levels as preset</button>
+                )}
               </div>
             </details>
           </>

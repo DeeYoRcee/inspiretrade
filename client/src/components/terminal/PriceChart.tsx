@@ -59,7 +59,7 @@ import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
 import { LeftRail } from "@/components/terminal/chart/LeftRail";
 import { DrawingPropsBar } from "@/components/terminal/chart/DrawingPropsBar";
 import { cursorCss, type CursorMode } from "@/components/terminal/chart/cursor-mode";
-import { loadDrawingTemplates, saveDrawingTemplate, deleteDrawingTemplate, type DrawingTemplate } from "@/lib/chart-persistence";
+import { loadDrawingTemplates, saveDrawingTemplate, deleteDrawingTemplate, loadFibPresets, saveFibPreset, deleteFibPreset, type DrawingTemplate, type FibPreset } from "@/lib/chart-persistence";
 import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorLibraryDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, type ContextMenuState,
@@ -384,6 +384,8 @@ export function PriceChart({
   const [editingIndicator, setEditingIndicator] = useState<IndicatorConfig | null>(null);
   /** Phase 36 §7 — searchable indicator library */
   const [indicatorLibraryOpen, setIndicatorLibraryOpen] = useState(false);
+  /** Phase 37 §5 — the user's custom Fibonacci presets (loaded once uid is known) */
+  const [fibPresets, setFibPresets] = useState<FibPreset[]>([]);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [openDialog, setOpenDialog] = useState<"settings" | "layouts" | "search" | null>(null);
   const [settings, setSettings] = useState<ChartSettings>(() => {
@@ -1611,6 +1613,13 @@ export function PriceChart({
     if (uid) saveIndicators(uid, symbolRef.current, next);
   }, [uid]);
 
+  // Phase 37 §5 — load the user's fib presets (uid declared above this point)
+  useEffect(() => {
+    let on = true;
+    if (uid) void loadFibPresets(uid).then((ps) => { if (on) setFibPresets(ps); });
+    return () => { on = false; };
+  }, [uid]);
+
   /** Remove one indicator + its orphan overlay series (shared by toolbar,
    *  object tree and the library). */
   const removeIndicator = useCallback((id: string) => {
@@ -2043,6 +2052,13 @@ export function PriceChart({
           return (
             <DrawingPropsBar
               drawing={sel}
+              fibPresets={fibPresets}
+              onSaveFibPreset={(name, lvls) => {
+                if (uid) { saveFibPreset(uid, name, sel.type, lvls); void loadFibPresets(uid).then(setFibPresets); }
+              }}
+              onDeleteFibPreset={(name) => {
+                if (uid) { deleteFibPreset(uid, name); void loadFibPresets(uid).then(setFibPresets); }
+              }}
               onChange={(patch) => commitDrawings(drawingsRef.current.map((d) => (d.id === sel.id ? { ...d, ...patch } : d)))}
               onDuplicate={() => {
                 const dt = (TF_SECONDS[timeframe] || 3600) * 4;

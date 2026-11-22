@@ -12,7 +12,7 @@ import type { Timeframe } from "@shared/terminal";
 export type DrawingType =
   // trend lines
   | "trend" | "hline" | "vline" | "ray" | "extended" | "info-line" | "trend-angle"
-  | "hray" | "hchannel" | "channel" | "regression" | "dchannel"
+  | "hray" | "hchannel" | "channel" | "regression" | "dchannel" | "pitchfork"
   // fibonaccis
   | "fib-retracement" | "fib-extension" | "fib-trend-ext" | "fib-channel"
   | "fib-timezone" | "fib-fan" | "fib-arc" | "fib-circle" | "fib-spiral" | "fib-wedge"
@@ -47,10 +47,21 @@ export interface DrawingStyle {
   showLabels?: boolean;
   /** endpoint time labels on line tools */
   showTimeLabels?: boolean;
+  /** Phase 37 §2 — print the level PRICE next to the % label (fib tools) */
+  showPrices?: boolean;
+  /** Phase 37 §2 — measure fib levels from the second anchor (reversed) */
+  reverse?: boolean;
 }
 
-/** one configurable Fibonacci level (ratio is the multiple of the measured span) */
-export interface FibLevel { ratio: number; show: boolean; color?: string }
+/** one configurable Fibonacci level (ratio is the multiple of the measured span).
+ *  Phase 37 §2: custom levels are addable/removable; per-level width/dash. */
+export interface FibLevel {
+  ratio: number;
+  show: boolean;
+  color?: string;
+  width?: number;
+  dash?: "solid" | "dashed" | "dotted";
+}
 
 export interface Drawing {
   id: string;
@@ -93,6 +104,7 @@ export function makeDrawing(type: DrawingType, points: DrawingPoint[], text?: st
 export const TOOL_POINT_COUNT: Record<DrawingType, number> = {
   trend: 2, hline: 1, vline: 1, ray: 2, extended: 2,
   "info-line": 2, "trend-angle": 2, hray: 2, hchannel: 3, channel: 3, regression: 2, dchannel: 4,
+  pitchfork: 3,
   "fib-retracement": 2, "fib-extension": 3, "fib-trend-ext": 3, "fib-channel": 3,
   "fib-timezone": 2, "fib-fan": 2, "fib-arc": 2, "fib-circle": 2, "fib-spiral": 2, "fib-wedge": 3,
   rect: 2, rrect: 3, triangle: 3, circle: 2, ellipse: 2,
@@ -115,6 +127,7 @@ export const TOOL_LABELS: Partial<Record<DrawingType, string[]>> = {
   "three-drives": ["1", "A", "2", "B", "3", "C"],
   "long-position": ["Entry", "Stop", "Target"],
   "short-position": ["Entry", "Stop", "Target"],
+  pitchfork: ["P0", "P1", "P2"],
 };
 
 /** Tools that ask for their text content on commit (single prompt, like TV). */
@@ -135,7 +148,7 @@ export const FIB_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
 export const FIB_DEFAULT_LEVELS: Partial<Record<DrawingType, number[]>> = {
   // Phase 27 §5: the full standard level set — the props bar lets users
   // toggle individual levels off, so showing the complete list is safe
-  "fib-retracement": [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618, 2.618],
+  "fib-retracement": [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618, 2, 2.618],
   "fib-extension": [0, 0.618, 1, 1.618, 2.618],
   "fib-trend-ext": [0, 0.618, 1, 1.618, 2.618],
   "fib-channel": [0.382, 0.5, 0.618, 1, 1.618],
@@ -152,6 +165,66 @@ export function levelsFor(d: Drawing): FibLevel[] {
   if (d.levels?.length) return d.levels;
   const defaults = FIB_DEFAULT_LEVELS[d.type];
   return defaults ? defaults.map((ratio) => ({ ratio, show: true })) : [];
+}
+
+/** Phase 37 §2 — pure Fibonacci level-price math (retracement & extension
+ *  families), independent of canvas code so it can be unit-tested.
+ *  retracement: price = from + (to − from) × ratio, measured p0→p1
+ *  (reverse: measured p1→p0, levels project beyond p0).
+ *  extension: the p0→p1 swing projected from p2:
+ *  price = p2 + (p1 − p0) × ratio (reverse projects p0−p1). */
+export function fibLevelPrice(
+  kind: "retracement" | "extension",
+  p0: number, p1: number, p2: number,
+  ratio: number, reverse = false,
+): number {
+  if (kind === "extension") return reverse ? p2 + (p0 - p1) * ratio : p2 + (p1 - p0) * ratio;
+  const a = reverse ? p1 : p0;
+  const b = reverse ? p0 : p1;
+  return a + (b - a) * ratio;
+}
+
+export interface LineSeg { from: XY; to: XY }
+
+/** Phase 37 §1 — Andrews pitchfork tines (pure): median from P0 through the
+ *  P1/P2 midpoint, upper/lower prongs through P1/P2 parallel to the median,
+ *  all extended to `edgeX`. Caller picks the edge side from the direction. */
+export function pitchforkLines(p0: XY, p1: XY, p2: XY, edgeX: number): {
+  median: LineSeg; upper: LineSeg; lower: LineSeg;
+} {
+  const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  const dir = { x: mid.x - p0.x, y: mid.y - p0.y };
+  const toEdge = (from: XY): XY => {
+    if (Math.abs(dir.x) < 1e-9) return { x: from.x, y: from.y + (dir.y >= 0 ? 1 : -1) * 1e4 };
+    const t = (edgeX - from.x) / dir.x;
+    if (t <= 0) return { x: from.x, y: from.y };
+    return { x: edgeX, y: from.y + dir.y * t };
+  };
+  return {
+    median: { from: p0, to: toEdge(p0) },
+    upper: { from: p1, to: toEdge(p1) },
+    lower: { from: p2, to: toEdge(p2) },
+  };
+}
+
+/** Phase 37 §5 — validate a level list from persistence/presets (used by
+ *  __sanitizeDrawingList and the fib-preset store). */
+export function sanitizeFibLevels(raw: unknown): FibLevel[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: FibLevel[] = [];
+  for (const l of raw) {
+    if (!l || typeof l !== "object") continue;
+    const o = l as Record<string, unknown>;
+    const ratio = Number(o.ratio);
+    if (!Number.isFinite(ratio) || ratio < -10 || ratio > 100) continue;
+    const lv: FibLevel = { ratio, show: o.show !== false };
+    if (typeof o.color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(o.color)) lv.color = o.color;
+    const w = Number(o.width);
+    if (Number.isFinite(w)) lv.width = Math.min(6, Math.max(1, Math.round(w)));
+    if (o.dash === "dashed" || o.dash === "dotted" || o.dash === "solid") lv.dash = o.dash;
+    out.push(lv);
+  }
+  return out.length ? out.slice(0, 64) : undefined;
 }
 
 /** Market-price formatter for drawing labels — Phase 26 D1: measurement
@@ -502,6 +575,15 @@ export function hitTest(
         if (p.x >= Math.min(...xs) - LINE_HIT && p.x <= Math.max(...xs) + LINE_HIT) return { index: i };
         break;
       }
+      case "pitchfork": {
+        const edgeX = (pts[1].x + pts[2].x) / 2 >= pts[0].x ? 1e6 : -1e6;
+        const L = pitchforkLines(pts[0], pts[1], pts[2], edgeX);
+        const rays: LineSeg[] = [L.upper, L.median, L.lower];
+        for (const ray of rays) {
+          if (distToSegmentSq(p, ray.from, ray.to) <= LINE_HIT * LINE_HIT) return { index: i };
+        }
+        break;
+      }
       case "fib-fan":
       case "fib-arc":
       case "fib-circle":
@@ -756,20 +838,29 @@ export function renderDrawing(
     }
     case "fib-retracement": {
       const [p0, p1] = pts;
+      const reverse = d.style.reverse === true;
+      const a = reverse ? p1 : p0;
+      const b = reverse ? p0 : p1;
       const x1 = Math.min(p0.x, p1.x);
-      const x2 = Math.max(p0.x, p1.x);
-      // Phase 26 D2: the props bar always offered per-level toggles/colors —
-      // render them (visibleLevels falls back to the tool defaults).
+      // Phase 37 §2 — extend levels to the right edge when requested
+      const x2 = d.style.extend === "right" || d.style.extend === "both" ? canvasW : Math.max(p0.x, p1.x);
       for (const lvl of visibleLevels(d)) {
-        const y = p0.y + (p1.y - p0.y) * lvl.ratio;
+        const y = a.y + (b.y - a.y) * lvl.ratio;
         ctx.save();
         if (lvl.color) ctx.strokeStyle = lvl.color;
+        if (lvl.width) ctx.lineWidth = lvl.width;
+        if (lvl.dash) ctx.setLineDash(lvl.dash === "dashed" ? [6, 4] : lvl.dash === "dotted" ? [2, 3] : []);
         ctx.globalAlpha = lvl.ratio === 0 || lvl.ratio === 1 ? 0.9 : 0.7;
         drawSegment(ctx, { x: x1, y }, { x: x2, y });
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 0.9;
-        ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
-        ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%`, x1 + 4, y - 3);
+        if (d.style.showLabels !== false) {
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 0.9;
+          ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+          const priceTxt = d.style.showPrices && d.points.length >= 2
+            ? ` ${fmtDrawingPrice(fibLevelPrice("retracement", d.points[0].price, d.points[1].price, 0, lvl.ratio, reverse))}`
+            : "";
+          ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%${priceTxt}`, x1 + 4, y - 3);
+        }
         ctx.restore();
       }
       break;
@@ -782,17 +873,26 @@ export function renderDrawing(
       ctx.globalAlpha = 0.5;
       drawSegment(ctx, p1, p2);
       ctx.restore();
-      const x2 = Math.max(p0.x, p1.x, p2.x);
+      const right = Math.max(p0.x, p1.x, p2.x);
+      const x2 = d.style.extend === "right" || d.style.extend === "both" ? canvasW : right;
+      const reverse = d.style.reverse === true;
       for (const lvl of visibleLevels(d)) {
-        const y = p2.y + (p1.y - p0.y) * lvl.ratio;
+        const y = p2.y + (reverse ? p0.y - p1.y : p1.y - p0.y) * lvl.ratio;
         ctx.save();
         if (lvl.color) ctx.strokeStyle = lvl.color;
+        if (lvl.width) ctx.lineWidth = lvl.width;
+        if (lvl.dash) ctx.setLineDash(lvl.dash === "dashed" ? [6, 4] : lvl.dash === "dotted" ? [2, 3] : []);
         ctx.globalAlpha = 0.7;
         drawSegment(ctx, { x: Math.min(p2.x, x2 - 40), y }, { x: x2, y });
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 0.9;
-        ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
-        ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%`, x2 - 58, y - 3);
+        if (d.style.showLabels !== false) {
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 0.9;
+          ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+          const priceTxt = d.style.showPrices && d.points.length >= 3
+            ? ` ${fmtDrawingPrice(fibLevelPrice("extension", d.points[0].price, d.points[1].price, d.points[2].price, lvl.ratio, reverse))}`
+            : "";
+          ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%${priceTxt}`, x2 - 58, y - 3);
+        }
         ctx.restore();
       }
       break;
@@ -895,8 +995,25 @@ export function renderDrawing(
       break;
     }
     case "regression": {
-      // rendered by the canvas layer (needs the bars) — base rendering: the span
-      drawSegment(ctx, { x: Math.min(pts[0].x, pts[1].x), y: pts[0].y }, { x: Math.max(pts[0].x, pts[1].x), y: pts[1].y });
+      // Phase 37 §7 fix — the canvas layer always renders the bars-driven
+      // least-squares fit for regression; this base case used to ALSO stroke a
+      // degenerate span, double-drawing every regression. Render nothing here.
+      break;
+    }
+    case "pitchfork": {
+      if (pts.length === 3) {
+        // extend toward the side the fork opens to (mid of P1P2 vs P0)
+        const edgeX = (pts[1].x + pts[2].x) / 2 >= pts[0].x ? canvasW : 0;
+        const L = pitchforkLines(pts[0], pts[1], pts[2], edgeX);
+        ctx.save();
+        ctx.setLineDash([3, 3]);
+        ctx.globalAlpha *= 0.55;
+        drawSegment(ctx, pts[1], pts[2]); // trigger line
+        ctx.restore();
+        drawSegment(ctx, L.upper.from, L.upper.to);
+        drawSegment(ctx, L.median.from, L.median.to);
+        drawSegment(ctx, L.lower.from, L.lower.to);
+      }
       break;
     }
 
@@ -1430,6 +1547,7 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
     const min = arity === -1 || arity === -2 ? 2 : arity;
     const max = arity === -1 || arity === -2 ? Infinity : arity;
     if (points.length < min || points.length > max) continue;
+    const levels = sanitizeFibLevels(r.levels);
     const st = (r.style && typeof r.style === "object" ? r.style : {}) as Record<string, unknown>;
     const fill = st.fill && typeof st.fill === "object" ? (st.fill as Record<string, unknown>) : null;
     const tfs = Array.isArray(r.tfs)
@@ -1450,13 +1568,15 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
         ...(st.extend === "right" || st.extend === "both" ? { extend: st.extend } : {}),
         ...(st.showLabels === true || st.showLabels === false ? { showLabels: st.showLabels } : {}),
         ...(st.showTimeLabels === true || st.showTimeLabels === false ? { showTimeLabels: st.showTimeLabels } : {}),
+        ...(st.showPrices === true || st.showPrices === false ? { showPrices: st.showPrices } : {}),
+        ...(st.reverse === true || st.reverse === false ? { reverse: st.reverse } : {}),
       },
       ...(typeof r.text === "string" ? { text: r.text.slice(0, 200) } : {}),
       ...(r.locked === true ? { locked: true } : {}),
       ...(r.hidden === true ? { hidden: true } : {}),
       ...(typeof r.name === "string" && r.name ? { name: r.name.slice(0, 60) } : {}),
       ...(tfs && tfs.length ? { tfs } : {}),
-      ...(Array.isArray(r.levels) ? { levels: r.levels as FibLevel[] } : {}),
+      ...(levels ? { levels } : {}),
     };
     out.set(d.id, d); // duplicate ids collapse to the newest entry
   }

@@ -108,6 +108,13 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   const mouseRef = useRef<XY | null>(null);
   const toolRef = useRef<DrawingType | null>(activeTool);
   toolRef.current = activeTool;
+  // Phase 37 §7 — while a drawing tool is armed the browser must not steal
+  // touch gestures (page scroll / pinch): disable native touch-action on the
+  // capture wrapper. Cursor mode leaves chart pan/zoom fully native.
+  useEffect(() => {
+    const el = attachRef.current;
+    if (el) el.style.touchAction = activeTool ? "none" : "";
+  }, [activeTool, attachRef]);
   const drawingsRef = useRef(drawings);
   drawingsRef.current = drawings;
   const magnetRef = useRef(magnet);

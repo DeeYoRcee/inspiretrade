@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Crosshair, Eraser, Eye, EyeOff, Layers, Lock, LockOpen, Magnet,
+  Crosshair, Eraser, Eye, EyeOff, Layers, Lock, LockOpen, Magnet, Star,
 } from "lucide-react";
 import type { DrawingType } from "@/lib/drawings";
 import { cn } from "@/lib/utils";
@@ -44,7 +44,8 @@ const ICONS: Partial<Record<DrawingType, IconSpec>> = {
   hchannel: { p: ["M2 4.5L14 4.5", "M2 8L14 8", "M2 11.5L14 11.5"], d: [[2, 4.5], [14, 11.5]] },
   channel: { p: ["M3 13L11 5", "M6 13L14 5", "M4.5 14.7L12.5 6.7"], d: [[3, 13], [11, 5]] },
   regression: { p: ["M2 12.5C5.5 3.5 10.5 13 14 4"], d: [[2, 12.5], [14, 4]] },
-  dchannel: { p: ["M2.5 6.5L9 3", "M7 13.2L13.5 9.7", "M4 8.2L10.5 4.7"], d: [[2.5, 6.5], [9, 3], [13.5, 9.7]] },
+  dchannel: { p: ["M2.5 6.5L9 3", "M7 13.2L13.5 9.7", "M4 8.2L10.5 4.7"], d: [[2.5, 6.5], [9, 3]] },
+  pitchfork: { p: ["M3 3.5L13 8", "M3 3.5L13 3", "M3 3.5L13 13", "M13 3L13 13"], d: [[3, 3.5]] },
   // ---- Fibonacci ------------------------------------------------------------
   "fib-retracement": { p: ["M2 13.5L14 4", "M3.5 12L9 12", "M3.5 9.3L11.5 9.3", "M3.5 6.6L10.5 6.6", "M3.5 4L8.5 4"] },
   "fib-extension": { p: ["M2 14L9 4.5L14 8.5", "M4.5 11L14 11", "M4.5 8L12 8", "M4.5 5L8.5 5"] },
@@ -146,6 +147,7 @@ const GROUPS: ToolGroup[] = [
       g("channel", "Parallel channel", "P"),
       g("regression", "Regression trend — least-squares fit"),
       g("dchannel", "Disjoint channel"),
+      g("pitchfork", "Andrews pitchfork — 3 pivots"),
     ],
   },
   {
@@ -233,6 +235,17 @@ const GROUPS: ToolGroup[] = [
 ];
 
 const LAST_TOOL_KEY = "it-rail-last-tool";
+/** Phase 37 §3 — pinned favorite tools, persisted locally */
+const FAV_KEY = "it-rail-favorites";
+
+function readFavs(): string[] {
+  try {
+    const raw = localStorage.getItem(FAV_KEY);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(list) ? (list.filter((x) => typeof x === "string") as string[]).slice(0, 12) : [];
+  } catch { /* private mode */ }
+  return [];
+}
 
 function readLastTool(): Partial<Record<string, DrawingType>> {
   try {
@@ -266,6 +279,14 @@ export function LeftRail({
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [lastTool, setLastTool] = useState<Partial<Record<string, DrawingType>>>(readLastTool);
+  const [favs, setFavs] = useState<string[]>(readFavs);
+  const toggleFav = useCallback((id: string) => {
+    setFavs((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(0, 12);
+      try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
+  }, []);
   const railRef = useRef<HTMLDivElement | null>(null);
 
   // close the popover on outside pointerdown / Esc — pointerdown INSIDE the
@@ -337,6 +358,52 @@ export function LeftRail({
         )}
       </div>
       <div className="my-0.5 h-px w-6 bg-slate-800" />
+      {favs.length > 0 && (() => {
+        const isOpen = openGroup === "fav";
+        const favActive = activeTool !== "cursor" && favs.includes(activeTool);
+        return (
+          <div className="relative">
+            <button
+              title={`Favorites — ${favs.length} pinned tool${favs.length > 1 ? "s" : ""}`}
+              aria-label="Favorite tools"
+              onClick={() => setOpenGroup(isOpen ? null : "fav")}
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded transition-colors",
+                favActive ? "bg-sky-600 text-white" : isOpen ? "bg-slate-800 text-slate-200" : "text-amber-400/90 hover:bg-slate-800",
+              )}
+            >
+              <Star className={cn("h-4 w-4", favActive && "fill-current")} />
+            </button>
+            {isOpen && (
+              <div
+                className="absolute left-full top-0 z-40 ml-1 grid max-h-[70vh] grid-cols-4 gap-0.5 overflow-y-auto rounded-lg border border-slate-700/80 bg-[#0d1526] p-1.5 shadow-2xl"
+                role="menu"
+                aria-label="Favorite tools"
+                style={{ minWidth: 122 }}
+              >
+                {favs.map((t) => (
+                  <button
+                    key={t}
+                    role="menuitem"
+                    title={t}
+                    onClick={() => pick("fav", t as DrawingType)}
+                    className={cn(
+                      "relative flex h-7 w-7 items-center justify-center rounded transition-colors",
+                      activeTool === t ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
+                    )}
+                  >
+                    <ToolIcon id={t as DrawingType} className="h-4 w-4" />
+                    <Star
+                      onClick={(e) => { e.stopPropagation(); toggleFav(t); }}
+                      className="absolute right-0 top-0 h-2 w-2 fill-amber-400 text-amber-400"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {GROUPS.map((grp) => {
         // the group button shows the group's LAST-USED tool (TradingView
         // behavior), falls back to the first tool; open state adds a caret
@@ -373,11 +440,18 @@ export function LeftRail({
                     aria-label={t.label}
                     onClick={() => pick(grp.id, t.id)}
                     className={cn(
-                      "flex h-7 w-7 items-center justify-center rounded transition-colors",
+                      "group/tb relative flex h-7 w-7 items-center justify-center rounded transition-colors",
                       activeTool === t.id ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
                     )}
                   >
                     <ToolIcon id={t.id} className="h-4 w-4" />
+                    <Star
+                      onClick={(e) => { e.stopPropagation(); toggleFav(t.id); }}
+                      className={cn(
+                        "absolute right-0 top-0 h-2 w-2 transition-opacity",
+                        favs.includes(t.id) ? "fill-amber-400 text-amber-400" : "text-slate-500 opacity-0 group-hover/tb:opacity-100",
+                      )}
+                    />
                   </button>
                 ))}
               </div>
