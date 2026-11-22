@@ -478,7 +478,7 @@ export async function createAccount(uid: string, label?: string, startingBalance
   const existing = await accountsCol(uid).get();
   if (existing.size >= MAX_ACCOUNTS) throw new HttpError(409, "TOO_MANY_ACCOUNTS", `Maximum ${MAX_ACCOUNTS} accounts`);
   const settings = await getPlatformSettings();
-  const balance = Math.round(Math.min(5_000_000, Math.max(1_000, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
+  const balance = Math.round(Math.min(5_000_000, Math.max(5_000, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
   const rules = sanitizeRules(opts.rules);
   const leverageRaw = Number(opts.leverage) || settings.defaultLeverage;
   const allowed = settings.allowedLeverages?.length ? settings.allowedLeverages : ALLOWED_LEVERAGES;

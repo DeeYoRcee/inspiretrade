@@ -12,6 +12,7 @@ import { get, onValue, ref as dbRef, remove, set } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
 import { __sanitizeDrawingList } from "@/lib/drawings";
 import type { Drawing } from "@/lib/drawings";
+import { sanitizeIndicatorList } from "@/lib/indicators-config";
 import type { IndicatorConfig } from "@/lib/indicators-config";
 
 export interface LayoutSnapshot {
@@ -146,8 +147,10 @@ export function subscribeIndicators(
   symbol: string,
   cb: (indicators: IndicatorConfig[]) => void,
 ): () => void {
+  // Phase 36: validate snapshots like drawings — unknown types are dropped,
+  // params clamped into catalog ranges, duplicate ids collapsed.
   const cached = localGet<Record<string, IndicatorConfig>>(uid, "indicators", symbol);
-  if (cached) cb(Object.values(cached));
+  if (cached) cb(sanitizeIndicatorList(Object.values(cached)));
   let timer: ReturnType<typeof setTimeout> | null = null;
   const push = (list: IndicatorConfig[]) => {
     const map = Object.fromEntries(list.map((i) => [i.id, i]));
@@ -164,8 +167,9 @@ export function subscribeIndicators(
       // null must CLEAR too (like subscribeDrawings): switching to an
       // instrument with no stored indicators otherwise keeps the previous
       // instrument's configs active over the new bars
-      cb(remote ? Object.values(remote) : []);
-      if (remote) localSet(uid, "indicators", symbol, remote);
+      const list = remote ? sanitizeIndicatorList(Object.values(remote)) : [];
+      cb(list);
+      if (remote) localSet(uid, "indicators", symbol, Object.fromEntries(list.map((i) => [i.id, i])));
     },
     () => { /* rules/offline — LS only */ },
   );
@@ -176,6 +180,12 @@ export function saveIndicators(uid: string, symbol: string, indicators: Indicato
   const map = Object.fromEntries(indicators.map((i) => [i.id, i]));
   localSet(uid, "indicators", symbol, map);
   void set(rtdb(`chart/${uid}/indicators/${symbol}`), map).catch(() => { /* LS covers it */ });
+}
+
+/** Phase 36 §6 — Remove All Indicators: clears the LS mirror + RTDB node. */
+export function clearIndicators(uid: string, symbol: string): void {
+  localDel(uid, "indicators", symbol);
+  void remove(rtdb(`chart/${uid}/indicators/${symbol}`)).catch(() => { /* LS covers it */ });
 }
 
 // ---------------------------------------------------------------------------

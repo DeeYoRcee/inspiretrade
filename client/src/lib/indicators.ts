@@ -660,3 +660,55 @@ export function roc(closes: number[], period = 9): Point[] {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 36 — momentum trio + source prices
+// ---------------------------------------------------------------------------
+
+/** Extract a named price series: close|open|high|low|hl2|hlc3|ohlc4. */
+export function sourceSeries(bars: BarLike[], src: string): number[] {
+  switch (src) {
+    case "open": return bars.map((b) => b.open);
+    case "high": return bars.map((b) => b.high);
+    case "low": return bars.map((b) => b.low);
+    case "hl2": return bars.map((b) => (b.high + b.low) / 2);
+    case "hlc3": return bars.map((b) => (b.high + b.low + b.close) / 3);
+    case "ohlc4": return bars.map((b) => (b.open + b.high + b.low + b.close) / 4);
+    default: return bars.map((b) => b.close);
+  }
+}
+
+/** Momentum (MOM): close − close `period` bars ago, in price units. */
+export function momentum(closes: number[], period = 10): Point[] {
+  const out: Point[] = new Array(closes.length).fill(null);
+  for (let i = period; i < closes.length; i++) out[i] = closes[i] - closes[i - period];
+  return out;
+}
+
+/** Rolling population standard deviation over `period`. */
+export function stdev(values: number[], period = 20): Point[] {
+  const out: Point[] = new Array(values.length).fill(null);
+  if (period <= 0) return out;
+  for (let i = period - 1; i < values.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += values[j];
+    const mean = sum / period;
+    let acc = 0;
+    for (let j = i - period + 1; j <= i; j++) acc += (values[j] - mean) ** 2;
+    out[i] = Math.sqrt(acc / period);
+  }
+  return out;
+}
+
+/**
+ * Bollinger Band Width: (upper − lower) / basis × 100 — squeezes read low,
+ * expansions read high. Null wherever the bands are still warming up.
+ */
+export function bollingerWidth(values: number[], period = 20, mult = 2): Point[] {
+  const r = bollinger(values, period, mult);
+  return r.basis.map((b, i) =>
+    b != null && r.upper[i] != null && b !== 0
+      ? ((r.upper[i]! - r.lower[i]!) / b) * 100
+      : null,
+  );
+}

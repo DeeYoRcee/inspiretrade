@@ -35,19 +35,20 @@ import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  atr, bollinger, ema, macd as macdCalc, rsi as rsiCalc, sma, stochastic, vwap as vwapCalc,
+  atr, bollinger, bollingerWidth, ema, macd as macdCalc, momentum, rsi as rsiCalc, sma,
+  sourceSeries, stdev, stochastic, vwap as vwapCalc,
   wma, hma, supertrend, donchian, keltner, psar, ichimoku, adx, williamsR, cci, stochRsi,
   mfi, obv, trix, awesomeOscillator, roc,
   type Point,
 } from "@/lib/indicators";
 import {
-  INDICATOR_CATALOG, newIndicatorConfig, type IndicatorConfig, type IndicatorType,
+  INDICATOR_CATALOG, newIndicatorConfig, withAlpha, type IndicatorConfig, type IndicatorType,
 } from "@/lib/indicators-config";
 import {
   reorderDrawing, effectiveName, isVisibleOnTf, __sanitizeDrawingList, type Drawing, type DrawingType } from "@/lib/drawings";
 import {
   subscribeDrawings, saveDrawings, clearDrawings as clearDrawingsRemote,
-  subscribeIndicators, saveIndicators,
+  subscribeIndicators, saveIndicators, clearIndicators as clearIndicatorsRemote,
   type LayoutSnapshot,
 } from "@/lib/chart-persistence";
 import {
@@ -60,10 +61,10 @@ import { DrawingPropsBar } from "@/components/terminal/chart/DrawingPropsBar";
 import { cursorCss, type CursorMode } from "@/components/terminal/chart/cursor-mode";
 import { loadDrawingTemplates, saveDrawingTemplate, deleteDrawingTemplate, type DrawingTemplate } from "@/lib/chart-persistence";
 import {
-  ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorParamsDialog,
+  ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorLibraryDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, type ContextMenuState,
 } from "@/components/terminal/chart/dialogs";
-import { Eye, EyeOff, X, Activity, Database, Lock, Unlock, Loader2 } from "lucide-react";
+import { Eye, EyeOff, X, Activity, Database, Lock, Unlock, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { cn } from "@/lib/utils";
 
@@ -333,6 +334,10 @@ export function PriceChart({
   const tfSecRef = useRef(300);
   const timeIdxRef = useRef<Map<number, number>>(new Map());
   const indValuesRef = useRef<Map<string, Map<string, Point[]>>>(new Map()); // indId → seriesKey → values
+  /** Phase 36 §5 — compute cache keyed by a params+data signature */
+  const indCacheRef = useRef(new Map<string, { sig: string; values: Map<string, Point[]> }>());
+  const indTickRef = useRef(0);
+  const indLenRef = useRef(0);
   const olderLoadingRef = useRef(false);
   const tradesRef = useRef<ServerTrade[]>([]);
   const syncingRef = useRef(false);
@@ -377,6 +382,8 @@ export function PriceChart({
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [editingDrawing, setEditingDrawing] = useState<Drawing | null>(null);
   const [editingIndicator, setEditingIndicator] = useState<IndicatorConfig | null>(null);
+  /** Phase 36 §7 — searchable indicator library */
+  const [indicatorLibraryOpen, setIndicatorLibraryOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [openDialog, setOpenDialog] = useState<"settings" | "layouts" | "search" | null>(null);
   const [settings, setSettings] = useState<ChartSettings>(() => {
@@ -806,8 +813,8 @@ export function PriceChart({
     const closes = bars.map((b) => b.close);
     const p = (k: string) => Number(cfg.params[k]);
     switch (cfg.type) {
-      case "sma": out.set("sma", sma(closes, p("period"))); break;
-      case "ema": out.set("ema", ema(closes, p("period"))); break;
+      case "sma": out.set("sma", sma(sourceSeries(bars, String(cfg.params.source || "close")), p("period"))); break;
+      case "ema": out.set("ema", ema(sourceSeries(bars, String(cfg.params.source || "close")), p("period"))); break;
       case "bb": {
         const r = bollinger(closes, p("period"), p("mult"));
         out.set("basis", r.basis); out.set("upper", r.upper); out.set("lower", r.lower);
@@ -828,7 +835,7 @@ export function PriceChart({
       }
       case "atr": out.set("atr", atr(bars, p("period"))); break;
       // ---- Phase 27: the TradingView-standard set --------------------------
-      case "wma": out.set("wma", wma(closes, p("period"))); break;
+      case "wma": out.set("wma", wma(sourceSeries(bars, String(cfg.params.source || "close")), p("period"))); break;
       case "hma": out.set("hma", hma(closes, p("period"))); break;
       case "supertrend": {
         const r = supertrend(bars, p("period"), p("mult"));
@@ -868,6 +875,10 @@ export function PriceChart({
       case "trix": out.set("trix", trix(closes, p("period"))); break;
       case "ao": out.set("ao", awesomeOscillator(bars, p("fast"), p("slow"))); break;
       case "roc": out.set("roc", roc(closes, p("period"))); break;
+      // ---- Phase 36 additions ------------------------------------------------
+      case "momentum": out.set("momentum", momentum(sourceSeries(bars, String(cfg.params.source || "close")), p("period"))); break;
+      case "bbw": out.set("bbw", bollingerWidth(closes, p("period"), p("mult"))); break;
+      case "stddev": out.set("stddev", stdev(sourceSeries(bars, String(cfg.params.source || "close")), p("period"))); break;
       default: void meta; break;
     }
     return out;
@@ -894,10 +905,29 @@ export function PriceChart({
       if (volumeVisibleRef.current) volume.update(toVolume(last));
     }
 
-    // indicators: overlays on the main series + sub-pane series
+    // indicators: overlays on the main series + sub-pane series.
+    // Phase 36 §5 — compute cache: values are keyed by a params+data
+    // signature so unchanged indicators never recompute, and same-bar tick
+    // revisions recompute at most 2 Hz (new bars and config changes stay
+    // immediate). Replaces the per-tick full O(n) recompute of every series.
+    const now = Date.now();
+    const fresh = mode === "set" || data.length !== indLenRef.current || now - indTickRef.current >= 500;
+    if (fresh) indTickRef.current = now;
+    indLenRef.current = data.length;
+    const wantedIds = new Set<string>();
     for (const cfg of indicatorsRef.current) {
       if (!cfg.visible) continue;
-      const values = computeIndicator(cfg, data);
+      wantedIds.add(cfg.id);
+      const lastBar = data[data.length - 1];
+      const sig = `${JSON.stringify(cfg.params)}|${data.length}|${data[0]?.time}|${lastBar?.time}|${lastBar?.close}`;
+      const cached = indCacheRef.current.get(cfg.id);
+      let values: Map<string, Point[]>;
+      if (cached && (cached.sig === sig || !fresh)) {
+        values = cached.values;
+      } else {
+        values = computeIndicator(cfg, data);
+        indCacheRef.current.set(cfg.id, { sig, values });
+      }
       indValuesRef.current.set(cfg.id, values);
       const color = String(cfg.params.color || INDICATOR_CATALOG[cfg.type].colors[0] || COLORS.accent);
       if (INDICATOR_CATALOG[cfg.type].pane === "main" && cfg.type !== "volume") {
@@ -910,10 +940,11 @@ export function PriceChart({
           const id = `${cfg.id}:${key}`;
           if (!seriesMap.has(id)) {
             const style = metaC.keyStyle?.[key];
+            const st = cfg.style;
             const s = chartRef.current!.addLineSeries({
-              color: metaC.keyColors?.[key] || color,
-              lineWidth: style?.lineWidth ?? 1,
-              lineStyle: (style?.lineStyle ?? LineStyle.Solid) as LineStyle,
+              color: withAlpha(metaC.keyColors?.[key] || color, st?.opacity),
+              lineWidth: (st?.width ? Math.min(4, Math.max(1, Math.round(st.width))) : style?.lineWidth ?? 1) as 1 | 2 | 3 | 4,
+              lineStyle: (st?.dash === "dashed" ? LineStyle.Dashed : st?.dash === "dotted" ? LineStyle.Dotted : style?.lineStyle ?? LineStyle.Solid) as LineStyle,
               priceLineVisible: false,
               lastValueVisible: key !== "upper" && key !== "lower",
               crosshairMarkerVisible: false,
@@ -934,13 +965,35 @@ export function PriceChart({
         for (const [key, arr] of values) {
           const s = pane.series.find((x) => x && (x as any).__key === key);
           if (!s) continue;
+          // live per-instance style (Phase 36 §2) — line series only; the
+          // histogram panes (MACD hist, AO) carry no __color and are skipped
+          const st = cfg.style;
+          if (st && (s as any).__color) {
+            try {
+              s.applyOptions({
+                ...(st.width ? { lineWidth: Math.min(4, Math.max(1, Math.round(st.width))) } : {}),
+                ...(st.dash ? { lineStyle: st.dash === "dashed" ? LineStyle.Dashed : st.dash === "dotted" ? LineStyle.Dotted : LineStyle.Solid } : {}),
+                ...(st.opacity != null ? { color: withAlpha(String((s as any).__color), st.opacity) } : {}),
+              } as any);
+            } catch { /* style race — next pass fixes it */ }
+          }
           const points = seriesToLineData(data, arr, key === "hist");
           if (mode === "set") s.setData(points);
           else if (points.length) s.update(points[points.length - 1]);
         }
       }
     }
+    for (const k of [...indCacheRef.current.keys()]) if (!wantedIds.has(k)) indCacheRef.current.delete(k);
   }, [computeIndicator]);
+
+  /** Phase 36 §1 — volume honesty: crypto carries real exchange base volume;
+   *  forex/metals/indices feeds only give tick or sample-count volume. */
+  const volumeNote = useMemo(
+    () => /(USDT|USDC|BUSD|FDUSD|TUSD|DAI)$/i.test(symbol)
+      ? undefined
+      : "Forex / metals / indices feeds provide tick or sample-count volume — volume-based readings are an activity proxy, not exchange-traded size.",
+    [symbol],
+  );
 
   const priceFormatRef = useRef(priceFormat);
   priceFormatRef.current = priceFormat;
@@ -1153,11 +1206,11 @@ export function PriceChart({
   // ---- indicator list change → full recompute + pane lifecycle ----------------
   const subKey = indicators
     .filter((i) => i.visible && INDICATOR_CATALOG[i.type].pane === "sub")
-    .map((i) => `${i.id}:${i.type}:${JSON.stringify(i.params)}`)
+    .map((i) => `${i.id}:${i.type}:${JSON.stringify(i.params)}:${JSON.stringify(i.style ?? {})}`)
     .join("|");
   const overlayKey = indicators
     .filter((i) => i.visible && INDICATOR_CATALOG[i.type].pane === "main" && i.type !== "volume")
-    .map((i) => `${i.id}:${JSON.stringify(i.params)}`)
+    .map((i) => `${i.id}:${JSON.stringify(i.params)}:${JSON.stringify(i.style ?? {})}`)
     .join("|");
 
   useEffect(() => {
@@ -1192,10 +1245,15 @@ export function PriceChart({
       });
       const series: ISeriesApi<"Line" | "Histogram">[] = [];
       const addLine = (key: string, color: string, lineWidth: 1 | 2, opts: Record<string, unknown> = {}) => {
+        const st = cfg.style;
         const s = chart.addLineSeries({
-          color, lineWidth, priceLineVisible: false, lastValueVisible: false, ...opts,
+          color: withAlpha(color, st?.opacity),
+          lineWidth: (st?.width ? Math.min(4, Math.max(1, Math.round(st.width))) : lineWidth) as 1 | 2,
+          lineStyle: (st?.dash === "dashed" ? LineStyle.Dashed : st?.dash === "dotted" ? LineStyle.Dotted : LineStyle.Solid) as LineStyle,
+          priceLineVisible: false, lastValueVisible: false, ...opts,
         } as any);
         (s as any).__key = key;
+        (s as any).__color = color;
         series.push(s);
         return s;
       };
@@ -1223,6 +1281,10 @@ export function PriceChart({
         series.push(hist);
       }
       if (cfg.type === "roc") addLine("roc", "#94a3b8", 2);
+      // ---- Phase 36 sub-panes -------------------------------------------------
+      if (cfg.type === "momentum") addLine("momentum", "#94a3b8", 2);
+      if (cfg.type === "bbw") addLine("bbw", "#38bdf8", 2);
+      if (cfg.type === "stddev") addLine("stddev", "#a78bfa", 2);
 
       // time-scale sync: pane follows main; main follows pane (guarded)
       const syncHandler = (range: { from: number; to: number } | null) => {
@@ -1549,6 +1611,39 @@ export function PriceChart({
     if (uid) saveIndicators(uid, symbolRef.current, next);
   }, [uid]);
 
+  /** Remove one indicator + its orphan overlay series (shared by toolbar,
+   *  object tree and the library). */
+  const removeIndicator = useCallback((id: string) => {
+    commitIndicators(indicatorsRef.current.filter((i) => i.id !== id));
+    for (const [key, s] of [...overlayRef.current]) {
+      if (key.startsWith(`${id}:`)) { try { chartRef.current?.removeSeries(s); } catch { /* gone */ } overlayRef.current.delete(key); }
+    }
+    indCacheRef.current.delete(id);
+    indValuesRef.current.delete(id);
+  }, [commitIndicators]);
+
+  /** Phase 36 §6 — Remove All Indicators with confirmation. */
+  const clearAllIndicators = useCallback(() => {
+    if (!indicatorsRef.current.length) return;
+    if (!window.confirm("Remove ALL indicators from this chart?")) return;
+    commitIndicators([]);
+    for (const [, s] of [...overlayRef.current]) { try { chartRef.current?.removeSeries(s); } catch { /* gone */ } }
+    overlayRef.current.clear();
+    indCacheRef.current.clear();
+    indValuesRef.current.clear();
+    if (uid) clearIndicatorsRemote(uid, symbolRef.current);
+  }, [commitIndicators, uid]);
+
+  /** Phase 36 §3 — reorder indicators (z-order for overlays, pane order). */
+  const moveIndicator = useCallback((id: string, dir: -1 | 1) => {
+    const list = [...indicatorsRef.current];
+    const i = list.findIndex((x) => x.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    commitIndicators(list);
+  }, [commitIndicators]);
+
   // ---- legend + countdown ----------------------------------------------------------
   const updateLegend = useCallback((hoverTime: number | null) => {
     const el = legendRef.current;
@@ -1819,14 +1914,10 @@ export function PriceChart({
         indicators={indicators}
         onAddIndicator={(type) => commitIndicators([...indicatorsRef.current, newIndicatorConfig(type)])}
         onIndicatorToggle={(id) => commitIndicators(indicatorsRef.current.map((i) => (i.id === id ? { ...i, visible: !i.visible } : i)))}
-        onIndicatorRemove={(id) => {
-          commitIndicators(indicatorsRef.current.filter((i) => i.id !== id));
-          // drop orphan series + pane immediately
-          for (const [key, s] of [...overlayRef.current]) {
-            if (key.startsWith(`${id}:`)) { try { chartRef.current?.removeSeries(s); } catch { /* gone */ } overlayRef.current.delete(key); }
-          }
-        }}
+        onIndicatorRemove={removeIndicator}
         onIndicatorConfigure={(id) => setEditingIndicator(indicatorsRef.current.find((i) => i.id === id) ?? null)}
+        onOpenIndicatorLibrary={() => setIndicatorLibraryOpen(true)}
+        volumeNote={volumeNote}
         onOpenSettings={() => setOpenDialog("settings")}
         onOpenLayouts={() => setOpenDialog("layouts")}
         onOpenSearch={() => setOpenDialog("search")}
@@ -2129,6 +2220,8 @@ export function PriceChart({
                   <button className="min-w-0 flex-1 truncate text-left text-slate-300 hover:text-sky-300" onClick={() => setEditingIndicator(cfg)}>
                     {INDICATOR_CATALOG[cfg.type].label}
                   </button>
+                  <button title="Move up" onClick={() => moveIndicator(cfg.id, -1)} className="text-slate-500 hover:text-slate-200"><ChevronUp className="h-3 w-3" /></button>
+                  <button title="Move down" onClick={() => moveIndicator(cfg.id, 1)} className="text-slate-500 hover:text-slate-200"><ChevronDown className="h-3 w-3" /></button>
                   <button title={cfg.visible ? "Hide" : "Show"} onClick={() => commitIndicators(indicatorsRef.current.map((i) => (i.id === cfg.id ? { ...i, visible: !i.visible } : i)))} className="text-slate-500 hover:text-slate-200">
                     {cfg.visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
                   </button>
@@ -2224,7 +2317,18 @@ export function PriceChart({
       <IndicatorParamsDialog
         config={editingIndicator}
         onClose={() => setEditingIndicator(null)}
-        onSave={(id, params) => commitIndicators(indicatorsRef.current.map((i) => (i.id === id ? { ...i, params } : i)))}
+        onSave={(id, params, style) => commitIndicators(indicatorsRef.current.map((i) => (i.id === id ? { ...i, params, ...(style ? { style } : {}) } : i)))}
+      />
+      <IndicatorLibraryDialog
+        open={indicatorLibraryOpen}
+        onClose={() => setIndicatorLibraryOpen(false)}
+        active={indicators}
+        volumeNote={volumeNote}
+        onAdd={(type) => commitIndicators([...indicatorsRef.current, newIndicatorConfig(type)])}
+        onConfigure={(id) => setEditingIndicator(indicatorsRef.current.find((i) => i.id === id) ?? null)}
+        onToggle={(id) => commitIndicators(indicatorsRef.current.map((i) => (i.id === id ? { ...i, visible: !i.visible } : i)))}
+        onRemove={removeIndicator}
+        onRemoveAll={clearAllIndicators}
       />
       <DrawingPropsDialog
         drawing={editingDrawing}
@@ -2258,6 +2362,7 @@ export function PriceChart({
           },
           toggleHide: toggleDrawingHidden,
           clearDrawings: () => { commitDrawings([]); if (uid) clearDrawingsRemote(uid, symbolRef.current); },
+          clearIndicators: clearAllIndicators,
           resetChart: resetView,
         }}
       />

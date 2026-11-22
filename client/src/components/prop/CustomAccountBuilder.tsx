@@ -24,12 +24,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { PropRules } from "@shared/trading-engine";
 import { cn } from "@/lib/utils";
 
-/** Server clamps startingBalance to 1,000…5,000,000 (store.createAccount). */
-const SIZE_STOPS = [1000, 2500, 5000, 10000, 25000, 50000, 100000];
+/** Server clamps startingBalance to 5,000…5,000,000 (store.createAccount). */
+const SIZE_STOPS = [5000, 10000, 25000, 50000, 100000];
 
 /** PLACEHOLDER — replace with the owner's real price list. */
 const BASE_PRICE: Record<number, number> = {
-  1000: 9, 2500: 19, 5000: 29, 10000: 49, 25000: 89, 50000: 149, 100000: 249,
+  5000: 29, 10000: 49, 25000: 89, 50000: 149, 100000: 249,
 };
 
 /** Server-allowed leverages (ALLOWED_LEVERAGES in trading/store.ts). */
@@ -104,7 +104,7 @@ export function CustomAccountBuilder({ onCreated }: { onCreated: (accountId: str
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [sizeIdx, setSizeIdx] = useState(3); // $10,000
+  const [sizeIdx, setSizeIdx] = useState(1); // $10,000
   const [kind, setKind] = useState<Kind>("2step");
   const [target, setTarget] = useState(10);
   const [maxDd, setMaxDd] = useState(6);

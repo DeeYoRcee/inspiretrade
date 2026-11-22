@@ -3,9 +3,11 @@
  * drawing properties, plus the right-click context menu. All functional.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Eye, EyeOff, X } from "lucide-react";
 import { INSTRUMENTS } from "@shared/terminal";
 import {
-  INDICATOR_CATALOG, sanitizeParams, type IndicatorConfig,
+  INDICATOR_CATALOG, INDICATOR_CATEGORY_LABELS, INDICATOR_CATEGORY_ORDER, indicatorLabel,
+  sanitizeParams, sanitizeStyle, type IndicatorCategory, type IndicatorConfig, type IndicatorStyle, type IndicatorType,
 } from "@/lib/indicators-config";
 import type { Drawing } from "@/lib/drawings";
 import type { LayoutSnapshot } from "@/lib/chart-persistence";
@@ -268,14 +270,17 @@ export function IndicatorParamsDialog({
 }: {
   config: IndicatorConfig | null;
   onClose: () => void;
-  onSave: (id: string, params: Record<string, number | string>) => void;
+  /** style is the optional per-instance line-style override (Phase 36 §2) */
+  onSave: (id: string, params: Record<string, number | string>, style?: IndicatorStyle) => void;
 }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [styleDraft, setStyleDraft] = useState<IndicatorStyle>({});
   useEffect(() => {
     if (config) {
       const d: Record<string, string> = {};
       for (const p of INDICATOR_CATALOG[config.type].params) d[p.key] = String(config.params[p.key] ?? p.default);
       setDraft(d);
+      setStyleDraft({ ...(config.style || {}) });
     }
   }, [config]);
   if (!config) return null;
@@ -286,28 +291,216 @@ export function IndicatorParamsDialog({
       const v = draft[p.key];
       if (v !== undefined) raw[p.key] = p.kind === "number" ? Number(v) : v;
     }
-    onSave(config.id, sanitizeParams(config.type, raw));
+    onSave(config.id, sanitizeParams(config.type, raw), sanitizeStyle(styleDraft));
     onClose();
   };
+  const reset = () => {
+    const d: Record<string, string> = {};
+    for (const p of meta.params) d[p.key] = String(p.default);
+    setDraft(d);
+    setStyleDraft({});
+  };
+  const styleField = (label: string, node: React.ReactNode) => (
+    <label>
+      <span className="mb-0.5 block text-[10px] text-slate-400">{label}</span>
+      {node}
+    </label>
+  );
   return (
     <ChartDialog title={meta.label} onClose={onClose}>
+      <p className="mb-2 text-[10px] leading-snug text-slate-500">{meta.description}</p>
       <div className="grid grid-cols-2 gap-2 text-xs">
         {meta.params.map((p) => (
           <label key={p.key}>
             <span className="mb-0.5 block text-[10px] text-slate-400">{p.label}</span>
-            <input
-              type={p.kind === "number" ? "number" : "color"}
-              min={p.min} max={p.max} step={p.step}
-              value={draft[p.key] ?? ""}
-              onChange={(e) => setDraft({ ...draft, [p.key]: e.target.value })}
-              className={p.kind === "number" ? "num-input" : "h-7 w-full rounded border border-slate-700 bg-slate-950"}
-            />
+            {p.kind === "select" ? (
+              <select
+                value={draft[p.key] ?? ""}
+                onChange={(e) => setDraft({ ...draft, [p.key]: e.target.value })}
+                className="h-7 w-full rounded border border-slate-700 bg-slate-950"
+              >
+                {(p.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : (
+              <input
+                type={p.kind === "number" ? "number" : "color"}
+                min={p.min} max={p.max} step={p.step}
+                value={draft[p.key] ?? ""}
+                onChange={(e) => setDraft({ ...draft, [p.key]: e.target.value })}
+                className={p.kind === "number" ? "num-input" : "h-7 w-full rounded border border-slate-700 bg-slate-950"}
+              />
+            )}
           </label>
         ))}
         {!meta.params.length && <p className="col-span-2 text-slate-500">This indicator has no parameters.</p>}
       </div>
-      <div className="mt-3">
+      {/* Phase 36 §2 — per-instance line style (hidden for the volume histogram) */}
+      {config.type !== "volume" && (
+        <div className="mt-2 border-t border-slate-800 pt-2">
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Line style</p>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            {styleField("Width", (
+              <select
+                value={String(styleDraft.width ?? "")}
+                onChange={(e) => setStyleDraft({ ...styleDraft, width: e.target.value ? Number(e.target.value) : undefined })}
+                className="h-7 w-full rounded border border-slate-700 bg-slate-950"
+              >
+                <option value="">Default</option>
+                {[1, 2, 3, 4].map((w) => <option key={w} value={w}>{w}</option>)}
+              </select>
+            ))}
+            {styleField("Dash", (
+              <select
+                value={styleDraft.dash ?? ""}
+                onChange={(e) => setStyleDraft({ ...styleDraft, dash: (e.target.value || undefined) as IndicatorStyle["dash"] })}
+                className="h-7 w-full rounded border border-slate-700 bg-slate-950"
+              >
+                <option value="">Default</option>
+                <option value="solid">solid</option>
+                <option value="dashed">dashed</option>
+                <option value="dotted">dotted</option>
+              </select>
+            ))}
+            {styleField("Opacity", (
+              <input
+                type="number" min={0.1} max={1} step={0.05}
+                value={styleDraft.opacity ?? ""}
+                onChange={(e) => setStyleDraft({ ...styleDraft, opacity: e.target.value === "" ? undefined : Number(e.target.value) })}
+                className="num-input"
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="mt-3 flex items-center justify-between">
+        {/* Phase 36 §3 — restore the catalog defaults */}
+        <button onClick={reset} className="rounded-lg border border-slate-600 px-2 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200">
+          Restore defaults
+        </button>
         <DialogFooter onCancel={onClose} onOk={save} okLabel="Save" />
+      </div>
+    </ChartDialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 36 — searchable indicator library (§1/§7)
+// ---------------------------------------------------------------------------
+
+export function IndicatorLibraryDialog({
+  open, onClose, active, volumeNote, onAdd, onConfigure, onToggle, onRemove, onRemoveAll,
+}: {
+  open: boolean;
+  onClose: () => void;
+  active: IndicatorConfig[];
+  /** honest-volume note for non-crypto feeds (§1) */
+  volumeNote?: string;
+  onAdd: (type: IndicatorType) => void;
+  onConfigure: (id: string) => void;
+  onToggle: (id: string) => void;
+  onRemove: (id: string) => void;
+  onRemoveAll: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [cat, setCat] = useState<"all" | IndicatorCategory>("all");
+  useEffect(() => {
+    if (open) { setQuery(""); setCat("all"); }
+  }, [open]);
+  if (!open) return null;
+  const q = query.trim().toLowerCase();
+  const metas = Object.values(INDICATOR_CATALOG).filter(
+    (m) => (cat === "all" || m.category === cat) &&
+      (!q || m.label.toLowerCase().includes(q) || m.description.toLowerCase().includes(q)),
+  );
+  const countByType = new Map<string, number>();
+  for (const c of active) countByType.set(c.type, (countByType.get(c.type) || 0) + 1);
+  return (
+    <ChartDialog title="Indicators" onClose={onClose}>
+      {/* search */}
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search indicators…"
+        className="mb-2 h-8 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 text-xs outline-none placeholder:text-slate-600 focus:border-slate-500"
+      />
+      {/* category navigation */}
+      <div className="mb-2 flex flex-wrap gap-1">
+        <button
+          onClick={() => setCat("all")}
+          className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold", cat === "all" ? "border-sky-500/50 bg-sky-500/15 text-sky-300" : "border-slate-700 text-slate-400 hover:text-slate-200")}
+        >
+          All ({Object.keys(INDICATOR_CATALOG).length})
+        </button>
+        {INDICATOR_CATEGORY_ORDER.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCat(c)}
+            className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold", cat === c ? "border-sky-500/50 bg-sky-500/15 text-sky-300" : "border-slate-700 text-slate-400 hover:text-slate-200")}
+          >
+            {INDICATOR_CATEGORY_LABELS[c]}
+          </button>
+        ))}
+      </div>
+      {/* honest-volume note (§1): tick/sample volume is not traded size */}
+      {(cat === "volume" || q.includes("volume") || q.includes("obv") || q.includes("mfi") || q.includes("vwap")) && volumeNote && (
+        <p className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-snug text-amber-300/90">{volumeNote}</p>
+      )}
+      {/* library list */}
+      <div className="max-h-64 space-y-0.5 overflow-y-auto">
+        {metas.length === 0 && (
+          <p className="px-1 py-4 text-center text-xs text-slate-600">No indicator matches “{query}”</p>
+        )}
+        {metas.map((m) => {
+          const n = countByType.get(m.type) || 0;
+          return (
+            <button
+              key={m.type}
+              onClick={() => { onAdd(m.type); }}
+              className="flex w-full items-start justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-800"
+              title={m.description}
+            >
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-semibold text-slate-200">{m.label}</span>
+                  <span className="rounded bg-slate-800 px-1 text-[9px] uppercase text-slate-500">{m.pane === "main" ? "overlay" : "pane"}</span>
+                  {n > 0 && <span className="rounded bg-sky-500/15 px-1 text-[9px] font-bold text-sky-300">×{n}</span>}
+                </span>
+                <span className="mt-0.5 block text-[10px] leading-snug text-slate-500">{m.description}</span>
+              </span>
+              <Plus className="mt-1 h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            </button>
+          );
+        })}
+      </div>
+      {/* active list */}
+      <div className="mt-2 border-t border-slate-800 pt-2">
+        <div className="mb-1 flex items-center justify-between">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active · {active.length}</p>
+          {active.length > 0 && (
+            <button
+              onClick={() => { if (window.confirm("Remove ALL indicators from this chart?")) { onRemoveAll(); } }}
+              className="text-[10px] font-semibold text-red-400 hover:text-red-300"
+            >
+              Remove all
+            </button>
+          )}
+        </div>
+        <div className="max-h-28 space-y-0.5 overflow-y-auto">
+          {active.length === 0 && <p className="px-1 py-2 text-center text-[11px] text-slate-600">No active indicators yet — add one above.</p>}
+          {active.map((cfg) => (
+            <div key={cfg.id} className="flex items-center gap-1 rounded px-1 py-0.5">
+              <button onClick={() => onConfigure(cfg.id)} className="min-w-0 flex-1 truncate text-left text-[11px] text-slate-300 hover:text-sky-300" title="Edit parameters">
+                {indicatorLabel(cfg)}
+              </button>
+              <button onClick={() => onToggle(cfg.id)} title={cfg.visible ? "Hide" : "Show"} className="text-slate-500 hover:text-slate-200">
+                {cfg.visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+              </button>
+              <button onClick={() => onRemove(cfg.id)} title="Remove" className="text-slate-500 hover:text-red-400">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     </ChartDialog>
   );
@@ -417,6 +610,8 @@ export function ChartContextMenu({
     duplicateDrawing: (id: string) => void;
     toggleHide: (id: string) => void;
     clearDrawings: () => void;
+    /** Phase 36 §6 — Remove All Indicators (with confirmation inside) */
+    clearIndicators: () => void;
     resetChart: () => void;
   };
 }) {
@@ -453,6 +648,7 @@ export function ChartContextMenu({
     items.push({ label: "Add text annotation", onClick: () => actions.addText(state.time!, state.price!) });
   }
   items.push({ label: "Clear all drawings", danger: true, onClick: actions.clearDrawings });
+  items.push({ label: "Remove all indicators", danger: true, onClick: actions.clearIndicators });
   items.push({ label: "Reset chart view", onClick: actions.resetChart });
 
   const style: React.CSSProperties = {

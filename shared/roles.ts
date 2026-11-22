@@ -148,7 +148,7 @@ export function sanitizePlatformSettings(raw: any, current?: PlatformSettings): 
     registrationOpen: raw?.registrationOpen === undefined ? base.registrationOpen : !!raw.registrationOpen,
     symbolsMode: raw?.symbolsMode === "custom" ? "custom" : raw?.symbolsMode === "all" ? "all" : base.symbolsMode,
     customSymbols: custom,
-    defaultAccountBalance: num(raw?.defaultAccountBalance, 1000, 1_000_000, base.defaultAccountBalance),
+    defaultAccountBalance: num(raw?.defaultAccountBalance, 5_000, 1_000_000, base.defaultAccountBalance),
     defaultChallenge: {
       profitTargetPct: dc.profitTargetPct === undefined ? base.defaultChallenge.profitTargetPct : optNum(dc.profitTargetPct, 0.5, 100),
       dailyLossLimitPct: dc.dailyLossLimitPct === undefined ? base.defaultChallenge.dailyLossLimitPct : optNum(dc.dailyLossLimitPct, 0.5, 50),

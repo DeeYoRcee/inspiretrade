@@ -20,6 +20,7 @@ import { updateInstrumentSettings } from "@/lib/instrument-settings";
 export function ChartToolbar({
   symbol,
   indicators, onAddIndicator, onIndicatorToggle, onIndicatorRemove, onIndicatorConfigure,
+  onOpenIndicatorLibrary, volumeNote,
   onOpenSettings, onOpenLayouts, onOpenSearch, onReset, onFullscreen,
   onOpenAlerts, onOpenReplay,
   chartType, onChartTypeChange,
@@ -31,6 +32,10 @@ export function ChartToolbar({
   onIndicatorToggle: (id: string) => void;
   onIndicatorRemove: (id: string) => void;
   onIndicatorConfigure: (id: string) => void;
+  /** Phase 36 §7 — opens the searchable indicator library dialog */
+  onOpenIndicatorLibrary: () => void;
+  /** honest-volume note shown on the volume chip for non-crypto feeds */
+  volumeNote?: string;
   onOpenSettings: () => void;
   onOpenLayouts: () => void;
   onOpenSearch: () => void;
@@ -119,8 +124,9 @@ export function ChartToolbar({
       {/* indicators dropdown + chips */}
       <div ref={indRef} className="relative">
         <button
-          onClick={() => setIndOpen((v) => !v)}
+          onClick={() => { setIndOpen(false); onOpenIndicatorLibrary(); }}
           className="flex h-6 items-center gap-1 rounded-md border border-slate-700/70 px-2 text-[10px] font-semibold text-slate-300 hover:bg-slate-800"
+          title="Indicator library — search, categories, active list"
         >
           <Waves className="h-3.5 w-3.5" /> Indicators <Plus className="h-3 w-3" />
         </button>
@@ -148,7 +154,7 @@ export function ChartToolbar({
           )}
         >
           <button onClick={() => onIndicatorConfigure(cfg.id)} className="hover:underline">
-            {indicatorLabel(cfg)}
+            {cfg.type === "volume" && volumeNote ? "Vol · tick/sample" : indicatorLabel(cfg)}
           </button>
           <button onClick={() => onIndicatorToggle(cfg.id)} title={cfg.visible ? "Hide" : "Show"}>
             {cfg.visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
