@@ -26,7 +26,7 @@ export function DailyPnLChart({ category = "ALL" }: { category?: string }) {
   const chartH = 120;
 
   return (
-    <Card className="glass-panel">
+    <Card className="border border-border/25 bg-card/[0.08]">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">{t("dailyPnl30")}</CardTitle>

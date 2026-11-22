@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { saveUserProfile, useUserProfile } from "@/hooks/use-premium";
-import { useEconomy, useInventory } from "@/hooks/use-economy";
+import { useInventory } from "@/hooks/use-economy";
 import { ALL_FRAGMENTS } from "@shared/fragments";
 import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
@@ -144,7 +144,6 @@ function StatCell({
     </div>
   );
 }
-import { formatINSP } from "@/lib/number-format";
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -153,7 +152,6 @@ export default function ProfilePage() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const { data: profile } = useUserProfile();
-  const { data: economy } = useEconomy();
   const { data: inventory } = useInventory();
   const ownedFragments = useMemo(
     () => Object.entries(inventory || {}).filter(([, n]) => (n ?? 0) > 0) as [string, number][],
@@ -771,16 +769,8 @@ export default function ProfilePage() {
           value={bio || t("profileBioEmpty")}
           valueClass={bio ? undefined : "text-muted-foreground"}
         />
-        <InfoRow
-          label={t("inspireBalance")}
-          value={`${formatINSP(economy?.coins ?? 0)} INSP`}
-          valueClass="text-amber-400"
-        />
-        <InfoRow
-          label={t("casesTitle")}
-          value={String(economy?.cases ?? 0)}
-          valueClass="text-primary"
-        />
+        {/* INSP balance + Cases rows removed per user request — not shown on
+            the profile card anymore */}
         <InfoRow
           label={t("publicProfileLink")}
           value={publicUrl ? publicUrl.replace(/^https?:\/\//, "") : t("profileNotPublished")}

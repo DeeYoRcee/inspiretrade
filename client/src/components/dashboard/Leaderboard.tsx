@@ -17,7 +17,7 @@ export function Leaderboard({ period }: LeaderboardProps) {
 
   if (isLoading) {
     return (
-      <Card className="glass-panel">
+      <Card className="border border-border/25 bg-card/[0.08]">
         <CardHeader><CardTitle className="text-xl font-display flex items-center gap-2"><Trophy className="w-5 h-5 text-yellow-500" /> {t("leaderboard")}</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-2">
@@ -32,7 +32,7 @@ export function Leaderboard({ period }: LeaderboardProps) {
 
   if (!entries || entries.length === 0) {
     return (
-      <Card className="glass-panel">
+      <Card className="border border-border/25 bg-card/[0.08]">
         <CardHeader><CardTitle className="text-xl font-display flex items-center gap-2"><Trophy className="w-5 h-5 text-yellow-500" /> {t("leaderboard")}</CardTitle></CardHeader>
         <CardContent>
           <p className="text-center text-muted-foreground text-sm py-6">{t("noTrades")}</p>
@@ -42,7 +42,7 @@ export function Leaderboard({ period }: LeaderboardProps) {
   }
 
   return (
-    <Card className="glass-panel">
+    <Card className="border border-border/25 bg-card/[0.08]">
       <CardHeader className="pb-3">
         <CardTitle className="text-xl font-display flex items-center gap-2">
           <Trophy className="w-5 h-5 text-yellow-500" /> {t("leaderboard")}

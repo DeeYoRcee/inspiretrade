@@ -22,7 +22,8 @@ export const PROFILE_BACKGROUNDS: ProfileBackground[] = [
   { id: "knight", name: "Knight", src: "/videos/knight.mp4", tint: "linear-gradient(140deg, #07090d, #1d2736 55%, #3c2f14)" },
   { id: "storm", name: "Storm", src: "/videos/storm.mp4", tint: "linear-gradient(140deg, #0a0a10, #262838 55%, #1c2a52)" },
   { id: "embers", name: "Embers", src: "/videos/embers.mp4", tint: "linear-gradient(140deg, #0c0503, #301006 55%, #7a3008)" },
-  { id: "frost", name: "Frost", src: "/videos/frost.mp4", tint: "linear-gradient(140deg, #061018, #1c3a54 55%, #0e6e78)" },
+  // "frost" removed per user request — profiles already carrying the id fall
+  // through getProfileBackground() to the plain (no-video) look
   // Phase 29-UI request: a Formula-1 and a sword/knight pick for the gallery
   { id: "f1", name: "Formula 1", src: "/videos/f1.mp4", tint: "linear-gradient(140deg, #120404, #7a1414 55%, #b3270f)" },
   { id: "sword", name: "Sword", src: "/videos/sword.mp4", tint: "linear-gradient(140deg, #07090d, #232c3d 55%, #584317)" },

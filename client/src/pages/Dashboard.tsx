@@ -184,7 +184,7 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            <Card className="glass-panel border-primary/20">
+            <Card className="bg-card/[0.08] border-primary/20">
               <CardHeader className="pb-3 pt-4 px-5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-primary">
@@ -414,7 +414,7 @@ export default function Dashboard() {
                           /* P/L amount: finer font, vertically centred — the
                              mono/col-bold combo used to sink it to the bottom */
                           <span className={cn(
-                            "flex flex-1 items-center justify-center text-[12px] sm:text-[15px] font-medium leading-none tracking-tight tabular-nums",
+                            "flex flex-1 items-center justify-center text-[11px] sm:text-[13px] font-normal leading-none tracking-tight tabular-nums",
                             dayPnL > 0 ? "text-success" : dayPnL < 0 ? "text-destructive" : "text-muted-foreground"
                           )}>
                             {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$
@@ -516,7 +516,7 @@ export default function Dashboard() {
                           <span className="font-medium text-xs sm:text-sm">{format(date, "d")}</span>
                           {hasTrades && (
                             <span className={cn(
-                              "flex flex-1 items-center justify-center text-[12px] sm:text-[15px] font-medium leading-none tracking-tight tabular-nums",
+                              "flex flex-1 items-center justify-center text-[11px] sm:text-[13px] font-normal leading-none tracking-tight tabular-nums",
                               dayPnL > 0 ? "text-success" : dayPnL < 0 ? "text-destructive" : "text-muted-foreground"
                             )}>
                               {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$

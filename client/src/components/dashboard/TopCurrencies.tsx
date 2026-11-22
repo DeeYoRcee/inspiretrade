@@ -31,7 +31,7 @@ export function TopCurrencies({ category = "ALL" }: { category?: string }) {
 
   if (data.length === 0) {
     return (
-      <Card className="glass-panel">
+      <Card className="border border-border/25 bg-card/[0.08]">
         <CardHeader><CardTitle className="text-lg">{t("topCurrencies")}</CardTitle></CardHeader>
         <CardContent className="flex items-center justify-center h-24 text-muted-foreground text-sm">{t("noDataYet")}</CardContent>
       </Card>
@@ -39,7 +39,7 @@ export function TopCurrencies({ category = "ALL" }: { category?: string }) {
   }
 
   return (
-    <Card className="glass-panel">
+    <Card className="border border-border/25 bg-card/[0.08]">
       <CardHeader className="pb-2">
         <CardTitle className="text-lg">{t("topCurrencies")}</CardTitle>
       </CardHeader>

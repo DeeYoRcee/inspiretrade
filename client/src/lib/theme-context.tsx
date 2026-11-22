@@ -24,14 +24,16 @@ function isTheme(value: string | null): value is Theme {
 function getSavedTheme(): Theme {
   try {
     const stored = localStorage.getItem("tj-theme");
-    return isTheme(stored) ? stored : "dark";
+    // user request: Skywalker is the site's DEFAULT theme — the one a new
+    // visitor lands on; a saved personal choice still wins
+    return isTheme(stored) ? stored : "vader";
   } catch {
-    return "dark";
+    return "vader";
   }
 }
 
 const ThemeContext = createContext<{ theme: Theme; setTheme: (theme: Theme) => void; toggleTheme: () => void }>({
-  theme: "dark",
+  theme: "vader",
   setTheme: () => {},
   toggleTheme: () => {},
 });

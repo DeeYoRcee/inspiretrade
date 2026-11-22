@@ -565,8 +565,13 @@ export function PriceChart({
   replayCursorRef.current = replayCursor;
   const replayStatusRef = useRef<string | null>(replayStatus);
   replayStatusRef.current = replayStatus;
+  // replay mode is a STRUCTURAL series source: entering/leaving it must
+  // re-run the feed effect so the live subscription is torn down (a replay
+  // chart that keeps its live subscription gets spoiler updates) and the
+  // replay slice is painted exactly once
+  const replayMode = replayBars != null;
   const replayModeRef = useRef(false);
-  replayModeRef.current = replayBars != null;
+  replayModeRef.current = replayMode;
 
   /** the visible replay series: bars[0..cursor] (+ forming bar) — the future stays hidden */
   const replayVisible = useCallback((cursor: number): Bar[] => {
@@ -811,7 +816,10 @@ export function PriceChart({
       const symNow = symbolRef.current;
       const tfNow = tfRef.current;
       const instNow = getInstrument(symNow);
-      if (range.from < 60 && data.length && !olderLoadingRef.current && tfSecRef.current > 0 && instNow) {
+      if (range.from < 60 && data.length && !olderLoadingRef.current && tfSecRef.current > 0 && instNow && !replayModeRef.current) {
+        // REPLAY: never merge live-provider history into a replay session —
+        // prepending candles older than the session start (and the live merge
+        // callbacks below it) would paint the future the replay must hide
         // shared prepend: merge older bars, rebuild the series, keep the
         // viewport anchored — no chart jump, no full reload (§5)
         const prependOlder = (older: Bar[]) => {
@@ -1282,7 +1290,7 @@ export function PriceChart({
       unsub?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, timeframe, reloadKey]);
+  }, [symbol, timeframe, reloadKey, replayMode]);
 
   // ---- replay cursor/forming-candle updates -----------------------------------
   useEffect(() => {
@@ -2456,8 +2464,9 @@ export function PriceChart({
 
       {/* bottom bar: timeframe shortcuts + scale mode (TV-style). The old
           1D/5D/5Y/All range buttons were replaced by the user's request with
-          direct timeframe switching — same one-click row, real TF change. */}
-      <div className="flex h-7 shrink-0 items-center gap-0.5 border-t border-slate-800 bg-slate-900/80 px-2">
+          direct timeframe switching — same one-click row, real TF change.
+          pl-11 clears the left rail so the first TF button is never covered. */}
+      <div className="flex h-7 shrink-0 items-center gap-0.5 border-t border-slate-800 bg-slate-900/80 pl-11 pr-2">
         {(["1m", "5m", "15m", "1h", "4h", "1d", "1W"] as Timeframe[]).map((tf) => (
           <button
             key={tf}
