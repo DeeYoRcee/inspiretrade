@@ -414,25 +414,24 @@ img[src="/logo.png"] {
   z-index: -3;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 46% 44% at 74% 72%, rgb(220 38 38 / 0.16), transparent 66%),
-    radial-gradient(ellipse 30% 22% at 76% 84%, rgb(220 38 38 / 0.2), transparent 72%);
+    radial-gradient(ellipse 44% 42% at 50% 70%, rgb(220 38 38 / 0.15), transparent 66%),
+    radial-gradient(ellipse 30% 20% at 50% 82%, rgb(220 38 38 / 0.18), transparent 72%);
   animation: it-vader-glow 7s ease-in-out infinite alternate;
 }
 :root[data-theme="vader"] body::after {
   content: "";
   position: fixed;
-  right: 1.5vw;
+  left: 0;
+  right: 0;
   bottom: 0;
   z-index: -2;
-  height: min(88vh, 820px);
-  max-width: min(60vw, 560px);
+  margin: 0 auto;
+  height: min(92vh, 900px);
+  max-width: min(88vw, 620px);
   aspect-ratio: 449 / 792;
   pointer-events: none;
-  opacity: 0.92;
-  background: url("/vader-anakin.jpg") center bottom / contain no-repeat;
-  /* fade the left edge into the UI so the poster never reads as a pasted box */
-  -webkit-mask-image: linear-gradient(100deg, transparent 0%, black 22%);
-  mask-image: linear-gradient(100deg, transparent 0%, black 22%);
+  opacity: 0.94;
+  background: url("/vader-anakin.png") center bottom / contain no-repeat;
   animation: it-vader-breathe 9s ease-in-out infinite alternate;
 }
 @keyframes it-vader-glow {
@@ -440,8 +439,8 @@ img[src="/logo.png"] {
   to { opacity: 1; }
 }
 @keyframes it-vader-breathe {
-  from { transform: translateX(-50%) scale(1); opacity: 0.72; }
-  to { transform: translateX(-50%) scale(1.05); opacity: 0.95; }
+  from { transform: scale(1); opacity: 0.72; }
+  to { transform: scale(1.05); opacity: 0.95; }
 }
 :root[data-theme="knight"] .hover-glow:hover { box-shadow: 0 0 24px -6px hsl(42 78% 58% / 0.35); }
 
