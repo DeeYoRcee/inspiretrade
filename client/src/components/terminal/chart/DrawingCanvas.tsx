@@ -226,10 +226,17 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     // ---- committed drawings ------------------------------------------------
     const toCanvas = (d: Drawing): XY[] => {
       const pts: XY[] = [];
+      const topPrice = conv.price(0);
       for (const p of d.points) {
         const x = conv.x(p.time);
-        const y = conv.y(p.price);
-        if (x == null || y == null) return [];
+        if (x == null) continue;
+        let y = conv.y(p.price);
+        if (y == null) {
+          // P40 — clamp off-scale anchors instead of dropping the WHOLE
+          // drawing (one anchor outside the visible price range used to
+          // make the object unrenderable AND unselectable)
+          y = topPrice != null && p.price > topPrice ? 1 : H - 1;
+        }
         pts.push({ x, y });
       }
       return pts;

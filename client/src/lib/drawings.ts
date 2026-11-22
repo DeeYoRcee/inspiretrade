@@ -88,6 +88,8 @@ export interface Drawing {
   name?: string;
   /** timeframe visibility — undefined/empty = visible on EVERY timeframe */
   tfs?: Timeframe[];
+  /** P40 — LWW merge timestamp (ms) stamped on every persisted edit */
+  updatedAt?: number;
 }
 
 export const FIB_RETRACEMENT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -100,8 +102,17 @@ export const DEFAULT_STYLE: DrawingStyle = {
   fontSize: 12,
 };
 
+/** P40 — collision-resistant ids (ms time + rotating counter + 40-bit rand);
+ *  batch paste/duplicate in one tick used to collide and silently drop one
+ *  object in the sanitizer. */
+let drawingIdCounter = 0;
+export function newDrawingId(): string {
+  drawingIdCounter = (drawingIdCounter + 1) % 1679616;
+  return `d${Date.now().toString(36)}${drawingIdCounter.toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function makeDrawing(type: DrawingType, points: DrawingPoint[], text?: string): Drawing {
-  return { id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`, type, points, style: { ...DEFAULT_STYLE }, text };
+  return { id: newDrawingId(), type, points, style: { ...DEFAULT_STYLE }, text };
 }
 
 /**
@@ -1695,6 +1706,7 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
       ...(r.locked === true ? { locked: true } : {}),
       ...(r.hidden === true ? { hidden: true } : {}),
       ...(typeof r.name === "string" && r.name ? { name: r.name.slice(0, 60) } : {}),
+      ...(Number.isFinite(Number(r.updatedAt)) ? { updatedAt: Number(r.updatedAt) } : {}),
       ...(tfs && tfs.length ? { tfs } : {}),
       ...(levels ? { levels } : {}),
     };
@@ -1763,4 +1775,75 @@ export function magnetSnapTime(time: number, tfSec: number | null | undefined): 
     return Math.floor((time - MONDAY_ANCHOR) / tfSec) * tfSec + MONDAY_ANCHOR;
   }
   return Math.floor(time / tfSec) * tfSec;
+}
+
+
+// ---------------------------------------------------------------------------
+// P40 — persistence merge helpers (pure; unit-tested in tests/p40-persistence)
+// ---------------------------------------------------------------------------
+
+/** Stable change signature of a drawing (updatedAt excluded). */
+function __drawingSig(d: Drawing): string {
+  try {
+    return JSON.stringify({ ...d, updatedAt: 0 });
+  } catch {
+    return d.id;
+  }
+}
+
+/** P40 — stamp `updatedAt` on every drawing that is new or changed vs prev. */
+export function stampChangedDrawings(prev: Drawing[], next: Drawing[], now: number): Drawing[] {
+  const prevMap = new Map(prev.map((d) => [d.id, d]));
+  return next.map((d) => {
+    const old = prevMap.get(d.id);
+    if (old && __drawingSig(old) === __drawingSig(d)) return d;
+    return { ...d, updatedAt: now };
+  });
+}
+
+/**
+ * P40 — merge a remote snapshot into the local list, per-drawing LWW by
+ * updatedAt: local-only entries are KEPT (their write may still be in
+ * flight), remote-only entries are added, common ids take the newer copy.
+ * Object identity is preserved for unchanged drawings so an in-progress
+ * drag is never disturbed; returns the LOCAL reference when nothing differs
+ * (the common self-echo case → zero re-renders).
+ */
+export function mergeDrawingLists(local: Drawing[], remote: Drawing[], pendingIds?: ReadonlySet<string>): Drawing[] {
+  const rMap = new Map(remote.map((d) => [d.id, d]));
+  const lMap = new Map(local.map((d) => [d.id, d]));
+  // local-only drawings are kept ONLY while their write is in flight —
+  // otherwise a remote deletion (another device) could never propagate
+  const keepLocalOnly = (id: string): boolean => pendingIds?.has(id) ?? false;
+  const differs = local.length !== remote.length
+    || local.some((l) => {
+      const r = rMap.get(l.id);
+      if (!r) return !keepLocalOnly(l.id);
+      return __drawingSig(r) !== __drawingSig(l) || (r.updatedAt ?? 0) !== (l.updatedAt ?? 0);
+    })
+    || remote.some((r) => !lMap.has(r.id));
+  if (!differs) return local;
+  const ordered: string[] = local.map((d) => d.id);
+  for (const r of remote) if (!lMap.has(r.id)) ordered.push(r.id);
+  const out: Drawing[] = [];
+  for (const id of ordered) {
+    const l = lMap.get(id);
+    const r = rMap.get(id);
+    if (l && r) out.push((r.updatedAt ?? 0) > (l.updatedAt ?? 0) ? { ...r } : l);
+    else if (l && keepLocalOnly(id)) out.push(l);
+    else if (r) out.push({ ...r });
+  }
+  return out;
+}
+
+/**
+ * P40 — drop drawings whose local tombstone (deletion time) is newer than
+ * the drawing's own updatedAt: a remote echo of a deleted drawing must not
+ * resurrect it, while a NEWER remote edit of the same id still wins.
+ */
+export function filterTombstonedDrawings(list: Drawing[], tombstones: Record<string, number>): Drawing[] {
+  return list.filter((d) => {
+    const ts = tombstones[d.id];
+    return ts == null || ts < (d.updatedAt ?? 0);
+  });
 }

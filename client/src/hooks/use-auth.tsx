@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { User, onAuthStateChanged, signOut } from "firebase/auth";
+import { clearChartLocalCache } from "@/lib/chart-persistence";
 import { auth } from "@/lib/firebase";
 
 // the splash logo is the site's entrance animation — hold it on screen for at
@@ -36,6 +37,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
+      // P40 — drop this user's chart localStorage mirrors on logout
+      clearChartLocalCache(auth.currentUser?.uid ?? "");
       await signOut(auth);
     } catch (error) {
       console.error("Logout failed", error);

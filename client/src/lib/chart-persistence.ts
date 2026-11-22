@@ -8,9 +8,9 @@
  *   chart/{uid}/indicators/{symbol} → { [id]: IndicatorConfig }
  *   chart/{uid}/layouts             → { [name]: LayoutSnapshot }
  */
-import { get, onValue, ref as dbRef, remove, set } from "firebase/database";
+import { get, onValue, ref as dbRef, remove, set, update } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
-import { __sanitizeDrawingList } from "@/lib/drawings";
+import { __sanitizeDrawingList, filterTombstonedDrawings } from "@/lib/drawings";
 import type { Drawing, FibLevel } from "@/lib/drawings";
 import { sanitizeFibLevels } from "@/lib/drawings";
 import { sanitizeIndicatorList } from "@/lib/indicators-config";
@@ -45,6 +45,45 @@ const uidOf = (): string | null => auth.currentUser?.uid ?? null;
 const rtdb = (path: string) => dbRef(db, path);
 
 // ---------------------------------------------------------------------------
+// P40 — write bookkeeping: per-child diffed uploads + deletion tombstones
+// ---------------------------------------------------------------------------
+
+/** last successfully-written child map per (uid|symbol) — the debounced
+ *  writer diffs against it, so each commit uploads ONLY changed/deleted
+ *  children instead of re-serializing the whole symbol's drawing set. */
+const lastSavedDrawings = new Map<string, Map<string, Drawing>>();
+/** deletion tombstones: id → deletion time (local time). A stale remote
+ *  echo of a deleted drawing is suppressed until a NEWER edit appears. */
+const drawingTombstones = new Map<string, Map<string, number>>();
+const TOMBSTONE_TTL = 30 * 60 * 1000;
+
+function drawingsKey(uid: string, symbol: string): string {
+  return `${uid}|${symbol}`;
+}
+
+/** P40 — remember ids deleted locally so a stale remote echo cannot
+ *  resurrect them (pruned after TTL; superseded by newer edits). */
+export function recordDrawingTombstones(uid: string, symbol: string, ids: string[]): void {
+  if (!ids.length) return;
+  const map = drawingTombstones.get(drawingsKey(uid, symbol)) ?? new Map<string, number>();
+  const now = Date.now();
+  for (const id of ids) map.set(id, now);
+  for (const [id, ts] of map) if (now - ts > TOMBSTONE_TTL) map.delete(id);
+  drawingTombstones.set(drawingsKey(uid, symbol), map);
+}
+
+/** Fire any drawing write still sitting in the 400 ms debounce window
+ *  (symbol switch / unmount): nothing is lost on the way out. */
+export function flushPendingDrawingWrites(): void {
+  for (const [key, timer] of [...pendingDrawingWrites]) {
+    clearTimeout(timer);
+    pendingDrawingWrites.delete(key);
+    const job = pendingDrawingJobs.get(key);
+    if (job) void job().catch(() => { /* offline — LS keeps it */ });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Drawings
 // ---------------------------------------------------------------------------
 
@@ -53,17 +92,9 @@ export function subscribeDrawings(
   symbol: string,
   cb: (drawings: Drawing[]) => void,
 ): () => void {
+  const key = drawingsKey(uid, symbol);
   const cached = localGet<Record<string, Drawing>>(uid, "drawings", symbol);
   if (cached) cb(__sanitizeDrawingList(Object.values(cached)));
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const push = (list: Drawing[]) => {
-    const map = Object.fromEntries(list.map((d) => [d.id, d]));
-    localSet(uid, "drawings", symbol, map);
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      void set(rtdb(`chart/${uid}/drawings/${symbol}`), map).catch(() => { /* offline — LS keeps it */ });
-    }, 350);
-  };
   const off = onValue(
     rtdb(`chart/${uid}/drawings/${symbol}`),
     (snap) => {
@@ -73,17 +104,23 @@ export function subscribeDrawings(
         // and duplicates collapsed. No extra RTDB write here; the healed list
         // is persisted to RTDB with the user's next edit.
         const list = __sanitizeDrawingList(Object.values(remote));
-        cb(list);
-        localSet(uid, "drawings", symbol, Object.fromEntries(list.map((d) => [d.id, d])));
+        // P40 — a stale echo of a locally-deleted drawing must not resurrect
+        const tombs: Record<string, number> = Object.fromEntries(drawingTombstones.get(key) ?? []);
+        const kept = filterTombstonedDrawings(list, tombs);
+        cb(kept);
+        localSet(uid, "drawings", symbol, Object.fromEntries(kept.map((d) => [d.id, d])));
+        // the debounce diff is computed against what RTDB actually holds
+        lastSavedDrawings.set(key, new Map(kept.map((d) => [d.id, d])));
       } else {
         // the new symbol has NO stored drawings — clear the previous
         // symbol's list instead of leaving it on the chart (isolation)
         cb([]);
+        lastSavedDrawings.set(key, new Map());
       }
     },
-    () => { /* rules/offline — LS only */ },
+    (err) => console.warn("[chart] drawing listener error (LS mirror active):", err),
   );
-  return () => { if (timer) clearTimeout(timer); off(); };
+  return () => off();
 }
 
 /** Phase 37 §5 — one RTDB write per burst: the property bar commits style
@@ -91,17 +128,42 @@ export function subscribeDrawings(
  *  debounce. localStorage stays immediate (sync + cheap) and clearDrawings
  *  cancels a pending save so it can never resurrect deleted drawings. */
 const pendingDrawingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingDrawingJobs = new Map<string, () => Promise<void>>();
 
 export function saveDrawings(uid: string, symbol: string, drawings: Drawing[]): void {
   const map = Object.fromEntries(drawings.map((d) => [d.id, d]));
   localSet(uid, "drawings", symbol, map);
-  const key = `${uid}|${symbol}`;
+  const key = drawingsKey(uid, symbol);
+  const job = () => writeDrawingsMap(uid, symbol, map);
   const prev = pendingDrawingWrites.get(key);
   if (prev) clearTimeout(prev);
   pendingDrawingWrites.set(key, setTimeout(() => {
     pendingDrawingWrites.delete(key);
-    void set(rtdb(`chart/${uid}/drawings/${symbol}`), map).catch(() => { /* LS covers it */ });
+    pendingDrawingJobs.delete(key);
+    job().catch((err) => console.warn("[chart] drawing save failed — kept in localStorage:", err));
   }, 400));
+  pendingDrawingJobs.set(key, job);
+}
+
+/** P40 — upload ONLY the children that changed or were deleted since the
+ *  last successful write (multi-path update with null deletes), never the
+ *  whole map. Offline failures keep the LS mirror and are retried with the
+ *  user's next edit. */
+async function writeDrawingsMap(uid: string, symbol: string, map: Record<string, Drawing>): Promise<void> {
+  const path = `chart/${uid}/drawings/${symbol}`;
+  const last = lastSavedDrawings.get(drawingsKey(uid, symbol));
+  if (!last) {
+    await set(rtdb(path), map);
+  } else {
+    const updates: Record<string, Drawing | null> = {};
+    for (const [id, d] of Object.entries(map)) {
+      const old = last.get(id);
+      if (!old || JSON.stringify(old) !== JSON.stringify(d)) updates[`${path}/${id}`] = d;
+    }
+    for (const id of last.keys()) if (!(id in map)) updates[`${path}/${id}`] = null;
+    if (Object.keys(updates).length) await update(rtdb("/"), updates);
+  }
+  lastSavedDrawings.set(drawingsKey(uid, symbol), new Map(Object.entries(map)));
 }
 
 // ---------------------------------------------------------------------------
@@ -147,11 +209,26 @@ export function deleteDrawingTemplate(uid: string, name: string): void {
 }
 
 export function clearDrawings(uid: string, symbol: string): void {
-  const key = `${uid}|${symbol}`;
+  const key = drawingsKey(uid, symbol);
   const prev = pendingDrawingWrites.get(key);
   if (prev) { clearTimeout(prev); pendingDrawingWrites.delete(key); }
+  pendingDrawingJobs.delete(key);
   localDel(uid, "drawings", symbol);
+  lastSavedDrawings.delete(key); // next save does a full set, not a diff
   void remove(rtdb(`chart/${uid}/drawings/${symbol}`)).catch(() => { /* ignore */ });
+}
+
+/** P40 — drop this user's chart localStorage mirrors (logout hygiene). */
+export function clearChartLocalCache(uid: string): void {
+  if (!uid) return;
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("it_chart_") && k.includes(`_${uid}_`)) stale.push(k);
+    }
+    for (const k of stale) localStorage.removeItem(k);
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -210,15 +287,6 @@ export function subscribeIndicators(
   // params clamped into catalog ranges, duplicate ids collapsed.
   const cached = localGet<Record<string, IndicatorConfig>>(uid, "indicators", symbol);
   if (cached) cb(sanitizeIndicatorList(Object.values(cached)));
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const push = (list: IndicatorConfig[]) => {
-    const map = Object.fromEntries(list.map((i) => [i.id, i]));
-    localSet(uid, "indicators", symbol, map);
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      void set(rtdb(`chart/${uid}/indicators/${symbol}`), map).catch(() => { /* offline */ });
-    }, 350);
-  };
   const off = onValue(
     rtdb(`chart/${uid}/indicators/${symbol}`),
     (snap) => {
@@ -230,9 +298,9 @@ export function subscribeIndicators(
       cb(list);
       if (remote) localSet(uid, "indicators", symbol, Object.fromEntries(list.map((i) => [i.id, i])));
     },
-    () => { /* rules/offline — LS only */ },
+    (err) => console.warn("[chart] indicator listener error (LS mirror active):", err),
   );
-  return () => { if (timer) clearTimeout(timer); off(); };
+  return () => off();
 }
 
 export function saveIndicators(uid: string, symbol: string, indicators: IndicatorConfig[]): void {

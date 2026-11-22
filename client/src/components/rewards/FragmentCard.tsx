@@ -1,25 +1,6 @@
 import { useMemo } from "react";
-import {
-  ShieldCheck, Hourglass, Scale, FlaskConical, ClipboardList, Brain,
-  Repeat, Crosshair, Crown, Gem, Zap, Star, Target, Medal, Trophy,
-  Rocket, Diamond, Briefcase, Gauge, LineChart, PieChart, Activity,
-  BarChart3, Waves, Landmark, type LucideIcon,
-} from "lucide-react";
 import { getFragment, RARITY_META, type FragmentDef, type Rarity } from "@shared/fragments";
 import { cn } from "@/lib/utils";
-
-const ICONS: Record<string, LucideIcon> = {
-  ShieldCheck, Hourglass, Scale, FlaskConical, ClipboardList, Brain,
-  Repeat, Crosshair, Crown, Gem, Zap, Star, Target, Medal, Trophy,
-  Rocket, Diamond, Briefcase, Gauge, LineChart, PieChart, Activity,
-  BarChart3, Waves, Landmark,
-};
-
-/** Lucide icon by fragment `icon` name — shared with the case-opening reel. */
-export function FragmentIcon({ icon, className }: { icon: string; className?: string }) {
-  const Icon = ICONS[icon] || Crown;
-  return <Icon className={className} />;
-}
 
 export function rarityStyle(rarity: Rarity) {
   const meta = RARITY_META[rarity];
@@ -38,10 +19,11 @@ interface FragmentCardProps {
   highlight?: boolean;
 }
 
+/** P42 — icon stickers removed: the fragment label ("5k$ 1") is the top
+ *  element, the rarity badge sits under it. No icons on fragment cards. */
 export function FragmentCard({ fragmentId, count, className, footer, highlight }: FragmentCardProps) {
   const fragment = useMemo<FragmentDef>(() => getFragment(fragmentId) || FRAGMENTS_FALLBACK, [fragmentId]);
   const meta = RARITY_META[fragment.rarity];
-  const Icon = ICONS[fragment.icon] || Crown;
 
   return (
     <div
@@ -58,13 +40,7 @@ export function FragmentCard({ fragmentId, count, className, footer, highlight }
           ×{count}
         </span>
       )}
-      <div
-        className="mb-3 flex h-12 w-12 items-center justify-center rounded-full transition-transform duration-300 group-hover:scale-110"
-        style={{ backgroundColor: `${meta.color}1f`, color: meta.color }}
-      >
-        <Icon className="h-6 w-6" />
-      </div>
-      <p className="text-sm font-semibold leading-tight text-foreground">{fragment.name}</p>
+      <p className="mt-3 text-lg font-bold leading-tight text-foreground">{fragment.name}</p>
       <span className="mt-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider" style={{ backgroundColor: `${meta.color}1f`, color: meta.color }}>
         {meta.label}
       </span>

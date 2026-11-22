@@ -45,12 +45,12 @@ import {
   INDICATOR_CATALOG, newIndicatorConfig, withAlpha, type IndicatorConfig, type IndicatorType,
 } from "@/lib/indicators-config";
 import {
-  reorderDrawing, effectiveName, isVisibleOnTf, __sanitizeDrawingList, type Drawing, type DrawingType } from "@/lib/drawings";
+  reorderDrawing, effectiveName, isVisibleOnTf, __sanitizeDrawingList,
+  mergeDrawingLists, stampChangedDrawings, newDrawingId, type Drawing, type DrawingType } from "@/lib/drawings";
 import {
   subscribeDrawings, saveDrawings, clearDrawings as clearDrawingsRemote,
   subscribeIndicators, saveIndicators, clearIndicators as clearIndicatorsRemote,
-  type LayoutSnapshot,
-} from "@/lib/chart-persistence";
+  type LayoutSnapshot, recordDrawingTombstones, flushPendingDrawingWrites } from "@/lib/chart-persistence";
 import {
   DrawingCanvas, type ChartConverter, type DrawingCanvasHandle, type TradeLine,
 } from "@/components/terminal/chart/DrawingCanvas";
@@ -1521,8 +1521,6 @@ export function PriceChart({
   }, []);
 
   // ---- drawings persistence -------------------------------------------------------
-  /** timestamp of the last local drawing save — echo/merge arbitration */
-  const lastDrawingsSaveAtRef = useRef(0);
   /** Phase 35 §6 — clear loading state while per-user drawings are restored */
   const [drawingsRestoring, setDrawingsRestoring] = useState(false);
   useEffect(() => {
@@ -1535,7 +1533,6 @@ export function PriceChart({
     setSelectedDrawingId(null);
     setSelectedIds([]);
     setEditingDrawing(null);
-    lastDrawingsSaveAtRef.current = 0;
     // the previous instrument's objects must not render on the new chart for
     // even a moment — clear synchronously, RTDB delivers the real list after
     setDrawings([]);
@@ -1543,51 +1540,67 @@ export function PriceChart({
     setDrawingsRestoring(true);
     const offD = subscribeDrawings(uid, symbol, (list) => {
       setDrawingsRestoring(false);
-      // echo/merge arbitration: a local edit from the last 15s wins over the
-      // (possibly stale) remote snapshot — offline deletions can no longer
-      // resurrect when RTDB answers after the fact, and we re-assert local.
-      if (Date.now() - lastDrawingsSaveAtRef.current < 15000) {
-        saveDrawings(uid, symbolRef.current, drawingsRef.current);
-        return;
-      }
-      setDrawings(list);
+      // P40 — per-drawing LWW merge replaces the old 15s echo window:
+      // local edits whose write is still in flight survive, remote edits and
+      // deletions propagate, tombstoned (locally deleted) echoes are already
+      // filtered out by subscribeDrawings. Identical echoes return the local
+      // reference → no re-render, no mid-drag flicker.
+      // drawings written <3s ago are still in flight — a remote snapshot
+      // without them must not drop them (RTDB offline queue delivers later)
+      const pendingIds = new Set(
+        drawingsRef.current.filter((d) => (d.updatedAt ?? 0) > Date.now() - 3000).map((d) => d.id),
+      );
+      const merged = mergeDrawingLists(drawingsRef.current, list, pendingIds);
+      if (merged === drawingsRef.current) return;
+      setDrawings(merged);
+      drawingsRef.current = merged;
     });
     const offI = subscribeIndicators(uid, symbol, (list) => setIndicators(list));
-    return () => { offD(); offI(); };
+    return () => { offD(); offI(); flushPendingDrawingWrites(); };
   }, [uid, symbol]);
+
+  /** P40 — stamp updatedAt on changed drawings, tombstone removals, then
+   *  persist (LS immediate, RTDB debounced per-child diff). Shared by
+   *  commit / undo / redo. */
+  const persistDrawings = useCallback((prev: Drawing[], next: Drawing[]) => {
+    const stamped = stampChangedDrawings(prev, next, Date.now());
+    if (uid) {
+      const nextIds = new Set(stamped.map((d) => d.id));
+      recordDrawingTombstones(uid, symbolRef.current, prev.filter((d) => !nextIds.has(d.id)).map((d) => d.id));
+      saveDrawings(uid, symbolRef.current, stamped);
+    }
+    return stamped;
+  }, [uid]);
 
   const commitDrawings = useCallback((next: Drawing[]) => {
     historyRef.current.push(drawingsRef.current);
     if (historyRef.current.length > 100) historyRef.current.shift();
     futureRef.current = [];
-    setDrawings(next);
-    drawingsRef.current = next;
-    if (uid) saveDrawings(uid, symbolRef.current, next);
-    lastDrawingsSaveAtRef.current = Date.now();
+    const stamped = persistDrawings(drawingsRef.current, next);
+    setDrawings(stamped);
+    drawingsRef.current = stamped;
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
-  }, [uid]);
+  }, [uid, persistDrawings]);
 
   const undoDrawings = useCallback(() => {
     const prev = historyRef.current.pop();
     if (!prev) return;
     futureRef.current.push(drawingsRef.current);
-    setDrawings(prev);
-    drawingsRef.current = prev;
-    if (uid) saveDrawings(uid, symbolRef.current, prev);
-    lastDrawingsSaveAtRef.current = Date.now();
+    const stamped = persistDrawings(drawingsRef.current, prev);
+    setDrawings(stamped);
+    drawingsRef.current = stamped;
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
-  }, [uid]);
+  }, [persistDrawings]);
 
   const redoDrawings = useCallback(() => {
     const next = futureRef.current.pop();
     if (!next) return;
     historyRef.current.push(drawingsRef.current);
-    setDrawings(next);
-    drawingsRef.current = next;
-    if (uid) saveDrawings(uid, symbolRef.current, next);
-    lastDrawingsSaveAtRef.current = Date.now();
+    const stamped = persistDrawings(drawingsRef.current, next);
+    setDrawings(stamped);
+    drawingsRef.current = stamped;
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
-  }, [uid]);
+  }, [persistDrawings]);
 
   const toggleDrawingHidden = useCallback((id: string) => {
     commitDrawings(drawingsRef.current.map((d) => (d.id === id ? { ...d, hidden: !d.hidden } : d)));
@@ -1810,13 +1823,13 @@ export function PriceChart({
         }
         if (k === "v" && copyRef.current.length) {
           const dt = (TF_SECONDS[timeframe] || 3600) * 4;
-          const pasted = copyRef.current.map((d) => ({ ...d, id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${d.id}`, locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
+          const pasted = copyRef.current.map((d) => ({ ...d, id: newDrawingId(), locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
           commitDrawings([...drawingsRef.current, ...pasted]);
           return;
         }
         if (k === "d" && ids.length) {
           const dt = (TF_SECONDS[timeframe] || 3600) * 4;
-          const copies = drawingsRef.current.filter((d) => ids.includes(d.id)).map((d) => ({ ...d, id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${d.id}`, locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
+          const copies = drawingsRef.current.filter((d) => ids.includes(d.id)).map((d) => ({ ...d, id: newDrawingId(), locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
           commitDrawings([...drawingsRef.current, ...copies]);
           return;
         }
@@ -1859,13 +1872,13 @@ export function PriceChart({
 
   // ---- context menu actions -------------------------------------------------------------
   const addHLineAt = useCallback((price: number) => {
-    const d: Drawing = { id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`, type: "hline", points: [{ time: 0, price }], style: { color: "#38bdf8", width: 1, dash: "solid", fontSize: 12 } };
+    const d: Drawing = { id: newDrawingId(), type: "hline", points: [{ time: 0, price }], style: { color: "#38bdf8", width: 1, dash: "solid", fontSize: 12 } };
     commitDrawings([...drawingsRef.current, d]);
     setSelectedDrawingId(d.id);
   }, [commitDrawings]);
 
   const addTextAt = useCallback((time: number, price: number) => {
-    const d: Drawing = { id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`, type: "text", points: [{ time, price }], style: { color: "#e2e8f0", width: 1, dash: "solid", fontSize: 12 }, text: "Note" };
+    const d: Drawing = { id: newDrawingId(), type: "text", points: [{ time, price }], style: { color: "#e2e8f0", width: 1, dash: "solid", fontSize: 12 }, text: "Note" };
     commitDrawings([...drawingsRef.current, d]);
     setSelectedDrawingId(d.id);
     setEditingDrawing(d);
@@ -2096,7 +2109,7 @@ export function PriceChart({
                 const dt = (TF_SECONDS[timeframe] || 3600) * 4;
                 const copy: Drawing = {
                   ...sel,
-                  id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+                  id: newDrawingId(),
                   points: sel.points.map((q) => ({ time: q.time + dt, price: q.price * 1.001 })),
                   locked: false,
                 };
@@ -2402,7 +2415,7 @@ export function PriceChart({
             const step = TF_SECONDS[timeframeRef.current] ?? 60;
             const copy: Drawing = {
               ...src,
-              id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+              id: newDrawingId(),
               points: src.points.map((q) => ({ time: q.time + step, price: q.price * 1.001 })),
             };
             commitDrawings([...drawingsRef.current, copy]);

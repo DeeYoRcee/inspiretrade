@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { CASES, FRAGMENTS, RARITY_META, type CaseType, type FragmentDef } from "@shared/fragments";
-import { FragmentCard, FragmentIcon } from "./FragmentCard";
+import { FragmentCard } from "./FragmentCard";
 import { Gem, Sparkles, Crown } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
 import { casePop, caseRattle, caseReveal, caseSpin, caseSpinStop } from "@/lib/sfx";
@@ -222,10 +222,7 @@ export function CaseOpeningDialog({ open, result, caseType = "inspire", pool, ca
                               className="flex h-24 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border"
                               style={{ borderColor: `${itemMeta.color}66`, background: `linear-gradient(180deg, transparent 30%, ${itemMeta.color}2e 100%)` }}
                             >
-                              <span style={{ color: itemMeta.color }}>
-                                <FragmentIcon icon={item.icon} className="h-6 w-6" />
-                              </span>
-                              <span className="text-xs font-bold" style={{ color: itemMeta.color }}>
+                              <span className="text-sm font-bold" style={{ color: itemMeta.color }}>
                                 {item.name}
                               </span>
                               <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
