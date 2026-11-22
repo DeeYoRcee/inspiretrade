@@ -370,15 +370,16 @@ var chat_send_default = handle(async (req, res) => {
   const body = typeof req.body === "string" ? safeParse6(req.body) : req.body || {};
   const text = String(body.text || "").trim().slice(0, 300);
   if (!text) throw new HttpError(400, "EMPTY_TEXT", "Provide a message text");
-  await rtdb().ref(`users/${admin2.uid}/profile`).transaction((profile) => ({
-    ...profile || {},
+  const snap = await rtdb().ref(`users/${admin2.uid}/profile`).transaction((profile) => ({
     ...profile || {},
     uid: admin2.uid,
     ceo: true
   }));
+  const username = typeof snap.value?.username === "string" ? snap.value.username : void 0;
   const message = {
     uid: admin2.uid,
     name: "CEO",
+    ...username ? { username } : {},
     ceo: true,
     text,
     at: Date.now()
@@ -946,7 +947,7 @@ function sanitizePlatformSettings(raw, current) {
     registrationOpen: raw?.registrationOpen === void 0 ? base.registrationOpen : !!raw.registrationOpen,
     symbolsMode: raw?.symbolsMode === "custom" ? "custom" : raw?.symbolsMode === "all" ? "all" : base.symbolsMode,
     customSymbols: custom,
-    defaultAccountBalance: num(raw?.defaultAccountBalance, 1e3, 1e6, base.defaultAccountBalance),
+    defaultAccountBalance: num(raw?.defaultAccountBalance, 5e3, 1e6, base.defaultAccountBalance),
     defaultChallenge: {
       profitTargetPct: dc.profitTargetPct === void 0 ? base.defaultChallenge.profitTargetPct : optNum(dc.profitTargetPct, 0.5, 100),
       dailyLossLimitPct: dc.dailyLossLimitPct === void 0 ? base.defaultChallenge.dailyLossLimitPct : optNum(dc.dailyLossLimitPct, 0.5, 50),
@@ -1463,7 +1464,7 @@ async function createAccount(uid, label, startingBalance, opts = {}) {
   const existing = await accountsCol(uid).get();
   if (existing.size >= MAX_ACCOUNTS) throw new HttpError(409, "TOO_MANY_ACCOUNTS", `Maximum ${MAX_ACCOUNTS} accounts`);
   const settings = await getPlatformSettings();
-  const balance = Math.round(Math.min(5e6, Math.max(1e3, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
+  const balance = Math.round(Math.min(5e6, Math.max(5e3, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
   const rules = sanitizeRules(opts.rules);
   const leverageRaw = Number(opts.leverage) || settings.defaultLeverage;
   const allowed = settings.allowedLeverages?.length ? settings.allowedLeverages : ALLOWED_LEVERAGES;

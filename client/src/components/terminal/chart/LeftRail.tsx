@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Crosshair, Eraser, Eye, EyeOff, Layers, Lock, LockOpen, Magnet, Star,
+  Crosshair, Eraser, Eye, EyeOff, Layers, Lock, LockOpen, Magnet, PencilLine, Star, Trash2,
 } from "lucide-react";
 import type { DrawingType } from "@/lib/drawings";
 import { cn } from "@/lib/utils";
@@ -259,6 +259,8 @@ export function LeftRail({
   activeTool, onToolSelect, magnet, onMagnetToggle,
   locked, onLockToggle, hiddenAll, onHideAllToggle,
   drawingsCount, onDeleteAll,
+  stayDrawing, onStayDrawingToggle,
+  hasSelected, onDeleteSelected,
   objectsOpen, onObjectsToggle,
   cursorMode, onCursorMode,
 }: {
@@ -272,6 +274,12 @@ export function LeftRail({
   onHideAllToggle: () => void;
   drawingsCount: number;
   onDeleteAll: () => void;
+  /** P38 §1 — Stay in Drawing Mode toggle */
+  stayDrawing: boolean;
+  onStayDrawingToggle: () => void;
+  /** P38 §3 — delete the SELECTED drawing from the toolbar */
+  hasSelected: boolean;
+  onDeleteSelected: () => void;
   objectsOpen: boolean;
   onObjectsToggle: () => void;
   cursorMode: CursorMode;
@@ -460,6 +468,13 @@ export function LeftRail({
         );
       })}
       <div className="my-0.5 h-px w-6 bg-slate-800" />
+      <RailButton
+        title={stayDrawing ? "Stay in Drawing Mode ON — tool stays armed after each drawing (Shift also chains)" : "Stay in Drawing Mode OFF — back to Select after each drawing"}
+        active={stayDrawing}
+        onClick={onStayDrawingToggle}
+      >
+        <PencilLine className="h-4 w-4" />
+      </RailButton>
       <RailButton title={magnet ? "Magnet mode ON — crosshair snaps to OHLC" : "Magnet mode OFF"} active={magnet} onClick={onMagnetToggle}>
         <Magnet className="h-4 w-4" />
       </RailButton>
@@ -476,6 +491,14 @@ export function LeftRail({
         onClick={onDeleteAll}
       >
         <Eraser className="h-4 w-4" />
+      </RailButton>
+      <RailButton
+        title={hasSelected ? "Delete selected drawing" : "Select a drawing, then click to delete it"}
+        danger
+        disabled={!hasSelected || locked}
+        onClick={onDeleteSelected}
+      >
+        <Trash2 className="h-4 w-4" />
       </RailButton>
       <div className="my-0.5 h-px w-6 bg-slate-800" />
       <RailButton title="Object tree — drawings & indicators" active={objectsOpen} onClick={onObjectsToggle}>

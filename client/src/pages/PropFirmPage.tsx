@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, ArrowRight, BarChart3, ChevronDown, LockKeyhole, Wallet, RefreshCw, Trophy,
+  ArrowLeft, ArrowRight, BarChart3, ChevronDown, LockKeyhole, Wallet, RefreshCw,
   CircleCheck, CircleX, PauseCircle, Activity, Target, ShieldAlert, TrendingUp, Scale,
 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -14,7 +14,6 @@ import {
   type ChallengeTypeInfo, type ServerAccount, type ServerTrade,
 } from "@/lib/trading-api";
 import { useLanguage } from "@/lib/language-context";
-import { LeaderboardPanel } from "@/components/leaderboard/LeaderboardPanel";
 import { CustomAccountBuilder } from "@/components/prop/CustomAccountBuilder";
 import { cn } from "@/lib/utils";
 
@@ -380,7 +379,7 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
-  const [tab, setTab] = useState<"rankings" | "marketplace" | "custom" | "accounts">("rankings");
+  const [tab, setTab] = useState<"rankings" | "marketplace" | "custom" | "accounts">("marketplace");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // evaluated account ids — evaluate is idempotent but we run it once per mount
   const evaluatedRef = useRef<Set<string>>(new Set());
@@ -436,7 +435,8 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
   }
 
   const tabs = [
-    { id: "rankings" as const, label: t("pfTabRankings") },
+    // P38 — Rankings hidden temporarily (owner request); restore the entry
+    // below + the render block when it comes back
     { id: "marketplace" as const, label: t("pfTabMarket") },
     // Phase 35 — the custom-account builder (raw label: the page chrome is English)
     { id: "custom" as const, label: "Custom" },
@@ -452,9 +452,6 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Prop Firm Hub</h1>
             <p className="mt-1 text-sm text-muted-foreground">Pick a challenge format and start your funded journey.</p>
           </div>
-          <Button variant="outline" className="gap-2 rounded-xl border-border" onClick={() => setTab("rankings")}>
-            <Trophy className="h-4 w-4 text-amber-400" />{t("lbTitle")}
-          </Button>
         </div>
         {isDemo && <DemoLine />}
 
@@ -466,12 +463,6 @@ export default function PropFirmPage({ params }: { params?: { challengeId?: stri
             >{item.label}</button>
           ))}
         </div>
-
-        {tab === "rankings" && (
-          <div className="mx-auto max-w-3xl">
-            <LeaderboardPanel />
-          </div>
-        )}
 
         {tab === "marketplace" && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

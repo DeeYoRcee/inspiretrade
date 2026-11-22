@@ -154,6 +154,36 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
    * time and to the nearest bar OHLC within a 12px radius (TradingView
    * magnet). Creation-time only — dragging existing drawings never snaps,
    * so the user can always place a drawing exactly where they want it. */
+  // ---- P38 §5 — Shift angle-snap (TradingView behavior) -------------------
+  // Shift locks the line's final leg to 45° steps measured in SCREEN pixels,
+  // so horizontal / vertical / diagonal lines are one gesture at any zoom.
+  const ANGLE_SNAP_TOOLS = new Set<DrawingType>(["trend", "ray", "extended", "info-line", "trend-angle"]);
+  const shiftRef = useRef(false);
+
+  const snapLegScreen = (anchor: XY, cur: XY, shift: boolean, tool: DrawingType): XY => {
+    if (!shift || !ANGLE_SNAP_TOOLS.has(tool)) return cur;
+    const dx = cur.x - anchor.x, dy = cur.y - anchor.y;
+    if (!dx && !dy) return cur;
+    const step = Math.PI / 4;
+    const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+    const len = Math.hypot(dx, dy);
+    return { x: anchor.x + Math.cos(ang) * len, y: anchor.y + Math.sin(ang) * len };
+  };
+
+  /** market-coordinate wrapper: convert both ends to screen, snap, convert back */
+  const snapLegMarket = (anchor: DrawingPoint, cur: DrawingPoint, shift: boolean, tool: DrawingType): DrawingPoint => {
+    if (!shift || !ANGLE_SNAP_TOOLS.has(tool)) return cur;
+    const conv = converterRef.current;
+    if (!conv) return cur;
+    const ax = conv.x(anchor.time), ay = conv.y(anchor.price);
+    const cx = conv.x(cur.time), cy = conv.y(cur.price);
+    if (ax == null || ay == null || cx == null || cy == null) return cur;
+    const s = snapLegScreen({ x: ax, y: ay }, { x: cx, y: cy }, true, tool);
+    const t = conv.time(s.x), pr = conv.price(s.y);
+    if (t == null || pr == null) return cur;
+    return { time: t, price: pr };
+  };
+
   const snapPoint = (time: number, price: number): { time: number; price: number } => {
     if (!magnetRef.current) return { time, price };
     const t = magnetSnapTime(time, tfRef.current);
@@ -257,7 +287,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (drag?.mode === "draw" && drag.drawing) {
       const pts = toCanvas(drag.drawing);
       const m = mouseRef.current;
-      if (m && pts.length < TOOL_POINT_COUNT[drag.drawing.type]) pts.push(m);
+      if (m && pts.length < TOOL_POINT_COUNT[drag.drawing.type]) {
+        // P38 §5 — Shift-locked preview leg
+        const last = drag.drawing.points[drag.drawing.points.length - 1];
+        const anchor = last ? (() => { const ax = conv.x(last.time); const ay = conv.y(last.price); return ax != null && ay != null ? { x: ax, y: ay } : null; })() : null;
+        pts.push(anchor ? snapLegScreen(anchor, m, shiftRef.current, drag.drawing.type) : m);
+      }
       // measure preview: label from the first committed point → current mouse (market space)
       if (drag.drawing.type === "measure" && drag.drawing.points.length === 1 && m) {
         const t = conv.time(m.x);
@@ -405,9 +440,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
             d.style = { ...d.style, ...toolDefaultsRef.current };
             return d;
           })();
-      const snapped = snapPoint(time, price);
-      drawing.points = [...drawing.points, snapped];
       const wanted = TOOL_POINT_COUNT[tool];
+      const snapped = snapPoint(time, price);
+      const legPt = wanted >= 2 && drawing.points.length === wanted - 1
+        ? snapLegMarket(drawing.points[drawing.points.length - 1], snapped, e.shiftKey, tool)
+        : snapped;
+      drawing.points = [...drawing.points, legPt];
       // click-collected tools (path/polyline) wait for double-click / Enter
       if (CLICK_COLLECT_TOOLS.has(tool)) {
         dragRef.current = { mode: "draw", drawing };
@@ -495,6 +533,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (!conv) return;
     const p = localXY(e);
     mouseRef.current = p;
+    shiftRef.current = e.shiftKey;
     const drag = dragRef.current;
     const target = attachEl();
     if (!drag) {
@@ -639,7 +678,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
             const time = conv.time(p.x);
             const price = conv.price(p.y);
             if (time != null && price != null) {
-              const drawing = { ...d, points: [...d.points, { time, price }] };
+              const finalPt = snapLegMarket(d.points[d.points.length - 1], { time, price }, e.shiftKey, tool);
+              const drawing = { ...d, points: [...d.points, finalPt] };
               if (tool === "measure") {
                 drawing.text = measureLabel(drawing.points[0], drawing.points[1]);
               }

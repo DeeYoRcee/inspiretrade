@@ -1750,6 +1750,23 @@ export function PriceChart({
     return () => clearInterval(timer);
   }, []);
 
+  // ---- P38 §1 — "Stay in Drawing Mode" --------------------------------------
+  // Default: after finishing one drawing the tool returns to Select, so a
+  // click can never accidentally start a second object. This toggle (persisted)
+  // keeps the tool armed for users drawing many objects in a row — the same
+  // effect as the Shift chaining shortcut, but visible and sticky.
+  const [stayDrawing, setStayDrawing] = useState<boolean>(() => {
+    try { return localStorage.getItem("it-stay-drawing") === "1"; } catch { return false; }
+  });
+  const stayDrawingRef = useRef(stayDrawing);
+  stayDrawingRef.current = stayDrawing;
+  const onStayDrawingToggle = useCallback(() => {
+    setStayDrawing((v) => {
+      try { localStorage.setItem("it-stay-drawing", v ? "0" : "1"); } catch { /* private mode */ }
+      return !v;
+    });
+  }, []);
+
   // ---- keyboard tool shortcuts --------------------------------------------------------
   // Phase 31: Shift-held tracker — chaining drawings (Shift+commit keeps the
   // tool armed, TradingView-style) without a per-user setting to forget.
@@ -1808,6 +1825,15 @@ export function PriceChart({
           const dt = (TF_SECONDS[timeframe] || 3600) * 4;
           const copies = drawingsRef.current.filter((d) => ids.includes(d.id)).map((d) => ({ ...d, id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${d.id}`, locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
           commitDrawings([...drawingsRef.current, ...copies]);
+          return;
+        }
+        // P38 §4 — Ctrl+A selects all visible drawings (the INPUT/TEXTAREA
+        // guard at the top of this handler keeps text fields native)
+        if (k === "a" && drawingsRef.current.length) {
+          e.preventDefault();
+          const ids = drawingsRef.current.filter((d) => !d.locked && !d.hidden).map((d) => d.id);
+          setSelectedIds(ids);
+          setSelectedDrawingId(ids[ids.length - 1] ?? null);
           return;
         }
       }
@@ -1954,6 +1980,19 @@ export function PriceChart({
           hiddenAll={hiddenAll}
           onHideAllToggle={() => setHiddenAll((v) => { try { localStorage.setItem("it_chart_hideall", v ? "0" : "1"); } catch { /* private mode */ } return !v; })}
           drawingsCount={drawings.length}
+          stayDrawing={stayDrawing}
+          onStayDrawingToggle={onStayDrawingToggle}
+          hasSelected={!!selectedDrawingId || selectedIds.length > 0}
+          onDeleteSelected={() => {
+            // P38 §3 — toolbar Delete for the SELECTED drawing (mouse-first;
+            // the keyboard Delete path already existed)
+            const ids = selectedIds.length ? selectedIds : (selectedDrawingId ? [selectedDrawingId] : []);
+            if (!ids.length) return;
+            const drop = new Set(ids);
+            commitDrawings(drawingsRef.current.filter((d) => !drop.has(d.id)));
+            setSelectedIds([]);
+            setSelectedDrawingId(null);
+          }}
           onDeleteAll={() => {
             if (!drawingsRef.current.length) return;
             if (!window.confirm(`Delete all ${drawingsRef.current.length} drawings on ${symbolRef.current}?`)) return;
@@ -2005,7 +2044,7 @@ export function PriceChart({
           // Phase 31: TradingView behaviour — after a drawing commits the
           // tool ALWAYS returns to the cursor; hold Shift while committing to
           // chain another object with the same tool. Esc also disarms.
-          onToolCommitted={() => { if (!shiftHeldRef.current) setActiveTool("cursor"); }}
+          onToolCommitted={() => { if (!stayDrawingRef.current && !shiftHeldRef.current) setActiveTool("cursor"); }}
           magnet={settings.magnet}
           toolDefaults={{
             color: settingsRef.current.drawColor,

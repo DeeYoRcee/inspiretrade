@@ -255,6 +255,7 @@ var PLATFORM_SETTINGS_DEFAULTS = {
   updatedAt: null,
   updatedBy: null
 };
+var CHALLENGES_ENABLED = false;
 var num = (v, lo, hi, fallback) => {
   const n = Number(v);
   if (v == null || v === "" || !Number.isFinite(n)) return fallback;
@@ -276,7 +277,7 @@ function sanitizePlatformSettings(raw, current) {
     registrationOpen: raw?.registrationOpen === void 0 ? base.registrationOpen : !!raw.registrationOpen,
     symbolsMode: raw?.symbolsMode === "custom" ? "custom" : raw?.symbolsMode === "all" ? "all" : base.symbolsMode,
     customSymbols: custom,
-    defaultAccountBalance: num(raw?.defaultAccountBalance, 1e3, 1e6, base.defaultAccountBalance),
+    defaultAccountBalance: num(raw?.defaultAccountBalance, 5e3, 1e6, base.defaultAccountBalance),
     defaultChallenge: {
       profitTargetPct: dc.profitTargetPct === void 0 ? base.defaultChallenge.profitTargetPct : optNum(dc.profitTargetPct, 0.5, 100),
       dailyLossLimitPct: dc.dailyLossLimitPct === void 0 ? base.defaultChallenge.dailyLossLimitPct : optNum(dc.dailyLossLimitPct, 0.5, 50),
@@ -339,6 +340,9 @@ async function getPlatformSettings(force = false) {
   cache = { at: Date.now(), settings };
   return settings;
 }
+
+// api/_src/trading/index.ts
+init_firebase();
 
 // api/_src/admin/platform-guard.ts
 init_firebase();
@@ -1405,7 +1409,7 @@ async function createAccount(uid, label, startingBalance, opts = {}) {
   const existing = await accountsCol(uid).get();
   if (existing.size >= MAX_ACCOUNTS) throw new HttpError(409, "TOO_MANY_ACCOUNTS", `Maximum ${MAX_ACCOUNTS} accounts`);
   const settings = await getPlatformSettings();
-  const balance = Math.round(Math.min(5e6, Math.max(1e3, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
+  const balance = Math.round(Math.min(5e6, Math.max(5e3, Number(startingBalance) || settings.defaultAccountBalance)) * 100) / 100;
   const rules = sanitizeRules(opts.rules);
   const leverageRaw = Number(opts.leverage) || settings.defaultLeverage;
   const allowed = settings.allowedLeverages?.length ? settings.allowedLeverages : ALLOWED_LEVERAGES;
@@ -2196,6 +2200,9 @@ var routes = {
     json(res, 200, { trades: await history(user.uid, accountId, limit) });
   },
   async create(_req, res, user, body) {
+    if (!CHALLENGES_ENABLED && body.rules != null) {
+      throw new HttpError(503, "CHALLENGES_DISABLED", "Challenge purchases are temporarily unavailable \u2014 they will open at launch.");
+    }
     json(res, 200, { account: await createAccount(user.uid, body.label, body.startingBalance, {
       leverage: body.leverage != null ? Number(body.leverage) : null,
       rules: body.rules ?? null
@@ -2349,7 +2356,7 @@ var index_default = handle(async (req, res) => {
   if (!action) return health(res);
   if (action === "platform-status") {
     const settings = await getPlatformSettings();
-    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen });
+    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED });
   }
   if (action.startsWith("admin-")) {
     const route2 = adminRoutes[action];

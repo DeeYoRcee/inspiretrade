@@ -33,6 +33,8 @@
  */
 import { handle, requireUser, json, assertPost, type AuthedUser } from "../lib/firebase";
 import { getAdminRole, getPlatformSettings } from "../lib/platform";
+import { CHALLENGES_ENABLED } from "../../../shared/roles";
+import { HttpError } from "../lib/firebase";
 import { assertRole } from "../admin/platform-guard";
 import * as store from "./store";
 import { getQuotes } from "./prices";
@@ -96,6 +98,13 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     json(res, 200, { trades: await store.history(user.uid, accountId, limit) });
   },
   async create(_req, res, user, body) {
+    // P38 — challenge purchases are temporarily switched off (pre-launch).
+    // Only CHALLENGE creation is blocked: DEMO onboarding (rules === null)
+    // keeps working, and admin-gifted challenges call store.createAccount
+    // directly (propAdmin) so they are unaffected.
+    if (!CHALLENGES_ENABLED && body.rules != null) {
+      throw new HttpError(503, "CHALLENGES_DISABLED", "Challenge purchases are temporarily unavailable — they will open at launch.");
+    }
     json(res, 200, { account: await store.createAccount(user.uid, body.label, body.startingBalance, {
       leverage: body.leverage != null ? Number(body.leverage) : null,
       rules: body.rules ?? null,
@@ -256,7 +265,7 @@ export default handle(async (req, res) => {
   // public platform-status probe (no auth) — maintenance/registration flags
   if (action === "platform-status") {
     const settings = await getPlatformSettings();
-    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen });
+    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED });
   }
 
   // admin surface — role matrix enforced server-side (never frontend checks)

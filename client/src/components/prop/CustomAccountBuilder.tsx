@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PropRules } from "@shared/trading-engine";
 import { cn } from "@/lib/utils";
+import { CHALLENGES_ENABLED } from "@shared/roles";
 
 /** Server clamps startingBalance to 5,000…5,000,000 (store.createAccount). */
 const SIZE_STOPS = [5000, 10000, 25000, 50000, 100000];
@@ -292,9 +293,15 @@ export function CustomAccountBuilder({ onCreated }: { onCreated: (accountId: str
             <p className="mt-1 text-[10px] text-muted-foreground">Placeholder pricing — real prices coming soon.</p>
           </div>
 
+          {!CHALLENGES_ENABLED && (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-center text-[11px] font-medium text-amber-400">
+              Challenge purchases are temporarily unavailable — they will open at launch.
+            </p>
+          )}
+
           <Button
             className="w-full rounded-xl bg-emerald-500 font-semibold text-black hover:bg-emerald-400"
-            disabled={creating}
+            disabled={creating || !CHALLENGES_ENABLED}
             onClick={submit}
           >
             {creating ? "Creating…" : <><Rocket className="mr-2 h-4 w-4" />Buy Now</>}

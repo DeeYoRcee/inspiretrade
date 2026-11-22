@@ -224,6 +224,49 @@ async function ytApiSearch(q: string): Promise<Track[]> {
 }
 
 /** resolve the playable audio URL for a full-length track (server-side) */
+// ---------------------------------------------------------------------------
+// P38 — session audio cache. The player used to re-download every replay:
+// <audio src> was re-assigned from the network URL each time, and YouTube
+// streams resolve to a NEW signed URL per call. Two layers fix replays:
+//   1. blob cache for direct sources (Audius / iTunes / SC mp3) keyed by
+//      track id — warmed in the BACKGROUND after first play so playback is
+//      never delayed, then replays start instantly from a blob URL (LRU, 15).
+//   2. resolved-URL memo for YouTube/SoundCloud streams (signed links expire,
+//      so 25 min TTL) — replay skips the resolver round-trip and the browser
+//      HTTP cache serves the bytes.
+// ---------------------------------------------------------------------------
+const audioBlobCache = new Map<string, string>();
+const AUDIO_CACHE_MAX = 15;
+
+function cacheGet(key: string): string | null {
+  const hit = audioBlobCache.get(key);
+  if (hit) { audioBlobCache.delete(key); audioBlobCache.set(key, hit); } // LRU touch
+  return hit ?? null;
+}
+
+function cachePut(key: string, objectUrl: string): void {
+  if (audioBlobCache.has(key)) return;
+  audioBlobCache.set(key, objectUrl);
+  while (audioBlobCache.size > AUDIO_CACHE_MAX) {
+    const oldest = audioBlobCache.keys().next().value as string | undefined;
+    if (oldest == null) break;
+    const stale = audioBlobCache.get(oldest);
+    audioBlobCache.delete(oldest);
+    if (stale) { try { URL.revokeObjectURL(stale); } catch { /* ignore */ } }
+  }
+}
+
+function warmBlobCache(key: string, url: string): void {
+  if (cacheGet(key) || url.includes(".m3u8")) return;
+  void fetch(url, { mode: "cors" })
+    .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
+    .then((b) => cachePut(key, URL.createObjectURL(b)))
+    .catch(() => { /* CORS or size — replays just stay on the network URL */ });
+}
+
+const resolvedStreamCache = new Map<string, { url: string; at: number }>();
+const RESOLVED_TTL = 25 * 60 * 1000;
+
 async function resolveYtStream(id: string, hint?: string): Promise<string | null> {
   try {
     const q = new URLSearchParams({ id });
@@ -499,14 +542,28 @@ export function MusicPlayer() {
     try { el.pause(); } catch { /* ignore */ }
     setLoading(true);
     if (t.url) {
-      // direct URL (Audius / iTunes preview / SoundCloud mp3) — play now
-      playUrl(t.url);
+      // direct URL (Audius / iTunes preview / SoundCloud mp3)
+      const cached = cacheGet(t.id);
+      if (cached) {
+        // P38 — replay from the session blob cache: instant start, no download
+        if (idxRef.current === i) playUrl(cached);
+        return;
+      }
+      playUrl(t.url); // first play streams exactly as before…
+      warmBlobCache(t.id, t.url); // …then warms the cache for next time
     } else {
       // full-length YouTube/SoundCloud track — resolve the stream first
+      const memo = resolvedStreamCache.get(t.id);
+      if (memo && Date.now() - memo.at < RESOLVED_TTL) {
+        // P38 — replay within the TTL: skip the resolver round-trip entirely
+        if (idxRef.current === i) playUrl(memo.url);
+        return;
+      }
       void resolveYtStream(t.id, t.hint)
         .then((url) => {
           if (idxRef.current !== i) return; // the user picked another song meanwhile
           if (url) {
+            if (!url.includes(".m3u8")) resolvedStreamCache.set(t.id, { url, at: Date.now() });
             playUrl(url);
           } else {
             void rescueTrack(t).then((ok) => {

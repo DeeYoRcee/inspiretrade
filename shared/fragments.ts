@@ -120,7 +120,9 @@ export const DAILY_CASES = 1;              // cases granted per claim
 // ---- Economy tuning -------------------------------------------------------
 export const STREAK_BONUS_EVERY = REWARD_CYCLE_DAYS;
 export const MARKET_FEE_PERCENT = 10;      // seller fee (burned, CS2-like)
-export const MAX_ACTIVE_LISTINGS = 20;     // per user
+export const MAX_ACTIVE_LISTINGS = 50;     // per user — counts every listing kind
+// (fragments + cases + custom cases + username listings), so 50 keeps the
+// spam protection while letting a seller list their full inventory
 export const MIN_LISTING_PRICE = 0.01;     // INSP (2-decimal precision)
 export const MAX_LISTING_PRICE = 1000000;  // INSP
 

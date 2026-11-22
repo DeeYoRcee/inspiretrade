@@ -158,10 +158,11 @@ export function DrawingPropsBar({
             <select
               title="Line extension"
               value={style.extend || "none"}
-              onChange={(e) => setStyle({ extend: e.target.value as "none" | "right" | "both" })}
+              onChange={(e) => setStyle({ extend: e.target.value as "none" | "right" | "left" | "both" })}
               className="h-5 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200"
             >
               <option value="none">Segment</option>
+              <option value="left">Extend left</option>
               <option value="right">Extend right (ray)</option>
               <option value="both">Extend both (infinite)</option>
             </select>
@@ -171,6 +172,13 @@ export function DrawingPropsBar({
               className={cn("rounded px-1.5 py-0.5", style.showLabels ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800")}
             >
               $
+            </button>
+            <button
+              title="Toggle price change + percentage label"
+              onClick={() => setStyle({ showPrices: !style.showPrices })}
+              className={cn("rounded px-1.5 py-0.5", style.showPrices ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800")}
+            >
+              Δ
             </button>
             <button
               title="Toggle endpoint time labels"

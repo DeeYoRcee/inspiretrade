@@ -10,6 +10,7 @@ import { DEFAULT_PROP_RULES, type PropRules } from "@shared/trading-engine";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { CHALLENGES_ENABLED } from "@shared/roles";
 import { cn } from "@/lib/utils";
 
 const LEVERAGES = [10, 20, 30, 50, 100, 200, 500];
@@ -27,6 +28,7 @@ export function NewAccountDialog({ open, onClose }: { open: boolean; onClose: ()
   const patchRule = (patch: Partial<PropRules>) => setRules((r) => ({ ...r, ...patch }));
 
   const submit = async () => {
+    if (kind === "challenge" && !CHALLENGES_ENABLED) return; // P38 kill-switch
     const acc = await createAccount({
       label: kind === "challenge" ? `Challenge ${accounts.length}` : `DEMO ${accounts.length + 1}`,
       startingBalance: balance,
@@ -54,7 +56,7 @@ export function NewAccountDialog({ open, onClose }: { open: boolean; onClose: ()
         </DialogHeader>
 
         <div className="flex gap-1.5">
-          {(["demo", "challenge"] as const).map((k) => (
+          {((["demo", "challenge"] as const).filter((k) => k === "demo" || CHALLENGES_ENABLED)).map((k) => (
             <button
               key={k} onClick={() => setKind(k)}
               className={cn(

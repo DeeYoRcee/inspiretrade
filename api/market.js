@@ -160,7 +160,7 @@ var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_TRADING = TRADING_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var MARKET_FEE_PERCENT = 10;
-var MAX_ACTIVE_LISTINGS = 20;
+var MAX_ACTIVE_LISTINGS = 50;
 var MIN_LISTING_PRICE = 0.01;
 var MAX_LISTING_PRICE = 1e6;
 function getFragment(id) {

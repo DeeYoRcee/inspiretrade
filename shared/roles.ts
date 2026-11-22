@@ -119,6 +119,11 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettings = {
   updatedBy: null,
 };
 
+/** P38 — kill-switch: challenge (prop account) purchases are OFF until launch.
+ *  Admin-gifted challenge accounts bypass the public route and keep working.
+ *  Flip to true when challenges go live (redeploy). */
+export const CHALLENGES_ENABLED = false;
+
 const num = (v: unknown, lo: number, hi: number, fallback: number): number => {
   const n = Number(v);
   if (v == null || v === "" || !Number.isFinite(n)) return fallback;

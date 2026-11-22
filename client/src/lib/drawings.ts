@@ -41,8 +41,8 @@ export interface DrawingStyle {
   textColor?: string;
   /** where the attached text sits relative to the anchors */
   textPos?: "start" | "end" | "above" | "below";
-  /** trend-line extension: none = segment · right = ray · both = infinite */
-  extend?: "none" | "right" | "both";
+  /** trend-line extension: none = segment · left = backward ray · right = ray · both = infinite */
+  extend?: "none" | "right" | "left" | "both";
   /** endpoint price labels on line tools */
   showLabels?: boolean;
   /** endpoint time labels on line tools */
@@ -450,9 +450,21 @@ export function hitTest(
     }
 
     switch (d.type) {
-      case "trend":
-        if (distToSegmentSq(p, pts[0], pts[1]) <= LINE_HIT * LINE_HIT) return { index: i };
+      case "trend": {
+        // P38 §6 — the hit zone follows the extension mode, so clicking the
+        // extended part of a ray still selects the drawing
+        const mode = d.style.extend || "none";
+        if (mode === "right" || mode === "left") {
+          const ext = mode === "right"
+            ? rayToEdge(pts[0], pts[1], canvasW, canvasH)
+            : rayToEdge(pts[1], pts[0], canvasW, canvasH);
+          if (distToSegmentSq(p, ext.a, ext.b) <= LINE_HIT * LINE_HIT) return { index: i };
+        } else if (mode === "both") {
+          const ext = extendedToEdge(pts[0], pts[1], canvasW, canvasH);
+          if (distToSegmentSq(p, ext.a, ext.b) <= LINE_HIT * LINE_HIT) return { index: i };
+        } else if (distToSegmentSq(p, pts[0], pts[1]) <= LINE_HIT * LINE_HIT) return { index: i };
         break;
+      }
       case "ray": {
         const ext = rayToEdge(pts[0], pts[1], canvasW, canvasH);
         if (distToSegmentSq(p, ext.a, ext.b) <= LINE_HIT * LINE_HIT) return { index: i };
@@ -790,10 +802,27 @@ export function renderDrawing(
       } else if (mode === "both") {
         const ext = extendedToEdge(pts[0], pts[1], canvasW, canvasH);
         drawSegment(ctx, ext.a, ext.b);
+      } else if (mode === "left") {
+        // P38 §6 — backward ray: from the end anchor through the start anchor
+        const ext = rayToEdge(pts[1], pts[0], canvasW, canvasH);
+        drawSegment(ctx, ext.a, ext.b);
       } else {
         drawSegment(ctx, pts[0], pts[1]);
       }
       drawEndpointLabels(ctx, d, pts);
+      // P38 §6 — Δ price + % over the leg (props-bar "Δ" toggle)
+      if (d.style.showPrices && d.points.length >= 2) {
+        const dp = d.points[1].price - d.points[0].price;
+        const pct = d.points[0].price ? (dp / d.points[0].price) * 100 : 0;
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.font = `${d.style.fontSize}px ui-sans-serif, system-ui`;
+        ctx.fillStyle = d.style.textColor || d.style.color;
+        const sign = dp >= 0 ? "+" : "";
+        ctx.fillText(`${sign}${fmtDrawingPrice(dp)} (${sign}${pct.toFixed(2)}%)`, pts[1].x + 6, pts[1].y + d.style.fontSize + 4);
+        ctx.restore();
+      }
       break;
     }
     case "ray": {
@@ -1565,7 +1594,7 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
         ...(fill ? { fill: { color: typeof fill.color === "string" ? fill.color : DEFAULT_STYLE.color, opacity: clamp(fill.opacity, 0, 1, 0.15) } } : {}),
         ...(typeof st.textColor === "string" ? { textColor: st.textColor } : {}),
         ...(st.textPos === "start" || st.textPos === "end" || st.textPos === "above" || st.textPos === "below" ? { textPos: st.textPos } : {}),
-        ...(st.extend === "right" || st.extend === "both" ? { extend: st.extend } : {}),
+        ...(st.extend === "right" || st.extend === "left" || st.extend === "both" ? { extend: st.extend } : {}),
         ...(st.showLabels === true || st.showLabels === false ? { showLabels: st.showLabels } : {}),
         ...(st.showTimeLabels === true || st.showTimeLabels === false ? { showTimeLabels: st.showTimeLabels } : {}),
         ...(st.showPrices === true || st.showPrices === false ? { showPrices: st.showPrices } : {}),
