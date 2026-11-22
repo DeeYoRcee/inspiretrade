@@ -571,6 +571,8 @@ export function ChartContextMenu({
     /** Phase 36 §6 — Remove All Indicators (with confirmation inside) */
     clearIndicators: () => void;
     resetChart: () => void;
+    /** PHASE 47 — open the trading-alert dialog prefilled at this price */
+    addAlert?: (price: number) => void;
   };
 }) {
   // Close on OUTSIDE pointerdown only. The capture-phase listener used to
@@ -601,6 +603,7 @@ export function ChartContextMenu({
   }
   if (state.price != null) {
     items.push({ label: "Add horizontal line", onClick: () => actions.addHLine(state.price!) });
+    if (actions.addAlert) items.push({ label: "Add price alert", onClick: () => actions.addAlert!(state.price!) });
   }
   if (state.time != null && state.price != null) {
     items.push({ label: "Add text annotation", onClick: () => actions.addText(state.time!, state.price!) });

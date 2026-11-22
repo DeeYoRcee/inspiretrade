@@ -73,6 +73,8 @@ import {
   magnetModeOf, applyGridDefaultOff,
 } from "@/components/terminal/chart/dialogs";
 import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
+import { TradingAlertDialog } from "@/components/terminal/TradingAlertDialog";
+import { publishChartSnapshot } from "@/components/terminal/TradingAlertsEngine";
 import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -394,6 +396,17 @@ export function PriceChart({
   const [fibPresets, setFibPresets] = useState<FibPreset[]>([]);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [openDialog, setOpenDialog] = useState<"settings" | "layouts" | "search" | null>(null);
+  // P47 — trading alerts: context-menu prefilled price + the dialog state
+  const [alertPriceDraft, setAlertPriceDraft] = useState<number | null>(null);
+  const [alertDialogOpen, setAlertDialogOpen] = useState(false);
+  // publish the live snapshot (bars + drawings) for the alert engine; a 1s
+  // cadence keeps the bridge fresh without per-tick object churn
+  useEffect(() => {
+    const publish = () => publishChartSnapshot(symbolRef.current, timeframe, barsRef.current, drawingsRef.current, replayBarsRef.current != null);
+    publish();
+    const t = setInterval(publish, 1000);
+    return () => clearInterval(t);
+  }, [timeframe]);
   const [settings, setSettings] = useState<ChartSettings>(() => {
     try { return applyGridDefaultOff({ ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") }); }
     catch { return DEFAULT_SETTINGS; }
@@ -2565,7 +2578,19 @@ export function PriceChart({
           clearDrawings: () => { commitDrawings([]); if (uid) clearDrawingsRemote(uid, symbolRef.current); },
           clearIndicators: clearAllIndicators,
           resetChart: resetView,
+          addAlert: (price) => { setAlertPriceDraft(price); setAlertDialogOpen(true); },
         }}
+      />
+      {/* P47 — create a trading alert from the chart context menu */}
+      <TradingAlertDialog
+        open={alertDialogOpen}
+        symbol={symbol}
+        timeframe={timeframe}
+        lastPrice={barsRef.current[barsRef.current.length - 1]?.close ?? null}
+        initialPrice={alertPriceDraft}
+        drawings={drawings}
+        editing={null}
+        onClose={() => { setAlertDialogOpen(false); setAlertPriceDraft(null); }}
       />
     </div>
   );

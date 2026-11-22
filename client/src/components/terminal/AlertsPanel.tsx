@@ -6,9 +6,13 @@
  * toasts, browser notifications and (when subscribed) web push.
  */
 import { useEffect, useState } from "react";
-import { BellRing, Monitor, RefreshCw, Smartphone, Trash2 } from "lucide-react";
+import { BellRing, Monitor, MoonStar, RefreshCw, Smartphone, Trash2, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { loadAlertSettings, saveAlertSettings, requestBrowserPermission, enableWebPush, isPushSubscribed, getAlertLog, clearAlertLog, loadEventAlerts, removeEventAlert, type AlertSettings, type EventAlert } from "@/lib/notifications";
+import { TradingAlertsManager } from "./TradingAlertsManager";
+import { readTerminalSnapshot } from "@/lib/terminal-bridge";
+import { getTerminalSettings } from "@/lib/terminal-settings";
+import type { Timeframe } from "@shared/terminal";
 import { SYMBOLS, CALENDAR_CURRENCIES, SYMBOL_COLOR } from "@/lib/news-api";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -29,7 +33,7 @@ function Chip({ active, color, label, onClick }: { active: boolean; color?: stri
   );
 }
 
-function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
+function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: React.ReactNode; hint?: string }) {
   return (
     <button onClick={() => onChange(!checked)} className="flex w-full items-center gap-3 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-left transition-colors hover:border-slate-700">
       <span className={cn("flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors", checked ? "bg-sky-600" : "bg-slate-700")}>
@@ -43,7 +47,7 @@ function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange
   );
 }
 
-export default function AlertsPanel() {
+export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: { symbol?: string; timeframe?: Timeframe } = {}) {
   const [settings, setSettings] = useState<AlertSettings>(loadAlertSettings);
   const [customAlerts, setCustomAlerts] = useState<EventAlert[]>(loadEventAlerts);
   const [log, setLog] = useState(getAlertLog);
@@ -134,6 +138,46 @@ export default function AlertsPanel() {
         </div>
 
         <div className="space-y-2.5">
+          {/* PHASE 47 — the dedicated Trading Alerts manager (create / pause /
+              resume / edit / duplicate / delete / search / trigger history) */}
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs font-semibold text-slate-200">Trading alerts</div>
+              <span className="text-[10px] text-slate-500">price · indicator · drawing</span>
+            </div>
+            {(() => {
+              const snap = readTerminalSnapshot();
+              const sym = symbolProp ?? snap?.symbol ?? getTerminalSettings().general.defaultSymbol;
+              const tf = tfProp ?? snap?.timeframe ?? (getTerminalSettings().general.defaultTf as Timeframe);
+              return <TradingAlertsManager symbol={sym} timeframe={tf} lastPrice={null} drawings={snap?.drawings ?? []} />;
+            })()}
+          </div>
+
+          {/* PHASE 47 — unified notification preferences */}
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+            <div className="text-xs font-semibold text-slate-200">Notification categories</div>
+            <div className="mt-2 space-y-1.5">
+              <Toggle checked={settings.tradingAlerts ?? true} onChange={(v) => update({ tradingAlerts: v })} label="Trading alerts" hint="Price / indicator / drawing alert fires." />
+              <Toggle checked={settings.systemNotifs ?? true} onChange={(v) => update({ systemNotifs: v })} label="Platform notifications" hint="System events (paused alerts, push status, …)." />
+              <Toggle checked={settings.sound ?? false} onChange={(v) => update({ sound: v })} label={<span className="inline-flex items-center gap-1">Sound <Volume2 className="h-3 w-3" /></span>} hint="Short beep when an alert fires." />
+            </div>
+            <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-400">
+              <MoonStar className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="shrink-0">Quiet hours</span>
+              <select className="h-7 flex-1 rounded border border-slate-700 bg-slate-950 px-1 text-[11px] text-slate-200"
+                value={settings.quietFrom ?? ""} onChange={(e) => update({ quietFrom: e.target.value === "" ? null : Number(e.target.value) })}>
+                <option value="">off</option>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+              </select>
+              <span>→</span>
+              <select className="h-7 flex-1 rounded border border-slate-700 bg-slate-950 px-1 text-[11px] text-slate-200"
+                value={settings.quietTo ?? ""} onChange={(e) => update({ quietTo: e.target.value === "" ? null : Number(e.target.value) })}>
+                <option value="">—</option>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+              </select>
+            </div>
+          </div>
+
           <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
             <div className="text-xs font-semibold text-slate-200">Delivery</div>
             <div className="mt-2 space-y-2">

@@ -7692,8 +7692,25 @@ function sanitizeSettings(s) {
     enabled: !!s?.enabled,
     symbols: Array.isArray(s?.symbols) ? s.symbols.slice(0, 20).map(String) : [],
     calEnabled: !!s?.calEnabled,
-    calCurrencies: Array.isArray(s?.calCurrencies) ? s.calCurrencies.slice(0, 12).map(String) : []
+    calCurrencies: Array.isArray(s?.calCurrencies) ? s.calCurrencies.slice(0, 12).map(String) : [],
+    // PHASE 47 — additive category flags (missing = previous behavior = on)
+    tradingAlerts: s?.tradingAlerts !== false,
+    systemNotifs: s?.systemNotifs !== false
   };
+}
+async function recordNotification(uid, id, n) {
+  try {
+    await rtdb().ref(`notifications/${uid}/${id}`).update({
+      category: n.category,
+      title: String(n.title || "").slice(0, 200),
+      body: n.body ? String(n.body).slice(0, 400) : null,
+      url: n.url || null,
+      symbol: n.symbol || null,
+      at: Date.now(),
+      readAt: null
+    });
+  } catch {
+  }
 }
 function safeParse(raw) {
   try {
@@ -7752,6 +7769,7 @@ var alerts_cron_default = handle(async (req, res) => {
     } catch {
     }
   }
+  const settingsCache = await rtdb().ref("pushSettings").once("value").then((snap2) => snap2.val() || {}).catch(() => ({}));
   const snap = await rtdb().ref("terminalAlerts").once("value");
   const all = snap.val() || {};
   const jobs = [];
@@ -7760,11 +7778,14 @@ var alerts_cron_default = handle(async (req, res) => {
   const yahooDailyNeeded = /* @__PURE__ */ new Set();
   const spotNeeded = /* @__PURE__ */ new Set();
   for (const [uid, alerts] of Object.entries(all)) {
+    const prefs = settingsCache[uid] || {};
     for (const [id, a] of Object.entries(alerts || {})) {
-      if (!a || a.paused) continue;
+      if (!a || a.paused || a.done) continue;
       const kind = a.kind ?? "price";
       if (kind !== "price" && kind !== "dailyHL") continue;
       if (kind === "price" && a.price == null) continue;
+      if (a.expiresAt && Date.now() > a.expiresAt) continue;
+      if (prefs.tradingAlerts === false) continue;
       const last = a.lastTriggeredAt || a.triggeredAt || 0;
       if (Date.now() - last < (a.cooldownMin ?? 60) * 6e4) continue;
       jobs.push({ uid, id, a });
@@ -7857,13 +7878,22 @@ var alerts_cron_default = handle(async (req, res) => {
     if (!hit) continue;
     fired++;
     const history = [...Array.isArray(job.a.history) ? job.a.history : [], { at: now, price }].slice(-20);
-    await rtdb().ref(`terminalAlerts/${job.uid}/${job.id}`).update({ lastTriggeredAt: now, history });
+    await rtdb().ref(`terminalAlerts/${job.uid}/${job.id}`).update({
+      lastTriggeredAt: now,
+      lastPrice: price,
+      history,
+      // PHASE 47 — "only once" alerts pause themselves after the first trigger
+      ...job.a.frequency === "once" ? { paused: true, done: true } : {}
+    });
+    const dir = job.a.direction === "above" ? "crossed above" : "dropped to";
+    const title = String(job.a.message || `${job.a.symbol} ${kind === "dailyHL" ? "daily level" : "alert"}`).slice(0, 120);
+    const body = `${job.a.symbol} ${dir} ${job.a.price} \u2014 now ${price}`;
+    await recordNotification(job.uid, `srv-${job.id}-${now}`, { category: "alert", title, body, url: `/terminal?symbol=${encodeURIComponent(job.a.symbol)}`, symbol: job.a.symbol });
     if (pushOn) {
-      const dir = job.a.direction === "above" ? "crossed above" : "dropped to";
       pushed += await sendPush(job.uid, {
-        title: `${job.a.symbol} ${kind === "dailyHL" ? "daily level" : "alert"}`,
-        body: `${job.a.symbol} ${dir} ${job.a.price} \u2014 now ${price}`,
-        url: "/terminal",
+        title,
+        body,
+        url: `/terminal?symbol=${encodeURIComponent(job.a.symbol)}`,
         tag: `alert-${job.uid}-${job.id}`
       });
     }
@@ -7894,6 +7924,7 @@ var alerts_cron_default = handle(async (req, res) => {
         ).slice(0, 3);
         for (const item of fresh) {
           const syms = item.symbols.filter((sym) => s.symbols.includes(sym)).join(" \xB7 ");
+          await recordNotification(uid, `srv-news-${Buffer.from(item.link).toString("base64url").slice(0, 80)}`, { category: "news", title: String(item.title || "").slice(0, 180), url: "/news", symbol: item.symbols[0] });
           newsPushed += await sendPush(uid, { title: syms || "News", body: String(item.title || "").slice(0, 180), url: "/news", tag: item.link });
           updates[item.link] = now;
         }
@@ -7903,6 +7934,7 @@ var alerts_cron_default = handle(async (req, res) => {
           ).slice(0, 2);
           for (const ev of soon) {
             const mins = Math.max(1, Math.round((ev.date - now) / 6e4));
+            await recordNotification(uid, `srv-cal-${ev.id}`, { category: "calendar", title: `${ev.currency} \u2014 ${mins} min`, body: String(ev.title || "").slice(0, 180), url: "/news", symbol: ev.currency });
             calPushed += await sendPush(uid, { title: `${ev.currency} \u2014 ${mins} min`, body: String(ev.title || "").slice(0, 180), url: "/news", tag: ev.id });
             updates[ev.id] = now;
           }

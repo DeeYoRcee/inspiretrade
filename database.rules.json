@@ -229,6 +229,18 @@
         ".write": "$uid === auth.uid"
       }
     },
+    "terminalAlerts": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "notifications": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
     "terminalDrawings": {
       "$uid": {
         ".read": "$uid === auth.uid",

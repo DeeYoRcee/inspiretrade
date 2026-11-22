@@ -9,7 +9,7 @@
 
 import { SYMBOLS } from "@/lib/news-api";
 
-export type AlertKind = "news" | "calendar";
+export type AlertKind = "news" | "calendar" | "alert" | "system";
 
 export interface AlertLogEntry {
   id: string;
@@ -28,6 +28,16 @@ export interface AlertSettings {
   calMinutesBefore: number;
   /** Telegram-style browser notifications (Notification API) */
   browser: boolean;
+  // ---- PHASE 47 additions (additive — defaults preserve existing behavior) ----
+  /** trading alerts (price / indicator / drawing) master switch */
+  tradingAlerts?: boolean;
+  /** platform/system notifications master switch */
+  systemNotifs?: boolean;
+  /** short beep on alert fire */
+  sound?: boolean;
+  /** quiet hours (local hours 0-23, inclusive-from exclusive-to); null = off */
+  quietFrom?: number | null;
+  quietTo?: number | null;
 }
 
 const SETTINGS_KEY = "inspire_alert_settings";
@@ -76,6 +86,12 @@ export function loadAlertSettings(): AlertSettings {
     calCurrencies: Array.isArray(raw.calCurrencies) ? raw.calCurrencies : DEFAULT_SETTINGS.calCurrencies,
     calMinutesBefore: [5, 15, 30, 60].includes(Number(raw.calMinutesBefore)) ? Number(raw.calMinutesBefore) : DEFAULT_SETTINGS.calMinutesBefore,
     browser: raw.browser ?? DEFAULT_SETTINGS.browser,
+    // PHASE 47 — new optional fields; missing = the previous behavior (on)
+    tradingAlerts: raw.tradingAlerts ?? true,
+    systemNotifs: raw.systemNotifs ?? true,
+    sound: raw.sound ?? false,
+    quietFrom: raw.quietFrom ?? null,
+    quietTo: raw.quietTo ?? null,
   };
 }
 
@@ -85,6 +101,33 @@ export function saveAlertSettings(settings: AlertSettings): void {
   void syncAlertStateToSW();
   // keep the server snapshot fresh so the cron pushes for the right symbols
   void syncPushSettings();
+}
+
+/** true when the local clock is inside the user's quiet-hours window. */
+export function inQuietHours(s: AlertSettings, now = new Date()): boolean {
+  const from = s.quietFrom;
+  const to = s.quietTo;
+  if (from == null || to == null) return false;
+  const h = now.getHours();
+  return from <= to ? h >= from && h < to : h >= from || h < to;
+}
+
+/** tiny WebAudio beep for the sound preference (no asset, no autoplay abuse). */
+export function playAlertBeep(): void {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+    osc.onended = () => void ctx.close();
+  } catch { /* audio unavailable — silent */ }
 }
 
 /**
