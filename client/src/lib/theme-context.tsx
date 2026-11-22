@@ -8,7 +8,7 @@ export const THEME_LABELS: Record<Theme, string> = {
   light: "Light",
   ocean: "Ocean",
   forest: "Forest",
-  vader: "Darth Vader",
+  vader: "Skywalker",
   aurora: "Aurora",
   neon: "Neon Grid",
   cosmos: "Cosmos",

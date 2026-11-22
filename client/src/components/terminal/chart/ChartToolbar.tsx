@@ -128,7 +128,7 @@ export function ChartToolbar({
           className="flex h-6 items-center gap-1 rounded-md border border-slate-700/70 px-2 text-[10px] font-semibold text-slate-300 hover:bg-slate-800"
           title="Indicator library — search, categories, active list"
         >
-          <Waves className="h-3.5 w-3.5" /> Indicators <Plus className="h-3 w-3" />
+          <Waves className="h-4 w-4" /> Indicators <Plus className="h-3 w-3" />
         </button>
         {indOpen && (
           <div className="absolute left-0 top-7 z-40 w-60 rounded-lg border border-slate-700 bg-slate-900 p-1 shadow-xl">
@@ -167,18 +167,18 @@ export function ChartToolbar({
 
       {/* alert + replay — real features, TV positions */}
       <div className="mx-1 h-5 w-px bg-slate-800" />
-      <ToolButton title="Add alert" onClick={onOpenAlerts}><Bell className="h-3.5 w-3.5" /></ToolButton>
-      <ToolButton title="Bar replay" onClick={onOpenReplay}><Rewind className="h-3.5 w-3.5" /></ToolButton>
+      <ToolButton title="Add alert" onClick={onOpenAlerts}><Bell className="h-4 w-4" /></ToolButton>
+      <ToolButton title="Bar replay" onClick={onOpenReplay}><Rewind className="h-4 w-4" /></ToolButton>
 
       {/* undo / redo drawings */}
       <div className="mx-1 h-5 w-px bg-slate-800" />
-      <ToolButton title="Undo drawing (Ctrl+Z)" onClick={onUndo} disabled={!canUndo}><Undo2 className="h-3.5 w-3.5" /></ToolButton>
-      <ToolButton title="Redo drawing (Ctrl+Y)" onClick={onRedo} disabled={!canRedo}><Redo2 className="h-3.5 w-3.5" /></ToolButton>
+      <ToolButton title="Undo drawing (Ctrl+Z)" onClick={onUndo} disabled={!canUndo}><Undo2 className="h-4 w-4" /></ToolButton>
+      <ToolButton title="Redo drawing (Ctrl+Y)" onClick={onRedo} disabled={!canRedo}><Redo2 className="h-4 w-4" /></ToolButton>
 
       {/* right cluster — Phase 34b: chart theme dropdown leads it */}
       <div className="ml-auto flex items-center gap-0.5">
         <div ref={themeRef} className="relative">
-          <ToolButton title="Chart theme" onClick={() => setThemeOpen((v) => !v)}><Palette className="h-3.5 w-3.5" /></ToolButton>
+          <ToolButton title="Chart theme" onClick={() => setThemeOpen((v) => !v)}><Palette className="h-4 w-4" /></ToolButton>
           {themeOpen && (
             <div className="absolute right-0 top-7 z-40 w-44 rounded-lg border border-slate-700 bg-slate-900 p-1 shadow-xl">
               {APPEARANCE_PRESETS.map((p) => (
@@ -198,11 +198,11 @@ export function ChartToolbar({
             </div>
           )}
         </div>
-        <ToolButton title="Screenshot (PNG)" onClick={onScreenshot}><Camera className="h-3.5 w-3.5" /></ToolButton>
-        <ToolButton title="Chart settings" onClick={onOpenSettings}><Settings className="h-3.5 w-3.5" /></ToolButton>
-        <ToolButton title="Chart layouts" onClick={onOpenLayouts}><LayoutTemplate className="h-3.5 w-3.5" /></ToolButton>
-        <ToolButton title="Reset chart view" onClick={onReset}><RotateCcw className="h-3.5 w-3.5" /></ToolButton>
-        <ToolButton title="Fullscreen" onClick={onFullscreen}><Maximize2 className="h-3.5 w-3.5" /></ToolButton>
+        <ToolButton title="Screenshot (PNG)" onClick={onScreenshot}><Camera className="h-4 w-4" /></ToolButton>
+        <ToolButton title="Chart settings" onClick={onOpenSettings}><Settings className="h-4 w-4" /></ToolButton>
+        <ToolButton title="Chart layouts" onClick={onOpenLayouts}><LayoutTemplate className="h-4 w-4" /></ToolButton>
+        <ToolButton title="Reset chart view" onClick={onReset}><RotateCcw className="h-4 w-4" /></ToolButton>
+        <ToolButton title="Fullscreen" onClick={onFullscreen}><Maximize2 className="h-4 w-4" /></ToolButton>
       </div>
     </div>
   );
@@ -248,7 +248,7 @@ function ToolButton({ title, onClick, disabled, children }: { title: string; onC
       title={title}
       onClick={onClick}
       disabled={disabled}
-      className={`flex h-6 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 ${disabled ? "opacity-30 hover:bg-transparent hover:text-slate-400" : ""}`}
+      className={`flex h-7 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 ${disabled ? "opacity-30 hover:bg-transparent hover:text-slate-400" : ""}`}
     >
       {children}
     </button>

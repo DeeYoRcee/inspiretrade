@@ -27,7 +27,7 @@ import { saveChartSettingsCloud } from "@/lib/chart-persistence";
 import { useQuotes } from "@/lib/quotes-context";
 import { marketStatus } from "@/lib/market-status";
 import type { ChartSettings } from "@/components/terminal/chart/dialogs";
-import { DEFAULT_SETTINGS } from "@/components/terminal/chart/dialogs";
+import { DEFAULT_SETTINGS, magnetModeOf } from "@/components/terminal/chart/dialogs";
 
 const SECTIONS = [
   { id: "general", label: "General" },
@@ -312,7 +312,7 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                 <Show label="Show grid"><Toggle label="Show grid" checked={chartCfg.grid} onChange={(v) => saveChartCfg({ grid: v })} /></Show>
                 <Show label="OHLC legend"><Toggle label="OHLC legend" checked={chartCfg.legend} onChange={(v) => saveChartCfg({ legend: v })} /></Show>
                 <Show label="Candle-close countdown"><Toggle label="Candle-close countdown" checked={chartCfg.countdown} onChange={(v) => saveChartCfg({ countdown: v })} /></Show>
-                <Show label="Magnet crosshair"><Toggle label="Magnet crosshair" checked={chartCfg.magnet} onChange={(v) => saveChartCfg({ magnet: v })} /></Show>
+                <Show label="Magnet crosshair"><Toggle label="Magnet crosshair" checked={magnetModeOf(chartCfg) > 0} onChange={(v) => saveChartCfg({ magnet: v, magnetMode: v ? 1 : 0 })} /></Show>
                 <Show label="Bid/Ask price lines"><Toggle label="Bid/Ask price lines" checked={chartCfg.bidAsk} onChange={(v) => saveChartCfg({ bidAsk: v })} /></Show>
                 <Show label="Price scale">
                   <Select label="Price scale" value={scaleMode}

@@ -276,7 +276,7 @@ function readLastTool(): Partial<Record<string, DrawingType>> {
 }
 
 export function LeftRail({
-  activeTool, onToolSelect, magnet, onMagnetToggle,
+  activeTool, onToolSelect, magnetMode, onMagnetCycle,
   locked, onLockToggle, hiddenAll, onHideAllToggle,
   drawingsCount, onDeleteAll,
   stayDrawing, onStayDrawingToggle,
@@ -287,8 +287,9 @@ export function LeftRail({
 }: {
   activeTool: DrawingType | "cursor";
   onToolSelect: (t: DrawingType | "cursor") => void;
-  magnet: boolean;
-  onMagnetToggle: () => void;
+  /** P46 §2 — 0=off · 1=normal · 2=strong */
+  magnetMode: 0 | 1 | 2;
+  onMagnetCycle: () => void;
   locked: boolean;
   onLockToggle: () => void;
   hiddenAll: boolean;
@@ -356,18 +357,18 @@ export function LeftRail({
   const activeGroup = activeTool !== "cursor" ? groupOf(activeTool)?.id ?? null : null;
 
   return (
-    <div ref={railRef} className="relative flex w-11 shrink-0 flex-col items-center gap-0.5 border-r border-slate-800 bg-[#0b1220] py-1">
+    <div ref={railRef} className="relative flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-slate-800 bg-[#0b1220] py-1">
       {/* cursor group — cross / dot / arrow pointer modes */}
       <div className="relative">
         <button
           title="Cursor — cross · dot · arrow (Esc resets)"
           onClick={() => setOpenGroup(openGroup === "cursor" ? null : "cursor")}
           className={cn(
-            "flex h-8 w-8 items-center justify-center rounded transition-colors",
+            "flex h-9 w-9 items-center justify-center rounded transition-colors",
             activeTool === "cursor" ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
           )}
         >
-          <CursorGlyph mode={cursorMode} className="h-[18px] w-[18px]" />
+          <CursorGlyph mode={cursorMode} className="h-5 w-5" />
         </button>
         {openGroup === "cursor" && (
           <div className="absolute left-full top-0 z-40 ml-1 flex flex-col gap-0.5 rounded-lg border border-slate-700/80 bg-[#0d1526] p-1 shadow-2xl" role="menu" aria-label="Cursor modes">
@@ -383,11 +384,11 @@ export function LeftRail({
                 aria-label={row.label}
                 onClick={() => { onCursorMode(row.mode); pick("", "cursor"); }}
                 className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded transition-colors",
+                  "flex h-9 w-9 items-center justify-center rounded transition-colors",
                   cursorMode === row.mode && activeTool === "cursor" ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
                 )}
               >
-                <CursorGlyph mode={row.mode} className="h-[18px] w-[18px]" />
+                <CursorGlyph mode={row.mode} className="h-5 w-5" />
               </button>
             ))}
           </div>
@@ -404,7 +405,7 @@ export function LeftRail({
               aria-label="Favorite tools"
               onClick={() => setOpenGroup(isOpen ? null : "fav")}
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded transition-colors",
+                "flex h-9 w-9 items-center justify-center rounded transition-colors",
                 favActive ? "bg-sky-600 text-white" : isOpen ? "bg-slate-800 text-slate-200" : "text-amber-400/90 hover:bg-slate-800",
               )}
             >
@@ -424,11 +425,11 @@ export function LeftRail({
                     title={t}
                     onClick={() => pick("fav", t as DrawingType)}
                     className={cn(
-                      "relative flex h-7 w-7 items-center justify-center rounded transition-colors",
+                      "relative flex h-8 w-8 items-center justify-center rounded transition-colors",
                       activeTool === t ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
                     )}
                   >
-                    <ToolIcon id={t as DrawingType} className="h-[18px] w-[18px]" />
+                    <ToolIcon id={t as DrawingType} className="h-5 w-5" />
                     <Star
                       onClick={(e) => { e.stopPropagation(); toggleFav(t); }}
                       className="absolute right-0 top-0 h-2 w-2 fill-amber-400 text-amber-400"
@@ -452,12 +453,12 @@ export function LeftRail({
               aria-label={grp.title}
               onClick={() => setOpenGroup(isOpen ? null : grp.id)}
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded transition-colors",
+                "flex h-9 w-9 items-center justify-center rounded transition-colors",
                 activeGroup === grp.id ? "bg-sky-600 text-white" : isOpen ? "bg-slate-800 text-slate-200" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
               )}
             >
               <span className="relative">
-                <ToolIcon id={shown} className="h-[18px] w-[18px]" />
+                <ToolIcon id={shown} className="h-5 w-5" />
                 <span className={cn("absolute -bottom-0.5 -right-1 h-1 w-1 rounded-full", isOpen ? "bg-sky-300" : "bg-slate-500")} />
               </span>
             </button>
@@ -476,11 +477,11 @@ export function LeftRail({
                     aria-label={t.label}
                     onClick={() => pick(grp.id, t.id)}
                     className={cn(
-                      "group/tb relative flex h-7 w-7 items-center justify-center rounded transition-colors",
+                      "group/tb relative flex h-8 w-8 items-center justify-center rounded transition-colors",
                       activeTool === t.id ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
                     )}
                   >
-                    <ToolIcon id={t.id} className="h-[18px] w-[18px]" />
+                    <ToolIcon id={t.id} className="h-5 w-5" />
                     <Star
                       onClick={(e) => { e.stopPropagation(); toggleFav(t.id); }}
                       className={cn(
@@ -501,16 +502,21 @@ export function LeftRail({
         active={stayDrawing}
         onClick={onStayDrawingToggle}
       >
-        <PencilLine className="h-[18px] w-[18px]" />
+        <PencilLine className="h-5 w-5" />
       </RailButton>
-      <RailButton title={magnet ? "Magnet mode ON — crosshair snaps to OHLC" : "Magnet mode OFF"} active={magnet} onClick={onMagnetToggle}>
-        <Magnet className="h-[18px] w-[18px]" />
+      <RailButton
+        title={magnetMode === 2 ? "Magnet STRONG — wide OHLC snap (click → normal)" : magnetMode === 1 ? "Magnet ON — cursor/anchors snap to OHLC (click → strong)" : "Magnet OFF (click → normal)"}
+        active={magnetMode > 0}
+        onClick={onMagnetCycle}
+      >
+        <Magnet className="h-5 w-5" />
+        {magnetMode === 2 && <span title="Strong" className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-amber-400" />}
       </RailButton>
       <RailButton title={locked ? "All drawings LOCKED — cannot be moved or edited" : "Unlock drawings"} active={locked} onClick={onLockToggle}>
-        {locked ? <Lock className="h-[18px] w-[18px]" /> : <LockOpen className="h-[18px] w-[18px]" />}
+        {locked ? <Lock className="h-5 w-5" /> : <LockOpen className="h-5 w-5" />}
       </RailButton>
       <RailButton title={hiddenAll ? "Show all drawings" : "Hide all drawings"} active={hiddenAll} onClick={onHideAllToggle}>
-        {hiddenAll ? <EyeOff className="h-[18px] w-[18px]" /> : <Eye className="h-[18px] w-[18px]" />}
+        {hiddenAll ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
       </RailButton>
       <RailButton
         title={drawingsCount > 0 ? `Delete all drawings (${drawingsCount})` : "No drawings"}
@@ -518,7 +524,7 @@ export function LeftRail({
         disabled={drawingsCount === 0 || locked}
         onClick={onDeleteAll}
       >
-        <Eraser className="h-[18px] w-[18px]" />
+        <Eraser className="h-5 w-5" />
       </RailButton>
       <RailButton
         title={hasSelected ? "Delete selected drawing" : "Select a drawing, then click to delete it"}
@@ -526,11 +532,11 @@ export function LeftRail({
         disabled={!hasSelected || locked}
         onClick={onDeleteSelected}
       >
-        <Trash2 className="h-[18px] w-[18px]" />
+        <Trash2 className="h-5 w-5" />
       </RailButton>
       <div className="my-0.5 h-px w-6 bg-slate-800" />
       <RailButton title="Object tree — drawings & indicators" active={objectsOpen} onClick={onObjectsToggle}>
-        <Layers className="h-[18px] w-[18px]" />
+        <Layers className="h-5 w-5" />
       </RailButton>
     </div>
   );
@@ -573,7 +579,7 @@ function RailButton({
       onClick={onClick}
       aria-label={title}
       className={cn(
-        "flex h-8 w-8 items-center justify-center rounded transition-colors",
+        "flex h-9 w-9 items-center justify-center rounded transition-colors",
         active
           ? "bg-sky-600 text-white"
           : danger

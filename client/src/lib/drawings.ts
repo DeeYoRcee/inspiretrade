@@ -303,6 +303,8 @@ export interface DrawingRenderEnv {
   digits?: number;
   contractSize?: number;
   pipSize?: number;
+  /** P46 §1 — minimum price increment for level rounding */
+  tickSize?: number;
   balance?: number;
   symbol?: string;
 }
@@ -382,6 +384,85 @@ export function positionAnchors(pts: XY[]): XY[] {
     { x: xL, y: yMid },
     { x: xR, y: yMid },
   ];
+}
+
+// ---------------------------------------------------------------------------
+// P46 §1 — TradingView-grade position interactions (pure, unit-tested)
+// ---------------------------------------------------------------------------
+
+/** Snap a price onto the instrument's minimum price increment. tickSize
+ * ≤ 0 / missing → unchanged (never fabricate a step the instrument
+ * does not define). */
+export function snapToTick(price: number, tickSize: number | undefined | null): number {
+  if (!Number.isFinite(price) || !tickSize || tickSize <= 0) return price;
+  // toPrecision(12) strips binary float noise (1.2345700000000002 → 1.23457)
+  return Number((Math.round(price / tickSize) * tickSize).toPrecision(12));
+}
+
+/**
+ * P46 §1.1 — directional integrity while DRAGGING a level (the properties
+ * panel stays free-edit; drags can never produce an inverted stop/target):
+ * long stop ≤ entry−tick, long target ≥ entry+tick, short mirrored.
+ */
+export function clampPositionPrice(
+  type: "long-position" | "short-position",
+  handle: number,
+  entryPrice: number,
+  price: number,
+  tickSize?: number | null,
+): number {
+  const tick = tickSize && tickSize > 0 ? tickSize : 0;
+  const gap = tick > 0 ? tick : 0;
+  if (handle === 1) {
+    return type === "long-position"
+      ? Math.min(price, entryPrice - gap)
+      : Math.max(price, entryPrice + gap);
+  }
+  if (handle === 2) {
+    return type === "long-position"
+      ? Math.max(price, entryPrice + gap)
+      : Math.min(price, entryPrice - gap);
+  }
+  return price; // entry level is free
+}
+
+/**
+ * P46 §1.1 — TV-style creation: ONE gesture (press at entry, drag, release)
+ * or two clicks. The drag's price lands on whichever side it was dragged to:
+ * drag up from entry on a LONG = that point is the TARGET and the stop
+ * mirrors it at 1:R (and vice versa); SHORT mirrors both. All levels snap to
+ * the instrument tick; stop/target share the drag's time (band right edge).
+ */
+export function createPositionFromGesture(
+  type: "long-position" | "short-position",
+  entry: DrawingPoint,
+  drag: DrawingPoint,
+  tickSize?: number | null,
+): DrawingPoint[] {
+  const isLong = type === "long-position";
+  const draggedUp = drag.price >= entry.price;
+  // The dragged point is whichever side the user pulled toward (long: up =
+  // target / down = stop; short mirrored). The other level mirrors the drag
+  // around entry — the universal reflection 2·entry − drag (always lands on
+  // the opposite side, 1:1 risk/reward by construction).
+  const far: DrawingPoint = { time: drag.time, price: snapToTick(drag.price, tickSize) };
+  const mirror: DrawingPoint = { time: drag.time, price: snapToTick(entry.price + (entry.price - drag.price), tickSize) };
+  const stop = isLong ? (draggedUp ? mirror : far) : (draggedUp ? far : mirror);
+  const target = isLong ? (draggedUp ? far : mirror) : (draggedUp ? mirror : far);
+  const entrySnapped: DrawingPoint = { time: entry.time, price: snapToTick(entry.price, tickSize) };
+  return [entrySnapped, stop, target];
+}
+
+/** P46 §2 — magnet thresholds in SCREEN px (zoom-independent by design):
+ * normal snaps when the cursor is close, strong reaches further. */
+export const MAGNET_PX = { normal: 12, strong: 36 } as const;
+export type MagnetMode = 0 | 1 | 2; // off · normal · strong
+
+/** P46 §2.1 — resolve the 3-state magnet from stored chart settings (legacy
+ * boolean `magnet` migrates: true→1 normal, false→0 off; junk→0). Pure. */
+export function magnetModeOf(s: { magnet?: boolean; magnetMode?: 0 | 1 | 2 }): 0 | 1 | 2 {
+  if (s.magnetMode === 0 || s.magnetMode === 1 || s.magnetMode === 2) return s.magnetMode;
+  return s.magnet ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1695,12 +1776,25 @@ export function renderDrawing(
     // ---------- measurement & positions ----------
     case "long-position":
     case "short-position": {
-      if (pts.length < 3) break; // P39b: mid-creation preview may be short
-      const [entry, stop, target] = pts;
+      // P46 §1.1 — 2-point PREVIEW while the user is still pressing/dragging
+      // (entry placed, second level following the cursor): derive the missing
+      // side as the 1:R mirror so the preview shows the final geometry.
+      const previewPts = pts.length === 2
+        ? [
+            pts[0],
+            pts[1],
+            {
+              x: pts[1].x,
+              y: Math.max(0, Math.min(canvasH, pts[0].y + (pts[0].y - pts[1].y))),
+            } as XY,
+          ]
+        : pts;
+      if (previewPts.length < 3) break; // single click placed — nothing to show yet
+      const [entry, stop, target] = previewPts;
       const isLong = d.type === "long-position";
       const lossCol = d.style.lossColor || "#ef4444";
       const profitCol = d.style.profitColor || "#22c55e";
-      const alpha = d.style.opacity ?? 1;
+      const alpha = (d.style.opacity ?? 1) * (pts.length === 2 ? 0.55 : 1);
       // P41 — the band spans [entry.x, stop.x]; target.x is IGNORED: all
       // three levels always span the whole band (TradingView geometry)
       const xL = Math.min(entry.x, stop.x);
@@ -1761,15 +1855,18 @@ export function renderDrawing(
         ctx.textAlign = "left";
       }
       // header: direction · RR · size + money (money ONLY when the live
-      // balance was provided — never fabricated)
+      // balance was provided — never fabricated). P46 §1.2: the whole text
+      // block honours showLabels — off means a clean, label-free box.
       const dir = isLong ? "Long" : "Short";
-      let header = `${dir} · RR ${calc.rr.toFixed(2)}`;
-      if (calc.lots != null) header += ` · ${calc.lots.toFixed(2)} lots`;
-      if (calc.riskAmount != null && calc.rewardAmount != null) {
-        header += ` · Risk $${calc.riskAmount.toFixed(0)} / Reward $${calc.rewardAmount.toFixed(0)}`;
+      if (d.style.showLabels !== false) {
+        let header = `${dir} · RR ${calc.rr.toFixed(2)}`;
+        if (calc.lots != null) header += ` · ${calc.lots.toFixed(2)} lots`;
+        if (calc.riskAmount != null && calc.rewardAmount != null) {
+          header += ` · Risk $${calc.riskAmount.toFixed(0)} / Reward $${calc.rewardAmount.toFixed(0)}`;
+        }
+        ctx.fillStyle = d.style.color;
+        ctx.fillText(header, xL + 4, yTop - 6);
       }
-      ctx.fillStyle = d.style.color;
-      ctx.fillText(header, xL + 4, yTop - 6);
       ctx.restore();
       break;
     }

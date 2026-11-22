@@ -101,9 +101,9 @@ export function FavoritesToolbar({
         onPointerMove={onGripMove}
         onPointerUp={onGripUp}
         onPointerCancel={onGripUp}
-        className="flex h-8 w-5 shrink-0 touch-none cursor-grab items-center justify-center rounded text-slate-500 hover:text-slate-200 active:cursor-grabbing"
+        className="flex h-9 w-6 shrink-0 touch-none cursor-grab items-center justify-center rounded text-slate-500 hover:text-slate-200 active:cursor-grabbing"
       >
-        <GripVertical className="h-3.5 w-3.5" />
+        <GripVertical className="h-4 w-4" />
       </button>
       {favs.map((t, i) => (
         <div
@@ -123,7 +123,7 @@ export function FavoritesToolbar({
           onDrop={(e) => e.preventDefault()}
           onDragEnd={() => setDragIdx(null)}
           className={cn(
-            "group/f relative flex h-8 w-8 items-center justify-center rounded transition-colors",
+            "group/f relative flex h-9 w-9 items-center justify-center rounded transition-colors",
             activeTool === t ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
             dragIdx === i && "opacity-30",
           )}
@@ -134,7 +134,7 @@ export function FavoritesToolbar({
             onClick={() => onActivate(t as DrawingType)}
             className="flex h-full w-full items-center justify-center"
           >
-            <ToolIcon id={t as DrawingType} className="h-[18px] w-[18px]" />
+            <ToolIcon id={t as DrawingType} className="h-5 w-5" />
           </button>
           <button
             title={`Remove ${toolDisplayName(t as DrawingType)} from favorites`}

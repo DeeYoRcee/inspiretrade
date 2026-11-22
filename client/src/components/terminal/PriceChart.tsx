@@ -71,6 +71,7 @@ import { loadDrawingTemplates, saveDrawingTemplate, deleteDrawingTemplate, loadF
 import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorLibraryDialog, IndicatorParamsDialog,
   LayoutsDialog, SettingsDialog, type ContextMenuState,
+  magnetModeOf,
 } from "@/components/terminal/chart/dialogs";
 import { Eye, EyeOff, X, Activity, Database, Lock, Unlock, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { useIsAdmin } from "@/hooks/use-admin";
@@ -507,6 +508,7 @@ export function PriceChart({
     digits: effDigits,
     contractSize: inst?.contractSize,
     pipSize: inst?.pipSize,
+    tickSize: inst?.tickSize, // P46 §1 — level rounding to the real tick
     balance: accountBalance ?? undefined,
     symbol,
   }), [effDigits, inst, accountBalance, symbol]);
@@ -610,7 +612,7 @@ export function PriceChart({
         ? { vertLines: { color: mergedSettings.gridColor ?? COLORS.grid }, horzLines: { color: mergedSettings.gridColor ?? COLORS.grid } }
         : { vertLines: { visible: false }, horzLines: { visible: false } },
       crosshair: {
-        mode: mergedSettings.magnet ? CrosshairMode.Magnet : CrosshairMode.Normal,
+        mode: magnetModeOf(mergedSettings) > 0 ? CrosshairMode.Magnet : CrosshairMode.Normal,
         vertLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
         horzLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
       },
@@ -2126,8 +2128,11 @@ export function PriceChart({
           favs={favTools}
           onToggleFav={toggleFavTool}
           onToolSelect={(t) => setActiveTool((cur) => (cur === t ? "cursor" : t))}
-          magnet={settings.magnet}
-          onMagnetToggle={() => setSettings((s) => ({ ...s, magnet: !s.magnet }))}
+          magnetMode={magnetModeOf(settings)}
+          onMagnetCycle={() => setSettings((s) => {
+            const next = ((magnetModeOf(s) + 1) % 3) as 0 | 1 | 2;
+            return { ...s, magnetMode: next, magnet: next > 0 }; // keep the legacy boolean in sync
+          })}
           locked={locked}
           onLockToggle={() => setLocked((v) => { try { localStorage.setItem("it_chart_lock", v ? "0" : "1"); } catch { /* private mode */ } return !v; })}
           hiddenAll={hiddenAll}
@@ -2198,7 +2203,7 @@ export function PriceChart({
           // tool ALWAYS returns to the cursor; hold Shift while committing to
           // chain another object with the same tool. Esc also disarms.
           onToolCommitted={() => { if (!stayDrawingRef.current && !shiftHeldRef.current) setActiveTool("cursor"); }}
-          magnet={settings.magnet}
+          magnetMode={magnetModeOf(settings)}
           toolDefaults={styleForTool(toolDefaultMap, activeTool === "cursor" ? null : activeTool, {
             color: settingsRef.current.drawColor,
             width: settingsRef.current.drawWidth,
@@ -2256,7 +2261,7 @@ export function PriceChart({
               drawing={sel}
               positionEnv={renderEnv}
               onSetDefault={() => {
-                if (uid) saveDrawingDefaults(uid, { ...toolDefaultMap, [sel.type]: newDefaultFromStyle(sel.style) });
+                if (uid) saveDrawingDefaults(uid, { ...toolDefaultMap, [sel.type]: newDefaultFromStyle(sel.style, sel.riskPct) });
               }}
               fibPresets={fibPresets}
               onSaveFibPreset={(name, lvls) => {
@@ -2278,7 +2283,6 @@ export function PriceChart({
                 setSelectedDrawingId(copy.id);
               }}
               onDelete={() => { commitDrawings(drawingsRef.current.filter((d) => d.id !== sel.id)); setSelectedDrawingId(null); setSelectedIds([]); }}
-              onReorder={(action) => commitDrawings(reorderDrawing(drawingsRef.current, sel.id, action))}
               onEditText={() => {
                 const text = window.prompt("Text", sel.text || "") ?? "";
                 if (!text.trim()) return;

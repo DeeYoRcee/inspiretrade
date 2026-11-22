@@ -181,10 +181,10 @@ export function ObjectTree({
     { label: "No group", onClick: () => onMoveToGroup(ids, null) },
     ...Object.values(groups)
       .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
-      .map((g) => ({ label: g.name, icon: <Folder className="h-3 w-3 text-slate-500" />, onClick: () => onMoveToGroup(ids, g.id) })),
+      .map((g) => ({ label: g.name, icon: <Folder className="h-3.5 w-3.5 text-slate-500" />, onClick: () => onMoveToGroup(ids, g.id) })),
     {
       label: "＋ New group…",
-      icon: <FolderPlus className="h-3 w-3 text-slate-500" />,
+      icon: <FolderPlus className="h-3.5 w-3.5 text-slate-500" />,
       onClick: () => {
         const name = window.prompt("New group name", "Group")?.trim();
         if (!name) return;
@@ -193,27 +193,27 @@ export function ObjectTree({
     },
   ];
   const rowMenuFor = (d: Drawing): MenuItem[] => [
-    { label: "Rename", icon: <Pencil className="h-3 w-3" />, onClick: () => startRename(d) },
-    { label: "Edit properties", icon: <PenLine className="h-3 w-3" />, onClick: () => onEditProperties(d.id) },
-    { label: "Duplicate", icon: <Copy className="h-3 w-3" />, onClick: () => onDuplicate(d.id) },
-    { label: d.locked ? "Unlock" : "Lock", icon: d.locked ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />, onClick: () => onPatch(d.id, { locked: !d.locked }) },
-    { label: d.hidden ? "Show" : "Hide", icon: d.hidden ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />, onClick: () => onPatch(d.id, { hidden: !d.hidden }) },
-    { label: "Move to group", icon: <FolderInput className="h-3 w-3" />, sub: moveGroupSub([d.id]) },
-    { label: "Bring to front", icon: <ArrowUpToLine className="h-3 w-3" />, onClick: () => onReorder(d.id, "front") },
-    { label: "Send to back", icon: <ArrowDownToLine className="h-3 w-3" />, onClick: () => onReorder(d.id, "back") },
-    { label: "Delete", danger: true, icon: <Trash2 className="h-3 w-3" />, disabled: d.locked, onClick: () => onDelete([d.id]) },
+    { label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, onClick: () => startRename(d) },
+    { label: "Edit properties", icon: <PenLine className="h-3.5 w-3.5" />, onClick: () => onEditProperties(d.id) },
+    { label: "Duplicate", icon: <Copy className="h-3.5 w-3.5" />, onClick: () => onDuplicate(d.id) },
+    { label: d.locked ? "Unlock" : "Lock", icon: d.locked ? <Unlock className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />, onClick: () => onPatch(d.id, { locked: !d.locked }) },
+    { label: d.hidden ? "Show" : "Hide", icon: d.hidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />, onClick: () => onPatch(d.id, { hidden: !d.hidden }) },
+    { label: "Move to group", icon: <FolderInput className="h-3.5 w-3.5" />, sub: moveGroupSub([d.id]) },
+    { label: "Bring to front", icon: <ArrowUpToLine className="h-3.5 w-3.5" />, onClick: () => onReorder(d.id, "front") },
+    { label: "Send to back", icon: <ArrowDownToLine className="h-3.5 w-3.5" />, onClick: () => onReorder(d.id, "back") },
+    { label: "Delete", danger: true, icon: <Trash2 className="h-3.5 w-3.5" />, disabled: d.locked, onClick: () => onDelete([d.id]) },
   ];
   const groupMenuFor = (g: DrawingGroup): MenuItem[] => {
     const memberIds = drawings.filter((d) => d.group === g.id).map((d) => d.id);
     const n = memberIds.length;
     return [
-      { label: "Rename group", icon: <Pencil className="h-3 w-3" />, onClick: () => startGroupRename(g) },
-      { label: groupFlag(drawings, g.id, "hidden") ? "Show all members" : "Hide all members", icon: <EyeOff className="h-3 w-3" />, disabled: !n, onClick: () => onToggleGroupHidden(g.id) },
-      { label: groupFlag(drawings, g.id, "locked") ? "Unlock all members" : "Lock all members", icon: <Lock className="h-3 w-3" />, disabled: !n, onClick: () => onToggleGroupLocked(g.id) },
+      { label: "Rename group", icon: <Pencil className="h-3.5 w-3.5" />, onClick: () => startGroupRename(g) },
+      { label: groupFlag(drawings, g.id, "hidden") ? "Show all members" : "Hide all members", icon: <EyeOff className="h-3.5 w-3.5" />, disabled: !n, onClick: () => onToggleGroupHidden(g.id) },
+      { label: groupFlag(drawings, g.id, "locked") ? "Unlock all members" : "Lock all members", icon: <Lock className="h-3.5 w-3.5" />, disabled: !n, onClick: () => onToggleGroupLocked(g.id) },
       {
         label: `Delete group (${n} → ungrouped)`,
         danger: true,
-        icon: <Trash2 className="h-3 w-3" />,
+        icon: <Trash2 className="h-3.5 w-3.5" />,
         onClick: () => {
           if (window.confirm(`Delete group "${g.name}"? Its ${n} drawing(s) move back to Ungrouped — nothing is deleted.`)) onDeleteGroup(g.id);
         },
@@ -231,7 +231,7 @@ export function ObjectTree({
         onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: rowMenuFor(d) }); }}
       >
         <span className="flex h-4 w-4 shrink-0 items-center justify-center text-slate-400" title={toolDisplayName(d.type)}>
-          <ToolIcon id={d.type} className="h-3.5 w-3.5" />
+          <ToolIcon id={d.type} className="h-4 w-4" />
         </span>
         {renamingId === d.id ? (
           <input
@@ -258,14 +258,14 @@ export function ObjectTree({
           </button>
         )}
         <button title={d.hidden ? "Show" : "Hide"} onClick={() => onPatch(d.id, { hidden: !d.hidden })} className="text-slate-500 hover:text-slate-200">
-          {d.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+          {d.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
         </button>
         <button
           title={d.locked ? "Unlock object" : "Lock object"}
           onClick={() => onPatch(d.id, { locked: !d.locked })}
           className={cn("text-slate-500 hover:text-slate-200", d.locked && "text-amber-400")}
         >
-          {d.locked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+          {d.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
         </button>
       </div>
     );
@@ -291,22 +291,22 @@ export function ObjectTree({
     >
       {/* header */}
       <div className="flex items-center gap-1 border-b border-slate-800 px-2 py-1.5">
-        <Layers className="h-3.5 w-3.5 text-slate-400" />
+        <Layers className="h-4 w-4 text-slate-400" />
         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Objects · {drawings.length}</span>
         <span className="ml-auto flex items-center gap-0.5">
           <button
             title="Hide every drawing (each keeps its own state — Show all reverses it)"
             onClick={() => onPatchMany(drawings.map((d) => d.id), { hidden: true })}
-            className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
           >
-            <EyeOff className="h-3.5 w-3.5" />
+            <EyeOff className="h-4 w-4" />
           </button>
           <button
             title="Show every drawing"
             onClick={() => onPatchMany(drawings.map((d) => d.id), { hidden: false })}
-            className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
           >
-            <Eye className="h-3.5 w-3.5" />
+            <Eye className="h-4 w-4" />
           </button>
           <button
             title="New group"
@@ -314,12 +314,12 @@ export function ObjectTree({
               const name = window.prompt("New group name", "Group")?.trim();
               if (name) onCreateGroup(name);
             }}
-            className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
           >
-            <FolderPlus className="h-3.5 w-3.5" />
+            <FolderPlus className="h-4 w-4" />
           </button>
-          <button title="Close the object tree" onClick={onClose} className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
-            <X className="h-3.5 w-3.5" />
+          <button title="Close the object tree" onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
+            <X className="h-4 w-4" />
           </button>
         </span>
       </div>
@@ -327,7 +327,7 @@ export function ObjectTree({
       {/* search + category filter */}
       <div className="flex items-center gap-1 border-b border-slate-800 px-2 py-1">
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-600" />
+          <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-600" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -351,33 +351,33 @@ export function ObjectTree({
         <button
           title="Select all drawings in the list"
           onClick={() => { for (const d of visibleRows) if (!selSet.has(d.id)) onToggleSelect(d.id); }}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
         >
-          <ListChecks className="h-3.5 w-3.5" />
+          <ListChecks className="h-4 w-4" />
         </button>
         <button
           title="Duplicate the primary selected drawing"
           disabled={!selectedDrawingId}
           onClick={() => selectedDrawingId && onDuplicate(selectedDrawingId)}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
         >
-          <Copy className="h-3.5 w-3.5" />
+          <Copy className="h-4 w-4" />
         </button>
         <button
           title="Hide selected drawings"
           disabled={!selIds.length}
           onClick={() => onPatchMany(selIds, { hidden: true })}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
         >
-          <EyeOff className="h-3.5 w-3.5" />
+          <EyeOff className="h-4 w-4" />
         </button>
         <button
           title="Lock selected drawings"
           disabled={!selIds.length}
           onClick={() => onPatchMany(selIds, { locked: true })}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
         >
-          <Lock className="h-3.5 w-3.5" />
+          <Lock className="h-4 w-4" />
         </button>
         <button
           title="Move selected drawings into a group"
@@ -386,17 +386,17 @@ export function ObjectTree({
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             setMenu({ x: r.left, y: r.bottom + 4, items: moveGroupSub(selIds) });
           }}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
         >
-          <FolderInput className="h-3.5 w-3.5" />
+          <FolderInput className="h-4 w-4" />
         </button>
         <button
           title="Delete selected drawings (locked ones are never deleted)"
           disabled={!deletable.length}
           onClick={() => onDelete(deletable)}
-          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-red-500/15 hover:text-red-300 disabled:opacity-30"
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-red-500/15 hover:text-red-300 disabled:opacity-30"
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="h-4 w-4" />
         </button>
         {selIds.length > 0 && (
           <button title="Clear selection" onClick={() => { for (const id of selIds) onToggleSelect(id); }} className="ml-auto text-[10px] text-sky-400 hover:text-sky-300">
@@ -433,7 +433,7 @@ export function ObjectTree({
                   onClick={() => onGroupsChange({ ...groups, [g.id]: { ...g, collapsed: !collapsed } })}
                   className="flex h-4 w-4 items-center justify-center text-slate-500 hover:text-slate-300"
                 >
-                  {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                 </button>
                 {editingGroupId === g.id ? (
                   <input
@@ -451,7 +451,7 @@ export function ObjectTree({
                     onDoubleClick={() => startGroupRename(g)}
                     title="Click: expand/collapse · double-click: rename · right-click: group menu"
                   >
-                    <Folder className="h-3 w-3 shrink-0 text-amber-400/80" />
+                    <Folder className="h-3.5 w-3.5 shrink-0 text-amber-400/80" />
                     <span className="truncate normal-case">{g.name}</span>
                   </button>
                 )}
@@ -461,14 +461,14 @@ export function ObjectTree({
                   onClick={() => onToggleGroupHidden(g.id)}
                   className={cn("text-slate-500 hover:text-slate-200", groupFlag(drawings, g.id, "hidden") && "text-slate-600")}
                 >
-                  <EyeOff className="h-3 w-3" />
+                  <EyeOff className="h-3.5 w-3.5" />
                 </button>
                 <button
                   title={groupFlag(drawings, g.id, "locked") ? "Unlock all members" : "Lock all members"}
                   onClick={() => onToggleGroupLocked(g.id)}
                   className={cn("text-slate-500 hover:text-slate-200", groupFlag(drawings, g.id, "locked") && "text-amber-400")}
                 >
-                  <Lock className="h-3 w-3" />
+                  <Lock className="h-3.5 w-3.5" />
                 </button>
                 <button
                   title="Group menu"
@@ -478,7 +478,7 @@ export function ObjectTree({
                   }}
                   className="text-slate-500 hover:text-slate-200"
                 >
-                  <MoreVertical className="h-3 w-3" />
+                  <MoreVertical className="h-3.5 w-3.5" />
                 </button>
               </div>
               {!collapsed && members.map(row)}

@@ -15,7 +15,8 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "re
 import {
   hitTest, makeDrawing, renderDrawing, setupCanvas, regressionLine,
   TEXT_TOOLS, CLICK_COLLECT_TOOLS, TOOL_POINT_COUNT, TOOL_LABELS, drawHandle,
-  magnetSnapPrice, magnetSnapTime,
+  magnetSnapPrice, magnetSnapTime, MAGNET_PX, snapToTick, clampPositionPrice,
+  createPositionFromGesture, fmtPositionPrice,
   type Drawing, type DrawingPoint, type DrawingType, type XY, isPositionTool, positionAnchors, type DrawingRenderEnv } from "@/lib/drawings";
 
 export interface TradeLine {
@@ -52,6 +53,8 @@ interface DragState {
   startX?: number;
   startY?: number;
   moved?: boolean;
+  /** P46 §1.1 — position creation: press coordinates of the entry gesture */
+  positionPress?: XY;
 }
 
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
@@ -88,15 +91,19 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   locked?: boolean;
   /** global visibility toggle — hides every drawing (render + hit-test) */
   hiddenAll?: boolean;
-  /** Phase 27 §7 magnet: snap NEW anchors to the nearest bar OHLC/time */
+  /** Phase 27 §7 magnet: snap NEW anchors to the nearest bar OHLC/time.
+   * P46 §2 — three states: 0=off · 1=normal (12px) · 2=strong (36px). The
+   * legacy boolean prop maps true→1. Magnet now ALSO applies to handle drags
+   * (the dragged anchor only) — never to chart panning. */
   magnet?: boolean;
+  magnetMode?: 0 | 1 | 2;
   /** P41 — instrument metadata + live balance for position drawings */
   renderEnv?: DrawingRenderEnv;
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
   onSelect, onDelete, onDeleteMany, onEdit, onContextMenu, tradeLines, onTradeLineMove,
   tfSeconds = 0, digits = 2, locked = false, hiddenAll = false, getBars, cursorFallback = "default",
-  selectedIds, onSelectIds, toolDefaults, magnet = false, renderEnv,
+  selectedIds, onSelectIds, toolDefaults, magnet = false, magnetMode, renderEnv,
 }, ref) => {
   const renderEnvRef = useRef(renderEnv);
   renderEnvRef.current = renderEnv;
@@ -120,8 +127,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   }, [activeTool, attachRef]);
   const drawingsRef = useRef(drawings);
   drawingsRef.current = drawings;
-  const magnetRef = useRef(magnet);
-  magnetRef.current = magnet;
+  /** P46 §2 — 0=off · 1=normal · 2=strong (legacy boolean prop maps true→1) */
+  const magnetModeRef = useRef<0 | 1 | 2>(0);
+  magnetModeRef.current = (magnetMode ?? (magnet ? 1 : 0)) as 0 | 1 | 2;
+  /** P46 §2.5 — last snap location for the visual feedback ring (post-clip) */
+  const snapFlashRef = useRef<XY | null>(null);
   const getBarsRef = useRef(getBars);
   getBarsRef.current = getBars;
   /** Phase 27 §7: inline text editor draft (replaces window.prompt) */
@@ -187,19 +197,31 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     return { time: t, price: pr };
   };
 
-  const snapPoint = (time: number, price: number): { time: number; price: number } => {
-    if (!magnetRef.current) return { time, price };
-    const t = magnetSnapTime(time, tfRef.current);
+  /** P46 §2.3 — the bar containing a time (binary search over the REAL
+   * series): snapping only ever lands on actual OHLC values of existing
+   * candles — never on empty space or fabricated data. */
+  const barAtTime = (t: number): { open: number; high: number; low: number; close: number } | null => {
     const bars = getBarsRef.current?.() ?? [];
-    let bar: { open: number; high: number; low: number; close: number } | null = null;
-    if (bars.length) {
-      let lo = 0, hi = bars.length - 1;
-      while (lo < hi) { const mid = (lo + hi) >> 1; if ((bars[mid] as any).time < t) lo = mid + 1; else hi = mid; }
-      const cand = bars[lo] as any;
-      if (cand) bar = cand;
+    if (!bars.length) return null;
+    let lo = 0, hi = bars.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if ((bars[mid] as any).time < t) lo = mid + 1; else hi = mid; }
+    return (bars[lo] as any) ?? null;
+  };
+  /** P46 §2.2 — proximity threshold: normal 12px, strong 36px (screen px, so
+   * it behaves consistently at any zoom / device pixel ratio) */
+  const magnetThreshold = (): number => (magnetModeRef.current === 2 ? MAGNET_PX.strong : MAGNET_PX.normal);
+
+  const snapPoint = (time: number, price: number): { time: number; price: number } => {
+    if (!magnetModeRef.current) return { time, price };
+    const t = magnetSnapTime(time, tfRef.current);
+    const bar = barAtTime(t);
+    const snapped = magnetSnapPrice(price, bar, (pp) => converterRef.current?.y(pp) ?? null, magnetThreshold());
+    if ((snapped !== price || t !== time)) {
+      const sx = converterRef.current?.x(t) ?? null;
+      const sy = converterRef.current?.y(snapped) ?? null;
+      if (sx != null && sy != null) snapFlashRef.current = { x: sx, y: sy };
     }
-    const price2 = magnetSnapPrice(price, bar, (pp) => converterRef.current?.y(pp) ?? null);
-    return { time: t, price: price2 };
+    return { time: t, price: snapped };
   };
 
   /** measure tool summary: Δprice (Δ%) over N bars — computed in MARKET space */
@@ -298,7 +320,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const pts = toCanvas(drag.drawing);
       const m = mouseRef.current;
       const wantPts = TOOL_POINT_COUNT[drag.drawing.type];
-      if (m && pts.length < wantPts) {
+      if (isPositionTool(drag.drawing.type) && drag.drawing.points.length === 1 && m) {
+        // P46 §1.1 — live 1:R preview: the cursor is the second level and the
+        // opposite level mirrors it around entry, so the preview shows the
+        // FINAL geometry while the user is still choosing the side
+        const e0 = pts[0] ?? m;
+        pts.length = 0;
+        pts.push(e0, { x: m.x, y: m.y }, { x: m.x, y: Math.max(0, Math.min(H, 2 * e0.y - m.y)) });
+      } else if (m && pts.length < wantPts) {
         // P38 §5 — Shift-locked preview leg
         const last = drag.drawing.points[drag.drawing.points.length - 1];
         const anchor = last ? (() => { const ax = conv.x(last.time); const ay = conv.y(last.price); return ax != null && ay != null ? { x: ax, y: ay } : null; })() : null;
@@ -361,6 +390,56 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       }
     }
     ctx.restore();
+
+    // ---- P46 §1.2 — POST-CLIP overlays: TradingView-style price-axis tags
+    // for the Entry/Stop/Target levels (drawn on the axis strip right of the
+    // pane) + the P46 §2.5 magnet snap-flash ring ----
+    const axisW = Math.max(0, canvas.clientWidth - conv.paneW);
+    if (axisW > 8) {
+      const env = renderEnvRef.current;
+      const dEnv = env?.digits ?? digitsRef.current;
+      for (const d of drawingsRef.current) {
+        if (!isPositionTool(d.type) || d.hidden || d.points.length < 3) continue;
+        const tags: Array<[number, string, string]> = [
+          [d.points[0].price, fmtPositionPrice(d.points[0].price, dEnv), d.style.color],
+          [d.points[1].price, fmtPositionPrice(d.points[1].price, dEnv), d.style.lossColor || "#ef4444"],
+          [d.points[2].price, fmtPositionPrice(d.points[2].price, dEnv), d.style.profitColor || "#22c55e"],
+        ];
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.font = "bold 10px ui-sans-serif, system-ui";
+        for (const [pr, text, bg] of tags) {
+          const y = conv.y(pr);
+          if (y == null || y < 0 || y > conv.paneH) continue;
+          const tw = Math.min(axisW, ctx.measureText(text).width + 8);
+          ctx.globalAlpha = 0.95;
+          ctx.fillStyle = bg;
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") ctx.roundRect(conv.paneW + 1, Math.round(y - 7), tw, 14, 3);
+          else ctx.rect(conv.paneW + 1, Math.round(y - 7), tw, 14);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#0b1220";
+          ctx.fillText(text, conv.paneW + 5, Math.round(y - 7) + 10.5);
+        }
+        ctx.restore();
+      }
+    }
+    const flash = snapFlashRef.current;
+    if (flash) {
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = "rgba(56,189,248,0.9)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(flash.x, flash.y, 7, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(flash.x, flash.y, 2, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(56,189,248,0.9)";
+      ctx.fill();
+      ctx.restore();
+    }
   };
 
   useImperativeHandle(ref, () => ({ redraw }));
@@ -458,6 +537,34 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       // otherwise the stroke stayed armed and "kept drawing" on re-entry
       captureSafe(target, e.pointerId);
       const drag = dragRef.current;
+      // P46 §1.1 — position tools: ONE gesture (press entry → drag → release)
+      // or two clicks. The second point's SIDE decides stop vs target; the
+      // opposite level mirrors it at 1:R. All levels snap to the instrument
+      // tick (renderEnv.tickSize) — TradingView placement semantics.
+      if (isPositionTool(tool)) {
+        const tick = renderEnvRef.current?.tickSize;
+        const snapped = snapPoint(time, price);
+        if (drag?.mode === "draw" && drag.drawing && drag.drawing.type === tool && drag.drawing.points.length === 1) {
+          // second gesture (plain click) → derive stop/target + commit
+          const d2 = drag.drawing;
+          d2.points = createPositionFromGesture(tool as "long-position" | "short-position", d2.points[0], snapped, tick);
+          cbRef.current.onChange([...drawingsRef.current, d2]);
+          dragRef.current = null;
+          snapFlashRef.current = null;
+          cbRef.current.onToolCommitted();
+          cbRef.current.onSelect(d2.id);
+          redraw();
+          return;
+        }
+        const d = makeDrawing(tool, []);
+        const { riskPct: defaultRisk, ...stylePatch } = (toolDefaultsRef.current ?? {}) as Partial<Drawing["style"]> & { riskPct?: number };
+        d.style = { ...d.style, ...stylePatch };
+        if (typeof defaultRisk === "number" && defaultRisk > 0) d.riskPct = defaultRisk;
+        d.points = [{ time: snapped.time, price: snapToTick(snapped.price, tick) }];
+        dragRef.current = { mode: "draw", drawing: d, positionPress: { x: p.x, y: p.y } };
+        redraw();
+        return;
+      }
       const drawing = drag?.mode === "draw" && drag.drawing
         ? drag.drawing
         : (() => {
@@ -493,6 +600,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         }
         cbRef.current.onChange([...drawingsRef.current, drawing]);
         dragRef.current = null;
+        snapFlashRef.current = null;
         cbRef.current.onToolCommitted();
         cbRef.current.onSelect(drawing.id);
       } else {
@@ -616,25 +724,69 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const price = conv.price(p.y);
       if (time == null || price == null) return;
       const points = drag.original.points.map((q) => ({ ...q }));
-      // hline/vline/text drag only the meaningful axis
+      const tick = renderEnvRef.current?.tickSize;
+      const snapPx = magnetModeRef.current ? magnetThreshold() : 0;
+      /** P46 §2.5 — flash ring at the snapped location (post-clip overlay) */
+      const flashAt = (t2: number, pr2: number) => {
+        const sx = conv.x(t2), sy = conv.y(pr2);
+        if (sx != null && sy != null) snapFlashRef.current = { x: sx, y: sy };
+      };
+      // P46 §2.4/§2.6 — magnet applies ONLY to the anchor being dragged
+      // (never to panning, the crosshair path, or the other anchors);
+      // hline/vline snap their meaningful axis.
       if (drag.original.type === "hline" || drag.original.type === "text") {
-        points[drag.handle] = { ...points[drag.handle], price };
+        let pr2 = price;
+        if (snapPx) {
+          const s = magnetSnapPrice(price, barAtTime(points[drag.handle].time), (pp) => conv.y(pp) ?? null, snapPx);
+          if (s !== price) { pr2 = s; flashAt(points[drag.handle].time, s); }
+        }
+        points[drag.handle] = { ...points[drag.handle], price: pr2 };
       } else if (drag.original.type === "vline") {
-        points[drag.handle] = { ...points[drag.handle], time };
+        let t2 = time;
+        if (snapPx) {
+          const st = magnetSnapTime(time, tfRef.current);
+          if (st !== time) { t2 = st; flashAt(st, points[drag.handle].price); }
+        }
+        points[drag.handle] = { ...points[drag.handle], time: t2 };
       } else if (isPositionTool(drag.original.type) && drag.original.points.length >= 3) {
-        // P41 — position semantics: handles 0-2 move their LEVEL vertically
+        const posType = drag.original.type as "long-position" | "short-position";
+        // P41/P46 — position semantics: handles 0-2 move their LEVEL vertically
         // only (never the band, never each other); 3/4 drag the band edges
         // horizontally (right edge carries target.time with it)
         if (drag.handle <= 2) {
-          points[drag.handle] = { ...points[drag.handle], price };
+          // P46 §1.1 — OHLC magnet (price axis) → tick rounding → the level
+          // can never drag its way through entry (directional integrity)
+          const entryPrice = drag.original.points[0].price;
+          let pr2 = price;
+          if (snapPx) {
+            const s = magnetSnapPrice(price, barAtTime(points[drag.handle].time), (pp) => conv.y(pp) ?? null, snapPx);
+            if (s !== price) { pr2 = s; flashAt(points[drag.handle].time, s); }
+          }
+          pr2 = snapToTick(clampPositionPrice(posType, drag.handle, entryPrice, pr2, tick), tick);
+          points[drag.handle] = { ...points[drag.handle], price: pr2 };
         } else if (drag.handle === 3) {
-          points[0] = { ...points[0], time };
+          let t2 = time;
+          if (snapPx) {
+            const st = magnetSnapTime(time, tfRef.current);
+            if (st !== time) { t2 = st; flashAt(st, points[0].price); }
+          }
+          points[0] = { ...points[0], time: t2 };
         } else {
-          points[1] = { ...points[1], time };
-          points[2] = { ...points[2], time };
+          let t2 = time;
+          if (snapPx) {
+            const st = magnetSnapTime(time, tfRef.current);
+            if (st !== time) { t2 = st; flashAt(st, points[1].price); }
+          }
+          points[1] = { ...points[1], time: t2 };
+          points[2] = { ...points[2], time: t2 };
         }
       } else {
-        points[drag.handle] = { time, price };
+        let pt: DrawingPoint = { time, price };
+        if (snapPx) {
+          const s = snapPoint(time, price);
+          if (s.time !== time || s.price !== price) { pt = s; flashAt(s.time, s.price); }
+        }
+        points[drag.handle] = pt;
       }
       drag.drawing = { ...drag.original, points };
       drag.moved = true;
@@ -645,6 +797,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   const finishDrag = () => {
     const drag = dragRef.current;
     const conv = converterRef.current;
+    snapFlashRef.current = null;
     if (!drag || !conv) return;
     if (drag.mode === "draw") return; // multi-point tool in progress — the NEXT click commits it
     if (drag.mode === "move" || drag.mode === "handle") {
@@ -683,6 +836,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       e.stopPropagation();
       const d = drag.drawing;
       dragRef.current = null;
+      snapFlashRef.current = null;
       if (d.points.length >= 2) {
         cbRef.current.onChange([...drawingsRef.current, d]);
         cbRef.current.onSelect(d.id);
@@ -705,6 +859,31 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         const tool = toolRef.current;
         const wanted = TOOL_POINT_COUNT[tool];
         const d = dragDraw.drawing;
+        // P46 §1.1 — position release-derive: press at entry, drag ≥4px,
+        // release → the FULL three-level position commits from the gesture
+        // (the drag side picks stop vs target; the other mirrors at 1:R)
+        if (isPositionTool(tool) && d.points.length === 1 && dragDraw.positionPress) {
+          const conv = converterRef.current;
+          const p = conv ? localXY(e) : null;
+          const press = dragDraw.positionPress;
+          if (conv && p && (Math.abs(p.x - press.x) > 4 || Math.abs(p.y - press.y) > 4)) {
+            const time = conv.time(p.x);
+            const price = conv.price(p.y);
+            if (time != null && price != null) {
+              const s2 = snapPoint(time, price);
+              d.points = createPositionFromGesture(tool as "long-position" | "short-position", d.points[0], s2, renderEnvRef.current?.tickSize);
+              e.stopPropagation();
+              dragRef.current = null;
+              snapFlashRef.current = null;
+              cbRef.current.onChange([...drawingsRef.current, d]);
+              cbRef.current.onToolCommitted();
+              cbRef.current.onSelect(d.id);
+              redraw();
+              return;
+            }
+          }
+          // short press → stay armed: the next click finalises (two-click flow)
+        }
         if (wanted >= 2 && !CLICK_COLLECT_TOOLS.has(tool) && d.points.length === wanted - 1) {
           const conv = converterRef.current;
           const p = conv ? localXY(e) : null;
@@ -742,6 +921,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   // touch gestures / browser cancellations: never leave a stuck draw or drag
   const onPointerCancelCapture = (e: PointerEvent) => {
     const drag = dragRef.current;
+    snapFlashRef.current = null;
     if (!drag) return;
     e.stopPropagation();
     if (drag.mode === "draw" && drag.drawing && toolRef.current && TOOL_POINT_COUNT[toolRef.current] === -1) {

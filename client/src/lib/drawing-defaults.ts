@@ -9,21 +9,25 @@
  */
 import type { DrawingStyle } from "@/lib/drawings";
 
-export type ToolDefaultPatch = Partial<DrawingStyle>;
+export type ToolDefaultPatch = Partial<DrawingStyle> & {
+  /** P46 §1.5 — position tools persist their Risk% default (Drawing-level
+   * field, not style — carried alongside the style patch) */
+  riskPct?: number;
+};
 export type DrawingDefaultsMap = Record<string, ToolDefaultPatch | undefined>;
 
 /** Fields persisted for a tool default — text CONTENT stays per-object. */
 const DEFAULT_FIELDS = [
   "color", "width", "dash", "fontSize", "fill", "opacity", "extend",
   "textColor", "textPos", "fontWeight", "textAlign", "textBg",
-  "profitColor", "lossColor",
+  "profitColor", "lossColor", "riskPct",
 ] as const;
 
 const STRING_FIELDS = new Set([
   "color", "dash", "extend", "textColor", "textPos", "fontWeight",
   "textAlign", "textBg", "profitColor", "lossColor",
 ]);
-const NUMBER_FIELDS = new Set(["width", "fontSize", "opacity"]);
+const NUMBER_FIELDS = new Set(["width", "fontSize", "opacity", "riskPct"]);
 
 /** validate one style patch — only correctly-typed DEFAULT_FIELDS survive */
 function sanitizePatch(raw: unknown): ToolDefaultPatch | undefined {
@@ -33,6 +37,7 @@ function sanitizePatch(raw: unknown): ToolDefaultPatch | undefined {
     const v = (raw as Record<string, unknown>)[k];
     if (v === undefined) continue;
     if (STRING_FIELDS.has(k) && typeof v === "string" && v) clean[k] = v;
+    else if (k === "riskPct" && typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 100) clean[k] = v;
     else if (NUMBER_FIELDS.has(k) && typeof v === "number" && Number.isFinite(v)) clean[k] = v;
     else if (k === "fill" && v && typeof v === "object" && !Array.isArray(v)) {
       const f = v as Record<string, unknown>;
@@ -45,13 +50,18 @@ function sanitizePatch(raw: unknown): ToolDefaultPatch | undefined {
   return Object.keys(clean).length ? (clean as ToolDefaultPatch) : undefined;
 }
 
-/** Extract the persistable style subset from a live drawing's style. */
-export function newDefaultFromStyle(style: DrawingStyle): ToolDefaultPatch {
+/** Extract the persistable style subset from a live drawing's style.
+ * P46 §1.5 — pass the drawing's riskPct for position tools. */
+export function newDefaultFromStyle(style: DrawingStyle, riskPct?: number): ToolDefaultPatch {
   const src = style as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const k of DEFAULT_FIELDS) {
+    if (k === "riskPct") continue;
     const v = src[k];
     if (v !== undefined) out[k] = v;
+  }
+  if (typeof riskPct === "number" && Number.isFinite(riskPct) && riskPct > 0 && riskPct <= 100) {
+    out.riskPct = riskPct;
   }
   return out as ToolDefaultPatch;
 }

@@ -16,6 +16,7 @@ import { RotateCcw, X } from "lucide-react";
 import { getInstrument } from "@shared/terminal";
 import {
   DEFAULT_SETTINGS, APPEARANCE_PRESETS, type ChartSettings,
+  magnetModeOf,
 } from "@/components/terminal/chart/dialogs";
 import {
   getInstrumentSettings, updateInstrumentSettings, resetInstrumentSettings, useInstrumentSettings,
@@ -267,7 +268,7 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
               <Toggle on={per.grid ?? global.grid} onChange={(v) => setPer({ grid: v })} />
             </Row>
             <Row label="Magnet crosshair" hint="Snap the crosshair to OHLC values">
-              <Toggle on={global.magnet} onChange={(v) => setGlobalCfg({ magnet: v })} />
+              <Toggle on={magnetModeOf(global) > 0} onChange={(v) => setGlobalCfg({ magnet: v, magnetMode: v ? 1 : 0 })} />
             </Row>
             <Row label="Bullish color"><ColorInput value={global.upColor} onChange={(v) => setGlobalCfg({ upColor: v })} /></Row>
             <Row label="Bearish color"><ColorInput value={global.downColor} onChange={(v) => setGlobalCfg({ downColor: v })} /></Row>

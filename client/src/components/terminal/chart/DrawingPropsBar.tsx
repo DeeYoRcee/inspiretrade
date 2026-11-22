@@ -6,11 +6,11 @@
  * actions (duplicate / lock / hide / delete).
  */
 import { useState } from "react";
-import { RotateCcw, Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown, Save } from "lucide-react";
+import { RotateCcw, Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, Save } from "lucide-react";
 import { ColorPicker } from "./ColorPicker";
 import { DEFAULT_STYLE,
   FIB_TOOLS, levelsFor, FIB_DEFAULT_LEVELS,
-  isPositionTool, positionCalc, fmtPositionPrice,
+  isPositionTool, positionCalc, fmtPositionPrice, snapToTick,
   type Drawing, type DrawingType, type DrawingRenderEnv, type FibLevel} from "@/lib/drawings";
 import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import type { FibPreset } from "@/lib/chart-persistence";
@@ -46,7 +46,7 @@ function ToggleBtn({ label, on, onClick }: { label: string; on: boolean; onClick
 }
 
 export function DrawingPropsBar({
-  drawing, onChange, onDuplicate, onDelete, onEditText, onReorder,
+  drawing, onChange, onDuplicate, onDelete, onEditText,
   fibPresets, onSaveFibPreset, onDeleteFibPreset,
   positionEnv, onSetDefault,
 }: {
@@ -54,8 +54,6 @@ export function DrawingPropsBar({
   onChange: (patch: Partial<Drawing>) => void;
   onDuplicate: () => void;
   onDelete: () => void;
-  /** Phase 27 §4 — bring forward / send backward (render stack z-order) */
-  onReorder?: (action: "front" | "back" | "forward" | "backward") => void;
   onEditText: () => void;
   /** Phase 37 §5 — the user's saved Fibonacci presets */
   fibPresets?: FibPreset[];
@@ -117,7 +115,7 @@ export function DrawingPropsBar({
               key={w}
               onClick={() => setStyle({ width: w })}
               className={cn(
-                "flex h-5 w-5 items-center justify-center rounded",
+                "flex h-6 w-6 items-center justify-center rounded",
                 style.width === w ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800",
               )}
             >
@@ -157,18 +155,18 @@ export function DrawingPropsBar({
         <button
           title="Reset style to defaults"
           onClick={() => setStyle({ ...DEFAULT_STYLE })}
-          className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+          className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
         >
-          <RotateCcw className="h-3.5 w-3.5" />
+          <RotateCcw className="h-4 w-4" />
         </button>
         {/* P44 §5 — save this style as the per-tool default (Firebase-backed) */}
         {onSetDefault && (
           <button
             title={`Save this style as the default for new ${drawing.type} objects`}
             onClick={onSetDefault}
-            className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-sky-500/15 hover:text-sky-300"
+            className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-sky-500/15 hover:text-sky-300"
           >
-            <Save className="h-3.5 w-3.5" />
+            <Save className="h-4 w-4" />
           </button>
         )}
         {/* fill for shapes */}
@@ -208,7 +206,9 @@ export function DrawingPropsBar({
                   onChange={(e) => {
                     const v = Number(e.target.value);
                     if (!Number.isFinite(v) || !drawing.points[i]) return;
-                    onChange({ points: drawing.points.map((q, k) => (k === i ? { ...q, price: v } : q)) });
+                    // P46 §1.4 — every level lands on the instrument tick
+                    const snapped = snapToTick(v, positionEnv?.tickSize);
+                    onChange({ points: drawing.points.map((q, k) => (k === i ? { ...q, price: snapped } : q)) });
                   }}
                   className="h-5 w-20 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200 tabular-nums"
                 />
@@ -287,27 +287,6 @@ export function DrawingPropsBar({
               <option value="right">Extend right (ray)</option>
               <option value="both">Extend both (infinite)</option>
             </select>
-            <button
-              title="Toggle endpoint price labels"
-              onClick={() => setStyle({ showLabels: !style.showLabels })}
-              className={cn("rounded px-1.5 py-0.5", style.showLabels ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800")}
-            >
-              $
-            </button>
-            <button
-              title="Toggle price change + percentage label"
-              onClick={() => setStyle({ showPrices: !style.showPrices })}
-              className={cn("rounded px-1.5 py-0.5", style.showPrices ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800")}
-            >
-              Δ
-            </button>
-            <button
-              title="Toggle endpoint time labels"
-              onClick={() => setStyle({ showTimeLabels: !style.showTimeLabels })}
-              className={cn("rounded px-1.5 py-0.5", style.showTimeLabels ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800")}
-            >
-              T
-            </button>
           </>
         )}
         {/* P44 §2 — text styling only for text-bearing tools (relevant
@@ -373,8 +352,8 @@ export function DrawingPropsBar({
           onChange={(e) => setStyle({ textBg: e.target.value })}
           className="h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
         />
-        <button title="Edit text" onClick={onEditText} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
-          <PenLine className="h-3.5 w-3.5" />
+        <button title="Edit text" onClick={onEditText} className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
+          <PenLine className="h-4 w-4" />
         </button>
         </>
         )}
@@ -578,59 +557,27 @@ export function DrawingPropsBar({
         </details>
 
         <span className="h-4 w-px bg-slate-700" />
-        {/* object actions */}
-        <button title="Duplicate" onClick={onDuplicate} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
-          <Copy className="h-3.5 w-3.5" />
+        {/* object actions — P46: z-order buttons removed per user request;
+            reorder lives in the object-tree context menu (front/back) */}
+        <button title="Duplicate" onClick={onDuplicate} className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
+          <Copy className="h-4 w-4" />
         </button>
         <button
           title={drawing.locked ? "Unlock" : "Lock"}
           onClick={() => onChange({ locked: !drawing.locked })}
-          className={cn("flex h-5 w-5 items-center justify-center rounded hover:bg-slate-800", drawing.locked ? "text-amber-400" : "text-slate-400 hover:text-slate-200")}
+          className={cn("flex h-6 w-6 items-center justify-center rounded hover:bg-slate-800", drawing.locked ? "text-amber-400" : "text-slate-400 hover:text-slate-200")}
         >
-          {drawing.locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+          {drawing.locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
         </button>
         <button
           title={drawing.hidden ? "Show" : "Hide"}
           onClick={() => onChange({ hidden: !drawing.hidden })}
-          className={cn("flex h-5 w-5 items-center justify-center rounded hover:bg-slate-800", drawing.hidden ? "text-amber-400" : "text-slate-400 hover:text-slate-200")}
+          className={cn("flex h-6 w-6 items-center justify-center rounded hover:bg-slate-800", drawing.hidden ? "text-amber-400" : "text-slate-400 hover:text-slate-200")}
         >
-          {drawing.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          {drawing.hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
-        {onReorder && (
-          <>
-            <button
-              title="Bring forward"
-              onClick={() => onReorder("forward")}
-              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-            >
-              <ChevronUp className="h-3.5 w-3.5" />
-            </button>
-            <button
-              title="Send backward"
-              onClick={() => onReorder("backward")}
-              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-            >
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-            <button
-              title="Bring to front"
-              onClick={() => onReorder("front")}
-              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-            >
-              <ChevronsUp className="h-3.5 w-3.5" />
-            </button>
-            <button
-              title="Send to back"
-              onClick={() => onReorder("back")}
-              className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-            >
-              <ChevronsDown className="h-3.5 w-3.5" />
-            </button>
-            <span className="h-4 w-px bg-slate-700" />
-          </>
-        )}
-        <button title="Delete" onClick={onDelete} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-red-500/15 hover:text-red-400">
-          <Trash2 className="h-3.5 w-3.5" />
+        <button title="Delete" onClick={onDelete} className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-red-500/15 hover:text-red-400">
+          <Trash2 className="h-4 w-4" />
         </button>
       </div>
     </div>

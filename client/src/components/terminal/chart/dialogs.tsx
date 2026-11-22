@@ -14,6 +14,8 @@ import type { LayoutSnapshot } from "@/lib/chart-persistence";
 import { loadLayouts, deleteLayout } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
 import { ColorPicker } from "./ColorPicker";
+import { magnetModeOf } from "@/lib/drawings";
+export { magnetModeOf };
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -24,6 +26,8 @@ export interface ChartSettings {
   countdown: boolean;
   legend: boolean;
   magnet: boolean;
+  /** P46 §2 — 0=off · 1=normal · 2=strong (legacy `magnet` boolean maps) */
+  magnetMode?: 0 | 1 | 2;
   bidAsk: boolean;
   upColor: string;
   downColor: string;
@@ -49,7 +53,7 @@ export interface ChartSettings {
 // Phase 20: `volume` is no longer a setting — Volume became a real indicator
 // (Indicators menu, persisted per user+symbol), off by default.
 export const DEFAULT_SETTINGS: ChartSettings = {
-  grid: true, countdown: true, legend: true, magnet: true, bidAsk: true,
+  grid: true, countdown: true, legend: true, magnet: true, magnetMode: 1, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
   bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)",
   drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
@@ -83,7 +87,8 @@ export function SettingsDialog({
   if (!open) return null;
   const toggles: [keyof ChartSettings, string][] = [
     ["grid", "Show grid"], ["legend", "OHLC legend"], ["countdown", "Candle-close countdown"],
-    ["magnet", "Magnet crosshair"], ["bidAsk", "Bid / Ask price lines"],
+    // P46: magnet moved to its 3-state rail control (off / normal / strong)
+    ["bidAsk", "Bid / Ask price lines"],
   ];
   return (
     <ChartDialog title="Chart settings" onClose={onClose}>
