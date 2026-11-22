@@ -46,11 +46,10 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Plus, RefreshCw, RotateCcw, Search, Settings2, SlidersHorizontal } from "lucide-react";
+import { Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
 import { InstrumentSettingsPanel } from "@/components/terminal/InstrumentSettingsPanel";
 import { cn } from "@/lib/utils";
 import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
-import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
 import { getTerminalSettings } from "@/lib/terminal-settings";
 import { getInstrumentSettings } from "@/lib/instrument-settings";
 import { touchRecent } from "@/lib/watchlists";
@@ -143,9 +142,10 @@ export default function TerminalPage() {
     return () => window.removeEventListener("keydown", h);
   }, []);
 
-  // Phase 21 — the full instrument explorer + terminal settings dialog
+  // Phase 21 — the full instrument explorer (the terminal settings dialog is
+  // reachable from the chart toolbar's General settings gear — the duplicate
+  // top-bar button was removed per user request)
   const [explorerOpen, setExplorerOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   // Phase 34: per-instrument settings sheet (chart type, price, appearance)
   const [instSettingsOpen, setInstSettingsOpen] = useState(false);
 
@@ -195,7 +195,7 @@ export default function TerminalPage() {
           mode={mode} onModeChange={setMode}
           symbol={symbol} onSymbolChange={setSymbol}
           timeframe={timeframe} onTimeframeChange={setTimeframe}
-          onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)} onOpenInstrumentSettings={() => setInstSettingsOpen(true)}
+          onOpenExplorer={() => setExplorerOpen(true)} onOpenInstrumentSettings={() => setInstSettingsOpen(true)}
           accounts={[]} activeId={null} onAccountChange={setActiveId}
           metrics={null} busy={false} onRefresh={refreshNow}
           account={null} onReset={resetAccount}
@@ -229,7 +229,7 @@ export default function TerminalPage() {
         mode={mode} onModeChange={setMode}
         symbol={symbol} onSymbolChange={setSymbol}
         timeframe={timeframe} onTimeframeChange={setTimeframe}
-        onOpenExplorer={() => setExplorerOpen(true)} onOpenSettings={() => setSettingsOpen(true)} onOpenInstrumentSettings={() => setInstSettingsOpen(true)}
+        onOpenExplorer={() => setExplorerOpen(true)} onOpenInstrumentSettings={() => setInstSettingsOpen(true)}
         accounts={mode === "live" ? accounts : []} activeId={account?.id ?? null} onAccountChange={setActiveId}
         metrics={mode === "live" ? metrics : null} busy={busy} onRefresh={refreshNow}
         account={mode === "live" ? account : null} onReset={resetAccount}
@@ -316,7 +316,6 @@ export default function TerminalPage() {
         onClose={() => setExplorerOpen(false)}
         onSelect={setSymbol}
       />
-      <TerminalSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} symbol={symbol} />
       <InstrumentSettingsPanel symbol={symbol} open={instSettingsOpen} onClose={() => setInstSettingsOpen(false)} />
     </div>
   );
@@ -329,14 +328,14 @@ export default function TerminalPage() {
 function Toolbar({
   mode, onModeChange,
   symbol, onSymbolChange, timeframe, onTimeframeChange,
-  onOpenExplorer, onOpenSettings, onOpenInstrumentSettings,
+  onOpenExplorer, onOpenInstrumentSettings,
   accounts, activeId, onAccountChange,
   metrics, busy, onRefresh, account, onReset, onNewAccount,
 }: {
   mode: TerminalMode; onModeChange: (m: TerminalMode) => void;
   symbol: string; onSymbolChange: (s: string) => void;
   timeframe: Timeframe; onTimeframeChange: (tf: Timeframe) => void;
-  onOpenExplorer: () => void; onOpenSettings: () => void;
+  onOpenExplorer: () => void;
   onOpenInstrumentSettings: () => void;
   accounts: { id: string; label: string; type: string }[];
   activeId: string | null; onAccountChange: (id: string) => void;
@@ -407,15 +406,6 @@ function Toolbar({
             className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/70 text-slate-400 transition-colors hover:border-primary/60 hover:text-primary"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
-          </button>
-
-          {/* Phase 21 — unified terminal settings */}
-          <button
-            onClick={onOpenSettings}
-            title="Terminal settings"
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/70 text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
           </button>
         </>
       )}

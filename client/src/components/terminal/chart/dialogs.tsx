@@ -53,11 +53,28 @@ export interface ChartSettings {
 // Phase 20: `volume` is no longer a setting — Volume became a real indicator
 // (Indicators menu, persisted per user+symbol), off by default.
 export const DEFAULT_SETTINGS: ChartSettings = {
-  grid: true, countdown: true, legend: true, magnet: true, magnetMode: 1, bidAsk: true,
+  // user request: the chart grid ships OFF for everyone — the background
+  // lines stay quiet unless a user turns "Show grid" on in the settings
+  grid: false, countdown: true, legend: true, magnet: true, magnetMode: 1, bidAsk: true,
   upColor: "#e9edf4", downColor: "#9598a1",
   bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)",
   drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
 };
+
+const GRID_OFF_MIGRATION_KEY = "it_grid_default_off";
+/**
+ * One-time migration: a stored `it_chart_settings` blob written while grid
+ * defaulted to ON carries grid:true even for users who never chose it — the
+ * marker makes sure this flip runs once and a user's later explicit choice
+ * (re-enabling from settings) is respected afterwards.
+ */
+export function applyGridDefaultOff(s: ChartSettings): ChartSettings {
+  try {
+    if (localStorage.getItem(GRID_OFF_MIGRATION_KEY) === "1") return s;
+    localStorage.setItem(GRID_OFF_MIGRATION_KEY, "1");
+  } catch { /* private mode — still flip the default below */ }
+  return { ...s, grid: false };
+}
 
 /** Phase 34: professional appearance presets — one click re-styles the chart. */
 export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSettings> }[] = [
@@ -73,71 +90,6 @@ export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSe
   { id: "steel-blue", label: "Steel Blue", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#738bae", downColor: "#9c9c9c" } },
   { id: "deep-forest", label: "Deep Forest", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(219,219,219,0.4)", upColor: "#16302b", downColor: "#dbdbdb" } },
 ];
-
-export function SettingsDialog({
-  open, settings, onClose, onSave,
-}: {
-  open: boolean;
-  settings: ChartSettings;
-  onClose: () => void;
-  onSave: (s: ChartSettings) => void;
-}) {
-  const [draft, setDraft] = useState(settings);
-  useEffect(() => { if (open) setDraft(settings); }, [open, settings]);
-  if (!open) return null;
-  const toggles: [keyof ChartSettings, string][] = [
-    ["grid", "Show grid"], ["legend", "OHLC legend"], ["countdown", "Candle-close countdown"],
-    // P46: magnet moved to its 3-state rail control (off / normal / strong)
-    ["bidAsk", "Bid / Ask price lines"],
-  ];
-  return (
-    <ChartDialog title="Chart settings" onClose={onClose}>
-      <div className="space-y-2 text-xs">
-        {toggles.map(([key, label]) => (
-          <label key={key} className="flex cursor-pointer items-center justify-between">
-            <span className="text-slate-300">{label}</span>
-            <input
-              type="checkbox"
-              checked={Boolean(draft[key])}
-              onChange={(e) => setDraft({ ...draft, [key]: e.target.checked })}
-              className="h-4 w-4 accent-sky-500"
-            />
-          </label>
-        ))}
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          <label><span className="mb-0.5 block text-[10px] text-slate-400">Up candle</span>
-            <input type="color" value={draft.upColor} onChange={(e) => setDraft({ ...draft, upColor: e.target.value })} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>
-          <label><span className="mb-0.5 block text-[10px] text-slate-400">Down candle</span>
-            <input type="color" value={draft.downColor} onChange={(e) => setDraft({ ...draft, downColor: e.target.value })} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>
-        </div>
-        {/* drawing defaults — new objects take these */}
-        <p className="pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Drawing</p>
-        <p className="text-[10px] text-slate-500">A finished drawing returns the cursor automatically — hold Shift while placing the last point to chain another object with the same tool. Delete removes the selection.</p>
-        <div className="grid grid-cols-2 gap-2">
-          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default color</span>
-            <input type="color" value={draft.drawColor} onChange={(e) => setDraft({ ...draft, drawColor: e.target.value })} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>
-          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default width</span>
-            <select value={draft.drawWidth} onChange={(e) => setDraft({ ...draft, drawWidth: Number(e.target.value) })} className="h-7 w-full rounded border border-slate-700 bg-slate-950 px-1">
-              {[1, 2, 3, 4].map((w) => <option key={w} value={w}>{w}px</option>)}
-            </select></label>
-          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default style</span>
-            <select value={draft.drawDash} onChange={(e) => setDraft({ ...draft, drawDash: e.target.value as ChartSettings["drawDash"] })} className="h-7 w-full rounded border border-slate-700 bg-slate-950 px-1">
-              <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option>
-            </select></label>
-          <label><span className="mb-0.5 block text-[10px] text-slate-400">Default text size</span>
-            <select value={draft.drawFontSize} onChange={(e) => setDraft({ ...draft, drawFontSize: Number(e.target.value) })} className="h-7 w-full rounded border border-slate-700 bg-slate-950 px-1">
-              {[10, 12, 14, 16, 20, 24].map((s) => <option key={s} value={s}>{s}px</option>)}
-            </select></label>
-        </div>
-        <DialogFooter
-          onCancel={onClose}
-          onOk={() => { onSave(draft); onClose(); }}
-          okLabel="Apply"
-        />
-      </div>
-    </ChartDialog>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Symbol search

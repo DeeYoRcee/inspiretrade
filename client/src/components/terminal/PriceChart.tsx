@@ -14,22 +14,21 @@
  * heartbeat and every live tick cause ZERO React re-renders here.
  * Real feeds only: on failure an error state with retry is shown, never fake data.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart, ColorType, CrosshairMode, LineStyle, PriceScaleMode,
   type IChartApi, type IPriceLine, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import {
-  loadFeed, subscribeFeed, binanceProvider, getConnectionState, subscribeConnection, getFeedStats, markChartUpdate,
-  getSpotState, subscribeSpot, type SpotState,
+  loadFeed, subscribeFeed, binanceProvider, getConnectionState, markChartUpdate,
+  getSpotState,
   type FeedStatus,
 } from "@/lib/market-data";
 import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/terminal";
 import { SPREAD_PIPS } from "@shared/trading-engine";
 import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types";
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
-import { spotMeasuredUpdateSec, quotesHistOlder, quotesPrependHistory, quotesWhenDeep, quotesSnapshotBars } from "@/lib/market-data";
-import { marketStatus } from "@/lib/market-status";
+import { quotesHistOlder, quotesPrependHistory, quotesWhenDeep, quotesSnapshotBars } from "@/lib/market-data";
 import { authedFetch } from "@/lib/api";
 import { priceBusUpdate } from "@/lib/price-store";
 import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
@@ -46,7 +45,7 @@ import {
 } from "@/lib/indicators-config";
 import {
   reorderDrawing, effectiveName, isVisibleOnTf, __sanitizeDrawingList,
-  mergeDrawingLists, stampChangedDrawings, newDrawingId, type Drawing, type DrawingType, type DrawingRenderEnv } from "@/lib/drawings";
+  mergeDrawingLists, stampChangedDrawings, newDrawingId, magnetSnapTime, type Drawing, type DrawingType, type DrawingRenderEnv } from "@/lib/drawings";
 import { readFavoritesLocal, toggleFavorite, reorderFavorites } from "@/lib/drawing-favorites";
 import { saveFavorites, subscribeFavorites } from "@/lib/chart-persistence";
 import { saveDrawingDefaults, subscribeDrawingDefaults } from "@/lib/chart-persistence";
@@ -70,11 +69,11 @@ import { cursorCss, type CursorMode } from "@/components/terminal/chart/cursor-m
 import { loadDrawingTemplates, saveDrawingTemplate, deleteDrawingTemplate, loadFibPresets, saveFibPreset, deleteFibPreset, type DrawingTemplate, type FibPreset } from "@/lib/chart-persistence";
 import {
   ChartContextMenu, ChartSettings, DEFAULT_SETTINGS, DrawingPropsDialog, IndicatorLibraryDialog, IndicatorParamsDialog,
-  LayoutsDialog, SettingsDialog, type ContextMenuState,
-  magnetModeOf,
+  LayoutsDialog, type ContextMenuState,
+  magnetModeOf, applyGridDefaultOff,
 } from "@/components/terminal/chart/dialogs";
-import { Eye, EyeOff, X, Activity, Database, Lock, Unlock, Loader2, ChevronUp, ChevronDown } from "lucide-react";
-import { useIsAdmin } from "@/hooks/use-admin";
+import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
+import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface PriceMark {
@@ -368,13 +367,8 @@ export function PriceChart({
   const [scaleMode, setScaleMode] = useState<"normal" | "log" | "percent">(() => {
     try { const v = localStorage.getItem("it_chart_scale"); return v === "log" || v === "percent" ? v : "normal"; } catch { return "normal"; }
   });
-  // honest connection state (transitions only — never per tick)
-  const conn = useSyncExternalStore(subscribeConnection, getConnectionState);
   const lastTickRef = useRef<HTMLSpanElement | null>(null);
   const [objectsOpen, setObjectsOpen] = useState(false);
-  const isAdmin = useIsAdmin();
-  const [diagOpen, setDiagOpen] = useState(false);
-  const [histOpen, setHistOpen] = useState(false);
   // drawing undo/redo (past/future snapshots of the committed list)
   const historyRef = useRef<Drawing[][]>([]);
   const futureRef = useRef<Drawing[][]>([]);
@@ -401,7 +395,7 @@ export function PriceChart({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [openDialog, setOpenDialog] = useState<"settings" | "layouts" | "search" | null>(null);
   const [settings, setSettings] = useState<ChartSettings>(() => {
-    try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") }; }
+    try { return applyGridDefaultOff({ ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") }); }
     catch { return DEFAULT_SETTINGS; }
   });
   // Phase 21 — per-instrument overrides (Terminal Settings → Instrument):
@@ -612,7 +606,11 @@ export function PriceChart({
         ? { vertLines: { color: mergedSettings.gridColor ?? COLORS.grid }, horzLines: { color: mergedSettings.gridColor ?? COLORS.grid } }
         : { vertLines: { visible: false }, horzLines: { visible: false } },
       crosshair: {
-        mode: magnetModeOf(mergedSettings) > 0 ? CrosshairMode.Magnet : CrosshairMode.Normal,
+        // LC's built-in Magnet mode snaps the horizontal line to the CLOSE
+        // price only (library contract) — the user saw it "stick only to the
+        // candle body". The crosshair mode stays Normal and the full-OHLC
+        // magnet below (magnetCrosshair effect) does the real snapping.
+        mode: CrosshairMode.Normal,
         vertLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
         horzLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
       },
@@ -628,6 +626,70 @@ export function PriceChart({
     (candle as unknown as { applyOptions: (o: Record<string, unknown>) => void }).applyOptions({ priceLineVisible: lp, lastValueVisible: lp });
     canvasRef.current?.redraw();
   }, [settings, mergedSettings]);
+
+  // ---- full-OHLC crosshair magnet (P46 §2.3 follow-up) ----------------------
+  // LC's own Magnet mode only aligns the crosshair to the bar's CLOSE — the
+  // user's "magnet sticks only to the body" report. This effect re-snaps the
+  // crosshair to the NEAREST of open/high/low/close (wick tips included)
+  // within the magnet threshold and glues the vertical line to the bar's
+  // open time. Echo-safe: a synthetic position fires one more crosshairmove
+  // whose snap result equals itself → no set, no loop. Mode Normal means the
+  // raw mouse point is always the true cursor, never a pre-aligned close.
+  const magnetModeRef = useRef<0 | 1 | 2>(0);
+  magnetModeRef.current = magnetModeOf(mergedSettings);
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    let lastSet: { p: number; t: number } | null = null;
+    const onCross = (param: { point?: { x: number; y: number } | null; time?: unknown }) => {
+      const mode = magnetModeRef.current;
+      const s = candleRef.current;
+      if (!mode || !param.point || !param.time || !s) { lastSet = null; return; }
+      const rawPrice = s.coordinateToPrice(param.point.y);
+      const rawTime = Number(param.time);
+      if (rawPrice == null || !Number.isFinite(rawPrice) || !Number.isFinite(rawTime)) return;
+      const tfSec = tfSecRef.current;
+      // magnetSnapTime keeps weekly anchors on Monday 00:00 like the engine
+      const t = tfSec > 0 ? magnetSnapTime(rawTime, tfSec) : rawTime;
+      let snapped = rawPrice;
+      let snappedT = t;
+      // nearest OHLC of the bar under the cursor (and its immediate
+      // neighbours) within the mode's px threshold — high/low included; when
+      // a neighbour wins, the vertical line follows that bar (same contract
+      // as the drawing-anchor magnet in drawings.ts magnetSnapNear)
+      const bars = barsRef.current;
+      const py = s.priceToCoordinate(rawPrice);
+      if (py != null && bars.length) {
+        const thr = mode === 2 ? 36 : 12;
+        // binary search: exact bar or the insertion point (nearest pair is
+        // covered by the near-1/near+1 scan below)
+        let lo = 0, hi = bars.length - 1, near = -1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if ((bars[mid] as { time: number }).time === t) { near = mid; break; }
+          if ((bars[mid] as { time: number }).time < t) lo = mid + 1; else hi = mid - 1;
+        }
+        if (near < 0) near = Math.max(0, Math.min(bars.length - 1, lo));
+        let bestD = Infinity;
+        for (const i of [near, near - 1, near + 1]) {
+          const bar = i >= 0 ? (bars[i] as { time: number; open: number; high: number; low: number; close: number } | undefined) : undefined;
+          if (!bar) continue;
+          for (const c of [bar.open, bar.high, bar.low, bar.close]) {
+            const cy = s.priceToCoordinate(c);
+            if (cy == null) continue;
+            const d = Math.abs(cy - py);
+            if (d <= thr && d < bestD) { bestD = d; snapped = c as typeof snapped; snappedT = (bar as { time: number }).time; }
+          }
+        }
+      }
+      if (snapped === rawPrice && snappedT === rawTime) { lastSet = null; return; }
+      if (lastSet && lastSet.p === snapped && lastSet.t === snappedT) return;
+      lastSet = { p: snapped, t: snappedT };
+      try { chart.setCrosshairPosition(snapped, snappedT as UTCTimestamp, s as never); } catch { /* teardown race */ }
+    };
+    chart.subscribeCrosshairMove(onCross as Parameters<typeof chart.subscribeCrosshairMove>[0]);
+    return () => { try { chart.unsubscribeCrosshairMove(onCross as Parameters<typeof chart.unsubscribeCrosshairMove>[0]); } catch { /* already torn down */ } };
+  }, []);
 
 
 
@@ -1572,8 +1634,6 @@ export function PriceChart({
   }, []);
 
   // ---- drawings persistence -------------------------------------------------------
-  /** Phase 35 §6 — clear loading state while per-user drawings are restored */
-  const [drawingsRestoring, setDrawingsRestoring] = useState(false);
   useEffect(() => {
     if (!uid || !symbol) return;
     // instrument switch: the undo/redo stacks belong to the OLD instrument —
@@ -1588,9 +1648,7 @@ export function PriceChart({
     // even a moment — clear synchronously, RTDB delivers the real list after
     setDrawings([]);
     setIndicators([]);
-    setDrawingsRestoring(true);
     const offD = subscribeDrawings(uid, symbol, (list) => {
-      setDrawingsRestoring(false);
       // P40 — per-drawing LWW merge replaces the old 15s echo window:
       // local edits whose write is still in flight survive, remote edits and
       // deletions propagate, tombstoned (locally deleted) echoes are already
@@ -2036,58 +2094,14 @@ export function PriceChart({
     onTimeframeChange(snap.timeframe as Timeframe);
     setIndicators(snap.indicators ?? []);
     if (uid) saveIndicators(uid, snap.symbol, snap.indicators ?? []);
-    if (snap.settings) setSettings({ ...DEFAULT_SETTINGS, ...(snap.settings as unknown as Partial<ChartSettings>) });
+    if (snap.settings) setSettings(applyGridDefaultOff({ ...DEFAULT_SETTINGS, ...(snap.settings as unknown as Partial<ChartSettings>) }));
   }, [onSymbolChange, onTimeframeChange, uid]);
 
-  // honest connection badge: crypto reflects the REAL ws/rest state machine,
-  // metals reflect the browser-direct gold-api spot poll (Phase 15), other
-  // quotes feeds are labelled delayed with the provider source — never "LIVE"
-  const isCryptoFeed = getInstrument(symbol)?.feed === "binance";
-  const spotInst = getInstrument(symbol)?.spotCode ? getInstrument(symbol) : null;
-  const spot = useSyncExternalStore(subscribeSpot, getSpotState);
-  const statusChip = loaded.status !== "error" && (() => {
-    const c = conn.binance;
-    let dot = "bg-emerald-400";
-    let label = "LIVE";
-    if (isCryptoFeed) {
-      const provider = getInstrument(symbolRef.current)?.feedLabel || "Binance";
-      if (c === "connected") { dot = "bg-emerald-400"; label = `Live · ${provider}`; }
-      else if (c === "connecting") { dot = "bg-sky-400 animate-pulse"; label = "Connecting…"; }
-      else if (c === "reconnecting") { dot = "bg-amber-400 animate-pulse"; label = "RECONNECTING…"; }
-      else { dot = "bg-slate-500"; label = "OFFLINE"; }
-    } else if (spotInst) {
-      // metals: the 1s gold-api tail is the real-time layer; the delayed
-      // Yahoo/stooq history is named honestly next to it
-      if (spot.state === "live") {
-        const d = spot.providerDelaySec;
-        const measured = spotInst.spotCode ? spotMeasuredUpdateSec(spotInst.spotCode) : null;
-        // honest trio: provider stamp lag (latency) + MEASURED how often the
-        // feed actually publishes a NEW price (gold-api advances its stamp
-        // only every ~5-15s — a 1s poll cannot speed that up) + what builds
-        // the candles
-        // Phase 31: honesty rule — never create the illusion of fresh data
-        // when the provider is frozen: metals outside spot hours say so
-        const closed = marketStatus(symbolRef.current) === "closed" ? " · MARKET CLOSED (no new prices)" : "";
-        label = `Live spot · gold-api${d != null ? ` · ~${d}s` : ""}${measured != null ? ` · upd ~${measured}s` : ""}${TF_SECONDS[timeframe] < 60 ? " · live seconds" : " · self-recorded candles"}${closed}`;
-      } else if (spot.state === "connecting") {
-        dot = "bg-sky-400 animate-pulse";
-        label = "Spot connecting…";
-      } else {
-        dot = "bg-amber-400 animate-pulse";
-        label = "Spot feed down — recorded candles only";
-      }
-    } else {
-      dot = "bg-amber-400";
-      label = loaded.message || "DELAYED";
-    }
-    return (
-      <div className="absolute left-2 top-8 z-10 flex items-center gap-2 rounded-md border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-[11px] text-slate-300 backdrop-blur">
-        <span className={cn("inline-block h-2 w-2 rounded-full", dot)} />
-        <span>{label}</span>
-        <span ref={lastTickRef} className="font-number text-[10px] text-slate-500" title="Last real data update" />
-      </div>
-    );
-  })();
+  // The on-chart feed status badge (Live spot · gold-api · … / MARKET CLOSED)
+  // is HIDDEN by user request — the feeds themselves keep running exactly as
+  // before: the badge was pure presentation over `conn` + the spot snapshot,
+  // and the gold-api poller lives in market-data (independent of React).
+  // The last-tick span is gone with it; the imperative updater guards null.
 
   return (
     <div ref={wrapperRef} data-chart-dark="1" className={cn("relative flex h-full w-full min-h-0 flex-col bg-[#0b1220]", className)} style={height ? { height } : undefined}>
@@ -2120,6 +2134,11 @@ export function PriceChart({
         onUndo={undoDrawings}
         onRedo={redoDrawings}
         onScreenshot={screenshot}
+        favs={favTools}
+        activeTool={activeTool}
+        onActivateFav={(t) => setActiveTool(t)}
+        onToggleFav={toggleFavTool}
+        onReorderFav={reorderFavTools}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1">
@@ -2244,13 +2263,9 @@ export function PriceChart({
           onReorder={reorderFavTools}
         />
 
-        {/* Phase 35 §6 — drawings restore feedback (per-user, per-instrument) */}
-        {drawingsRestoring && (
-          <div className="absolute left-2 top-2 z-10 flex items-center gap-1.5 rounded-md border border-slate-700/70 bg-slate-950/80 px-2 py-1 text-[10px] font-semibold text-slate-400">
-            <Loader2 className="h-3 w-3 animate-spin text-sky-400" />
-            Restoring drawings…
-          </div>
-        )}
+        {/* Phase 35 §6 — drawings restore feedback is now INVISIBLE per user
+            request: the restore flow itself (subscribe → LWW merge) keeps
+            running untouched; only the on-chart pill was removed. */}
 
         {/* floating properties bar for the selected drawing */}
         {(() => {
@@ -2305,34 +2320,9 @@ export function PriceChart({
           className="pointer-events-none absolute z-10 rounded bg-slate-800/90 px-1.5 py-0.5 font-number text-[10px] text-sky-300"
           style={{ display: "none" }}
         />
-        {statusChip}
-        {/* Phase 10 — admin-only feed diagnostics (temporary debugging tool) */}
-        {isAdmin && (
-          <button
-            onClick={() => setDiagOpen((v) => !v)}
-            title="Feed diagnostics (admin)"
-            className={cn(
-              "absolute left-2 top-[7.5rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
-              diagOpen ? "text-sky-300" : "text-slate-500 hover:text-slate-300",
-            )}
-          >
-            <Activity className="h-3.5 w-3.5" />
-          </button>
-        )}
-        {isAdmin && diagOpen && <FeedDiagnostics symbol={symbol} conn={conn.binance} getBars={() => barsRef.current} />}
-        {isAdmin && (
-          <button
-            onClick={() => setHistOpen((v) => !v)}
-            title="Historical data management (admin)"
-            className={cn(
-              "absolute left-2 top-[9.6rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
-              histOpen ? "text-amber-300" : "text-slate-500 hover:text-slate-300",
-            )}
-          >
-            <Database className="h-3.5 w-3.5" />
-          </button>
-        )}
-        {isAdmin && histOpen && <div data-chart-ui><HistoryPanel symbol={symbol} /></div>}
+        {/* on-chart feed status badge removed (kept working in background) */}
+        {/* admin-only Feed diagnostics + Historical data manager UI removed
+            per user request (the data layer behind them is untouched) */}
 
         {/* P42 — Object Tree manager: grouped drawings, rename / visibility
             / lock, two-way selection sync, bulk actions, search + category
@@ -2464,16 +2454,23 @@ export function PriceChart({
         </div>
       </div>
 
-      {/* bottom bar: historical range shortcuts + scale mode (TV-style) */}
+      {/* bottom bar: timeframe shortcuts + scale mode (TV-style). The old
+          1D/5D/5Y/All range buttons were replaced by the user's request with
+          direct timeframe switching — same one-click row, real TF change. */}
       <div className="flex h-7 shrink-0 items-center gap-0.5 border-t border-slate-800 bg-slate-900/80 px-2">
-        {[["1d", "1D"], ["5d", "5D"], ["1mo", "1M"], ["3mo", "3M"], ["6mo", "6M"], ["ytd", "YTD"], ["1y", "1Y"], ["5y", "5Y"], ["all", "All"]].map(([key, label]) => (
+        {(["1m", "5m", "15m", "1h", "4h", "1d", "1W"] as Timeframe[]).map((tf) => (
           <button
-            key={key}
-            onClick={() => applyRange(key)}
-            title={`Show last ${label === "All" ? "history" : label === "YTD" ? "year to date" : label} on the chart`}
-            className="rounded px-2 py-0.5 text-[10px] font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+            key={tf}
+            onClick={() => onTimeframeChange(tf)}
+            title={`Switch the chart to the ${tf === "1W" ? "1 week" : tf} timeframe`}
+            className={cn(
+              "rounded px-2 py-0.5 text-[10px] font-semibold transition-colors",
+              timeframe === tf
+                ? "bg-sky-600 text-white"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-100",
+            )}
           >
-            {label}
+            {tf.toLowerCase()}
           </button>
         ))}
         <div className="ml-auto flex items-center gap-0.5">
@@ -2502,7 +2499,9 @@ export function PriceChart({
       </div>
 
       {/* dialogs + context menu */}
-      <SettingsDialog open={openDialog === "settings"} settings={settings} onClose={() => setOpenDialog(null)} onSave={setSettings} />
+      {/* the toolbar gear opens the unified General settings dialog (the old
+          chart-only SettingsDialog was merged into its Chart settings section) */}
+      <TerminalSettingsDialog open={openDialog === "settings"} onClose={() => setOpenDialog(null)} symbol={symbol} />
       <InstrumentExplorer
         open={openDialog === "search"}
         current={symbol}
@@ -2622,198 +2621,6 @@ function logicalToTime(data: Bar[], tfSec: number, logical: number): number | nu
   if (logical >= last) return data[last].time + (logical - last) * tfSec;
   const i = Math.round(logical);
   return data[i].time + (logical - i) * tfSec;
-}
-
-/**
- * Phase 10 — administrator-only feed diagnostics (temporary debugging tool).
- * Renders from an imperative 1s snapshot of the hot stats store, so it never
- * participates in the chart's render cycle.
- */
-function FeedDiagnostics({ symbol, conn, getBars }: { symbol: string; conn: string; getBars: () => Bar[] }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const fmt = (ms: number | null) => (ms ? new Date(ms).toLocaleTimeString([], { hour12: false }) : "—");
-    const timer = setInterval(() => {
-      const el = ref.current;
-      if (!el) return;
-      const s = getFeedStats();
-      const bars = getBars();
-      const last = bars?.length ? bars[bars.length - 1] : null;
-      const lastAge = last ? Math.max(0, Math.floor(Date.now() / 1000) - last.time) : null;
-      const rows: [string, string][] = [
-        ["Provider", getInstrument(symbol)?.feedLabel || (getInstrument(symbol)?.feed === "binance" ? "Binance WS+REST" : "Quotes proxy (Yahoo/stooq)")],
-        ["Connection", conn],
-        ["Last tick", `${fmt(s.lastTickAt)} (${s.tps10s} in 10s)`],
-        ["Last chart update", fmt(s.lastChartUpdateAt)],
-        ["Measured delay", s.delaySec != null ? `${s.delaySec}s` : "n/a (stream)"],
-        // Phase 25 §4: honest disclosure when a close-only fallback (Yahoo FX
-        // 1m) served the series instead of genuine Dukascopy OHLC
-        ["Close-only share", s.closeOnlyShare != null ? `${s.closeOnlyShare}% (fallback served)` : "genuine OHLC"],
-        ["Latest candle", last ? `O ${last.open} H ${last.high} L ${last.low} C ${last.close}` : "—"],
-        ["Candle time (UTC)", last ? `${new Date(last.time * 1000).toISOString().slice(0, 19).replace("T", " ")} (${lastAge}s old)` : "—"],
-        ["Invalid bars", String(s.invalidBars)],
-        ["Repaired bars (H/L)", String(s.repairedBars)],
-        ["Duplicate deliveries", String(s.duplicateBars)],
-        ["Out-of-order ticks", String(s.outOfOrderTicks)],
-        // Phase 31 §6: series shape — total depth + flat (zero-range) share,
-        // the direct measurement behind the "thin lines" complaint
-        ["Candle count (loaded)", String(bars?.length ?? 0)],
-        ["Oldest candle", bars?.length ? fmt(bars[0].time * 1000) : "—"],
-        ["Newest candle", last ? fmt(last.time * 1000) : "—"],
-        ["Flat candles", (() => { if (!bars?.length) return "—"; const flat = bars.filter((b) => b.open === b.high && b.high === b.low && b.low === b.close).length; return `${flat} (${((flat / bars.length) * 100).toFixed(0)}%)`; })()],
-      ];
-      el.innerHTML = rows.map(([k, v]) => `<div class="flex justify-between gap-3 border-b border-slate-800/60 py-0.5"><span class="text-slate-500">${k}</span><span class="text-right font-number text-slate-200">${v}</span></div>`).join("");
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [symbol, conn, getBars]);
-  return (
-    <div className="absolute left-2 top-[6.6rem] z-30 w-72 rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
-      <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Feed diagnostics</p>
-      <div ref={ref} />
-    </div>
-  );
-}
-
-/**
- * Phase 23 §9 — admin historical-data management panel. Coverage per
- * timeframe (earliest/latest/count/provider/missing intervals/backfill
- * state) + controlled Start/Resume backfill actions. Backfills mutate, so
- * they are admin-gated server-side (requireAdmin) AND this panel only mounts
- * for admins (useIsAdmin).
- */
-function HistoryPanel({ symbol }: { symbol: string }) {
-  const [rows, setRows] = useState<any[]>([]);
-  const [busy, setBusy] = useState<string>("");
-  const [note, setNote] = useState<string>("");
-  const [months, setMonths] = useState<Record<string, number>>({});
-  const load = useCallback(async () => {
-    try {
-      const res = await authedFetch<any>(`/api/quotes?action=hist-status&symbol=${encodeURIComponent(symbol)}`);
-      setRows(res?.rows ?? []);
-    } catch (e: any) {
-      setNote(`status error: ${String(e?.message || e)}`);
-    }
-  }, [symbol]);
-  useEffect(() => { void load(); }, [load]);
-  const backfill = async (tf: string) => {
-    setBusy(tf);
-    setNote("");
-    try {
-      const res = await authedFetch<any>("/api/quotes?action=hist-backfill", {
-        symbol, tf, months: months[tf] ?? undefined,
-      });
-      setNote(res?.ok ? `${tf}: +${res.written} bars via ${res.provider || "?"}${res.note ? ` · ${res.note}` : ""}${res.done ? " · DONE" : " · cursor saved — resume to go deeper"}` : `${tf}: ${res?.error || "failed"}`);
-    } catch (e: any) {
-      setNote(`${tf}: ${String(e?.message || e)}`);
-    } finally {
-      setBusy("");
-      void load();
-    }
-  };
-  // Phase 25 §8: run budgeted backfill steps IN A LOOP until the requested
-  // depth is covered. Every server call stays small (≤90 Dukascopy day files,
-  // 45s wall-clock deadline, 600 files/day) — the loop simply resumes the
-  // cursor until done=true, surfacing live progress. Guarded against
-  // no-progress spins (CDN down) and a hard step cap.
-  const [deepRunning, setDeepRunning] = useState<string>("");
-  const deepFill = async (tf: string) => {
-    setDeepRunning(tf);
-    setNote("");
-    try {
-      let steps = 0, written = 0, noProgress = 0, prevCursor: number | null = null;
-      for (; steps < 300; steps++) {
-        const res = await authedFetch<any>("/api/quotes?action=hist-backfill", {
-          symbol, tf, months: months[tf] ?? undefined,
-        });
-        if (!res?.ok) { setNote(`${tf}: step ${steps + 1} failed: ${res?.error || "failed"} — progress saved, resume later`); break; }
-        written += res.written || 0;
-        setNote(`${tf}: step ${steps + 1} — +${res.written} bars (${res.provider || "?"}) · oldest ${fmtDate(res.oldest)}${res.timedOut ? " · budget reached" : ""}${res.done ? " · DONE" : " · continuing"}`);
-        if (res.done) { setNote(`${tf}: DONE — ${written} bars over ${steps + 1} steps · oldest ${fmtDate(res.oldest)}`); break; }
-        noProgress = res.cursor != null && res.cursor === prevCursor && !res.written ? noProgress + 1 : 0;
-        prevCursor = res.cursor;
-        if (noProgress >= 3) { setNote(`${tf}: no progress for 3 steps (provider unreachable?) — saved cursor: ${fmtDate(res.cursor)}`); break; }
-        await new Promise((r) => setTimeout(r, 400));
-      }
-      if (steps >= 300) setNote(`${tf}: paused after 300 steps — resume later to continue deeper`);
-    } catch (e: any) {
-      setNote(`${tf}: ${String(e?.message || e)}`);
-    } finally {
-      setDeepRunning("");
-      void load();
-    }
-  };
-  const fmtDate = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : "—");
-  return (
-    <div className="absolute left-2 top-32 z-30 max-h-[26rem] w-96 max-w-[calc(100%-2.5rem)] overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/95 p-2 text-[11px] shadow-2xl backdrop-blur">
-      <p className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
-        <span>Historical store · {symbol}</span>
-        <button onClick={() => void load()} className="text-slate-400 hover:text-slate-200" title="Refresh coverage">↻</button>
-      </p>
-      <table className="w-full">
-        <thead>
-          <tr className="text-left text-[10px] text-slate-500">
-            <th className="font-medium">TF</th><th className="font-medium">From</th><th className="font-medium">To</th>
-            <th className="font-medium">Bars</th><th className="font-medium">Provider</th><th className="font-medium">Missing</th><th className="font-medium">Backfill</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.tf} className="border-t border-slate-800/60">
-              <td className="py-0.5 font-number text-slate-200">{r.tf}</td>
-              <td className="font-number text-slate-300">{fmtDate(r.earliest)}</td>
-              <td className="font-number text-slate-300">{fmtDate(r.latest)}</td>
-              <td className="font-number text-slate-300">{compactNum(r.candleCount)}</td>
-              <td className="text-slate-400" title={Object.entries(r.providers || {}).map(([k, v]) => `${k}×${v}`).join(", ") || r.state?.provider || "—"}>
-                {Object.keys(r.providers || {})[0] || r.state?.provider || "—"}
-              </td>
-              <td className="font-number text-slate-400" title={r.missing?.longestGapSec ? `longest gap ${(r.missing.longestGapSec / 3600).toFixed(1)}h (market hours only)` : ""}>
-                {r.missing?.count ?? 0}
-              </td>
-              <td>
-                <div className="flex items-center gap-1">
-                  <button
-                    disabled={busy === r.tf || deepRunning === r.tf}
-                    onClick={() => void backfill(r.tf)}
-                    className={cn("rounded border border-slate-700 px-1.5 py-0.5 text-[10px]", r.state?.done ? "text-slate-400 hover:text-slate-200" : "text-amber-300 hover:bg-slate-800")}
-                    title={r.state?.error ? `last error: ${r.state.error}` : r.state?.done ? "re-scan (existing shards are skipped)" : "one budgeted step (≤90 Dukascopy day files / ≤10 TD pages)"}
-                  >
-                    {busy === r.tf ? "…" : r.state?.done ? "re-scan" : "step"}
-                  </button>
-                  <button
-                    disabled={busy === r.tf || deepRunning === r.tf || r.state?.done}
-                    onClick={() => void deepFill(r.tf)}
-                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-emerald-300 hover:bg-slate-800 disabled:text-slate-500"
-                    title={`deep fill: loop budgeted steps until the requested depth is covered${r.state?.targetFrom ? ` (target ${fmtDate(r.state.targetFrom)})` : ""}`}
-                  >
-                    {deepRunning === r.tf ? "filling…" : "deep fill"}
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-          {!rows.length && <tr><td colSpan={7} className="py-1 text-slate-500">no stored history yet — run a backfill below the chart loads it automatically</td></tr>}
-        </tbody>
-      </table>
-      <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-400">
-        <span>months:</span>
-        {rows.slice(0, 1).map((r) => (
-          <input key={r.tf} type="number" min={1} max={240} value={months[r.tf] ?? ""} placeholder="cap"
-            onChange={(e) => setMonths((m) => ({ ...m, [r.tf]: Number(e.target.value) || 0 }))}
-            className="w-14 rounded border border-slate-700 bg-slate-950 px-1 py-0.5 font-number" />
-        ))}
-        {/* Phase 25 §8: depth progress — oldest stored vs the requested target */}
-        {rows[0]?.state?.targetFrom && (
-          <span className="ml-1 text-slate-500">
-            depth {fmtDate(rows[0]?.state?.oldest)} → target {fmtDate(rows[0].state.targetFrom)}
-          </span>
-        )}
-      </div>
-      {note && <p className="mt-1 text-[10px] text-amber-300/90">{note}</p>}
-      {rows.some((r) => r.state?.error) && (
-        <p className="mt-1 text-[10px] text-red-400/90">last error: {rows.find((r) => r.state?.error)?.state?.error}</p>
-      )}
-    </div>
-  );
 }
 
 function upsertLocal(bars: Bar[], bar: Bar): Bar[] {

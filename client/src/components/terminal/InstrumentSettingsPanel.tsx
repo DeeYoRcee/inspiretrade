@@ -15,7 +15,7 @@ import { motion } from "framer-motion";
 import { RotateCcw, X } from "lucide-react";
 import { getInstrument } from "@shared/terminal";
 import {
-  DEFAULT_SETTINGS, APPEARANCE_PRESETS, type ChartSettings,
+  DEFAULT_SETTINGS, APPEARANCE_PRESETS, applyGridDefaultOff, type ChartSettings,
   magnetModeOf,
 } from "@/components/terminal/chart/dialogs";
 import {
@@ -48,7 +48,7 @@ const TIMEZONES = [
 ];
 
 function readGlobalSettings(): ChartSettings {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") }; }
+  try { return applyGridDefaultOff({ ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") }); }
   catch { return { ...DEFAULT_SETTINGS }; }
 }
 

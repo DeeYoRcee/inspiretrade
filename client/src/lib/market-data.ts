@@ -16,7 +16,7 @@
 import { authedFetch } from "@/lib/api";
 import { getAllPrices } from "@/lib/price-store";
 import {
-  getInstrument, INSTRUMENTS, BINANCE_INTERVAL, BINANCE_AGGREGATE, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS, type InstrumentSpec,
+  getInstrument, INSTRUMENTS, BINANCE_INTERVAL, YAHOO_INTERVAL, YAHOO_AGGREGATE, TF_SECONDS, type InstrumentSpec,
   aggregateBars, type Bar, type Timeframe,
 } from "@shared/terminal";
 
@@ -65,7 +65,7 @@ function upsert(bars: Bar[], bar: Bar): Bar[] {
 // ---------------------------------------------------------------------------
 
 import { validateBars, dedupeBars, checkBar, minuteIslandFilter, staleRunFilter, flatShare, repairOutlierExtremes, bucketStart, type RawBar } from "@shared/feed-validation";
-import { upsertBar, wsBackoffDelay, nextEndpointIndex, aggregateToSeconds } from "@shared/candle-core";
+import { upsertBar, wsBackoffDelay, nextEndpointIndex } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
 // second REST host are Binance's official PUBLIC MARKET-DATA mirrors on a
@@ -97,26 +97,7 @@ class BinanceProvider {
     // short-lived fresh cache — instant timeframe switching / remounts
     const fresh = this.history.get(key);
     if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) return fresh;
-    // Phase 24 BUG-2: sub-minute TFs walk THREE 1s kline pages back-to-back
-    // (1000/page hard cap) — a single page held only ~16 minutes of 1s data,
-    // so 15s/30s charts opened with a handful of candles
-    let raw: Bar[];
-    if (BINANCE_AGGREGATE[tf]) {
-      const pages: Bar[] = [];
-      let end: number | undefined = undefined;
-      for (let page = 0; page < 3; page++) {
-        const chunk = await this.fetchRecent(symbol, tf, 1000, end);
-        if (!chunk.length) break;
-        pages.unshift(...chunk);
-        end = chunk[0].time * 1000 - 1;
-        if (chunk.length < 1000) break;
-      }
-      raw = pages;
-    } else {
-      raw = await this.fetchRecent(symbol, tf, 1000);
-    }
-    // sub-minute TFs fetch the native 1s stream and aggregate honestly here
-    const bars = BINANCE_AGGREGATE[tf] ? aggregateToSeconds(raw, TF_SECONDS[tf]) as Bar[] : raw;
+    const bars = await this.fetchRecent(symbol, tf, 1000);
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
     return bars;
@@ -184,32 +165,7 @@ class BinanceProvider {
    */
   async loadOlder(symbol: string, tf: Timeframe, beforeTime: number, limit = 1000): Promise<Bar[]> {
     const raw = await this.fetchRecent(symbol, tf, limit, beforeTime * 1000 - 1);
-    const filtered = raw.filter((b) => b.time < beforeTime);
-    return BINANCE_AGGREGATE[tf] ? aggregateToSeconds(filtered, TF_SECONDS[tf]) as Bar[] : filtered;
-  }
-
-  /**
-   * Phase 22 — fold one native-1s bar into its target sub-minute bucket.
-   * Real OHLC semantics: running high/low, latest close, summed volume; a
-   * late 1s frame folds into its OWN stored bucket instead of corrupting the
-   * tail. Returns null when the tf needs no aggregation.
-   */
-  private aggBar(key: string, bar: Bar): Bar | null {
-    const m = this.meta.get(key);
-    if (!m || !BINANCE_AGGREGATE[m.tf]) return null;
-    const sec = TF_SECONDS[m.tf];
-    const t = Math.floor(bar.time / sec) * sec;
-    const bars = this.history.get(key) || [];
-    const cur = bars.length ? bars[bars.length - 1] : null;
-    if (cur && cur.time === t) {
-      return { time: t, open: cur.open, high: Math.max(cur.high, bar.high), low: Math.min(cur.low, bar.low), close: bar.close, volume: (cur.volume ?? 0) + (bar.volume ?? 0) };
-    }
-    const existing = bars.find((b) => b.time === t);
-    if (existing) {
-      // late frame for an older bucket — fold, never overwrite the history
-      return { ...existing, high: Math.max(existing.high, bar.high), low: Math.min(existing.low, bar.low), close: bar.close, volume: (existing.volume ?? 0) + (bar.volume ?? 0) };
-    }
-    return { time: t, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume };
+    return raw.filter((b) => b.time < beforeTime);
   }
 
   /**
@@ -245,13 +201,10 @@ class BinanceProvider {
   }
 
   /** Fetch the last 2 klines and upsert them into the series (gap-fill).
-   * Phase 24 D1: aggBar only folds for sub-minute TFs and returns null for
-   * every standard timeframe — the old `if (folded)` gate made this entire
-   * safety poll a NO-OP for 1m..1M, so a WS outage froze the chart and every
-   * missed candle became a permanent gap. The raw bar is now used directly
-   * when no aggregation applies. Phase 24 D2: bars fold SEQUENTIALLY against
-   * the evolving series (the old two-at-once fold overwrote the first bar's
-   * volume/H/L when both landed in the same sub-minute bucket). */
+   * Phase 24 D2: bars fold SEQUENTIALLY against the evolving series (the old
+   * two-at-once fold overwrote the first bar's volume/H/L when both landed
+   * in the same bucket). Sub-minute aggregation is gone — the raw bar is
+   * used directly. */
   private async resync(key: string, isRealtime = true) {
     const m = this.meta.get(key);
     if (!m || !this.listeners.get(key)?.size) return;
@@ -259,12 +212,10 @@ class BinanceProvider {
     if (!recentRaw.length) return;
     let bars = this.history.get(key) || [];
     let changed = false;
-    for (const raw of recentRaw) {
-      const b = this.aggBar(key, raw) ?? raw; // sub-minute → fold · standard → as-is
+    for (const b of recentRaw) {
       const prev = bars.find((x) => x.time === b.time);
       if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
       bars = upsert(bars, b);
-      if (this.aggBar(key, raw)) this.history.set(key, bars); // aggBar reads the live series — keep it current between folds
     }
     if (!changed) return;
     this.history.set(key, bars);
@@ -374,8 +325,7 @@ class BinanceProvider {
         const chk = checkBar(bar);
         if (!chk.ok) { statsState.invalidBars++; return; } // corrupted frame — never reach the chart
         if (chk.repaired) { statsState.repairedBars++; bar.high = Math.max(bar.high, bar.open, bar.close); bar.low = Math.min(bar.low, bar.open, bar.close); }
-        const folded = this.aggBar(key, bar) ?? bar;
-        const bars = upsert(this.history.get(key) || [], folded);
+        const bars = upsert(this.history.get(key) || [], bar);
         this.history.set(key, bars);
         this.loadedAt.set(key, Date.now());
         markTick();
@@ -693,40 +643,16 @@ class QuotesProvider {
         if (!marketHours(symbol).open) return;
         const bars = this.history.get(key);
         if (!bars?.length) {
-          if (sec >= 60) {
-            // the very first recorded minute just opened — pull it into the
-            // chart immediately instead of waiting for the 3 min resync
-            void this.loadRecordedSpot(symbol, tf).then((fresh) => {
-              if (fresh?.length) {
-                this.listeners.get(key)?.forEach((c) => cb({ bars: fresh, lastBar: fresh[fresh.length - 1], isRealtime: false }));
-              }
-            }).catch(() => { /* transient — the next tick retries */ });
-            return;
-          }
-          // seconds candles start live from the first REAL observed quote
-          const t = Math.floor(Date.now() / 1000 / sec) * sec;
-          const first: Bar = { time: t, open: price, high: price, low: price, close: price, volume: 1 };
-          this.history.set(key, [first]);
-          markTick();
-          this.listeners.get(key)?.forEach((c) => cb({ bars: [first], lastBar: first, isRealtime: true }));
+          // the very first recorded minute just opened — pull it into the
+          // chart immediately instead of waiting for the 3 min resync
+          void this.loadRecordedSpot(symbol, tf).then((fresh) => {
+            if (fresh?.length) {
+              this.listeners.get(key)?.forEach((c) => cb({ bars: fresh, lastBar: fresh[fresh.length - 1], isRealtime: false }));
+            }
+          }).catch(() => { /* transient — the next tick retries */ });
           return;
         }
         if (tf !== "1d") {
-          if (sec < 60) {
-            const t = Math.floor(Date.now() / 1000 / sec) * sec;
-            const last = bars[bars.length - 1];
-            if (t < last.time) return; // stale sample — never rewrite history
-            const cur: Bar = last.time === t
-              ? { time: t, open: last.open, high: Math.max(last.high, price), low: Math.min(last.low, price), close: price, volume: (last.volume ?? 0) + 1 }
-              : { time: t, open: price, high: price, low: price, close: price, volume: 1 };
-            const next = last.time === t ? [...bars.slice(0, -1), cur] : [...bars, cur].slice(-3600);
-            this.history.set(key, next);
-            markTick();
-            statsState.delaySec = getSpotState().providerDelaySec;
-            statsState.delayBy[key] = getSpotState().providerDelaySec;
-            this.listeners.get(key)?.forEach((c) => cb({ bars: next, lastBar: cur, isRealtime: true }));
-            return;
-          }
           // bridging fill-forward is capped at 5 buckets for recorded data:
           // beyond that the missing minutes stay an honest gap on the axis
           const merged = mergeSpotTail(bars, price, sec, 5);
@@ -866,22 +792,6 @@ class QuotesProvider {
       } catch { /* backfill is best-effort */ }
     }
 
-    // ---- Phase 24 BUG: sub-minute timeframes are LIVE-ONLY ------------------
-    // Folding minute candles into second buckets put every minute in exactly
-    // ONE second bucket — a sparse string of flat dots that then BLOCKED the
-    // live seconds builder (history looked non-empty). No free source carries
-    // second-grain history for metals, so the honest answer is an empty
-    // initial series; subscribeFeed's seconds branch builds real candles from
-    // the first observed 1s gold-api quote onward (§7: nothing fabricated).
-    const key = `${symbol}:${tf}`;
-    const sec = TF_SECONDS[tf];
-    if (sec < 60) {
-      this.source.set(key, "spot-seconds-live");
-      this.identity.set(key, "spot");
-      this.history.set(key, []);
-      this.loadedAt.set(key, Date.now());
-      return [];
-    }
     // ---- Phase 29: FAST FIRST PAINT + async deep layers ---------------------
     // The terminal must open on real candles immediately: the recorded
     // aggregate paints first (one spot-history call), the deep layers
@@ -894,6 +804,8 @@ class QuotesProvider {
     // never freeze or blank the chart again (the 10:17 frozen-tail defect).
     if (m1.length) spotAnchor.set(code, { close: m1[m1.length - 1].close, at: Date.now() });
     lastSpotIslandRejected = islandRejected;
+    const key = `${symbol}:${tf}`;
+    const sec = TF_SECONDS[tf];
     const fastBars = dedupSort(aggregateBars(m1, sec / 60)) as Bar[];
     const fast = this.mergeExtended(key, fastBars);
     this.history.set(key, fast);

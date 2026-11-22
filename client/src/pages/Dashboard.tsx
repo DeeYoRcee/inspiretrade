@@ -389,7 +389,7 @@ export default function Dashboard() {
                         key={date.toISOString()}
                         onClick={() => handleDayClick(date)}
                         className={cn(
-                          "relative h-20 sm:h-24 rounded-lg flex flex-col items-center justify-between p-1.5 sm:p-2 transition-all text-left",
+                          "relative h-20 sm:h-24 rounded-lg flex flex-col items-center justify-start p-1.5 sm:p-2 transition-all text-left",
                           isSelected && "ring-2 ring-primary ring-offset-1 ring-offset-background",
                           todayDate && !isSelected && "bg-accent/60",
                           hasTrades && dayPnL > 0
@@ -411,8 +411,10 @@ export default function Dashboard() {
                           )}
                         </div>
                         {hasTrades && (
+                          /* P/L amount: finer font, vertically centred — the
+                             mono/col-bold combo used to sink it to the bottom */
                           <span className={cn(
-                            "text-[12px] sm:text-[15px] font-bold leading-none font-number",
+                            "flex flex-1 items-center justify-center text-[12px] sm:text-[15px] font-medium leading-none tracking-tight tabular-nums",
                             dayPnL > 0 ? "text-success" : dayPnL < 0 ? "text-destructive" : "text-muted-foreground"
                           )}>
                             {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$
@@ -504,7 +506,7 @@ export default function Dashboard() {
 
                       return (
                         <div className={cn(
-                          "flex flex-col items-center justify-between h-full w-full py-1 rounded-md transition-colors relative",
+                          "flex flex-col items-center justify-start h-full w-full py-1 rounded-md transition-colors relative",
                           hasTrades && dayPnL > 0
                             ? "border-[1.5px] border-success/80 shadow-[0_0_10px_rgba(34,197,94,0.3)]"
                             : hasTrades && dayPnL < 0
@@ -514,7 +516,7 @@ export default function Dashboard() {
                           <span className="font-medium text-xs sm:text-sm">{format(date, "d")}</span>
                           {hasTrades && (
                             <span className={cn(
-                              "text-[12px] sm:text-[15px] font-bold leading-none",
+                              "flex flex-1 items-center justify-center text-[12px] sm:text-[15px] font-medium leading-none tracking-tight tabular-nums",
                               dayPnL > 0 ? "text-success" : dayPnL < 0 ? "text-destructive" : "text-muted-foreground"
                             )}>
                               {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$

@@ -27,12 +27,12 @@ import { saveChartSettingsCloud } from "@/lib/chart-persistence";
 import { useQuotes } from "@/lib/quotes-context";
 import { marketStatus } from "@/lib/market-status";
 import type { ChartSettings } from "@/components/terminal/chart/dialogs";
-import { DEFAULT_SETTINGS, magnetModeOf } from "@/components/terminal/chart/dialogs";
+import { DEFAULT_SETTINGS, magnetModeOf, applyGridDefaultOff } from "@/components/terminal/chart/dialogs";
 
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "appearance", label: "Appearance" },
-  { id: "chart", label: "Chart" },
+  { id: "chart", label: "Chart settings" },
   { id: "instrument", label: "Instrument" },
   { id: "trading", label: "Trading" },
   { id: "notifications", label: "Notifications" },
@@ -249,7 +249,7 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
         {/* right content */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5">
-            <h3 className="text-sm font-bold text-slate-100">{SECTIONS.find((s) => s.id === section)?.label} settings</h3>
+            <h3 className="text-sm font-bold text-slate-100">General settings <span className="font-normal text-slate-500">· {SECTIONS.find((s) => s.id === section)?.label}</span></h3>
             <button onClick={onClose} className="px-2 text-slate-500 hover:text-slate-200">✕</button>
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-2">
@@ -263,7 +263,7 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                 </Show>
                 <Show label="Default timeframe">
                   <Select label="Default timeframe" value={ts.general.defaultTf}
-                    options={TIMEFRAMES.filter((tf) => !["1s", "5s", "15s", "30s"].includes(tf)).map((tf) => ({ value: tf, label: tf.toUpperCase() }))}
+                    options={TIMEFRAMES.map((tf) => ({ value: tf, label: tf.toUpperCase() }))}
                     onChange={(v) => updateTerminalSettings({ general: { defaultTf: v as typeof ts.general.defaultTf } })} />
                 </Show>
                 <Show label="Timezone" hint="IANA name (e.g. Asia/Tashkent) — empty = browser zone">
@@ -333,8 +333,28 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                 <Show label="Historical loading" hint="Charts load up to 1000 recent bars; metals self-record + Twelve Data backfill fills gaps">
                   <span className="text-[10px] text-slate-500">automatic</span>
                 </Show>
-                <Show label="Drawing defaults" hint="Color/width/style/one-shot live in the chart's own settings dialog">
-                  <span className="text-[10px] text-slate-500">chart toolbar ⚙</span>
+                <Show label="Magnet strength" hint="How strongly the crosshair and new drawing anchors snap to candle OHLC">
+                  <Select label="Magnet strength" value={String(magnetModeOf(chartCfg))}
+                    options={[{ value: "0", label: "Off" }, { value: "1", label: "Normal" }, { value: "2", label: "Strong" }]}
+                    onChange={(v) => saveChartCfg({ magnet: v !== "0", magnetMode: Number(v) as 0 | 1 | 2 })} />
+                </Show>
+                <Show label="Drawing default color" hint="New drawings take this color">
+                  <ColorField label="Drawing default color" value={chartCfg.drawColor} onChange={(v) => saveChartCfg({ drawColor: v })} />
+                </Show>
+                <Show label="Drawing default width">
+                  <Select label="Drawing default width" value={String(chartCfg.drawWidth)}
+                    options={[1, 2, 3, 4].map((w) => ({ value: String(w), label: `${w}px` }))}
+                    onChange={(v) => saveChartCfg({ drawWidth: Number(v) })} />
+                </Show>
+                <Show label="Drawing default style">
+                  <Select label="Drawing default style" value={chartCfg.drawDash}
+                    options={[{ value: "solid", label: "Solid" }, { value: "dashed", label: "Dashed" }, { value: "dotted", label: "Dotted" }]}
+                    onChange={(v) => saveChartCfg({ drawDash: v as ChartSettings["drawDash"] })} />
+                </Show>
+                <Show label="Drawing default text size">
+                  <Select label="Drawing default text size" value={String(chartCfg.drawFontSize)}
+                    options={[10, 12, 14, 16, 20, 24].map((s) => ({ value: String(s), label: `${s}px` }))}
+                    onChange={(v) => saveChartCfg({ drawFontSize: Number(v) })} />
                 </Show>
               </div>
             )}
@@ -575,6 +595,6 @@ function ShortcutsSection({ matches }: { matches: (label: string) => boolean }) 
 
 function loadChartCfg(): ChartSettings {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") };
+    return applyGridDefaultOff({ ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}") });
   } catch { return DEFAULT_SETTINGS; }
 }

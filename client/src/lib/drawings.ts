@@ -2048,6 +2048,33 @@ export function magnetSnapTime(time: number, tfSec: number | null | undefined): 
   return Math.floor(time / tfSec) * tfSec;
 }
 
+/**
+ * Neighbour-aware magnet: the containing bar's OHLC first, then its two
+ * immediate neighbours. A wick tip of the adjacent column still attracts the
+ * cursor — and when a neighbour wins, the TIME follows it, so the anchor
+ * always lands on the bar whose OHLC it snapped to (never a mixed pair).
+ * Pure; falls back to the plain containing-bar snap when nothing is in range.
+ */
+export function magnetSnapNear(
+  time: number,
+  price: number,
+  barAt: (t: number) => { open: number; high: number; low: number; close: number } | null,
+  tfSec: number | null | undefined,
+  priceToY: (p: number) => number | null,
+  thresholdPx = 12,
+): { time: number; price: number } {
+  const t = magnetSnapTime(time, tfSec);
+  const direct = magnetSnapPrice(price, barAt(t), priceToY, thresholdPx);
+  if (direct !== price) return { time: t, price: direct };
+  const tf = tfSec && tfSec > 0 ? tfSec : 0;
+  if (!tf || !Number.isFinite(t) || t <= 0) return { time: t, price };
+  for (const nt of [t - tf, t + tf]) {
+    const s = magnetSnapPrice(price, barAt(nt), priceToY, thresholdPx);
+    if (s !== price) return { time: magnetSnapTime(nt, tfSec), price: s };
+  }
+  return { time: t, price };
+}
+
 
 // ---------------------------------------------------------------------------
 // P40 — persistence merge helpers (pure; unit-tested in tests/p40-persistence)

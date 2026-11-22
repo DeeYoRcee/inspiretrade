@@ -15,7 +15,7 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "re
 import {
   hitTest, makeDrawing, renderDrawing, setupCanvas, regressionLine,
   TEXT_TOOLS, CLICK_COLLECT_TOOLS, TOOL_POINT_COUNT, TOOL_LABELS, drawHandle,
-  magnetSnapPrice, magnetSnapTime, MAGNET_PX, snapToTick, clampPositionPrice,
+  magnetSnapPrice, magnetSnapNear, magnetSnapTime, MAGNET_PX, snapToTick, clampPositionPrice,
   createPositionFromGesture, fmtPositionPrice,
   type Drawing, type DrawingPoint, type DrawingType, type XY, isPositionTool, positionAnchors, type DrawingRenderEnv } from "@/lib/drawings";
 
@@ -213,15 +213,16 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
   const snapPoint = (time: number, price: number): { time: number; price: number } => {
     if (!magnetModeRef.current) return { time, price };
-    const t = magnetSnapTime(time, tfRef.current);
-    const bar = barAtTime(t);
-    const snapped = magnetSnapPrice(price, bar, (pp) => converterRef.current?.y(pp) ?? null, magnetThreshold());
-    if ((snapped !== price || t !== time)) {
-      const sx = converterRef.current?.x(t) ?? null;
-      const sy = converterRef.current?.y(snapped) ?? null;
+    // neighbour-aware magnet: the containing bar's OHLC first, then its two
+    // neighbours (a wick tip of the adjacent column still attracts); when a
+    // neighbour wins, the time follows it — anchor and bar stay a pair
+    const snapped = magnetSnapNear(time, price, barAtTime, tfRef.current, (pp) => converterRef.current?.y(pp) ?? null, magnetThreshold());
+    if ((snapped.price !== price || snapped.time !== time)) {
+      const sx = converterRef.current?.x(snapped.time) ?? null;
+      const sy = converterRef.current?.y(snapped.price) ?? null;
       if (sx != null && sy != null) snapFlashRef.current = { x: sx, y: sy };
     }
-    return { time: t, price: snapped };
+    return snapped;
   };
 
   /** measure tool summary: Δprice (Δ%) over N bars — computed in MARKET space */
