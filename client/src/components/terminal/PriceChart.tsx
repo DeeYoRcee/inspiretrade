@@ -46,7 +46,10 @@ import {
 } from "@/lib/indicators-config";
 import {
   reorderDrawing, effectiveName, isVisibleOnTf, __sanitizeDrawingList,
-  mergeDrawingLists, stampChangedDrawings, newDrawingId, type Drawing, type DrawingType } from "@/lib/drawings";
+  mergeDrawingLists, stampChangedDrawings, newDrawingId, type Drawing, type DrawingType, type DrawingRenderEnv } from "@/lib/drawings";
+import { readFavoritesLocal, toggleFavorite, reorderFavorites } from "@/lib/drawing-favorites";
+import { saveFavorites, subscribeFavorites } from "@/lib/chart-persistence";
+import { FavoritesToolbar } from "@/components/terminal/chart/FavoritesToolbar";
 import {
   subscribeDrawings, saveDrawings, clearDrawings as clearDrawingsRemote,
   subscribeIndicators, saveIndicators, clearIndicators as clearIndicatorsRemote,
@@ -288,6 +291,7 @@ export function PriceChart({
   replayCursor = null,
   replayForming = null,
   replayStatus = null,
+  accountBalance = null,
 }: {
   symbol: string;
   timeframe: Timeframe;
@@ -313,6 +317,8 @@ export function PriceChart({
   replayForming?: Bar | null;
   /** replay status line, e.g. "REPLAY · 5m · paused" */
   replayStatus?: string | null;
+  /** P41 — live account balance (live mode) for the position size calc */
+  accountBalance?: number | null;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const mainHostRef = useRef<HTMLDivElement | null>(null);
@@ -491,6 +497,36 @@ export function PriceChart({
   // Phase 34: per-instrument decimal override (instrument settings panel)
   const precisionOverride = (perInstrument as { precision?: number } | undefined)?.precision;
   const effDigits = precisionOverride ?? digits;
+  // P41 §1 — real instrument metadata + live balance for position drawings
+  const renderEnv = useMemo<DrawingRenderEnv>(() => ({
+    digits: effDigits,
+    contractSize: inst?.contractSize,
+    pipSize: inst?.pipSize,
+    balance: accountBalance ?? undefined,
+    symbol,
+  }), [effDigits, inst, accountBalance, symbol]);
+
+  // ---- P41 §2 — per-user favorite drawing tools (LS mirror + RTDB) -------
+  const [favTools, setFavTools] = useState<string[]>(() => readFavoritesLocal(uid ?? ""));
+  useEffect(() => {
+    setFavTools(readFavoritesLocal(uid ?? ""));
+    if (!uid) return;
+    return subscribeFavorites(uid, (list) => setFavTools(list));
+  }, [uid]);
+  const toggleFavTool = useCallback((id: string) => {
+    setFavTools((prev) => {
+      const next = toggleFavorite(prev, id);
+      saveFavorites(uid ?? "", next);
+      return next;
+    });
+  }, [uid]);
+  const reorderFavTools = useCallback((from: number, to: number) => {
+    setFavTools((prev) => {
+      const next = reorderFavorites(prev, from, to);
+      if (next !== prev) saveFavorites(uid ?? "", next);
+      return next;
+    });
+  }, [uid]);
   const priceFormat = useMemo(
     () => ({ type: "price" as const, precision: effDigits, minMove: Math.pow(10, -effDigits) }),
     [effDigits],
@@ -1978,6 +2014,8 @@ export function PriceChart({
       <div className="flex min-h-0 min-w-0 flex-1">
         <LeftRail
           activeTool={activeTool}
+          favs={favTools}
+          onToggleFav={toggleFavTool}
           onToolSelect={(t) => setActiveTool((cur) => (cur === t ? "cursor" : t))}
           magnet={settings.magnet}
           onMagnetToggle={() => setSettings((s) => ({ ...s, magnet: !s.magnet }))}
@@ -2076,10 +2114,20 @@ export function PriceChart({
           onTradeLineMove={handleTradeLineMove}
           tfSeconds={TF_SECONDS[timeframe] ?? 0}
           digits={digits}
+          renderEnv={renderEnv}
           locked={locked}
           hiddenAll={hiddenAll}
           getBars={() => barsRef.current}
           cursorFallback={cursorCss(cursorMode)}
+        />
+
+        {/* P41 §2 — floating favorites toolbar (quick-access drawing tools) */}
+        <FavoritesToolbar
+          favs={favTools}
+          activeTool={activeTool}
+          onActivate={(t) => setActiveTool(t)}
+          onToggleFav={toggleFavTool}
+          onReorder={reorderFavTools}
         />
 
         {/* Phase 35 §6 — drawings restore feedback (per-user, per-instrument) */}
@@ -2097,6 +2145,7 @@ export function PriceChart({
           return (
             <DrawingPropsBar
               drawing={sel}
+              positionEnv={renderEnv}
               fibPresets={fibPresets}
               onSaveFibPreset={(name, lvls) => {
                 if (uid) { saveFibPreset(uid, name, sel.type, lvls); void loadFibPresets(uid).then(setFibPresets); }
@@ -2147,7 +2196,7 @@ export function PriceChart({
             onClick={() => setDiagOpen((v) => !v)}
             title="Feed diagnostics (admin)"
             className={cn(
-              "absolute left-2 top-[4.4rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
+              "absolute left-2 top-[7.5rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
               diagOpen ? "text-sky-300" : "text-slate-500 hover:text-slate-300",
             )}
           >
@@ -2160,7 +2209,7 @@ export function PriceChart({
             onClick={() => setHistOpen((v) => !v)}
             title="Historical data management (admin)"
             className={cn(
-              "absolute left-2 top-[6.5rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
+              "absolute left-2 top-[9.6rem] z-10 flex h-6 w-6 items-center justify-center rounded border border-slate-700/60 bg-slate-900/80 backdrop-blur transition-colors",
               histOpen ? "text-amber-300" : "text-slate-500 hover:text-slate-300",
             )}
           >

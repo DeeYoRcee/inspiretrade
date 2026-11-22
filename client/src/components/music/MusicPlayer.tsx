@@ -925,6 +925,9 @@ export function MusicPlayer() {
             {/* transport + seek */}
             {track && (
               <div className="px-3 pb-2.5">
+                {/* seek — wide view only: the mini card stays compact */}
+                {wide && (
+                <>
                 <input
                   type="range" min={0} max={1000} step={1} value={Math.round(seekFrac * 1000)}
                   onChange={(e) => seek(Number(e.target.value) / 1000)}
@@ -935,6 +938,8 @@ export function MusicPlayer() {
                   <span>{fmt(cur)}</span>
                   <span>{fmt(dur)}</span>
                 </div>
+                </>
+                )}
                 <div className="flex items-center justify-center gap-3">
                   <button
                     onClick={() => setShuffle((v) => !v)}
@@ -975,7 +980,8 @@ export function MusicPlayer() {
                     {repeat === "one" ? <Repeat1 className="h-3.5 w-3.5" /> : <Repeat className="h-3.5 w-3.5" />}
                   </button>
                 </div>
-                {/* volume */}
+                {/* volume — wide only */}
+                {wide && (
                 <div className="mt-2 flex items-center gap-1.5">
                   <Volume2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <input
@@ -985,7 +991,10 @@ export function MusicPlayer() {
                     title="Volume"
                   />
                 </div>
-                {/* panel transparency — lower % = more see-through */}
+                )}
+                {/* panel transparency — WIDE ONLY: nothing but the controls
+                    shows while minimized (user request) */}
+                {wide && (
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <span className="shrink-0 text-[10px] font-semibold text-muted-foreground">Transparency</span>
                   <input
@@ -996,6 +1005,7 @@ export function MusicPlayer() {
                   />
                   <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{Math.round(prefs.opacity * 100)}%</span>
                 </div>
+                )}
               </div>
             )}
 

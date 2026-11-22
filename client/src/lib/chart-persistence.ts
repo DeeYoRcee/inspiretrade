@@ -11,6 +11,7 @@
 import { get, onValue, ref as dbRef, remove, set, update } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
 import { __sanitizeDrawingList, filterTombstonedDrawings } from "@/lib/drawings";
+import { readFavoritesLocal, writeFavoritesLocal, MAX_FAVORITES } from "@/lib/drawing-favorites";
 import type { Drawing, FibLevel } from "@/lib/drawings";
 import { sanitizeFibLevels } from "@/lib/drawings";
 import { sanitizeIndicatorList } from "@/lib/indicators-config";
@@ -216,6 +217,81 @@ export function clearDrawings(uid: string, symbol: string): void {
   localDel(uid, "drawings", symbol);
   lastSavedDrawings.delete(key); // next save does a full set, not a diff
   void remove(rtdb(`chart/${uid}/drawings/${symbol}`)).catch(() => { /* ignore */ });
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ---------------------------------------------------------------------------
+// P41 — the global chart look (candle colors, chart type, grid…) syncs to
+// RTDB as well: it used to be localStorage-only, so a fresh browser or a
+// logout/login lost the user's candle colors even though drawings survived.
+// ---------------------------------------------------------------------------
+
+const pendingChartSettingsWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function saveChartSettingsCloud(uid: string, cfg: Record<string, unknown>): void {
+  if (!uid) return;
+  const key = `chartSettings|${uid}`;
+  const prev = pendingChartSettingsWrites.get(key);
+  if (prev) clearTimeout(prev);
+  pendingChartSettingsWrites.set(key, setTimeout(() => {
+    pendingChartSettingsWrites.delete(key);
+    void set(rtdb(`users/${uid}/chartSettings`), { ...cfg, savedAt: Date.now() })
+      .catch((err) => console.warn("[chart] settings save failed:", err));
+  }, 500));
+}
+
+export async function loadChartSettingsCloud(uid: string): Promise<Record<string, unknown> | null> {
+  try {
+    const snap = await get(rtdb(`users/${uid}/chartSettings`));
+    const val = snap.val() as Record<string, unknown> | null;
+    return val && typeof val === "object" ? val : null;
+  } catch { return null; }
+}
+
+// ---------------------------------------------------------------------------
+// P41 §2 — favorites: RTDB `chart/{uid}/favorites` (owner-only rules) with
+// the LS mirror for the first paint; the pure toggle/reorder logic lives in
+// drawing-favorites.ts and is unit-tested.
+// ---------------------------------------------------------------------------
+
+export function saveFavorites(uid: string, list: string[]): void {
+  writeFavoritesLocal(uid, list);
+  if (!uid) return; // anonymous → localStorage only
+  void set(rtdb(`chart/${uid}/favorites`), list.slice(0, MAX_FAVORITES))
+    .catch((err) => console.warn("[chart] favorites save failed — kept in localStorage:", err));
+}
+
+export function subscribeFavorites(uid: string, cb: (list: string[]) => void): () => void {
+  const cached = readFavoritesLocal(uid);
+  if (cached.length) cb(cached);
+  if (!uid) return () => {};
+  return onValue(
+    dbRef(db, `chart/${uid}/favorites`),
+    (snap) => {
+      const val = snap.val();
+      const list = Array.isArray(val)
+        ? [...new Set(val.filter((x): x is string => typeof x === "string" && x.length > 0))].slice(0, MAX_FAVORITES)
+        : [];
+      cb(list);
+      writeFavoritesLocal(uid, list);
+    },
+    (err) => console.warn("[chart] favorites listener error (LS mirror active):", err),
+  );
 }
 
 /** P40 — drop this user's chart localStorage mirrors (logout hygiene). */

@@ -59,6 +59,10 @@ export interface DrawingStyle {
   textAlign?: "left" | "center" | "right";
   /** background chip behind text (color string) */
   textBg?: string;
+  /** P41 — position tools: take-profit zone color (default #22c55e) */
+  profitColor?: string;
+  /** P41 — position tools: stop-loss zone color (default #ef4444) */
+  lossColor?: string;
 }
 
 /** one configurable Fibonacci level (ratio is the multiple of the measured span).
@@ -90,6 +94,8 @@ export interface Drawing {
   tfs?: Timeframe[];
   /** P40 — LWW merge timestamp (ms) stamped on every persisted edit */
   updatedAt?: number;
+  /** P41 — position tools: risk % of balance for the size calculation */
+  riskPct?: number;
 }
 
 export const FIB_RETRACEMENT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -280,6 +286,103 @@ export function riskReward(entry: number, stop: number, target: number): { rr: n
 }
 
 // ---------------------------------------------------------------------------
+// P41 §1/§3 — position tools: real geometry + real math from instrument data
+// ---------------------------------------------------------------------------
+
+export function isPositionTool(type: DrawingType): boolean {
+  return type === "long-position" || type === "short-position";
+}
+
+/** Instrument facts the position math needs (shared/terminal InstrumentSpec). */
+export interface PositionSpec { digits: number; pipSize: number; contractSize: number }
+
+/** Live chart/account context passed to the renderer (may be partial). */
+export interface DrawingRenderEnv {
+  digits?: number;
+  contractSize?: number;
+  pipSize?: number;
+  balance?: number;
+  symbol?: string;
+}
+
+/** Price formatting with REAL instrument precision (was a heuristic guess). */
+export function fmtPositionPrice(v: number, digits = 2): string {
+  if (!Number.isFinite(v)) return "—";
+  return v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+export interface PositionCalcResult {
+  entry: number;
+  stop: number;
+  target: number;
+  riskDist: number;       // price distance entry→stop
+  rewardDist: number;     // price distance entry→target
+  rr: number;             // reward / risk
+  riskPctOfPrice: number;
+  rewardPctOfPrice: number;
+  /** the following exist ONLY when instrument metadata AND balance are known */
+  lots?: number;          // size so a stop-out loses riskPct% of balance
+  riskAmount?: number;    // $ lost at stop (lots × distance × contract size)
+  rewardAmount?: number;  // $ gained at target
+}
+
+/**
+ * P41 §3 — position math. `lots` sizes the trade so that hitting the stop
+ * loses exactly riskPct% of the balance: risk$ = |entry−stop| × contractSize
+ * × lots. Every figure derives from the instrument's contract size — nothing
+ * is fabricated; monetary fields stay undefined without a real balance.
+ */
+export function positionCalc(
+  entry: number,
+  stop: number,
+  target: number,
+  spec?: PositionSpec,
+  balance?: number,
+  riskPct?: number,
+): PositionCalcResult {
+  const riskDist = Math.abs(entry - stop);
+  const rewardDist = Math.abs(target - entry);
+  const rr = riskDist > 0 ? rewardDist / riskDist : 0;
+  const riskPctOfPrice = entry > 0 ? (riskDist / entry) * 100 : 0;
+  const rewardPctOfPrice = entry > 0 ? (rewardDist / entry) * 100 : 0;
+  const out: PositionCalcResult = { entry, stop, target, riskDist, rewardDist, rr, riskPctOfPrice, rewardPctOfPrice };
+  if (spec && spec.contractSize > 0 && balance && balance > 0 && riskDist > 0) {
+    const riskMoney = (balance * (riskPct && riskPct > 0 ? riskPct : 1)) / 100;
+    const perLot = riskDist * spec.contractSize;
+    if (perLot > 0) {
+      out.lots = riskMoney / perLot;
+      out.riskAmount = out.lots * perLot;
+      out.rewardAmount = out.lots * rewardDist * spec.contractSize;
+    }
+  }
+  return out;
+}
+
+/**
+ * P41 §2 — the FIVE interactive handles of a position drawing, canvas px:
+ * 0=entry level · 1=stop level · 2=target level (all move VERTICALLY only,
+ * pinned to the band's right edge like TradingView) · 3=band left edge ·
+ * 4=band right edge (move HORIZONTALLY only). The band spans
+ * [entry.x, stop.x]; target.x is ignored — its line always spans the band,
+ * so dragging one level can never move another.
+ */
+export function positionAnchors(pts: XY[]): XY[] {
+  if (pts.length < 3) return pts;
+  const xL = Math.min(pts[0].x, pts[1].x);
+  const xR = Math.max(pts[0].x, pts[1].x);
+  const y0 = Math.min(pts[0].y, pts[1].y, pts[2].y);
+  const y1 = Math.max(pts[0].y, pts[1].y, pts[2].y);
+  const yMid = (y0 + y1) / 2;
+  return [
+    { x: xR, y: pts[0].y },
+    { x: xR, y: pts[1].y },
+    { x: xR, y: pts[2].y },
+    { x: xL, y: yMid },
+    { x: xR, y: yMid },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Geometry helpers (canvas-space)
 // ---------------------------------------------------------------------------
 
@@ -460,6 +563,26 @@ export function hitTest(
     if (d.locked || d.hidden) continue;
     const pts = toCanvas(d);
     if (!pts.length) continue;
+
+    // P41 — position tools: five SEMANTIC handles (3 levels on the right
+    // edge + 2 band edges) and a body hit on the zone rect; the raw anchor
+    // dots are never hit targets (they sit at arbitrary creation clicks)
+    if (isPositionTool(d.type) && pts.length >= 3) {
+      const anchors = positionAnchors(pts);
+      for (let h = 0; h < anchors.length; h++) {
+        if ((p.x - anchors[h].x) ** 2 + (p.y - anchors[h].y) ** 2 <= HANDLE_HIT * HANDLE_HIT) {
+          return { index: i, handle: h };
+        }
+      }
+      const xL = Math.min(pts[0].x, pts[1].x);
+      const xR = Math.max(pts[0].x, pts[1].x);
+      const y0 = Math.min(pts[0].y, pts[1].y, pts[2].y);
+      const y1 = Math.max(pts[0].y, pts[1].y, pts[2].y);
+      if (p.x >= xL - LINE_HIT && p.x <= xR + LINE_HIT && p.y >= y0 - LINE_HIT && p.y <= y1 + LINE_HIT) {
+        return { index: i };
+      }
+      continue;
+    }
 
     // endpoint handles first — they win over the body
     for (let h = 0; h < pts.length; h++) {
@@ -834,6 +957,7 @@ export function renderDrawing(
   canvasW: number,
   canvasH: number,
   selected: boolean,
+  env?: DrawingRenderEnv,
 ): void {
   if (!pts.length || d.hidden) return;
   applyStyle(ctx, d.style, (selected ? 1 : 0.92) * (d.style.opacity ?? 1));
@@ -1572,37 +1696,73 @@ export function renderDrawing(
       if (pts.length < 3) break; // P39b: mid-creation preview may be short
       const [entry, stop, target] = pts;
       const isLong = d.type === "long-position";
-      // risk zone (entry↔stop) red, reward zone (entry↔target) green
-      const x = entry.x - 36;
-      const w2 = Math.max(72, Math.abs(target.x - stop.x));
+      const lossCol = d.style.lossColor || "#ef4444";
+      const profitCol = d.style.profitColor || "#22c55e";
+      const alpha = d.style.opacity ?? 1;
+      // P41 — the band spans [entry.x, stop.x]; target.x is IGNORED: all
+      // three levels always span the whole band (TradingView geometry)
+      const xL = Math.min(entry.x, stop.x);
+      const xR = Math.max(entry.x, stop.x);
+      const w = Math.max(1, xR - xL);
+      const yTop = Math.min(entry.y, stop.y, target.y);
+      const yBot = Math.max(entry.y, stop.y, target.y);
       ctx.save();
-      ctx.globalAlpha = 0.14;
-      ctx.fillStyle = "#ef4444";
-      ctx.fillRect(x, Math.min(entry.y, stop.y), w2, Math.abs(stop.y - entry.y));
-      ctx.fillStyle = "#22c55e";
-      ctx.fillRect(x, Math.min(entry.y, target.y), w2, Math.abs(target.y - entry.y));
+      ctx.globalAlpha = 0.16 * alpha;
+      ctx.fillStyle = lossCol;
+      ctx.fillRect(xL, Math.min(entry.y, stop.y), w, Math.abs(stop.y - entry.y));
+      ctx.fillStyle = profitCol;
+      ctx.fillRect(xL, Math.min(entry.y, target.y), w, Math.abs(target.y - entry.y));
       ctx.restore();
+      // level lines + band edges
       ctx.save();
       ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
+      ctx.lineWidth = Math.max(1, d.style.width);
       ctx.strokeStyle = d.style.color;
-      drawSegment(ctx, { x, y: entry.y }, { x: x + w2, y: entry.y });
-      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
-      ctx.fillStyle = "#ef4444";
-      // Phase 26 D1: Stop/Target show the anchors' MARKET prices (was pixels)
-      ctx.fillText(`Stop ${fmtDrawingPrice(d.points[1]?.price ?? NaN)}`, x + 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
-      ctx.fillStyle = "#22c55e";
-      ctx.fillText(`Target ${fmtDrawingPrice(d.points[2]?.price ?? NaN)}`, x + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
-      ctx.fillStyle = d.style.color;
-      ctx.fillText(`Entry ${fmtDrawingPrice(d.points[0]?.price ?? NaN)}`, x + 4, entry.y + d.style.fontSize + 4);
-      // P39 §8 — RR from MARKET prices (exact on log/% scales too), not
-      // canvas pixels. Chart-measured figure — never a broker/P&L number.
+      drawSegment(ctx, { x: xL, y: entry.y }, { x: xR, y: entry.y });
+      ctx.strokeStyle = lossCol;
+      drawSegment(ctx, { x: xL, y: stop.y }, { x: xR, y: stop.y });
+      ctx.strokeStyle = profitCol;
+      drawSegment(ctx, { x: xL, y: target.y }, { x: xR, y: target.y });
+      ctx.strokeStyle = d.style.color;
+      ctx.globalAlpha = 0.75 * alpha;
+      drawSegment(ctx, { x: xL, y: yTop }, { x: xL, y: yBot });
+      drawSegment(ctx, { x: xR, y: yTop }, { x: xR, y: yBot });
+      ctx.restore();
+      // P41 §3 — market-space math with REAL instrument precision
       const entryP = d.points[0]?.price ?? 0;
       const stopP = d.points[1]?.price ?? 0;
       const targetP = d.points[2]?.price ?? 0;
-      const riskDist = Math.abs(entryP - stopP);
-      const rr = riskDist > 0 ? Math.abs(targetP - entryP) / riskDist : 0;
-      ctx.fillText(`${isLong ? "Long" : "Short"} · RR ${rr.toFixed(2)}`, x + 4, entry.y - 6);
+      const digits = env?.digits ?? 2;
+      const spec = env && env.contractSize ? { digits, pipSize: env.pipSize ?? 0, contractSize: env.contractSize } : undefined;
+      const calc = positionCalc(entryP, stopP, targetP, spec, env?.balance, d.riskPct);
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+      if (d.style.showLabels !== false) {
+        ctx.fillStyle = lossCol;
+        ctx.fillText(`Stop ${fmtPositionPrice(stopP, digits)}`, xL + 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
+        ctx.fillStyle = profitCol;
+        ctx.fillText(`Target ${fmtPositionPrice(targetP, digits)}`, xL + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
+        ctx.fillStyle = d.style.color;
+        ctx.fillText(`Entry ${fmtPositionPrice(entryP, digits)}`, xL + 4, entry.y + d.style.fontSize + 4);
+        // right-aligned % distances (chart-measured, always exact)
+        ctx.textAlign = "right";
+        ctx.fillStyle = lossCol;
+        ctx.fillText(`−${calc.riskPctOfPrice.toFixed(2)}%`, xR - 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
+        ctx.fillStyle = profitCol;
+        ctx.fillText(`+${calc.rewardPctOfPrice.toFixed(2)}%`, xR - 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
+        ctx.textAlign = "left";
+      }
+      // header: direction · RR · size + money (money ONLY when the live
+      // balance was provided — never fabricated)
+      const dir = isLong ? "Long" : "Short";
+      let header = `${dir} · RR ${calc.rr.toFixed(2)}`;
+      if (calc.lots != null) header += ` · ${calc.lots.toFixed(2)} lots`;
+      if (calc.riskAmount != null && calc.rewardAmount != null) {
+        header += ` · Risk $${calc.riskAmount.toFixed(0)} / Reward $${calc.rewardAmount.toFixed(0)}`;
+      }
+      ctx.fillStyle = d.style.color;
+      ctx.fillText(header, xL + 4, yTop - 6);
       ctx.restore();
       break;
     }
@@ -1637,7 +1797,9 @@ export function renderDrawing(
   drawAttachedText(ctx, d, pts);
 
   if (selected) {
-    for (const p of pts) drawHandle(ctx, p, false);
+    // P41 — position tools show their five semantic handles, not raw anchors
+    const handlePts = isPositionTool(d.type) ? positionAnchors(pts) : pts;
+    for (const p of handlePts) drawHandle(ctx, p, false);
   }
 }
 
@@ -1701,12 +1863,16 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
         ...(st.fontWeight === "bold" ? { fontWeight: "bold" as const } : {}),
         ...(st.textAlign === "left" || st.textAlign === "center" || st.textAlign === "right" ? { textAlign: st.textAlign } : {}),
         ...(typeof st.textBg === "string" && /^#[0-9a-fA-F]{3,8}$/.test(st.textBg) ? { textBg: st.textBg } : {}),
+        ...(typeof st.profitColor === "string" && /^#[0-9a-fA-F]{3,8}$/.test(st.profitColor) ? { profitColor: st.profitColor } : {}),
+        ...(typeof st.lossColor === "string" && /^#[0-9a-fA-F]{3,8}$/.test(st.lossColor) ? { lossColor: st.lossColor } : {}),
       },
       ...(typeof r.text === "string" ? { text: r.text.slice(0, 200) } : {}),
       ...(r.locked === true ? { locked: true } : {}),
       ...(r.hidden === true ? { hidden: true } : {}),
       ...(typeof r.name === "string" && r.name ? { name: r.name.slice(0, 60) } : {}),
       ...(Number.isFinite(Number(r.updatedAt)) ? { updatedAt: Number(r.updatedAt) } : {}),
+      ...(Number.isFinite(Number(r.riskPct)) && Number(r.riskPct) > 0
+        ? { riskPct: Math.min(100, Math.max(0.01, Number(r.riskPct))) } : {}),
       ...(tfs && tfs.length ? { tfs } : {}),
       ...(levels ? { levels } : {}),
     };

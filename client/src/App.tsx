@@ -46,6 +46,7 @@ import { captureRefFromUrl, popStoredRef, clearStoredRef } from "@/lib/referral"
 import { useTerminalSettings, setTerminalSettingsUser } from "@/lib/terminal-settings";
 import { setInstrumentSettingsUser } from "@/lib/instrument-settings";
 import { setWatchlistsUser } from "@/lib/watchlists";
+import { loadChartSettingsCloud } from "@/lib/chart-persistence";
 import { Activity, Send } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -62,6 +63,22 @@ function SettingsSync() {
     void setTerminalSettingsUser(uid);
     void setInstrumentSettingsUser(uid);
     void setWatchlistsUser(uid);
+    // P41 — restore the user's chart look (candle colors, chart type) from
+    // RTDB; the LS mirror is the offline cache, the cloud copy is canonical
+    if (uid) {
+      void loadChartSettingsCloud(uid).then((cloud) => {
+        if (!cloud || typeof cloud !== "object") return;
+        const cfg: Record<string, unknown> = { ...cloud };
+        delete cfg.savedAt;
+        if (!Object.keys(cfg).length) return;
+        try {
+          const localRaw = localStorage.getItem("it_chart_settings");
+          const merged = { ...(localRaw ? JSON.parse(localRaw) as Record<string, unknown> : {}), ...cfg };
+          localStorage.setItem("it_chart_settings", JSON.stringify(merged));
+          window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: merged }));
+        } catch { /* private mode */ }
+      });
+    }
   }, [user?.uid]);
   useEffect(() => {
     document.documentElement.style.fontSize = `${ts.appearance.fontSize}px`;

@@ -7,6 +7,8 @@
     --font-sans: 'Inter', sans-serif;
     --font-display: 'Outfit', sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
+    --font-numeric: 'Orbitron', 'JetBrains Mono', monospace;
+    --font-numeric: 'Orbitron', 'JetBrains Mono', monospace;
     color-scheme: dark;
     --background: 240 10% 4%;
     --foreground: 0 0% 98%;
@@ -156,6 +158,10 @@
   ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
   h1, h2, h3, h4, h5, h6 { font-family: var(--font-display); @apply tracking-tight; }
   .font-number { font-family: var(--font-mono); }
+  /* P42 — fragment collection numbers get their own display face */
+  .font-numeric { font-family: var(--font-numeric); letter-spacing: 0.08em; }
+  /* P42 — fragment collection numbers get their own display face */
+  .font-numeric { font-family: var(--font-numeric); letter-spacing: 0.08em; }
 }
 
 @layer utilities {

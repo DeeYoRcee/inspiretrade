@@ -22,6 +22,8 @@ import {
 } from "@/lib/instrument-settings";
 import { loadAlertSettings, saveAlertSettings } from "@/lib/notifications";
 import { useTheme, THEMES, THEME_LABELS } from "@/lib/theme-context";
+import { auth } from "@/lib/firebase";
+import { saveChartSettingsCloud } from "@/lib/chart-persistence";
 import { useQuotes } from "@/lib/quotes-context";
 import { marketStatus } from "@/lib/market-status";
 import type { ChartSettings } from "@/components/terminal/chart/dialogs";
@@ -149,6 +151,17 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
   const [, tick] = useState(0);
 
   useEffect(() => { if (open) { setInstrSymbol(symbol); setQ(""); } }, [open, symbol]);
+  // P41 — re-sync when chart settings change outside this dialog (chart
+  // toolbar type switch, cloud apply at login): the mount-time snapshot used
+  // to go stale and could resurrect overwritten values
+  useEffect(() => {
+    const onExternal = (e: Event) => {
+      const detail = (e as CustomEvent).detail as ChartSettings | undefined;
+      if (detail && typeof detail === "object") setChartCfg(detail);
+    };
+    window.addEventListener("it_chart_settings_changed", onExternal);
+    return () => window.removeEventListener("it_chart_settings_changed", onExternal);
+  }, []);
   useEffect(() => {
     if (!open) return;
     const t = setInterval(() => tick((n) => n + 1), 5000); // freshness labels
@@ -167,6 +180,8 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
     setChartCfg(next);
     try { localStorage.setItem("it_chart_settings", JSON.stringify(next)); } catch { /* private mode */ }
     window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: next }));
+    // P41 — the chart look follows the user across devices/logout
+    saveChartSettingsCloud(auth.currentUser?.uid ?? "", next as unknown as Record<string, unknown>);
   };
   const saveScale = (v: string) => {
     setScaleMode(v);

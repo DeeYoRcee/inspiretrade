@@ -28,11 +28,12 @@ import { Watchlist, MarketInfoPanel } from "@/components/terminal/Watchlist";
 import { TerminalShell, type ShellPanel } from "@/components/terminal/TerminalShell";
 import AlertsPanel from "@/components/terminal/AlertsPanel";
 import { NewAccountDialog } from "@/components/terminal/NewAccountDialog";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { MoreVertical } from "lucide-react";
 import {
   ReplayOverlay, ReplayBadge, ReplayControls, ReplayTicket, ReplayBook, useReplayJournalAutoSave,
 } from "@/components/terminal/ReplayWorkspace";
 import BacktestWorkspace from "@/components/terminal/BacktestWorkspace";
-import AnalyticsWorkspace from "@/components/terminal/AnalyticsWorkspace";
 import CalendarWorkspace from "@/components/terminal/CalendarWorkspace";
 import NewsWorkspace from "@/components/terminal/NewsWorkspace";
 import EventStrip from "@/components/terminal/EventStrip";
@@ -60,12 +61,11 @@ const TF_KEY = "it_terminal_tf";
 const MODE_KEY = "it_terminal_mode";
 const PANEL_KEY = "it_terminal_panel";
 
-type TerminalMode = "live" | "replay" | "backtest" | "analytics" | "calendar" | "news";
+type TerminalMode = "live" | "replay" | "backtest" | "calendar" | "news";
 const MODES: { id: TerminalMode; label: string }[] = [
   { id: "live", label: "Live" },
   { id: "replay", label: "Replay" },
   { id: "backtest", label: "Backtest" },
-  { id: "analytics", label: "Analytics" },
   { id: "calendar", label: "Calendar" },
   { id: "news", label: "News" },
 ];
@@ -84,9 +84,7 @@ export default function TerminalPage() {
     modifyPosition,
   } = useTrading();
   const [newAccountOpen, setNewAccountOpen] = useState(false);
-  const [mode, setMode] = useState<TerminalMode>(
-    () => (localStorage.getItem(MODE_KEY) as TerminalMode) || "live",
-  );
+  const [mode, setMode] = useState<TerminalMode>((() => { const saved = localStorage.getItem(MODE_KEY) as TerminalMode | null; return saved && MODES.some((mm) => mm.id === saved) ? saved : "live"; })());
   // right rail panel (watchlist / ticket / alerts / info) — persisted
   const [rightPanel, setRightPanel] = useState<ShellPanel>(() => {
     const v = localStorage.getItem(PANEL_KEY);
@@ -190,7 +188,7 @@ export default function TerminalPage() {
     : positions.filter((p) => p.symbol === symbol);
 
   // ---- backtest / analytics / calendar / news: full-area workspaces ---------
-  if (mode === "backtest" || mode === "analytics" || mode === "calendar" || mode === "news") {
+  if (mode === "backtest" || mode === "calendar" || mode === "news") {
     return (
       <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
         <Toolbar
@@ -205,7 +203,6 @@ export default function TerminalPage() {
         />
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/30">
           {mode === "backtest" && <BacktestWorkspace />}
-          {mode === "analytics" && <AnalyticsWorkspace />}
           {mode === "calendar" && <CalendarWorkspace symbol={symbol} />}
           {mode === "news" && <NewsWorkspace />}
         </div>
@@ -224,7 +221,10 @@ export default function TerminalPage() {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
+    /* P42 — data-term opts the LIVE terminal into the theme remap: panel
+       chrome follows the site theme, while the chart canvas keeps its own
+       dark background (the [data-chart-dark] subtree is excluded in CSS) */
+    <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
       <Toolbar
         mode={mode} onModeChange={setMode}
         symbol={symbol} onSymbolChange={setSymbol}
@@ -273,7 +273,8 @@ export default function TerminalPage() {
                 onTimeframeChange={setTimeframe}
                 onOpenAlerts={() => selectPanel("alerts")}
                 onOpenReplay={() => setMode("replay")}
-              />
+                accountBalance={mode === "live" ? metrics?.balance ?? null : null}
+        />
             </div>
           }
           blotter={<TradingBlotter symbol={symbol} className="h-full w-full" />}
@@ -344,6 +345,7 @@ function Toolbar({
   account: { id: string; label: string } | null; onReset: () => void;
   onNewAccount: () => void;
 }) {
+  const [resetOpen, setResetOpen] = useState(false);
   const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const pnl = metrics?.floatingPnl ?? 0;
   const liveOnly = mode === "live";
@@ -460,18 +462,31 @@ function Toolbar({
       <div className="ml-auto flex items-center gap-1.5">
         {liveOnly && (
           <>
-            <Button variant="outline" size="icon" onClick={onNewAccount} title="New DEMO / challenge account">
-              <Plus className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" onClick={onRefresh} disabled={busy} title="Refresh account">
-              <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" size="icon" disabled={busy || !account} title="Reset account to starting balance">
-                  <RotateCcw className="h-4 w-4" />
+            {/* P42 — the three account actions collapsed into ONE menu button:
+                same power, half the toolbar space, a single consistent style */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" title="Account actions — new demo / refresh / reset">
+                  <MoreVertical className="h-4 w-4" />
                 </Button>
-              </AlertDialogTrigger>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={onNewAccount}>
+                  <Plus className="mr-2 h-4 w-4" /> New DEMO / challenge account
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onRefresh} disabled={busy}>
+                  <RefreshCw className={cn("mr-2 h-4 w-4", busy && "animate-spin")} /> Refresh account
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={busy || !account}
+                  onSelect={(e) => { e.preventDefault(); setResetOpen(true); }}
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" /> Reset account…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Reset account?</AlertDialogTitle>

@@ -8,7 +8,8 @@
 import { RotateCcw, Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from "lucide-react";
 import { DEFAULT_STYLE,
   FIB_TOOLS, levelsFor, FIB_DEFAULT_LEVELS,
-  type Drawing, type DrawingType, type FibLevel} from "@/lib/drawings";
+  isPositionTool, positionCalc, fmtPositionPrice,
+  type Drawing, type DrawingType, type DrawingRenderEnv, type FibLevel} from "@/lib/drawings";
 import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import type { FibPreset } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,7 @@ function ToggleBtn({ label, on, onClick }: { label: string; on: boolean; onClick
 export function DrawingPropsBar({
   drawing, onChange, onDuplicate, onDelete, onEditText, onReorder,
   fibPresets, onSaveFibPreset, onDeleteFibPreset,
+  positionEnv,
 }: {
   drawing: Drawing;
   onChange: (patch: Partial<Drawing>) => void;
@@ -54,12 +56,27 @@ export function DrawingPropsBar({
   fibPresets?: FibPreset[];
   onSaveFibPreset?: (name: string, levels: FibLevel[]) => void;
   onDeleteFibPreset?: (name: string) => void;
+  /** P41 — instrument metadata + live balance for the position panel */
+  positionEnv?: DrawingRenderEnv;
 }) {
   const isFib = FIB_TOOLS.has(drawing.type);
   const isTrend = drawing.type === "trend";
   const levels = levelsFor(drawing);
   const style = drawing.style;
   const tfs = drawing.tfs ?? [];
+  // P41 §4/§5 — live position math (instrument metadata + real balance)
+  const isPosition = isPositionTool(drawing.type);
+  const posDigits = positionEnv?.digits ?? 2;
+  const posCalc = positionCalc(
+    drawing.points[0]?.price ?? 0,
+    drawing.points[1]?.price ?? 0,
+    drawing.points[2]?.price ?? 0,
+    positionEnv && positionEnv.contractSize
+      ? { digits: posDigits, pipSize: positionEnv.pipSize ?? 0, contractSize: positionEnv.contractSize }
+      : undefined,
+    positionEnv?.balance,
+    drawing.riskPct,
+  );
 
   const setStyle = (patch: Partial<Drawing["style"]>) => onChange({ style: { ...style, ...patch } });
   /** effective level list the editor works on (defaults materialized) */
@@ -168,6 +185,75 @@ export function DrawingPropsBar({
                 className="h-3 w-14 accent-sky-500"
               />
             </label>
+          </>
+        )}
+        {/* P41 — position tools: level prices, risk %, calculations */}
+        {isPosition && (
+          <>
+            <span className="h-4 w-px bg-slate-700" />
+            {(["Entry", "Stop", "Target"] as const).map((lbl, i) => (
+              <label key={lbl} className="flex items-center gap-0.5" title={`${lbl} price`}>
+                <span className={cn("font-semibold", i === 0 ? "text-slate-300" : i === 1 ? "text-red-400" : "text-emerald-400")}>{lbl}</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={drawing.points[i]?.price ?? 0}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || !drawing.points[i]) return;
+                    onChange({ points: drawing.points.map((q, k) => (k === i ? { ...q, price: v } : q)) });
+                  }}
+                  className="h-5 w-20 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200 tabular-nums"
+                />
+              </label>
+            ))}
+            <label className="flex items-center gap-0.5" title="Risk % — the position is sized so a stop-out loses this share of the balance">
+              <span className="text-slate-400">Risk%</span>
+              <input
+                type="number" min={0.01} max={100} step={0.05}
+                value={drawing.riskPct ?? 1}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v > 0) onChange({ riskPct: Math.min(100, v) });
+                }}
+                className="h-5 w-12 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200 tabular-nums"
+              />
+            </label>
+            <details className="relative">
+              <summary className="cursor-pointer list-none rounded px-1 text-slate-400 hover:bg-slate-800" title="Position calculations & zone colors">
+                {posCalc.rr.toFixed(1)}R
+              </summary>
+              <div className="absolute bottom-6 left-0 z-40 w-72 rounded-lg border border-slate-700 bg-slate-900/97 p-2 text-slate-300 shadow-2xl">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] tabular-nums">
+                  <span className="text-slate-500">Entry</span><span>{fmtPositionPrice(posCalc.entry, posDigits)}</span>
+                  <span className="text-red-400">Stop</span><span>{fmtPositionPrice(posCalc.stop, posDigits)}</span>
+                  <span className="text-emerald-400">Target</span><span>{fmtPositionPrice(posCalc.target, posDigits)}</span>
+                  <span className="text-slate-500">Risk dist</span><span>{fmtPositionPrice(posCalc.riskDist, posDigits)} ({posCalc.riskPctOfPrice.toFixed(2)}%)</span>
+                  <span className="text-slate-500">Reward dist</span><span>{fmtPositionPrice(posCalc.rewardDist, posDigits)} ({posCalc.rewardPctOfPrice.toFixed(2)}%)</span>
+                  <span className="text-slate-500">R:R</span><span>1 : {posCalc.rr.toFixed(2)}</span>
+                  <span className="text-slate-500">Balance</span>
+                  <span>{positionEnv?.balance != null ? `$${positionEnv.balance.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "—"}</span>
+                  <span className="text-slate-500">Size</span><span>{posCalc.lots != null ? `${posCalc.lots.toFixed(2)} lots` : "—"}</span>
+                  <span className="text-slate-500">Loss @ stop</span><span>{posCalc.riskAmount != null ? `$${posCalc.riskAmount.toFixed(2)}` : "—"}</span>
+                  <span className="text-slate-500">Gain @ target</span><span>{posCalc.rewardAmount != null ? `$${posCalc.rewardAmount.toFixed(2)}` : "—"}</span>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <label className="flex items-center gap-1" title="Take-profit zone color">
+                    <span className="text-slate-500">Profit</span>
+                    <input type="color" value={style.profitColor || "#22c55e"} onChange={(e) => setStyle({ profitColor: e.target.value })} className="h-4 w-6 cursor-pointer rounded border-0 bg-transparent p-0" />
+                  </label>
+                  <label className="flex items-center gap-1" title="Stop-loss zone color">
+                    <span className="text-slate-500">Loss</span>
+                    <input type="color" value={style.lossColor || "#ef4444"} onChange={(e) => setStyle({ lossColor: e.target.value })} className="h-4 w-6 cursor-pointer rounded border-0 bg-transparent p-0" />
+                  </label>
+                  <ToggleBtn label="Labels" on={style.showLabels !== false} onClick={() => setStyle({ showLabels: style.showLabels === false ? undefined : false })} />
+                </div>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
+                  Size derives from the instrument's contract size and the live balance so a stop-out loses
+                  the Risk% — no invented figures; "—" means metadata/balance is unavailable.
+                </p>
+              </div>
+            </details>
           </>
         )}
         {/* trend extension + endpoint labels */}

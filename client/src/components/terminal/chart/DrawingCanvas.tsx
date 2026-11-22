@@ -16,8 +16,7 @@ import {
   hitTest, makeDrawing, renderDrawing, setupCanvas, regressionLine,
   TEXT_TOOLS, CLICK_COLLECT_TOOLS, TOOL_POINT_COUNT, TOOL_LABELS, drawHandle,
   magnetSnapPrice, magnetSnapTime,
-  type Drawing, type DrawingPoint, type DrawingType, type XY,
-} from "@/lib/drawings";
+  type Drawing, type DrawingPoint, type DrawingType, type XY, isPositionTool, positionAnchors, type DrawingRenderEnv } from "@/lib/drawings";
 
 export interface TradeLine {
   positionId: string;
@@ -91,12 +90,16 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   hiddenAll?: boolean;
   /** Phase 27 §7 magnet: snap NEW anchors to the nearest bar OHLC/time */
   magnet?: boolean;
+  /** P41 — instrument metadata + live balance for position drawings */
+  renderEnv?: DrawingRenderEnv;
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
   onSelect, onDelete, onDeleteMany, onEdit, onContextMenu, tradeLines, onTradeLineMove,
   tfSeconds = 0, digits = 2, locked = false, hiddenAll = false, getBars, cursorFallback = "default",
-  selectedIds, onSelectIds, toolDefaults, magnet = false,
+  selectedIds, onSelectIds, toolDefaults, magnet = false, renderEnv,
 }, ref) => {
+  const renderEnvRef = useRef(renderEnv);
+  renderEnvRef.current = renderEnv;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   /** pointer target: the chart-area wrapper (host itself is pointer-events:none) */
@@ -245,7 +248,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const selSet = new Set(multiIdsRef.current);
       for (const d of drawingsRef.current) {
         const pts = toCanvas(d);
-        if (pts.length) renderDrawing(ctx, d, pts, W, H, selSet.has(d.id));
+        if (pts.length) renderDrawing(ctx, d, pts, W, H, selSet.has(d.id), renderEnvRef.current);
         // regression: least-squares line over the closes inside the selected span
         if (d.type === "regression" && getBars && d.points.length === 2) {
           const bars = getBars();
@@ -314,7 +317,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         if (t != null && pr != null) drag.drawing.text = measureLabel(drag.drawing.points[0], { time: t, price: pr });
       }
       try {
-        renderDrawing(ctx, drag.drawing, pts, W, H, true);
+        renderDrawing(ctx, drag.drawing, pts, W, H, true, renderEnvRef.current);
       } catch { /* a bad preview must never take the page down */ }
     } else if ((drag?.mode === "move" || drag?.mode === "handle") && drag.drawing) {
       const pts = toCanvas(drag.drawing);
@@ -323,7 +326,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         if (drag.drawing.type === "measure" && drag.drawing.points.length === 2) {
           drag.drawing.text = measureLabel(drag.drawing.points[0], drag.drawing.points[1]);
         }
-        renderDrawing(ctx, drag.drawing, pts, W, H, true);
+        renderDrawing(ctx, drag.drawing, pts, W, H, true, renderEnvRef.current);
         if (drag.mode === "handle" && drag.handle != null) drawHandle(ctx, pts[drag.handle], true);
       }
     } else if (drag?.mode === "trade" && drag.trade) {
@@ -346,7 +349,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
           else { ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y); }
           ctx.stroke();
           ctx.restore();
-          for (const p of pts) drawHandle(ctx, p, false);
+          for (const p of (isPositionTool(d.type) && pts.length >= 3 ? positionAnchors(pts) : pts)) drawHandle(ctx, p, false);
         }
       }
     }
@@ -618,6 +621,18 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         points[drag.handle] = { ...points[drag.handle], price };
       } else if (drag.original.type === "vline") {
         points[drag.handle] = { ...points[drag.handle], time };
+      } else if (isPositionTool(drag.original.type) && drag.original.points.length >= 3) {
+        // P41 — position semantics: handles 0-2 move their LEVEL vertically
+        // only (never the band, never each other); 3/4 drag the band edges
+        // horizontally (right edge carries target.time with it)
+        if (drag.handle <= 2) {
+          points[drag.handle] = { ...points[drag.handle], price };
+        } else if (drag.handle === 3) {
+          points[0] = { ...points[0], time };
+        } else {
+          points[1] = { ...points[1], time };
+          points[2] = { ...points[2], time };
+        }
       } else {
         points[drag.handle] = { time, price };
       }

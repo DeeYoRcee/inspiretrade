@@ -130,6 +130,18 @@ interface ToolGroup {
   tools: { id: DrawingType; label: string; hint?: string }[];
 }
 
+/** P41 — human label for tooltips (floating favorites toolbar, object tree). */
+export function toolDisplayName(id: DrawingType): string {
+  for (const grp of GROUPS) {
+    const t = grp.tools.find((x) => x.id === id);
+    if (t) return t.label;
+  }
+  return id;
+}
+
+
+
+
 const GROUPS: ToolGroup[] = [
   {
     id: "trend",
@@ -263,6 +275,7 @@ export function LeftRail({
   hasSelected, onDeleteSelected,
   objectsOpen, onObjectsToggle,
   cursorMode, onCursorMode,
+  favs: favsProp, onToggleFav,
 }: {
   activeTool: DrawingType | "cursor";
   onToolSelect: (t: DrawingType | "cursor") => void;
@@ -284,17 +297,24 @@ export function LeftRail({
   onObjectsToggle: () => void;
   cursorMode: CursorMode;
   onCursorMode: (m: CursorMode) => void;
+  /** P41 — per-user favorites from PriceChart (LS+RTDB store); when absent
+   *  the rail falls back to its own local pinned list (standalone usage) */
+  favs?: string[];
+  onToggleFav?: (id: string) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [lastTool, setLastTool] = useState<Partial<Record<string, DrawingType>>>(readLastTool);
-  const [favs, setFavs] = useState<string[]>(readFavs);
+  const [localFavs, setLocalFavs] = useState<string[]>(readFavs);
+  // P41 — the shared per-user store wins when PriceChart provides it
+  const favs = favsProp ?? localFavs;
   const toggleFav = useCallback((id: string) => {
-    setFavs((prev) => {
+    if (onToggleFav) { onToggleFav(id); return; }
+    setLocalFavs((prev) => {
       const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(0, 12);
       try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
       return next;
     });
-  }, []);
+  }, [onToggleFav]);
   const railRef = useRef<HTMLDivElement | null>(null);
 
   // close the popover on outside pointerdown / Esc — pointerdown INSIDE the

@@ -27,9 +27,9 @@ test("stampChangedDrawings — new and edited drawings get a timestamp, untouche
   const b = mk("b");
   const edited = { ...mk("a"), points: [{ time: 1, price: 2 }, { time: 3, price: 4 }] };
   const out = stampChangedDrawings([a, b], [edited, b, mk("c")], 12345);
-  assert.equal(out[0].updatedAt, 12345); // edited → stamped
-  assert.equal(out[1], b);               // unchanged → identity preserved
-  assert.equal(out[2].updatedAt, 12345); // new → stamped
+  assert.equal(out[0].updatedAt, 12345);
+  assert.equal(out[1], b);
+  assert.equal(out[2].updatedAt, 12345);
 });
 
 test("mergeDrawingLists — identical lists return the LOCAL reference (self-echo)", () => {
@@ -42,22 +42,21 @@ test("mergeDrawingLists — remote newer edit wins, local newer edit wins", () =
   const local = [mk("a", { updatedAt: 10 }), mk("b", { updatedAt: 30 })];
   const remote = [{ ...mk("a"), updatedAt: 20 }, { ...mk("b"), updatedAt: 15 }];
   const merged = mergeDrawingLists(local, remote);
-  assert.equal(merged[0].updatedAt, 20);  // remote edited later
-  assert.notEqual(merged[0], local[0]);   // replaced with the remote copy
-  assert.equal(merged[1], local[1]);      // local is newer → identity kept
+  assert.equal(merged[0].updatedAt, 20);
+  assert.notEqual(merged[0], local[0]);
+  assert.equal(merged[1], local[1]);
 });
 
-test("mergeDrawingLists — local-only kept only while in flight, remote-only added, remote deletion propagates", () => {
+test("mergeDrawingLists — local-only kept only while in flight, remote deletion propagates", () => {
   const local = [mk("a", { updatedAt: 10 }), mk("pending", { updatedAt: Date.now() })];
-  const remote = [mk("a", { updatedAt: 10 })]; // "pending" not yet on RTDB
+  const remote = [mk("a", { updatedAt: 10 })];
   const merged = mergeDrawingLists(local, remote, new Set(["pending"]));
   assert.deepEqual(merged.map((d) => d.id), ["a", "pending"]);
-  // the same snapshot with NO pending marker = deleted remotely
   const stale = [mk("pending", { updatedAt: 10 })];
   assert.deepEqual(mergeDrawingLists(stale, []).map((d) => d.id), []);
 
   const local2 = [mk("a", { updatedAt: 10 }), mk("b", { updatedAt: 10 })];
-  const remote2 = [mk("a", { updatedAt: 10 })]; // b deleted on another device
+  const remote2 = [mk("a", { updatedAt: 10 })];
   assert.deepEqual(mergeDrawingLists(local2, remote2).map((d) => d.id), ["a"]);
 });
 
@@ -79,17 +78,13 @@ test("sanitize round-trip keeps updatedAt (LWW survives reload)", () => {
 });
 
 test("full lifecycle — create → echo → edit elsewhere → delete → stale echo", () => {
-  // 1) created locally, stamped, echoed back identically
   const created = stampChangedDrawings([], [mk("d1")], 100);
   assert.equal(mergeDrawingLists(created, created.map((d) => ({ ...d }))), created);
-  // 2) another device edits it later — remote wins on merge
   const remoteEdit = [{ ...mk("d1"), updatedAt: 200 }];
   const merged = mergeDrawingLists(created, remoteEdit);
   assert.equal(merged[0].updatedAt, 200);
-  // 3) user deletes it here → tombstone at 300 → stale remote echo (200) dropped
   const tombs = { d1: 300 };
   assert.deepEqual(filterTombstonedDrawings(merged, tombs), []);
-  // 4) but a NEWER remote edit (400) is not hidden by the tombstone
   const newer = [{ ...mk("d1"), updatedAt: 400 }];
   assert.equal(filterTombstonedDrawings(newer, tombs).length, 1);
 });
