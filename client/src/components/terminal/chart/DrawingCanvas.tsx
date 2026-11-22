@@ -287,11 +287,18 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (drag?.mode === "draw" && drag.drawing) {
       const pts = toCanvas(drag.drawing);
       const m = mouseRef.current;
-      if (m && pts.length < TOOL_POINT_COUNT[drag.drawing.type]) {
+      const wantPts = TOOL_POINT_COUNT[drag.drawing.type];
+      if (m && pts.length < wantPts) {
         // P38 §5 — Shift-locked preview leg
         const last = drag.drawing.points[drag.drawing.points.length - 1];
         const anchor = last ? (() => { const ax = conv.x(last.time); const ay = conv.y(last.price); return ax != null && ay != null ? { x: ax, y: ay } : null; })() : null;
         pts.push(anchor ? snapLegScreen(anchor, m, shiftRef.current, drag.drawing.type) : m);
+      }
+      // P39b — pad the preview to the tool's arity (repeat the last point):
+      // 3/4-point tools used to render with a SHORT pts array mid-creation
+      // and their renderers threw → the whole page hit the error boundary
+      while (pts.length > 0 && pts.length < wantPts) {
+        pts.push({ ...pts[pts.length - 1] });
       }
       // measure preview: label from the first committed point → current mouse (market space)
       if (drag.drawing.type === "measure" && drag.drawing.points.length === 1 && m) {
@@ -299,7 +306,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         const pr = conv.price(m.y);
         if (t != null && pr != null) drag.drawing.text = measureLabel(drag.drawing.points[0], { time: t, price: pr });
       }
-      renderDrawing(ctx, drag.drawing, pts, W, H, true);
+      try {
+        renderDrawing(ctx, drag.drawing, pts, W, H, true);
+      } catch { /* a bad preview must never take the page down */ }
     } else if ((drag?.mode === "move" || drag?.mode === "handle") && drag.drawing) {
       const pts = toCanvas(drag.drawing);
       if (pts.length) {

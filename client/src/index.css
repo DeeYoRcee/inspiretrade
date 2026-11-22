@@ -414,21 +414,25 @@ img[src="/logo.png"] {
   z-index: -3;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 62% 44% at 50% 80%, rgb(220 38 38 / 0.14), transparent 66%),
-    radial-gradient(ellipse 36% 24% at 50% 86%, rgb(220 38 38 / 0.2), transparent 72%);
+    radial-gradient(ellipse 46% 44% at 74% 72%, rgb(220 38 38 / 0.16), transparent 66%),
+    radial-gradient(ellipse 30% 22% at 76% 84%, rgb(220 38 38 / 0.2), transparent 72%);
   animation: it-vader-glow 7s ease-in-out infinite alternate;
 }
 :root[data-theme="vader"] body::after {
   content: "";
   position: fixed;
-  left: 50%;
-  bottom: -3vh;
+  right: 1.5vw;
+  bottom: 0;
   z-index: -2;
-  width: min(56vw, 540px);
-  aspect-ratio: 200 / 230;
-  transform: translateX(-50%);
+  height: min(88vh, 820px);
+  max-width: min(60vw, 560px);
+  aspect-ratio: 449 / 792;
   pointer-events: none;
-  background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20200%20230'%3E%3Cpath%20d='M100%206C55%206%2024%2040%2024%2088c0%2030%208%2054%2017%2072l8%2034c3%2012%2013%2020%2025%2020h52c12%200%2022-8%2025-20l8-34c9-18%2017-42%2017-72%200-48-31-82-76-82z'%20fill='%230d0d10'/%3E%3Cpath%20d='M100%206C55%206%2024%2040%2024%2088c0%2014%202%2026%205%2036h142c3-10%205-22%205-36%200-48-31-82-76-82z'%20fill='%23151519'/%3E%3Cpath%20d='M42%2094h116l-9%2032H51z'%20fill='%23070708'/%3E%3Cpath%20d='M56%20100h36l-7%2016H60z'%20fill='%23dc2626'%20opacity='0.9'/%3E%3Cpath%20d='M108%20100h36l-4%2016h-26z'%20fill='%23dc2626'%20opacity='0.9'/%3E%3Cpath%20d='M80%20150h40l-7%2028H87z'%20fill='%231b1b20'/%3E%3Cpath%20d='M64%2096l9-24M136%2096l-9-24'%20stroke='%2326262c'%20stroke-width='3'%20fill='none'/%3E%3Cpath%20d='M100%20176v30'%20stroke='%2326262c'%20stroke-width='3'/%3E%3C/svg%3E") center bottom / contain no-repeat;
+  opacity: 0.92;
+  background: url("/vader-anakin.jpg") center bottom / contain no-repeat;
+  /* fade the left edge into the UI so the poster never reads as a pasted box */
+  -webkit-mask-image: linear-gradient(100deg, transparent 0%, black 22%);
+  mask-image: linear-gradient(100deg, transparent 0%, black 22%);
   animation: it-vader-breathe 9s ease-in-out infinite alternate;
 }
 @keyframes it-vader-glow {

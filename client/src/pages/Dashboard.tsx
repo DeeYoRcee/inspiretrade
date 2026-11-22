@@ -316,13 +316,13 @@ export default function Dashboard() {
               <div className="flex gap-4">
                 <div className="text-right">
                    <p className="text-xs text-muted-foreground">{t("weeklyPnl")}</p>
-                  <p className={`text-sm font-bold ${weeklyPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  <p className={`text-base font-bold ${weeklyPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
                     {weeklyPnL >= 0 ? '+' : ''}${weeklyPnL.toLocaleString()}
                   </p>
                 </div>
                 <div className="text-right">
                    <p className="text-xs text-muted-foreground">{t("monthlyPnl")}</p>
-                  <p className={`text-sm font-bold ${monthlyPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  <p className={`text-base font-bold ${monthlyPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
                     {monthlyPnL >= 0 ? '+' : ''}${monthlyPnL.toLocaleString()}
                   </p>
                 </div>
@@ -412,7 +412,7 @@ export default function Dashboard() {
                         </div>
                         {hasTrades && (
                           <span className={cn(
-                            "text-[9px] sm:text-[10px] font-bold leading-none font-number",
+                            "text-[12px] sm:text-[15px] font-bold leading-none font-number",
                             dayPnL > 0 ? "text-success" : dayPnL < 0 ? "text-destructive" : "text-muted-foreground"
                           )}>
                             {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$
@@ -514,7 +514,7 @@ export default function Dashboard() {
                           <span className="font-medium text-xs sm:text-sm">{format(date, "d")}</span>
                           {hasTrades && (
                             <span className={cn(
-                              "text-[9px] sm:text-[10px] font-bold leading-none",
+                              "text-[12px] sm:text-[15px] font-bold leading-none",
                               dayPnL > 0 ? "text-success" : dayPnL < 0 ? "text-destructive" : "text-muted-foreground"
                             )}>
                               {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$

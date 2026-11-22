@@ -4,7 +4,7 @@
  * Creates a market listing. The item is escrowed: it leaves the seller's
  * inventory (or case counters) immediately and is only returned on cancel.
  */
-import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
+import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementAmount } from "../lib/firebase";
 import { getFragment, CASES, MAX_ACTIVE_LISTINGS, MIN_LISTING_PRICE, MAX_LISTING_PRICE } from "../lib/fragments";
 import { getAdminRole } from "../lib/platform";
 
@@ -16,6 +16,10 @@ export default handle(async (req, res) => {
   const { fragmentId, caseId, price } = req.body || {};
   const body = (req.body && typeof req.body === "object") ? req.body : {};
   const kind = body.kind === "case" ? "case" : "fragment";
+
+  // P40 — how many units the seller is listing (per-unit price, 1..99)
+  const reqQty = Math.floor(Number(body.quantity) || 1);
+  const quantity = Math.min(Math.max(reqQty, 1), 99);
 
   // Resolve WHAT is being sold → the escrow counter ref + a friendly name.
   let escrowRef: any;
@@ -71,7 +75,7 @@ export default handle(async (req, res) => {
 
   // Escrow: atomically take the item out of the seller's inventory / cases.
   // (See decrementCounter — the update fn must never return undefined.)
-  await decrementCounter(escrowRef, insufficientError);
+  await decrementAmount(escrowRef, quantity, insufficientError);
 
   // Cap the number of active listings per user (refund escrow if exceeded).
   // P39 — owner/admin accounts are EXEMPT: the CEO must be able to list as
@@ -82,7 +86,7 @@ export default handle(async (req, res) => {
     (l) => l && l.sellerUid === user.uid && l.status === "active",
   ).length;
   if (!adminRole && activeMine >= MAX_ACTIVE_LISTINGS) {
-    await escrowRef.transaction((c: any) => (c || 0) + 1);
+    await escrowRef.transaction((c: any) => (c || 0) + quantity);
     throw new HttpError(400, "TOO_MANY_LISTINGS", `You can have at most ${MAX_ACTIVE_LISTINGS} active listings`);
   }
 
@@ -102,6 +106,7 @@ export default handle(async (req, res) => {
     itemName,
     ...listingItem,
     price: normalizedPrice,
+    quantity,
     status: "active",
     listedAt: now,
   };

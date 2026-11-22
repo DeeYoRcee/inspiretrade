@@ -27,26 +27,54 @@ export default handle(async (req, res) => {
   // the current listing unchanged, and success is detected from the
   // post-transaction snapshot. See decrementCounter in lib/firebase.ts.)
   const listingRef = db.ref(`market/${listingId}`);
+  // P40 — optional partial purchase: quantity (1..remaining). Taking fewer
+  // than all units keeps the listing ACTIVE with the remaining count; the
+  // bought units are held by pendingUid/pendingQty until payment settles.
+  const wantQty = Math.max(1, Math.min(Math.floor(Number((req.body as any)?.quantity) || 1), 99));
+  let taken = 1;
   const tx = await listingRef.transaction((current: any) => {
-    if (current && current.status === "active" && current.sellerUid !== user.uid) {
-      return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
+    if (!current || current.status !== "active" || current.sellerUid === user.uid) {
+      return current; // no-op: missing / sold / own listing
     }
-    return current; // no-op: missing / sold / own listing
+    const avail = Math.max(1, Math.floor(Number(current.quantity) || 1));
+    taken = Math.min(wantQty, avail);
+    const remaining = avail - taken;
+    if (remaining <= 0) {
+      return { ...current, status: "sold", quantity: 0, buyerUid: user.uid, soldAt: now };
+    }
+    return { ...current, quantity: remaining, pendingUid: user.uid, pendingQty: taken };
   });
   const reserved = tx.snapshot.val();
-  if (!tx.committed || !reserved || reserved.status !== "sold" || reserved.buyerUid !== user.uid) {
+  if (!tx.committed || !reserved || reserved.sellerUid === user.uid) {
     if (reserved && reserved.sellerUid === user.uid) {
       throw new HttpError(400, "OWN_LISTING", "You can't buy your own listing");
     }
     throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
   }
+  const justSold = reserved.status === "sold" && reserved.buyerUid === user.uid;
+  const pending = reserved.status === "active" && reserved.pendingUid === user.uid;
+  if (!justSold && !pending) {
+    throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
+  }
   const listing = reserved;
+  const qty = taken;
 
   // revert the reservation (payment failure / undeliverable item)
   const revertListing = async () => {
     await db.ref(`market/${listingId}`).transaction((current: any) => {
-      if (current && current.status === "sold" && current.buyerUid === user.uid) {
-        return { ...current, status: "active", buyerUid: null, soldAt: null };
+      if (!current) return current;
+      // a full purchase was reserved — restore it with its units
+      if (current.status === "sold" && current.buyerUid === user.uid) {
+        return { ...current, status: "active", buyerUid: null, soldAt: null, quantity: Math.max(1, Math.floor(Number(current.quantity) || 0) + qty) };
+      }
+      // a partial hold was reserved — give the units back to the pool
+      if (current.pendingUid === user.uid) {
+        return {
+          ...current,
+          quantity: Math.max(1, Math.floor(Number(current.quantity) || 0) + (current.pendingQty || qty)),
+          pendingUid: null,
+          pendingQty: null,
+        };
       }
       return current; // someone else changed it, leave as-is
     });
@@ -55,9 +83,10 @@ export default handle(async (req, res) => {
   // 2) Deduct buyer coins (no-op + refund if insufficient).
   const coinsRef = db.ref(`economy/${user.uid}/coins`);
   const before = (await coinsRef.get()).val() || 0;
+  const totalDue = Math.round(listing.price * qty * 100) / 100;
   const payTx = await coinsRef.transaction((c: any) => {
     const v = c || 0;
-    return v >= listing.price ? v - listing.price : v; // never undefined
+    return v >= totalDue ? v - totalDue : v; // never undefined
   });
   const coinsAfter = payTx?.snapshot?.val?.() ?? 0;
   if (!payTx?.committed || coinsAfter >= before) {
@@ -67,7 +96,7 @@ export default handle(async (req, res) => {
   }
 
   // 3) Credit seller and deliver the item (cent-accurate fee, 2-decimal prices).
-  const priceCents = Math.round(listing.price * 100);
+  const priceCents = Math.round(totalDue * 100);
   const feeCents = Math.round((priceCents * MARKET_FEE_PERCENT) / 100);
   const sellerReceives = (priceCents - feeCents) / 100;
   const fee = feeCents / 100;
@@ -95,15 +124,25 @@ export default handle(async (req, res) => {
     } else {
       await revertListing();
       // refund the buyer's coins (the deduction above is already committed)
-      await db.ref(`economy/${user.uid}/coins`).transaction((c: any) => (c || 0) + listing.price);
+      await db.ref(`economy/${user.uid}/coins`).transaction((c: any) => (c || 0) + totalDue);
       throw new HttpError(409, "CASE_UNAVAILABLE", "This case was removed by the owner — your coins are refunded");
     }
-    await deliverRef.transaction((c: any) => (c || 0) + 1);
+    await deliverRef.transaction((c: any) => (c || 0) + qty);
   } else {
     await db
       .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
-      .transaction((c: any) => (c || 0) + 1);
+      .transaction((c: any) => (c || 0) + qty);
     await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  }
+
+  // P40 — release the partial-purchase hold on the remaining units
+  if (pending) {
+    await db.ref(`market/${listingId}`).transaction((current: any) => {
+      if (current && current.pendingUid === user.uid) {
+        return { ...current, pendingUid: null, pendingQty: null };
+      }
+      return current;
+    });
   }
 
   await logLedger({
@@ -114,7 +153,8 @@ export default handle(async (req, res) => {
     kind: listing.kind || "fragment",
     caseId: listing.caseId,
     fragmentId: listing.fragmentId,
-    price: listing.price,
+    price: totalDue,
+    quantity: qty,
     fee,
     sellerReceives,
   });
@@ -122,6 +162,7 @@ export default handle(async (req, res) => {
   res.status(200).json({
     ok: true,
     listing: reserved,
+    quantityBought: qty,
     coinsLeft: coinsAfter,
   });
 });

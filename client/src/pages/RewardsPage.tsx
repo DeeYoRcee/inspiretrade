@@ -5,6 +5,7 @@ import {
   Coins, Gift, PackageOpen, Gem, Layers, Crown, ChevronRight, BadgeCheck, Lock, Check, Briefcase,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -393,7 +394,14 @@ export default function RewardsPage() {
         </motion.div>
       </div>
 
-      {/* Inventory — 5k$ set */}
+      {/* Fragment collections — tabbed like the Inventory page (P40) */}
+      <Tabs defaultValue="inspire" className="space-y-4">
+        <TabsList className="grid w-full max-w-md grid-cols-3 rounded-full">
+          <TabsTrigger value="inspire" className="rounded-full">5k$</TabsTrigger>
+          <TabsTrigger value="gold" className="rounded-full">10k$</TabsTrigger>
+          <TabsTrigger value="trading" className="rounded-full">25k$</TabsTrigger>
+        </TabsList>
+      <TabsContent value="inspire" className="mt-4">
       <Card className="glass-panel border-border/50">
         <CardHeader className="pb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -435,7 +443,8 @@ export default function RewardsPage() {
         </CardContent>
       </Card>
 
-      {/* Inventory — 10k$ gold set */}
+      </TabsContent>
+      <TabsContent value="gold" className="mt-4">
       <Card className="glass-panel border-amber-500/25">
         <CardHeader className="pb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -477,7 +486,8 @@ export default function RewardsPage() {
         </CardContent>
       </Card>
 
-      {/* Inventory — 25k$ trading set (Phase 32) */}
+      </TabsContent>
+      <TabsContent value="trading" className="mt-4">
       <Card className="glass-panel border-emerald-500/25">
         <CardHeader className="pb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -518,6 +528,8 @@ export default function RewardsPage() {
           </div>
         </CardContent>
       </Card>
+      </TabsContent>
+      </Tabs>
 
       {/* Claims */}
       {claims && claims.length > 0 && (

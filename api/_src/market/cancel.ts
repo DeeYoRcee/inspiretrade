@@ -36,11 +36,11 @@ export default handle(async (req, res) => {
         : caseId === "inspire"
           ? db.ref(`economy/${user.uid}/cases`)
           : db.ref(`economy/${user.uid}/customCases/${caseId}`);
-    await refundRef.transaction((c: any) => (c || 0) + 1);
+    await refundRef.transaction((c: any) => (c || 0) + (listing.quantity || 1));
   } else {
     await db
       .ref(`inventory/${user.uid}/${listing.fragmentId}/count`)
-      .transaction((c: any) => (c || 0) + 1);
+      .transaction((c: any) => (c || 0) + (listing.quantity || 1));
     await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
   }
 

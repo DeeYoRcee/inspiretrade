@@ -95,11 +95,12 @@ function handle(fn) {
 function assertPost(req) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
-async function decrementCounter(ref, insufficientError) {
+async function decrementAmount(ref, amount, insufficientError) {
+  if (!Number.isFinite(amount) || amount <= 0) throw insufficientError;
   const before = (await ref.get()).val() || 0;
   const tx = await ref.transaction((c) => {
     const v = c || 0;
-    return v >= 1 ? v - 1 : v;
+    return v >= amount ? v - amount : v;
   });
   const after = tx?.snapshot?.val?.() ?? 0;
   if (!tx?.committed || after >= before) {
@@ -191,6 +192,8 @@ var list_default = handle(async (req, res) => {
   const { fragmentId, caseId, price } = req.body || {};
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const kind = body.kind === "case" ? "case" : "fragment";
+  const reqQty = Math.floor(Number(body.quantity) || 1);
+  const quantity = Math.min(Math.max(reqQty, 1), 99);
   let escrowRef;
   let itemName;
   let insufficientError;
@@ -227,14 +230,14 @@ var list_default = handle(async (req, res) => {
   }
   const db = rtdb();
   const now = Date.now();
-  await decrementCounter(escrowRef, insufficientError);
+  await decrementAmount(escrowRef, quantity, insufficientError);
   const adminRole = await getAdminRole(user).catch(() => null);
   const allListings = (await db.ref("market").get()).val() || {};
   const activeMine = Object.values(allListings).filter(
     (l) => l && l.sellerUid === user.uid && l.status === "active"
   ).length;
   if (!adminRole && activeMine >= MAX_ACTIVE_LISTINGS) {
-    await escrowRef.transaction((c) => (c || 0) + 1);
+    await escrowRef.transaction((c) => (c || 0) + quantity);
     throw new HttpError(400, "TOO_MANY_LISTINGS", `You can have at most ${MAX_ACTIVE_LISTINGS} active listings`);
   }
   let sellerName = "Trader";
@@ -251,6 +254,7 @@ var list_default = handle(async (req, res) => {
     itemName,
     ...listingItem,
     price: normalizedPrice,
+    quantity,
     status: "active",
     listedAt: now
   };
@@ -269,40 +273,64 @@ var buy_default = handle(async (req, res) => {
   const db = rtdb();
   const now = Date.now();
   const listingRef = db.ref(`market/${listingId}`);
+  const wantQty = Math.max(1, Math.min(Math.floor(Number(req.body?.quantity) || 1), 99));
+  let taken = 1;
   const tx = await listingRef.transaction((current) => {
-    if (current && current.status === "active" && current.sellerUid !== user.uid) {
-      return { ...current, status: "sold", buyerUid: user.uid, soldAt: now };
+    if (!current || current.status !== "active" || current.sellerUid === user.uid) {
+      return current;
     }
-    return current;
+    const avail = Math.max(1, Math.floor(Number(current.quantity) || 1));
+    taken = Math.min(wantQty, avail);
+    const remaining = avail - taken;
+    if (remaining <= 0) {
+      return { ...current, status: "sold", quantity: 0, buyerUid: user.uid, soldAt: now };
+    }
+    return { ...current, quantity: remaining, pendingUid: user.uid, pendingQty: taken };
   });
   const reserved = tx.snapshot.val();
-  if (!tx.committed || !reserved || reserved.status !== "sold" || reserved.buyerUid !== user.uid) {
+  if (!tx.committed || !reserved || reserved.sellerUid === user.uid) {
     if (reserved && reserved.sellerUid === user.uid) {
       throw new HttpError(400, "OWN_LISTING", "You can't buy your own listing");
     }
     throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
   }
+  const justSold = reserved.status === "sold" && reserved.buyerUid === user.uid;
+  const pending = reserved.status === "active" && reserved.pendingUid === user.uid;
+  if (!justSold && !pending) {
+    throw new HttpError(400, "NOT_AVAILABLE", "Listing is no longer available");
+  }
   const listing = reserved;
+  const qty = taken;
   const revertListing = async () => {
     await db.ref(`market/${listingId}`).transaction((current) => {
-      if (current && current.status === "sold" && current.buyerUid === user.uid) {
-        return { ...current, status: "active", buyerUid: null, soldAt: null };
+      if (!current) return current;
+      if (current.status === "sold" && current.buyerUid === user.uid) {
+        return { ...current, status: "active", buyerUid: null, soldAt: null, quantity: Math.max(1, Math.floor(Number(current.quantity) || 0) + qty) };
+      }
+      if (current.pendingUid === user.uid) {
+        return {
+          ...current,
+          quantity: Math.max(1, Math.floor(Number(current.quantity) || 0) + (current.pendingQty || qty)),
+          pendingUid: null,
+          pendingQty: null
+        };
       }
       return current;
     });
   };
   const coinsRef = db.ref(`economy/${user.uid}/coins`);
   const before = (await coinsRef.get()).val() || 0;
+  const totalDue = Math.round(listing.price * qty * 100) / 100;
   const payTx = await coinsRef.transaction((c) => {
     const v = c || 0;
-    return v >= listing.price ? v - listing.price : v;
+    return v >= totalDue ? v - totalDue : v;
   });
   const coinsAfter = payTx?.snapshot?.val?.() ?? 0;
   if (!payTx?.committed || coinsAfter >= before) {
     await revertListing();
     throw new HttpError(400, "INSUFFICIENT_COINS", "Not enough INSP coins");
   }
-  const priceCents = Math.round(listing.price * 100);
+  const priceCents = Math.round(totalDue * 100);
   const feeCents = Math.round(priceCents * MARKET_FEE_PERCENT / 100);
   const sellerReceives = (priceCents - feeCents) / 100;
   const fee = feeCents / 100;
@@ -321,13 +349,21 @@ var buy_default = handle(async (req, res) => {
       deliverRef = db.ref(`economy/${user.uid}/customCases/${caseId}`);
     } else {
       await revertListing();
-      await db.ref(`economy/${user.uid}/coins`).transaction((c) => (c || 0) + listing.price);
+      await db.ref(`economy/${user.uid}/coins`).transaction((c) => (c || 0) + totalDue);
       throw new HttpError(409, "CASE_UNAVAILABLE", "This case was removed by the owner \u2014 your coins are refunded");
     }
-    await deliverRef.transaction((c) => (c || 0) + 1);
+    await deliverRef.transaction((c) => (c || 0) + qty);
   } else {
-    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + qty);
     await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
+  }
+  if (pending) {
+    await db.ref(`market/${listingId}`).transaction((current) => {
+      if (current && current.pendingUid === user.uid) {
+        return { ...current, pendingUid: null, pendingQty: null };
+      }
+      return current;
+    });
   }
   await logLedger({
     type: "market_buy",
@@ -337,13 +373,15 @@ var buy_default = handle(async (req, res) => {
     kind: listing.kind || "fragment",
     caseId: listing.caseId,
     fragmentId: listing.fragmentId,
-    price: listing.price,
+    price: totalDue,
+    quantity: qty,
     fee,
     sellerReceives
   });
   res.status(200).json({
     ok: true,
     listing: reserved,
+    quantityBought: qty,
     coinsLeft: coinsAfter
   });
 });
@@ -455,9 +493,9 @@ var cancel_default = handle(async (req, res) => {
   if (listing.kind === "case") {
     const caseId = String(listing.caseId || "");
     const refundRef = caseId === "gold" ? db.ref(`economy/${user.uid}/goldCases`) : caseId === "inspire" ? db.ref(`economy/${user.uid}/cases`) : db.ref(`economy/${user.uid}/customCases/${caseId}`);
-    await refundRef.transaction((c) => (c || 0) + 1);
+    await refundRef.transaction((c) => (c || 0) + (listing.quantity || 1));
   } else {
-    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + 1);
+    await db.ref(`inventory/${user.uid}/${listing.fragmentId}/count`).transaction((c) => (c || 0) + (listing.quantity || 1));
     await db.ref(`inventory/${user.uid}/${listing.fragmentId}/updatedAt`).set(now);
   }
   await logLedger({ type: "market_cancel", uid: user.uid, listingId, kind: listing.kind || "fragment", caseId: listing.caseId, fragmentId: listing.fragmentId });

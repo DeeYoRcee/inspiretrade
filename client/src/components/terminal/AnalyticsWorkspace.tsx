@@ -269,7 +269,7 @@ function Metric({ label, value, good, bad }: { label: string; value: string; goo
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
       <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`text-sm font-semibold tabular-nums ${good ? "text-emerald-400" : bad ? "text-red-400" : "text-slate-100"}`}>{value}</div>
+      <div className={`text-base font-semibold tabular-nums ${good ? "text-emerald-400" : bad ? "text-red-400" : "text-slate-100"}`}>{value}</div>
     </div>
   );
 }

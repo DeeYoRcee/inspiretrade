@@ -34,6 +34,8 @@ export default function MarketPage() {
   // "f:<fragmentId>" or "c:<caseId>" — one selector sells fragments AND cases
   const [sellItem, setSellItem] = useState<string>("");
   const [sellPrice, setSellPrice] = useState<string>("");
+  // P40 — how many units the seller lists (per-unit price)
+  const [sellQty, setSellQty] = useState<string>("");
   // username market — owner-only sale form
   const [uName, setUName] = useState("");
   const [uPrice, setUPrice] = useState("");
@@ -60,9 +62,9 @@ export default function MarketPage() {
     mutationFn: async () => {
       const price = Number(sellPrice);
       if (sellItem.startsWith("c:")) {
-        return authedFetch("/api/market?action=list", { kind: "case", caseId: sellItem.slice(2), price });
+        return authedFetch("/api/market?action=list", { kind: "case", caseId: sellItem.slice(2), price, quantity: sellQtyNum });
       }
-      return authedFetch("/api/market?action=list", { fragmentId: sellItem.slice(2), price });
+      return authedFetch("/api/market?action=list", { fragmentId: sellItem.slice(2), price, quantity: sellQtyNum });
     },
     onSuccess: () => {
       toast({ title: t("listingCreated") });
@@ -87,7 +89,9 @@ export default function MarketPage() {
   });
 
   const buyMutation = useMutation({
-    mutationFn: async (listingId: string) => authedFetch("/api/market?action=buy", { listingId }),
+    mutationFn: async (arg: string | { listingId: string; quantity?: number }) =>
+      authedFetch("/api/market?action=buy",
+        typeof arg === "string" ? { listingId: arg } : { listingId: arg.listingId, quantity: arg.quantity }),
     onSuccess: (result: any) => {
       toast({ title: t("purchaseSuccess") });
       invalidate();
@@ -145,7 +149,12 @@ export default function MarketPage() {
     Math.abs(rawPrice - parsedPrice) < 1e-9 &&
     parsedPrice >= MIN_LISTING_PRICE &&
     parsedPrice <= MAX_LISTING_PRICE;
-  const receive = priceValid ? sellerReceives(parsedPrice) : 0;
+  // P40 — quantity clamp + the receive preview covers ALL listed units
+  const maxSellQty = sellItem.startsWith("c:")
+    ? ownedCases.find((c) => `c:${c.caseId}` === sellItem)?.count ?? 1
+    : inventory?.[sellItem.slice(2)] ?? 1;
+  const sellQtyNum = Math.max(1, Math.min(Math.floor(Number(sellQty) || 1), Math.max(1, maxSellQty), 99));
+  const receive = priceValid ? Math.round(sellerReceives(parsedPrice) * sellQtyNum * 100) / 100 : 0;
 
   return (
     <div className="container mx-auto max-w-5xl space-y-6 p-4 sm:px-6">
@@ -188,7 +197,7 @@ export default function MarketPage() {
                       <div className="mt-3 w-full space-y-2 text-left">
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span className="max-w-[120px] truncate">@{listing.sellerName}</span>
-                          <span className="font-number font-bold text-amber-400">{listing.price} INSP</span>
+                          <span className="font-number font-bold text-amber-400">{listing.price}{listing.quantity && listing.quantity > 1 ? ` ×${listing.quantity}` : ""} INSP</span>
                         </div>
                         <ListingAction
                           listing={listing}
@@ -206,7 +215,7 @@ export default function MarketPage() {
                         <div className="mt-3 w-full space-y-2 text-left">
                           <div className="flex items-center justify-between text-xs text-muted-foreground">
                             <span className="max-w-[120px] truncate">@{listing.sellerName}</span>
-                            <span className="font-number font-bold text-amber-400">{listing.price} INSP</span>
+                            <span className="font-number font-bold text-amber-400">{listing.price}{listing.quantity && listing.quantity > 1 ? ` ×${listing.quantity}` : ""} INSP</span>
                           </div>
                           <ListingAction
                             listing={listing}
@@ -251,7 +260,7 @@ export default function MarketPage() {
                     <div className="mt-2 w-full space-y-2 text-left">
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span className="max-w-[120px] truncate">@{listing.sellerName}</span>
-                        <span className="font-number font-bold text-amber-400">{listing.price} INSP</span>
+                        <span className="font-number font-bold text-amber-400">{listing.price}{listing.quantity && listing.quantity > 1 ? ` ×${listing.quantity}` : ""} INSP</span>
                       </div>
                       {isAdmin ? (
                         <Button
@@ -355,6 +364,19 @@ export default function MarketPage() {
                         value={sellPrice}
                         onChange={(e) => setSellPrice(e.target.value)}
                         placeholder="0.03"
+                        className="rounded-xl"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Quantity ×</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={Math.max(1, maxSellQty)}
+                        step={1}
+                        value={sellQty}
+                        onChange={(e) => setSellQty(e.target.value)}
+                        placeholder={`1–${Math.max(1, maxSellQty)}`}
                         className="rounded-xl"
                       />
                     </div>
@@ -467,7 +489,11 @@ function ListingAction({ listing, coins, buyMutation, t }: {
   t: (key: string) => string;
 }) {
   const isOwn = listing.isOwn === true;
-  const insufficient = coins < listing.price;
+  // P40 — multi-unit listings: the buyer picks how many units to take
+  const avail = Math.max(1, Math.floor(Number(listing.quantity) || 1));
+  const [qty, setQty] = useState(1);
+  const total = Math.round(listing.price * qty * 100) / 100;
+  const insufficient = coins < total;
   if (isOwn) {
     return (
       <Button variant="secondary" size="sm" className="w-full rounded-xl" disabled>
@@ -476,13 +502,30 @@ function ListingAction({ listing, coins, buyMutation, t }: {
     );
   }
   return (
-    <Button
-      size="sm"
-      className="w-full rounded-xl font-semibold"
-      disabled={insufficient || buyMutation.isPending}
-      onClick={() => buyMutation.mutate(listing.id)}
-    >
-      {insufficient ? t("insufficientCoins") : <><Coins className="mr-1.5 h-4 w-4" />{t("buyButton")}</>}
-    </Button>
+    <div className="space-y-1.5">
+      {avail > 1 && (
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={1}
+            max={avail}
+            step={1}
+            value={qty}
+            onChange={(e) => setQty(Math.max(1, Math.min(Math.floor(Number(e.target.value) || 1), avail)))}
+            className="h-8 w-20 rounded-lg text-xs"
+            aria-label="quantity"
+          />
+          <span className="text-[11px] text-muted-foreground">× {listing.price} INSP = <b className="text-amber-400">{total}</b></span>
+        </div>
+      )}
+      <Button
+        size="sm"
+        className="w-full rounded-xl font-semibold"
+        disabled={insufficient || buyMutation.isPending}
+        onClick={() => buyMutation.mutate({ listingId: listing.id, quantity: qty })}
+      >
+        {insufficient ? t("insufficientCoins") : <><Coins className="mr-1.5 h-4 w-4" />{t("buyButton")}{avail > 1 ? ` (${qty})` : ""}</>}
+      </Button>
+    </div>
   );
 }

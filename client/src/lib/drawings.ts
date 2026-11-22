@@ -503,6 +503,7 @@ export function hitTest(
         break;
       }
       case "channel": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
         const off = channelOffset(pts[0], pts[1], pts[2]);
         if (distToSegmentSq(p, pts[0], pts[1]) <= LINE_HIT * LINE_HIT) return { index: i };
         if (distToSegmentSq(p, off.from, off.to) <= LINE_HIT * LINE_HIT) return { index: i };
@@ -518,6 +519,7 @@ export function hitTest(
         break;
       }
       case "fib-extension": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
         // bounding box of the three anchors (generous — the fan spans it)
         const xs = pts.map((q) => q.x);
         const ys = pts.map((q) => q.y);
@@ -527,6 +529,7 @@ export function hitTest(
         break;
       }
       case "hchannel": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
         const y1 = pts[0].y;
         const y2 = pts[2].y;
         const inX = p.x >= Math.min(pts[0].x, pts[1].x) - LINE_HIT && p.x <= Math.max(pts[0].x, pts[1].x) + LINE_HIT;
@@ -540,6 +543,7 @@ export function hitTest(
         break;
       }
       case "triangle": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
         if (pointInTri(p, pts[0], pts[1], pts[2])) return { index: i };
         break;
       }
@@ -567,6 +571,7 @@ export function hitTest(
       case "curve":
       case "double-curve":
       case "arc": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
         const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
         if (p.x >= Math.min(...xs) - LINE_HIT && p.x <= Math.max(...xs) + LINE_HIT &&
             p.y >= Math.min(...ys) - LINE_HIT && p.y <= Math.max(...ys) + LINE_HIT) return { index: i };
@@ -1064,6 +1069,7 @@ export function renderDrawing(
       break;
     }
     case "dchannel": {
+      if (pts.length < 4) break; // P39b: mid-creation preview may be short
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       ctx.lineTo(pts[1].x, pts[1].y);
@@ -1106,6 +1112,7 @@ export function renderDrawing(
 
     // ---------- fibonacci family ----------
     case "fib-trend-ext": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
       const [p0, p1, p2] = pts;
       drawSegment(ctx, p0, p1);
       ctx.save();
@@ -1133,6 +1140,7 @@ export function renderDrawing(
       break;
     }
     case "fib-channel": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
       const [p0, p1, p2] = pts;
       drawSegment(ctx, p0, p1);
       const dx = p1.x - p0.x, dy = p1.y - p0.y;
@@ -1246,6 +1254,7 @@ export function renderDrawing(
       break;
     }
     case "fib-wedge": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
       const [apex, p1, p2] = pts;
       for (const lvl of visibleLevels(d)) {
         const dir1 = { x: p1.x - apex.x, y: (p1.y - apex.y) * lvl.ratio };
@@ -1266,6 +1275,7 @@ export function renderDrawing(
 
     // ---------- shapes ----------
     case "rrect": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
       // rotated rectangle: p0→p1 is one edge, p2 sets the depth
       const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
       const ox = pts[2].x - (pts[0].x + dx / 2), oy = pts[2].y - (pts[0].y + dy / 2);
@@ -1325,6 +1335,7 @@ export function renderDrawing(
       break;
     }
     case "curve": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
       const poly = bezierPolyline(pts[0], pts[1], pts[2]);
       ctx.beginPath();
       ctx.moveTo(poly[0].x, poly[0].y);
@@ -1334,6 +1345,7 @@ export function renderDrawing(
       break;
     }
     case "double-curve": {
+      if (pts.length < 4) break; // P39b: mid-creation preview may be short
       // S-curve through 4 anchors: two quadratic halves sharing the middle
       const mid = { x: (pts[1].x + pts[2].x) / 2, y: (pts[1].y + pts[2].y) / 2 };
       const c1 = { x: (pts[0].x + mid.x) / 2 + (pts[1].x - pts[0].x), y: (pts[0].y + mid.y) / 2 + (pts[1].y - pts[0].y) };
@@ -1546,6 +1558,7 @@ export function renderDrawing(
     // ---------- measurement & positions ----------
     case "long-position":
     case "short-position": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
       const [entry, stop, target] = pts;
       const isLong = d.type === "long-position";
       // risk zone (entry↔stop) red, reward zone (entry↔target) green
@@ -1583,6 +1596,7 @@ export function renderDrawing(
       break;
     }
     case "forecast": {
+      if (pts.length < 3) break; // P39b: mid-creation preview may be short
       drawSegment(ctx, pts[0], pts[1]);
       ctx.save();
       ctx.setLineDash([6, 4]);

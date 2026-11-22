@@ -19,6 +19,8 @@ export interface MarketListing {
   itemName?: string;
   fragmentId: string;
   price: number;
+  /** P40 — units remaining at that per-unit price (1 for old listings) */
+  quantity?: number;
   status: "active" | "sold" | "canceled";
   listedAt: number;
   soldAt?: number;
