@@ -49,6 +49,8 @@ import {
   mergeDrawingLists, stampChangedDrawings, newDrawingId, type Drawing, type DrawingType, type DrawingRenderEnv } from "@/lib/drawings";
 import { readFavoritesLocal, toggleFavorite, reorderFavorites } from "@/lib/drawing-favorites";
 import { saveFavorites, subscribeFavorites } from "@/lib/chart-persistence";
+import { saveDrawingDefaults, subscribeDrawingDefaults } from "@/lib/chart-persistence";
+import { styleForTool, newDefaultFromStyle, type DrawingDefaultsMap } from "@/lib/drawing-defaults";
 import { FavoritesToolbar } from "@/components/terminal/chart/FavoritesToolbar";
 import { ObjectTree } from "@/components/terminal/chart/ObjectTree";
 import { newGroupId, moveToGroup, groupFlag, groupMemberIds, dissolveGroup, type DrawingGroup } from "@/lib/drawing-tree";
@@ -529,6 +531,14 @@ export function PriceChart({
       if (next !== prev) saveFavorites(uid ?? "", next);
       return next;
     });
+  }, [uid]);
+
+  // ---- P44 §5 — per-tool drawing style defaults (LS mirror + RTDB) -------
+  const [toolDefaultMap, setToolDefaultMap] = useState<DrawingDefaultsMap>({});
+  useEffect(() => {
+    setToolDefaultMap({});
+    if (!uid) return;
+    return subscribeDrawingDefaults(uid, setToolDefaultMap);
   }, [uid]);
   const priceFormat = useMemo(
     () => ({ type: "price" as const, precision: effDigits, minMove: Math.pow(10, -effDigits) }),
@@ -2189,12 +2199,12 @@ export function PriceChart({
           // chain another object with the same tool. Esc also disarms.
           onToolCommitted={() => { if (!stayDrawingRef.current && !shiftHeldRef.current) setActiveTool("cursor"); }}
           magnet={settings.magnet}
-          toolDefaults={{
+          toolDefaults={styleForTool(toolDefaultMap, activeTool === "cursor" ? null : activeTool, {
             color: settingsRef.current.drawColor,
             width: settingsRef.current.drawWidth,
             dash: settingsRef.current.drawDash,
             fontSize: settingsRef.current.drawFontSize,
-          }}
+          })}
           selectedId={selectedDrawingId}
           onSelect={(id) => { setSelectedDrawingId(id); setSelectedIds([]); }}
           onDelete={(id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id))}
@@ -2245,6 +2255,9 @@ export function PriceChart({
             <DrawingPropsBar
               drawing={sel}
               positionEnv={renderEnv}
+              onSetDefault={() => {
+                if (uid) saveDrawingDefaults(uid, { ...toolDefaultMap, [sel.type]: newDefaultFromStyle(sel.style) });
+              }}
               fibPresets={fibPresets}
               onSaveFibPreset={(name, lvls) => {
                 if (uid) { saveFibPreset(uid, name, sel.type, lvls); void loadFibPresets(uid).then(setFibPresets); }

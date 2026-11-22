@@ -539,7 +539,7 @@ export interface HitResult {
   handle?: number;
 }
 
-const HANDLE_HIT = 8;   // px radius around endpoints
+const HANDLE_HIT = 10;  // px radius around endpoints (P44: touch-friendlier)
 const LINE_HIT = 5;     // px distance to a line body
 const TEXT_HIT = 6;     // pad around text box edges
 
@@ -832,7 +832,7 @@ export function drawHandle(ctx: CanvasRenderingContext2D, p: XY, active: boolean
   ctx.strokeStyle = "#38bdf8";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+  ctx.arc(p.x, p.y, 5.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -1709,7 +1709,8 @@ export function renderDrawing(
       const yTop = Math.min(entry.y, stop.y, target.y);
       const yBot = Math.max(entry.y, stop.y, target.y);
       ctx.save();
-      ctx.globalAlpha = 0.16 * alpha;
+      // P44 §6 — per-zone opacity is user-configurable (style.fill.opacity)
+      ctx.globalAlpha = (d.style.fill?.opacity ?? 0.16) * alpha;
       ctx.fillStyle = lossCol;
       ctx.fillRect(xL, Math.min(entry.y, stop.y), w, Math.abs(stop.y - entry.y));
       ctx.fillStyle = profitCol;
@@ -1737,6 +1738,10 @@ export function renderDrawing(
       const digits = env?.digits ?? 2;
       const spec = env && env.contractSize ? { digits, pipSize: env.pipSize ?? 0, contractSize: env.contractSize } : undefined;
       const calc = positionCalc(entryP, stopP, targetP, spec, env?.balance, d.riskPct);
+      // P44 §6 — pip distances next to the % labels when the instrument has pips
+      const pipSize = env?.pipSize ?? 0;
+      const riskPips = pipSize > 0 ? calc.riskDist / pipSize : null;
+      const rewardPips = pipSize > 0 ? calc.rewardDist / pipSize : null;
       ctx.save();
       ctx.setLineDash([]);
       ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
@@ -1750,9 +1755,9 @@ export function renderDrawing(
         // right-aligned % distances (chart-measured, always exact)
         ctx.textAlign = "right";
         ctx.fillStyle = lossCol;
-        ctx.fillText(`−${calc.riskPctOfPrice.toFixed(2)}%`, xR - 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
+        ctx.fillText(`−${calc.riskPctOfPrice.toFixed(2)}%${riskPips ? ` · ${riskPips.toFixed(1)}p` : ""}`, xR - 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
         ctx.fillStyle = profitCol;
-        ctx.fillText(`+${calc.rewardPctOfPrice.toFixed(2)}%`, xR - 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
+        ctx.fillText(`+${calc.rewardPctOfPrice.toFixed(2)}%${rewardPips ? ` · ${rewardPips.toFixed(1)}p` : ""}`, xR - 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
         ctx.textAlign = "left";
       }
       // header: direction · RR · size + money (money ONLY when the live

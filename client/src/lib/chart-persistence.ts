@@ -13,6 +13,7 @@ import { auth, db } from "@/lib/firebase";
 import { __sanitizeDrawingList, filterTombstonedDrawings } from "@/lib/drawings";
 import { readFavoritesLocal, writeFavoritesLocal, MAX_FAVORITES } from "@/lib/drawing-favorites";
 import { sanitizeGroups, type DrawingGroup } from "@/lib/drawing-tree";
+import { sanitizeDefaultsMap, type DrawingDefaultsMap } from "@/lib/drawing-defaults";
 import type { Drawing, FibLevel } from "@/lib/drawings";
 import { sanitizeFibLevels } from "@/lib/drawings";
 import { sanitizeIndicatorList } from "@/lib/indicators-config";
@@ -450,4 +451,45 @@ export async function saveLayout(uid: string, name: string, snapshot: Omit<Layou
 
 export async function deleteLayout(uid: string, name: string): Promise<void> {
   await remove(rtdb(`chart/${uid}/layouts/${name}`));
+}
+
+// ---------------------------------------------------------------------------
+// P44 §5 — per-tool drawing style defaults: RTDB `users/{uid}/drawingDefaults`
+// (covered by the owner-only users/$uid rules) with an LS mirror for first
+// paint. Writes are debounced so flipping style knobs produces ONE write per
+// pause; anonymous users get localStorage only.
+// ---------------------------------------------------------------------------
+
+const DEFAULTS_MAX_TOOLS = 80;
+const defaultsWriteTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function saveDrawingDefaults(uid: string, map: DrawingDefaultsMap): void {
+  const entries = Object.entries(sanitizeDefaultsMap(map)).slice(0, DEFAULTS_MAX_TOOLS);
+  const clean = Object.fromEntries(entries);
+  try { localSet(uid, "defaults", "-", clean); } catch { /* private mode */ }
+  if (!uid) return; // anonymous → localStorage only
+  const prev = defaultsWriteTimers.get(uid);
+  if (prev) clearTimeout(prev);
+  defaultsWriteTimers.set(uid, setTimeout(() => {
+    defaultsWriteTimers.delete(uid);
+    void set(rtdb(`users/${uid}/drawingDefaults`), { ...clean, savedAt: Date.now() })
+      .catch((err) => console.warn("[chart] drawing defaults save failed — kept in localStorage:", err));
+  }, 600));
+}
+
+export function subscribeDrawingDefaults(uid: string, cb: (map: DrawingDefaultsMap) => void): () => void {
+  const cached = localGet<DrawingDefaultsMap>(uid, "defaults", "-");
+  if (cached) cb(sanitizeDefaultsMap(cached));
+  if (!uid) return () => {}; // anonymous → localStorage only
+  return onValue(
+    dbRef(db, `users/${uid}/drawingDefaults`),
+    (snap) => {
+      const val = snap.val();
+      if (!val || typeof val !== "object") return;
+      const clean = sanitizeDefaultsMap(val);
+      cb(clean);
+      try { localSet(uid, "defaults", "-", clean); } catch { /* private mode */ }
+    },
+    (err) => console.warn("[chart] drawing defaults listener error (LS mirror active):", err),
+  );
 }

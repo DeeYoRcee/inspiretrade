@@ -5,7 +5,9 @@
  * TIMEFRAME VISIBILITY grid, per-anchor coordinate editing, and object
  * actions (duplicate / lock / hide / delete).
  */
-import { RotateCcw, Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from "lucide-react";
+import { useState } from "react";
+import { RotateCcw, Copy, Lock, LockOpen, Eye, EyeOff, Trash2, PenLine, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown, Save } from "lucide-react";
+import { ColorPicker } from "./ColorPicker";
 import { DEFAULT_STYLE,
   FIB_TOOLS, levelsFor, FIB_DEFAULT_LEVELS,
   isPositionTool, positionCalc, fmtPositionPrice,
@@ -14,13 +16,16 @@ import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import type { FibPreset } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
 
-const COLORS = ["#38bdf8", "#22c55e", "#f59e0b", "#ef4444", "#a78bfa", "#e2e8f0", "#14b8a6", "#f472b6"];
-
 const SHAPE_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
   // P39 §9 — ONLY tools whose renderer actually applies style.fill; the fill
   // slider used to show for long/short/polyline where it did nothing
   "rect", "rrect", "triangle", "circle", "ellipse", "channel", "hchannel", "dchannel",
   "price-range", "date-range", "datetime-range",
+]);
+
+/** P44 §2 — tools that carry their own text styling controls */
+const TEXT_LIKE: ReadonlySet<DrawingType> = new Set<DrawingType>([
+  "text", "anchored-text", "note", "price-note", "price-label", "callout", "comment", "signpost", "flag",
 ]);
 
 const tfLabel = (tf: Timeframe) => (tf === "1W" ? "W1" : tf === "1M" ? "MN" : tf.toUpperCase());
@@ -43,7 +48,7 @@ function ToggleBtn({ label, on, onClick }: { label: string; on: boolean; onClick
 export function DrawingPropsBar({
   drawing, onChange, onDuplicate, onDelete, onEditText, onReorder,
   fibPresets, onSaveFibPreset, onDeleteFibPreset,
-  positionEnv,
+  positionEnv, onSetDefault,
 }: {
   drawing: Drawing;
   onChange: (patch: Partial<Drawing>) => void;
@@ -58,8 +63,11 @@ export function DrawingPropsBar({
   onDeleteFibPreset?: (name: string) => void;
   /** P41 — instrument metadata + live balance for the position panel */
   positionEnv?: DrawingRenderEnv;
+  /** P44 §5 — persist the current style as this tool's default */
+  onSetDefault?: () => void;
 }) {
   const isFib = FIB_TOOLS.has(drawing.type);
+  const [presetName, setPresetName] = useState("");
   const isTrend = drawing.type === "trend";
   const levels = levelsFor(drawing);
   const style = drawing.style;
@@ -93,30 +101,14 @@ export function DrawingPropsBar({
   };
 
   return (
-    <div data-chart-ui className="pointer-events-auto absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-900/95 px-2 py-1.5 shadow-2xl backdrop-blur">
+    <div data-chart-ui className="pointer-events-auto absolute bottom-3 left-1/2 z-30 max-w-[calc(100vw-1rem)] -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-900/95 px-2 py-1.5 shadow-2xl backdrop-blur">
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        {/* color swatches */}
-        <div className="flex items-center gap-1">
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              title={`Color ${c}`}
-              onClick={() => setStyle({ color: c, fill: style.fill ? { ...style.fill, color: c } : undefined })}
-              className={cn(
-                "h-4 w-4 rounded-full border",
-                style.color === c ? "border-white ring-1 ring-white/60" : "border-transparent",
-              )}
-              style={{ background: c }}
-            />
-          ))}
-          <input
-            type="color"
-            title="Custom color"
-            value={style.color}
-            onChange={(e) => setStyle({ color: e.target.value })}
-            className="h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
-          />
-        </div>
+        {/* P44 §1 — TradingView-style compact color picker */}
+        <ColorPicker
+          value={style.color}
+          title="Line color"
+          onChange={(c) => setStyle({ color: c, fill: style.fill ? { ...style.fill, color: c } : undefined })}
+        />
         <span className="h-4 w-px bg-slate-700" />
         {/* width */}
         <div className="flex items-center gap-0.5" title="Line thickness">
@@ -169,10 +161,25 @@ export function DrawingPropsBar({
         >
           <RotateCcw className="h-3.5 w-3.5" />
         </button>
+        {/* P44 §5 — save this style as the per-tool default (Firebase-backed) */}
+        {onSetDefault && (
+          <button
+            title={`Save this style as the default for new ${drawing.type} objects`}
+            onClick={onSetDefault}
+            className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-sky-500/15 hover:text-sky-300"
+          >
+            <Save className="h-3.5 w-3.5" />
+          </button>
+        )}
         {/* fill for shapes */}
         {SHAPE_TOOLS.has(drawing.type) && (
           <>
             <span className="h-4 w-px bg-slate-700" />
+            <ColorPicker
+              value={style.fill?.color ?? style.color}
+              title="Fill color"
+              onChange={(c) => setStyle({ fill: { color: c, opacity: style.fill?.opacity ?? 0.15 } })}
+            />
             <label className="flex items-center gap-1 text-slate-400" title="Fill opacity">
               <span>Fill</span>
               <input
@@ -180,7 +187,7 @@ export function DrawingPropsBar({
                 value={style.fill?.opacity ?? 0}
                 onChange={(e) => {
                   const opacity = Number(e.target.value);
-                  setStyle({ fill: opacity > 0 ? { color: style.color, opacity } : undefined });
+                  setStyle({ fill: opacity > 0 ? { color: style.fill?.color ?? style.color, opacity } : undefined });
                 }}
                 className="h-3 w-14 accent-sky-500"
               />
@@ -238,13 +245,22 @@ export function DrawingPropsBar({
                   <span className="text-slate-500">Gain @ target</span><span>{posCalc.rewardAmount != null ? `$${posCalc.rewardAmount.toFixed(2)}` : "—"}</span>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
-                  <label className="flex items-center gap-1" title="Take-profit zone color">
+                  <label className="flex items-center gap-1.5" title="Take-profit zone color">
                     <span className="text-slate-500">Profit</span>
-                    <input type="color" value={style.profitColor || "#22c55e"} onChange={(e) => setStyle({ profitColor: e.target.value })} className="h-4 w-6 cursor-pointer rounded border-0 bg-transparent p-0" />
+                    <ColorPicker value={style.profitColor || "#22c55e"} title="Take-profit zone color" onChange={(c) => setStyle({ profitColor: c })} />
                   </label>
-                  <label className="flex items-center gap-1" title="Stop-loss zone color">
+                  <label className="flex items-center gap-1.5" title="Stop-loss zone color">
                     <span className="text-slate-500">Loss</span>
-                    <input type="color" value={style.lossColor || "#ef4444"} onChange={(e) => setStyle({ lossColor: e.target.value })} className="h-4 w-6 cursor-pointer rounded border-0 bg-transparent p-0" />
+                    <ColorPicker value={style.lossColor || "#ef4444"} title="Stop-loss zone color" onChange={(c) => setStyle({ lossColor: c })} />
+                  </label>
+                  <label className="flex items-center gap-1" title="Zone opacity">
+                    <span className="text-slate-500">Zones</span>
+                    <input
+                      type="range" min={0.05} max={0.4} step={0.01}
+                      value={style.fill?.opacity ?? 0.16}
+                      onChange={(e) => setStyle({ fill: { color: style.fill?.color ?? style.color, opacity: Number(e.target.value) } })}
+                      className="h-3 w-14 accent-sky-500"
+                    />
                   </label>
                   <ToggleBtn label="Labels" on={style.showLabels !== false} onClick={() => setStyle({ showLabels: style.showLabels === false ? undefined : false })} />
                 </div>
@@ -294,7 +310,10 @@ export function DrawingPropsBar({
             </button>
           </>
         )}
-        {/* attached text — every drawing can carry a label that moves with it */}
+        {/* P44 §2 — text styling only for text-bearing tools (relevant
+            controls only; other drawings keep any previously-set label) */}
+        {TEXT_LIKE.has(drawing.type) && (
+        <>
         <span className="h-4 w-px bg-slate-700" />
         <input
           value={drawing.text ?? ""}
@@ -357,6 +376,8 @@ export function DrawingPropsBar({
         <button title="Edit text" onClick={onEditText} className="flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200">
           <PenLine className="h-3.5 w-3.5" />
         </button>
+        </>
+        )}
 
         {/* Fibonacci level toggles */}
         {isFib && (
@@ -402,12 +423,22 @@ export function DrawingPropsBar({
                       <option value="dashed">dash</option>
                       <option value="dotted">dot</option>
                     </select>
-                    <input
-                      type="color"
+                    <select
+                      value={lvl.width ?? ""}
+                      title="Level line width"
+                      onChange={(e) => setLevel(i, { ...lvl, width: e.target.value ? Number(e.target.value) : undefined })}
+                      className="h-5 rounded border border-slate-700 bg-slate-950 text-[10px]"
+                    >
+                      <option value="">—</option>
+                      <option value="1">1px</option>
+                      <option value="2">2px</option>
+                      <option value="3">3px</option>
+                    </select>
+                    <ColorPicker
                       value={lvl.color || style.color}
                       title="Level color"
-                      onChange={(e) => setLevel(i, { ...lvl, color: e.target.value })}
-                      className="h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+                      align="right"
+                      onChange={(c) => setLevel(i, { ...lvl, color: c })}
                     />
                     <button
                       title="Remove level"
@@ -425,46 +456,46 @@ export function DrawingPropsBar({
                     Reset to defaults
                   </button>
                 </div>
-                {/* Phase 37 §5 — custom Fibonacci presets (per user) */}
-                {fibPresets && fibPresets.length > 0 && (
+                {/* P44 §4 — custom Fibonacci templates (per user, Firebase) */}
+                {onSaveFibPreset && (
                   <div className="mt-1.5 border-t border-slate-800 pt-1.5">
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        const preset = fibPresets.find((x) => x.name === e.target.value);
-                        if (preset) onChange({ levels: preset.levels.map((l) => ({ ...l })) });
-                      }}
-                      className="h-6 w-full rounded border border-slate-700 bg-slate-950 text-[10px] text-slate-300"
-                    >
-                      <option value="">Apply preset…</option>
-                      {fibPresets.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.levels.length})</option>)}
-                    </select>
-                    <div className="mt-1 flex justify-between">
-                      <button
-                        onClick={() => {
-                          const name = window.prompt("Preset name", drawing.type);
-                          if (name?.trim()) onSaveFibPreset?.(name.trim(), baseLevels);
+                    {fibPresets && fibPresets.length > 0 && (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const preset = fibPresets.find((x) => x.name === e.target.value);
+                          if (preset) onChange({ levels: preset.levels.map((l) => ({ ...l })) });
                         }}
-                        className="text-[10px] font-semibold text-sky-400 hover:text-sky-300"
-                      >Save current as preset</button>
+                        className="h-6 w-full rounded border border-slate-700 bg-slate-950 text-[10px] text-slate-300"
+                      >
+                        <option value="">Apply preset…</option>
+                        {fibPresets.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.levels.length})</option>)}
+                      </select>
+                    )}
+                    <div className="mt-1 flex items-center gap-1">
+                      <input
+                        value={presetName}
+                        onChange={(e) => setPresetName(e.target.value.slice(0, 32))}
+                        placeholder="Preset name…"
+                        className="num-input h-6 min-w-0 flex-1 px-1 text-[10px]"
+                      />
                       <button
-                        onClick={() => {
-                          const name = window.prompt("Delete which preset?", fibPresets[0]?.name || "");
-                          if (name?.trim()) onDeleteFibPreset?.(name.trim());
-                        }}
-                        className="text-[10px] text-red-400 hover:text-red-300"
-                      >Delete preset</button>
+                        disabled={!presetName.trim()}
+                        onClick={() => { onSaveFibPreset(presetName.trim(), baseLevels); setPresetName(""); }}
+                        className="h-6 shrink-0 rounded bg-sky-600 px-2 text-[10px] font-semibold text-white disabled:opacity-40"
+                      >Save</button>
+                      {fibPresets && fibPresets.length > 0 && onDeleteFibPreset && (
+                        <select
+                          value=""
+                          onChange={(e) => { if (e.target.value) { onDeleteFibPreset(e.target.value); } }}
+                          className="h-6 rounded border border-red-900/50 bg-slate-950 text-[10px] text-red-400"
+                        >
+                          <option value="">Delete…</option>
+                          {fibPresets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+                        </select>
+                      )}
                     </div>
                   </div>
-                )}
-                {(!fibPresets || fibPresets.length === 0) && onSaveFibPreset && (
-                  <button
-                    onClick={() => {
-                      const name = window.prompt("Preset name", drawing.type);
-                      if (name?.trim()) onSaveFibPreset(name.trim(), baseLevels);
-                    }}
-                    className="mt-1.5 block text-[10px] font-semibold text-sky-400 hover:text-sky-300"
-                  >Save levels as preset</button>
                 )}
               </div>
             </details>

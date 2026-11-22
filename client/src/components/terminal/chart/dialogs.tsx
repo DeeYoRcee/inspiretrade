@@ -13,6 +13,7 @@ import type { Drawing } from "@/lib/drawings";
 import type { LayoutSnapshot } from "@/lib/chart-persistence";
 import { loadLayouts, deleteLayout } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
+import { ColorPicker } from "./ColorPicker";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -536,7 +537,7 @@ export function DrawingPropsDialog({
     <ChartDialog title="Drawing properties" onClose={onClose}>
       <div className="grid grid-cols-2 gap-2 text-xs">
         <label><span className="mb-0.5 block text-[10px] text-slate-400">Color</span>
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-7 w-full rounded border border-slate-700 bg-slate-950" /></label>
+          <div className="pt-1"><ColorPicker value={color} onChange={setColor} title="Color" placement="bottom" /></div></label>
         <label><span className="mb-0.5 block text-[10px] text-slate-400">Line width</span>
           <select value={width} onChange={(e) => setWidth(Number(e.target.value))} className="num-input">
             {[1, 2, 3, 4].map((w) => <option key={w} value={w}>{w}px</option>)}
