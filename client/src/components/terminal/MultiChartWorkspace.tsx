@@ -24,8 +24,6 @@ import { loadLastActive, saveLastActive } from "@/lib/workspace-presets";
 import { loadSyncSettings, saveSyncSettings, type SyncSettings } from "@/lib/chart-sync";
 import { WorkspaceDialog } from "@/components/terminal/chart/WorkspaceDialog";
 import type { WorkspacePreset } from "@/lib/workspace-presets";
-import { LayoutGrid } from "lucide-react";
-import { Crosshair, Link2, Clock, Tag } from "lucide-react";
 import type { ChartType } from "@/lib/chart-types";
 import type { Timeframe } from "@shared/terminal";
 import { cn } from "@/lib/utils";
@@ -112,21 +110,6 @@ export function MultiChartWorkspace({
   const dragRef = useRef<{ id: string; axis: "c" | "r"; idx: number; base: number[] } | null>(null);
 
   // ---- Phase 59: the P48 sync feature shipped WITHOUT any UI — the bus was
-  // permanently off. Toggles for crosshair / time / symbol / interval.
-  const [sync, setSync] = useState<SyncSettings>(() => loadSyncSettings());
-  useEffect(() => {
-    const on = () => setSync(loadSyncSettings());
-    window.addEventListener("it_chart_sync_changed", on);
-    return () => window.removeEventListener("it_chart_sync_changed", on);
-  }, []);
-  const toggleSync = useCallback((k: keyof SyncSettings) => {
-    setSync((cur) => {
-      const next = { ...cur, [k]: !cur[k] };
-      saveSyncSettings(next);
-      return next;
-    });
-  }, []);
-
   // ---- PHASE 60: named workspace manager --------------------------------
   const [wsOpen, setWsOpen] = useState(false);
   const [activeWsId, setActiveWsId] = useState<string | null>(null);
@@ -149,13 +132,14 @@ export function MultiChartWorkspace({
     if (w.rowH?.length) setRowH(w.rowH);
     if (w.sync) {
       saveSyncSettings({ crosshair: w.sync.crosshair, time: w.sync.time, symbol: w.sync.symbol, interval: w.sync.interval });
-      setSync({ crosshair: w.sync.crosshair, time: w.sync.time, symbol: w.sync.symbol, interval: w.sync.interval });
     }
     setActiveWsId(w.id);
   }, [symbol, timeframe, onSymbolChange, onTimeframeChange]);
 
   // ---- PHASE 60 Part 7: honest autosave indicator ------------------------
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  // PHASE 62 (user request): the "Saved" chip UI was removed with the top
+  // strip — autosave still runs silently (RTDB last-active snapshot).
+
 
   // initialize extra panels + restore the last-active workspace (P48 §4)
   useEffect(() => {
@@ -175,7 +159,6 @@ export function MultiChartWorkspace({
           })));
           if (def.sync) {
             saveSyncSettings({ crosshair: def.sync.crosshair, time: def.sync.time, symbol: def.sync.symbol, interval: def.sync.interval });
-            setSync({ crosshair: def.sync.crosshair, time: def.sync.time, symbol: def.sync.symbol, interval: def.sync.interval });
           }
         }
       }
@@ -207,15 +190,12 @@ export function MultiChartWorkspace({
   useEffect(() => {
     try { localStorage.setItem(LS_LAYOUT, layout); } catch { /* ignore */ }
     const t = setTimeout(() => {
-      setSaveState("saving");
       saveLastActive({
         layout,
         panels: [{ symbol, timeframe }, ...panels],
         colW: colW.length ? colW : undefined,
         rowH: rowH.length ? rowH : undefined,
-      })
-        .then(() => setSaveState("saved"))
-        .catch(() => setSaveState("idle")); // honest: no fake "saved" on failure
+      }).catch(() => { /* offline — the next debounce retries */ });
     }, 900);
     return () => clearTimeout(t);
   }, [layout, symbol, timeframe, panels, colW, rowH]);
@@ -347,54 +327,14 @@ export function MultiChartWorkspace({
     );
   };
 
-  const SYNC_TOGGLES: Array<[keyof SyncSettings, string, typeof Crosshair]> = [
-    ["crosshair", "Crosshair", Crosshair],
-    ["time", "Time range", Clock],
-    ["symbol", "Symbol", Tag],
-    ["interval", "Interval", Link2],
-  ];
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
-      {/* Phase 59: cross-chart sync toggles (P48 Part 3 finally has UI) */}
-      {!narrow && (
-        <div className="flex h-7 shrink-0 items-center justify-end gap-1.5 border-b border-slate-800/70 bg-slate-950/50 px-2">
-          {/* PHASE 60: honest autosave status — "Saving…" until the RTDB write
-              resolves, then a fading "Saved" chip. Never claims success early. */}
-          <span className={cn(
-            "text-[10px] font-semibold",
-            saveState === "saving" ? "text-amber-400" : saveState === "saved" ? "text-emerald-400" : "text-slate-600",
-          )}>
-            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : ""}
-          </span>
-          <button
-            onClick={() => setWsOpen(true)}
-            title="Workspaces"
-            className="inline-flex h-5 items-center gap-1 rounded-full border border-sky-400/60 bg-sky-400/15 px-2 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-400/25"
-          >
-            <LayoutGrid className="h-2.5 w-2.5" />
-            Workspaces
-          </button>
-          <span className="mx-1 h-3.5 w-px bg-slate-700" />
-          <span className="mr-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">Sync</span>
-          {SYNC_TOGGLES.map(([k, label, Icon]) => (
-            <button
-              key={k}
-              onClick={() => toggleSync(k)}
-              title={`${label} sync across panels`}
-              className={cn(
-                "inline-flex h-5 items-center gap-1 rounded-full border px-2 text-[10px] font-semibold transition-colors",
-                sync[k]
-                  ? "border-sky-400/60 bg-sky-400/15 text-sky-300"
-                  : "border-slate-700/70 bg-slate-900/60 text-slate-500 hover:text-slate-300",
-              )}
-            >
-              <Icon className="h-2.5 w-2.5" />
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-      {!narrow && def.panels > 1 && null}
+      {/* PHASE 62 (user request): the labeled top strip (Saved / Workspaces /
+          Sync / Crosshair / Time range / Symbol / Interval) is REMOVED — the
+          terminal chrome must stay clean like a professional charting default.
+          Workspaces stay reachable from the main toolbar; sync toggles live in
+          Terminal settings → Sync. Autosave continues silently in the
+          background and sync settings persist as configured. */}
       <WorkspaceDialog
         open={wsOpen}
         onClose={() => setWsOpen(false)}

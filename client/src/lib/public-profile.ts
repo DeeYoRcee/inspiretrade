@@ -68,6 +68,8 @@ export interface PublicProfileSnapshot {
   strategy?: string;
   history?: PublicProfileTrade[];
   notes?: string;
+  /** PHASE 62: registration date (ms) — "Member since" cell mirrors the own-profile look */
+  createdAt?: number;
 }
 
 export function createDefaultPublicProfileSettings(): PublicProfileSettings {
@@ -157,6 +159,7 @@ export function createPublicProfileSnapshot({
   trades,
   settings,
   avatar,
+  memberSince,
   profile,
 }: {
   uid: string;
@@ -165,6 +168,8 @@ export function createPublicProfileSnapshot({
   trades: Trade[];
   settings: PublicProfileSettings;
   avatar?: string | null;
+  /** registration date (ms) — shown as "Member since" on the public page */
+  memberSince?: number | null;
   /** full private profile — carries usernames/social/profileVideo */
   profile?: { ceo?: boolean; vip?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } | null;
 }): PublicProfileSnapshot {
@@ -176,6 +181,9 @@ export function createPublicProfileSnapshot({
     displayName: displayName.trim() || username.trim(),
     updatedAt: Date.now(),
   };
+  // PHASE 62 — registration date survives every republish (public page shows
+  // "Member since" exactly like the own-profile screen)
+  if (memberSince) snapshot.createdAt = memberSince;
 
   // look & feel of the header — background choice + profile picture
   if (settings.background) snapshot.background = settings.background;

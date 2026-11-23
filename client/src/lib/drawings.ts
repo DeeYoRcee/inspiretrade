@@ -181,10 +181,19 @@ export const TEXT_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
 /** Click-collected multi-point tools — commit on double-click / Enter. */
 export const CLICK_COLLECT_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>(["path", "polyline"]);
 
+/** PHASE 62 fix #14 (single source — DrawingPropsBar imports this too):
+    tools whose objects carry editable `text`. */
+export const TEXT_LIKE: ReadonlySet<DrawingType> = new Set<DrawingType>([
+  "text", "anchored-text", "note", "price-note", "price-label", "callout", "comment", "signpost", "flag",
+]);
+
 /** Fib tools whose defaults can be customized per level. */
 export const FIB_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
   "fib-retracement", "fib-extension", "fib-trend-ext", "fib-channel",
-  "fib-timezone", "fib-fan", "fib-arc", "fib-circle", "fib-spiral", "fib-wedge",
+  "fib-timezone", "fib-fan", "fib-arc", "fib-circle", "fib-wedge",
+  // "fib-spiral" intentionally excluded (PHASE 62 fix #8): the spiral renders
+  // a fixed golden spiral and ignores per-level ratios/colors — showing the
+  // level editor for it was a dead control.
 ]);
 
 /** Default Fibonacci level sets per tool (multiples of the measured span). */
@@ -1709,7 +1718,9 @@ export function renderDrawing(
       break;
     }
     case "price-note": {
-      const txt = d.text ? `${d.text} · ${pts[0].y.toFixed(0)}` : pts[0].y.toFixed(0);
+      // PHASE 62 fix #3: the chip shows the MARKET price (canvas pixel Y was
+      // meaningless and changed on every pan/zoom)
+      const txt = d.text ? `${d.text} · ${fmtDrawingPrice(d.points[0].price)}` : fmtDrawingPrice(d.points[0].price);
       ctx.save();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;

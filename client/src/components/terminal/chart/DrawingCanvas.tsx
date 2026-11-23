@@ -275,7 +275,13 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const selSet = new Set(multiIdsRef.current);
       for (const d of drawingsRef.current) {
         const pts = toCanvas(d);
-        if (pts.length) renderDrawing(ctx, d, pts, W, H, selSet.has(d.id), renderEnvRef.current);
+        // PHASE 62 fix #13: the measure label is computed at RENDER time from
+        // the live points — XY-editor/props-bar anchor edits used to leave the
+        // stale Δ%/bars text (the label was only refreshed during drags).
+        const rendered = d.type === "measure" && d.points.length === 2 && !dragRef.current
+          ? { ...d, text: measureLabel(d.points[0], d.points[1]) }
+          : d;
+        if (pts.length) renderDrawing(ctx, rendered, pts, W, H, selSet.has(d.id), renderEnvRef.current);
         // regression: least-squares line over the closes inside the selected span
         if (d.type === "regression" && getBars && d.points.length === 2) {
           const bars = getBars();
@@ -682,9 +688,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (!drag) {
       const c0 = cursorFor(p); // one hit-test per move (was two full passes)
       const c = c0 === "default" ? cursorFallbackRef.current : c0;
-      if (target && target.style.cursor !== c) target.style.cursor = c;
-      // hover re-render is throttled by rAF below
-      scheduleHover();
+      // PHASE 62 fix #9: the cursor only changes on object ENTER/LEAVE —
+      // scheduling a full redraw every frame while the mouse idles over one
+      // spot (regression resamples O(bars) at 60fps) was pure waste.
+      const cursorChanged = target && target.style.cursor !== c;
+      if (cursorChanged) {
+        target.style.cursor = c;
+        scheduleHover();
+      }
       return;
     }
     // Phase 59: only real gestures (move/resize/pan-nudge) consume the event.
@@ -708,7 +719,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
           }
         }
       }
-      redraw(); // preview follows the mouse
+      scheduleHover(); // PHASE 62 fix #10: rAF-coalesced preview (was 1 redraw per pointermove event)
       return;
     }
     if (drag.mode === "trade" && drag.trade) {
@@ -733,7 +744,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         points: drag.original.points.map((q) => ({ time: q.time + dt, price: q.price + dp })),
       };
       drag.moved = true;
-      redraw();
+      scheduleHover(); // PHASE 62 fix #10: rAF-coalesced (was per-event)
       return;
     }
     if (drag.mode === "handle" && drag.original && drag.handle != null) {
@@ -807,7 +818,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       }
       drag.drawing = { ...drag.original, points };
       drag.moved = true;
-      redraw();
+      scheduleHover(); // PHASE 62 fix #10: rAF-coalesced (was per-event)
     }
   };
 
@@ -820,7 +831,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (drag.mode === "move" || drag.mode === "handle") {
       if (drag.drawing && drag.moved) {
         const next = drawingsRef.current.slice();
-        next[drag.drawingIndex ?? -1] = drag.drawing;
+        // PHASE 62 fix #5: an RTDB merge mid-drag can shift the array —
+        // resolve the slot by id (falling back to the captured index only
+        // when the id is somehow missing).
+        const idx = drag.drawing.id != null
+          ? next.findIndex((d) => d.id === drag.drawing!.id)
+          : (drag.drawingIndex ?? -1);
+        if (idx < 0) return; // deleted mid-drag — nothing to commit
+        next[idx] = drag.drawing;
         // group move: every other selected drawing shifts by the SAME delta
         if (groupOrigRef.current && drag.mode === "move") {
           const d0 = drag.drawing.points[0];
@@ -1095,6 +1113,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
       {textDraft && (
         <div
+          /* PHASE 62 fix #2: WITHOUT data-chart-ui the tool handler treated
+             editor clicks as chart clicks, appending a 2nd point to the text
+             drawing — which the sanitizer then silently deleted on reload. */
+          data-chart-ui="text-editor"
           className="pointer-events-auto absolute z-30 flex items-center gap-1 rounded-md border border-slate-600 bg-slate-900/95 px-1.5 py-1 shadow-xl"
           style={{
             left: Math.min(Math.max(4, textDraft.x), (converterRef.current?.paneW ?? textDraft.x) - 140),

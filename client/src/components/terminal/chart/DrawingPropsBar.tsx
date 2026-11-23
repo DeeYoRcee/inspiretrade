@@ -11,7 +11,7 @@ import { ColorPicker } from "./ColorPicker";
 import { DEFAULT_STYLE,
   FIB_TOOLS, levelsFor, FIB_DEFAULT_LEVELS,
   isPositionTool, positionCalc, fmtPositionPrice, snapToTick,
-  type Drawing, type DrawingType, type DrawingRenderEnv, type FibLevel} from "@/lib/drawings";
+  type Drawing, type DrawingType, type DrawingRenderEnv, type FibLevel, TEXT_LIKE} from "@/lib/drawings";
 import { TIMEFRAMES, type Timeframe } from "@shared/terminal";
 import type { FibPreset } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
@@ -24,9 +24,6 @@ const SHAPE_TOOLS: ReadonlySet<DrawingType> = new Set<DrawingType>([
 ]);
 
 /** P44 §2 — tools that carry their own text styling controls */
-const TEXT_LIKE: ReadonlySet<DrawingType> = new Set<DrawingType>([
-  "text", "anchored-text", "note", "price-note", "price-label", "callout", "comment", "signpost", "flag",
-]);
 
 const tfLabel = (tf: Timeframe) => (tf === "1W" ? "W1" : tf === "1M" ? "MN" : tf.toUpperCase());
 

@@ -1,13 +1,46 @@
-import { ArrowDownRight, ArrowUpRight, Instagram, Send, Twitter, Crown, Activity, TrendingUp, TrendingDown } from "lucide-react";
+import { Instagram, Send, Twitter, Crown, Activity, Target, TrendingUp, TrendingDown, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
 import { getProfileBackground } from "@/lib/profile-backgrounds";
 
 /**
- * Telegram-style compact profile: centered avatar card, a single stats line,
- * short bio, recent activity. Long disclaimers and verbose sections removed.
+ * PHASE 62 (user request): the PUBLIC profile must mirror the REAL profile
+ * screen — same Telegram-style hero, the same 4-cell stat grid (trades, win
+ * rate, net P/L, member since) and the same BIO info card. The old profit
+ * factor / drawdown / win-rate cards and the trade history list are gone.
  */
+/** Mirrors the own-profile StatCell (ProfilePage) — same classes, same ring. */
+function StatCell({ label, value, tone, icon: Icon, iconTone, ring, ringTone }: {
+  label: string;
+  value: string;
+  tone?: string;
+  icon?: typeof Crown;
+  iconTone?: string;
+  ring?: number;
+  ringTone?: string;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-gradient-to-b from-primary/[0.06] to-transparent px-2 py-3 text-center transition-colors hover:border-primary/40">
+      {Icon && (
+        <div className="mx-auto mb-1 flex h-7 w-7 items-center justify-center rounded-lg border border-border/50 bg-card/70">
+          <Icon className={cn("h-3.5 w-3.5", iconTone)} />
+        </div>
+      )}
+      <p className={cn("font-number text-lg font-bold leading-tight", tone)}>{value}</p>
+      <p className="mt-0.5 truncate text-[10px] font-medium text-muted-foreground">{label}</p>
+      {ring != null && (
+        <div className="mx-auto mt-1.5 h-1 w-4/5 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full transition-[width] duration-700"
+            style={{ width: `${Math.round(Math.min(1, Math.max(0, ring)) * 100)}%`, background: ringTone || "hsl(var(--primary))" }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProfilePresentation({ profile }: { profile: PublicProfileSnapshot }) {
   const { t } = useLanguage();
   const initials =
@@ -192,71 +225,46 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         )}
       </header>
 
-      <div className="space-y-5 p-4 sm:p-6">
-        {/* detailed stats — compact grid */}
+      {/* the SAME layout as the own-profile screen: 4 stat cells + BIO card */}
+      <div className="space-y-4 p-4 sm:p-6">
         {stats && (
-          <section className="grid grid-cols-3 gap-3">
-            <div className="rounded-2xl border border-border/60 bg-background/45 p-3.5 text-center">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("publicProfileProfitFactor")}</p>
-              <p className="mt-1 text-lg font-bold">{stats.profitFactor != null && Number.isFinite(stats.profitFactor) ? stats.profitFactor.toFixed(2) : "—"}</p>
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-background/45 p-3.5 text-center">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("publicProfileDrawdown")}</p>
-              <p className="mt-1 text-lg font-bold text-rose-300">
-                {stats.maxDrawdown > 0 ? formatPublicMoney(-stats.maxDrawdown) : "$0"}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-gradient-to-b from-emerald-400/[0.08] to-transparent p-3.5 text-center">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("publicProfileWinRate")}</p>
-              <p className="mt-1 text-lg font-bold text-emerald-300">
-                {profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) ? `${profile.winRate.rate.toFixed(1)}%` : "—"}
-              </p>
-              {profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) && (
-                <div className="mx-auto mt-2 h-1 w-4/5 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.round(Math.min(100, profile.winRate.rate))}%` }} />
-                </div>
-              )}
-            </div>
+          <section className="grid grid-cols-4 gap-2">
+            <StatCell label={t("totalTrades")} value={String(stats.totalTrades)} icon={Activity} iconTone="text-sky-400" />
+            <StatCell
+              label={t("winRate")}
+              value={profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) ? `${profile.winRate.rate.toFixed(0)}%` : "—"}
+              icon={Target}
+              iconTone="text-emerald-400"
+              ring={profile.winRate && profile.winRate.total > 0 ? profile.winRate.wins / profile.winRate.total : 0}
+              ringTone="hsl(var(--success))"
+            />
+            <StatCell
+              label={t("netPnl")}
+              value={formatPublicMoney(stats.netPnl)}
+              tone={stats.netPnl >= 0 ? "text-emerald-400" : "text-red-400"}
+              icon={stats.netPnl >= 0 ? TrendingUp : TrendingDown}
+              iconTone={stats.netPnl >= 0 ? "text-emerald-400" : "text-red-400"}
+            />
+            <StatCell
+              label={t("profileMemberSince")}
+              value={profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "—"}
+              icon={CalendarDays}
+              iconTone="text-violet-400"
+            />
           </section>
         )}
 
-        {/* recent activity */}
-        {profile.history && (
-          <section>
-            <h3 className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-              {t("tradeHistory")}
-            </h3>
-            {recent.length === 0 ? (
-              <p className="rounded-2xl border border-dashed border-border/70 bg-background/40 px-4 py-8 text-center text-sm text-muted-foreground">
-                {t("publicProfileNoTrades")}
-              </p>
-            ) : (
-              <div className="divide-y divide-border/50 overflow-hidden rounded-2xl border border-border/60 bg-background/35">
-                {recent.map((trade) => (
-                  <div key={trade.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{trade.assetName}</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {trade.type} · {new Date(trade.timestamp).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <span className={`flex shrink-0 items-center gap-1 text-sm font-bold ${trade.profit >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {trade.profit >= 0 ? <ArrowUpRight className="h-4 w-4" /> : <ArrowDownRight className="h-4 w-4" />}
-                      {formatPublicMoney(trade.profit)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* notes as a short quote */}
-        {profile.notes && (
-          <section className="rounded-2xl border-l-2 border-emerald-400/60 bg-emerald-400/[0.06] px-4 py-3">
-            <p className="whitespace-pre-wrap text-[13px] leading-6 text-foreground/80">{profile.notes}</p>
-          </section>
-        )}
+        {/* Telegram-style BIO card — identical to the own-profile info card */}
+        <section className="divide-y divide-border/50 rounded-3xl border border-border/50 bg-card/60">
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t("profileBio")}</span>
+          </div>
+          <div className="px-4 py-3">
+            <p className={profile.strategy ? "whitespace-pre-wrap text-[13px] leading-6" : "text-[13px] text-muted-foreground"}>
+              {profile.strategy || t("profileBioEmpty")}
+            </p>
+          </div>
+        </section>
       </div>
     </article>
   );

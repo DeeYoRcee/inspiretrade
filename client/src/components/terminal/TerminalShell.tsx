@@ -31,7 +31,7 @@ export interface ShellState {
   bottomOpen: boolean;
 }
 
-const DEFAULTS: ShellState = { right: 330, bottom: 250, bottomOpen: true };
+const DEFAULTS: ShellState = { right: 330, bottom: 250, bottomOpen: false };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -41,7 +41,10 @@ function loadShell(): ShellState {
     return {
       right: clamp(Number(raw.right) || DEFAULTS.right, 260, 460),
       bottom: clamp(Number(raw.bottom) || DEFAULTS.bottom, 140, 480),
-      bottomOpen: raw.bottomOpen !== false,
+      // PHASE 62 (user request): a fresh terminal starts CLEAN (TradingView
+      // default) — the blotter is CLOSED unless the user explicitly opened it
+      // (persisted). One click on the bottom tab brings it back.
+      bottomOpen: raw.bottomOpen === true,
     };
   } catch {
     return DEFAULTS;

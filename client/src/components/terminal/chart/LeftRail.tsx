@@ -354,6 +354,18 @@ export function LeftRail({
   }, [lastTool, onToolSelect]);
 
   const groupOf = (t: DrawingType) => GROUPS.find((grp) => grp.tools.some((x) => x.id === t));
+/** PHASE 62: labels carry " — usage" hints; the flyout rows show the clean
+    TradingView-style tool NAME only (no shortcuts, no usage hints). */
+const nameCache = new Map<DrawingType, string>();
+function cleanName(id: DrawingType): string {
+  let n = nameCache.get(id);
+  if (!n) {
+    const label = GROUPS.flatMap((g) => g.tools).find((x) => x.id === id)?.label ?? id;
+    n = label.split(" — ")[0].split(" (")[0];
+    nameCache.set(id, n);
+  }
+  return n;
+}
   const activeGroup = activeTool !== "cursor" ? groupOf(activeTool)?.id ?? null : null;
 
   return (
@@ -412,27 +424,30 @@ export function LeftRail({
               <Star className={cn("h-4 w-4", favActive && "fill-current")} />
             </button>
             {isOpen && (
+              /* PHASE 62 (user request): TV-style flyout — icon + NAME rows,
+                 no shortcut hints. Shared with the group flyouts below. */
               <div
-                className="absolute left-full top-0 z-40 ml-1 grid max-h-[70vh] grid-cols-4 gap-0.5 overflow-y-auto rounded-lg border border-slate-700/80 bg-[#0d1526] p-1.5 shadow-2xl"
+                className="absolute left-full top-0 z-40 ml-1 max-h-[70vh] overflow-y-auto rounded-lg border border-slate-700/80 bg-[#0d1526] py-1 shadow-2xl"
                 role="menu"
                 aria-label="Favorite tools"
-                style={{ minWidth: 122 }}
+                style={{ minWidth: 198 }}
               >
                 {favs.map((t) => (
                   <button
                     key={t}
                     role="menuitem"
-                    title={t}
+                    title={cleanName(t as DrawingType)}
                     onClick={() => pick("fav", t as DrawingType)}
                     className={cn(
-                      "relative flex h-8 w-8 items-center justify-center rounded transition-colors",
-                      activeTool === t ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
+                      "group/tb relative flex h-8 w-full items-center gap-2.5 rounded px-2 transition-colors",
+                      activeTool === t ? "bg-sky-600 text-white" : "text-slate-300 hover:bg-slate-800 hover:text-slate-100",
                     )}
                   >
-                    <ToolIcon id={t as DrawingType} className="h-5 w-5" />
+                    <ToolIcon id={t as DrawingType} className="h-4 w-4 shrink-0" />
+                    <span className="truncate text-[12px] font-medium">{cleanName(t as DrawingType)}</span>
                     <Star
                       onClick={(e) => { e.stopPropagation(); toggleFav(t); }}
-                      className="absolute right-0 top-0 h-2 w-2 fill-amber-400 text-amber-400"
+                      className="ml-auto h-3 w-3 shrink-0 fill-amber-400 text-amber-400"
                     />
                   </button>
                 ))}
@@ -464,28 +479,31 @@ export function LeftRail({
             </button>
             {isOpen && (
               <div
-                className="absolute left-full top-0 z-40 ml-1 grid max-h-[70vh] grid-cols-4 gap-0.5 overflow-y-auto rounded-lg border border-slate-700/80 bg-[#0d1526] p-1.5 shadow-2xl"
+                className="absolute left-full top-0 z-40 ml-1 max-h-[70vh] overflow-y-auto rounded-lg border border-slate-700/80 bg-[#0d1526] py-1 shadow-2xl"
                 role="menu"
                 aria-label={grp.title}
-                style={{ minWidth: 122 }}
+                style={{ minWidth: 198 }}
               >
+                {/* group header — TradingView's flyout titles the section */}
+                <p className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">{grp.title}</p>
                 {grp.tools.map((t) => (
                   <button
                     key={`${grp.id}-${t.id}`}
                     role="menuitem"
-                    title={t.hint ? `${t.label} (${t.hint})` : t.label}
-                    aria-label={t.label}
+                    title={cleanName(t.id)}
+                    aria-label={cleanName(t.id)}
                     onClick={() => pick(grp.id, t.id)}
                     className={cn(
-                      "group/tb relative flex h-8 w-8 items-center justify-center rounded transition-colors",
-                      activeTool === t.id ? "bg-sky-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
+                      "group/tb relative flex h-8 w-full items-center gap-2.5 rounded px-2 transition-colors",
+                      activeTool === t.id ? "bg-sky-600 text-white" : "text-slate-300 hover:bg-slate-800 hover:text-slate-100",
                     )}
                   >
-                    <ToolIcon id={t.id} className="h-5 w-5" />
+                    <ToolIcon id={t.id} className="h-4 w-4 shrink-0" />
+                    <span className="truncate text-[12px] font-medium">{cleanName(t.id)}</span>
                     <Star
                       onClick={(e) => { e.stopPropagation(); toggleFav(t.id); }}
                       className={cn(
-                        "absolute right-0 top-0 h-2 w-2 transition-opacity",
+                        "ml-auto h-3 w-3 shrink-0 transition-opacity",
                         favs.includes(t.id) ? "fill-amber-400 text-amber-400" : "text-slate-500 opacity-0 group-hover/tb:opacity-100",
                       )}
                     />

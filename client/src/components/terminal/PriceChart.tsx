@@ -1117,7 +1117,11 @@ export function PriceChart({
         return ts.logicalToCoordinate(logical as any);
       },
       y(price: number): number | null {
-        return candle.priceToCoordinate(price);
+        // PHASE 62 fix #1: read the LIVE candle series — the chartType/replay
+        // effects replace candleRef.current without rebuilding the converter,
+        // and the old closure kept converting against a removed series
+        // (clamped-to-edge renders, broken placement after a series rebuild).
+        return candleRef.current?.priceToCoordinate(price) ?? null;
       },
       time(x: number): number | null {
         const logical = chart.timeScale().coordinateToLogical(x) as number | null;
@@ -1125,7 +1129,7 @@ export function PriceChart({
         return logicalToTime(barsRef.current, tfSecRef.current, logical);
       },
       price(y: number): number | null {
-        return candle.coordinateToPrice(y) as number | null;
+        return (candleRef.current?.coordinateToPrice(y) as number | null) ?? null;
       },
     };
     converterRef.current = conv;
@@ -1943,10 +1947,13 @@ export function PriceChart({
       // deletions propagate, tombstoned (locally deleted) echoes are already
       // filtered out by subscribeDrawings. Identical echoes return the local
       // reference → no re-render, no mid-drag flicker.
-      // drawings written <3s ago are still in flight — a remote snapshot
-      // without them must not drop them (RTDB offline queue delivers later)
+      // PHASE 62 fix #4: drawings whose RTDB write is still in flight must
+      // not be dropped by a remote snapshot that predates them (offline >
+      // 3s used to lose local-only drawings). 90s covers long offline
+      // bursts; real remote deletions carry tombstones and are filtered in
+      // subscribeDrawings regardless of this window.
       const pendingIds = new Set(
-        drawingsRef.current.filter((d) => (d.updatedAt ?? 0) > Date.now() - 3000).map((d) => d.id),
+        drawingsRef.current.filter((d) => (d.updatedAt ?? 0) > Date.now() - 90_000).map((d) => d.id),
       );
       const merged = mergeDrawingLists(drawingsRef.current, list, pendingIds);
       if (merged === drawingsRef.current) return;
@@ -1970,11 +1977,29 @@ export function PriceChart({
     return stamped;
   }, [uid]);
 
+  // PHASE 62 fix #7 — props-bar sliders/keystrokes fire commits every frame;
+  // consecutive single-drawing commits within 800ms collapse into ONE undo
+  // step (typing a 20-char label used to push 20 history entries).
+  const lastCommitMetaRef = useRef<{ ids: Set<string>; at: number }>({ ids: new Set(), at: 0 });
   const commitDrawings = useCallback((next: Drawing[]) => {
-    historyRef.current.push(drawingsRef.current);
-    if (historyRef.current.length > 100) historyRef.current.shift();
-    futureRef.current = [];
-    const stamped = persistDrawings(drawingsRef.current, next);
+    const prev = drawingsRef.current;
+    const prevMap = new Map(prev.map((d) => [d.id, d]));
+    const changed = new Set<string>();
+    for (const d of next) if (prevMap.get(d.id) !== d) changed.add(d.id);
+    for (const d of prev) if (!next.some((x) => x.id === d.id)) changed.add(d.id);
+    const now = Date.now();
+    const meta = lastCommitMetaRef.current;
+    const coalesce = changed.size === 1 && changed.values().next().value != null && meta.ids.has(changed.values().next().value as string) && now - meta.at < 800;
+    const stamped = persistDrawings(prev, next);
+    // PHASE 62 fix #6: history stores the STAMPED snapshot — pre-stamp
+    // snapshots made undo re-stamp every drawing (RTDB churn + cross-device
+    // LWW conflicts).
+    if (!coalesce) {
+      historyRef.current.push(stamped);
+      if (historyRef.current.length > 100) historyRef.current.shift();
+      futureRef.current = [];
+    }
+    lastCommitMetaRef.current = { ids: changed, at: now };
     setDrawings(stamped);
     drawingsRef.current = stamped;
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
@@ -1983,6 +2008,7 @@ export function PriceChart({
   const undoDrawings = useCallback(() => {
     const prev = historyRef.current.pop();
     if (!prev) return;
+    lastCommitMetaRef.current = { ids: new Set(), at: 0 };
     futureRef.current.push(drawingsRef.current);
     const stamped = persistDrawings(drawingsRef.current, prev);
     setDrawings(stamped);
@@ -1993,8 +2019,9 @@ export function PriceChart({
   const redoDrawings = useCallback(() => {
     const next = futureRef.current.pop();
     if (!next) return;
-    historyRef.current.push(drawingsRef.current);
+    lastCommitMetaRef.current = { ids: new Set(), at: 0 };
     const stamped = persistDrawings(drawingsRef.current, next);
+    historyRef.current.push(stamped);
     setDrawings(stamped);
     drawingsRef.current = stamped;
     setHistLens({ u: historyRef.current.length, r: futureRef.current.length });
@@ -2355,14 +2382,28 @@ export function PriceChart({
         }
         if (k === "v" && copyRef.current.length) {
           const dt = (TF_SECONDS[timeframe] || 3600) * 4;
-          const pasted = copyRef.current.map((d) => ({ ...d, id: newDrawingId(), locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
+          // PHASE 62 fix #15: pasted copies leave the source group and become
+          // the active selection (grouped move used to hijack pastes).
+          const pasted = copyRef.current.map((d) => {
+            const { group: _strippedGroup, ...rest } = d;
+            return { ...rest, id: newDrawingId(), locked: false, group: undefined, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) } as Drawing;
+          });
           commitDrawings([...drawingsRef.current, ...pasted]);
+          const newIds = pasted.map((p) => p.id);
+          setSelectedIdsSync(newIds);
+          setSelectedDrawingId(newIds[newIds.length - 1] ?? null);
           return;
         }
         if (k === "d" && ids.length) {
           const dt = (TF_SECONDS[timeframe] || 3600) * 4;
-          const copies = drawingsRef.current.filter((d) => ids.includes(d.id)).map((d) => ({ ...d, id: newDrawingId(), locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) }));
+          const copies = drawingsRef.current.filter((d) => ids.includes(d.id)).map((d) => {
+            const { group: _strippedGroup, ...rest } = d;
+            return { ...rest, id: newDrawingId(), locked: false, group: undefined, points: d.points.map((q) => ({ time: q.time + dt, price: q.price })) } as Drawing;
+          });
           commitDrawings([...drawingsRef.current, ...copies]);
+          const newIds = copies.map((p) => p.id);
+          setSelectedIdsSync(newIds);
+          setSelectedDrawingId(newIds[newIds.length - 1] ?? null);
           return;
         }
         // P38 §4 — Ctrl+A selects all visible drawings (the INPUT/TEXTAREA
@@ -2411,7 +2452,12 @@ export function PriceChart({
 
   // ---- context menu actions -------------------------------------------------------------
   const addHLineAt = useCallback((price: number) => {
-    const d: Drawing = { id: newDrawingId(), type: "hline", points: [{ time: 0, price }], style: { color: "#38bdf8", width: 1, dash: "solid", fontSize: 12 } };
+    // PHASE 62 fix #11: anchor at the latest bar — time 0 resolved via
+    // logical extrapolation to a far-off-screen x (handle dot off-pane,
+    // ObjectTree "locate" jumped to index 0).
+    const bars = barsRef.current;
+    const anchorTime = bars.length ? bars[bars.length - 1].time : Math.floor(Date.now() / 1000);
+    const d: Drawing = { id: newDrawingId(), type: "hline", points: [{ time: anchorTime, price }], style: { color: "#38bdf8", width: 1, dash: "solid", fontSize: 12 } };
     commitDrawings([...drawingsRef.current, d]);
     setSelectedDrawingId(d.id);
   }, [commitDrawings]);

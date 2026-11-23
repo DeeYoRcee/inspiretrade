@@ -14,7 +14,7 @@ import type { LayoutSnapshot } from "@/lib/chart-persistence";
 import { loadLayouts, deleteLayout } from "@/lib/chart-persistence";
 import { cn } from "@/lib/utils";
 import { ColorPicker } from "./ColorPicker";
-import { magnetModeOf } from "@/lib/drawings";
+import { TEXT_LIKE,  magnetModeOf } from "@/lib/drawings";
 export { magnetModeOf };
 
 // ---------------------------------------------------------------------------
@@ -510,7 +510,9 @@ export function DrawingPropsDialog({
             <option value="dashed">Dashed</option>
             <option value="dotted">Dotted</option>
           </select></label>
-        {drawing.type === "text" && (
+        {/* PHASE 62 fix #14: every text-like tool gets the text field (the
+            dialog used to gate it on type==="text" only). */}
+        {TEXT_LIKE.has(drawing.type) && (
           <label className="col-span-2"><span className="mb-0.5 block text-[10px] text-slate-400">Text</span>
             <input value={text} onChange={(e) => setText(e.target.value)} className="num-input" /></label>
         )}
@@ -534,7 +536,7 @@ export function DrawingPropsDialog({
             const patch: Parameters<typeof onSave>[1] = {};
             if (Object.keys(style).length) patch.style = style as Drawing["style"];
             if (!visible !== (drawing.hidden ?? false)) patch.hidden = !visible;
-            if (drawing.type === "text" && text !== (drawing.text ?? "")) patch.text = text.slice(0, 200);
+            if (TEXT_LIKE.has(drawing.type) && text !== (drawing.text ?? "")) patch.text = text.slice(0, 200);
             onSave(drawing.id, patch);
             onClose();
           }}

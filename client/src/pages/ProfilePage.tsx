@@ -186,6 +186,7 @@ export default function ProfilePage() {
       trades: trades ?? [],
       settings,
       avatar: profile?.avatar ?? null,
+      memberSince: user.metadata?.creationTime ? new Date(user.metadata.creationTime).getTime() : null,
       profile: {
         ceo: profile?.ceo,
         vip: !!(profile?.isPremium || profile?.premiumPlan),
