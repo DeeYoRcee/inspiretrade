@@ -50,7 +50,7 @@ export function DailyRewardDialog() {
   // Phase 32b: Daily / VIP tab — the VIP tab is locked for non-premium users
   const [vipTab, setVipTab] = useState(false);
   const [granted, setGranted] = useState<{ caseType: CaseType; caseName: string } | null>(null);
-  const [vipGranted, setVipGranted] = useState<{ caseName: string; isTrading: boolean } | null>(null);
+  const [vipGranted, setVipGranted] = useState<{ caseType: CaseType; caseName: string; isTrading: boolean } | null>(null);
   const [caseResult, setCaseResult] = useState<FragmentDef | null>(null);
   const [openCaseType, setOpenCaseType] = useState<CaseType>("inspire");
 
@@ -66,7 +66,10 @@ export function DailyRewardDialog() {
   // instantly after the claim made the "Open case now" button unreachable.
   const open =
     (!!user && user.emailVerified !== false && !isLoading && !claimedToday && !dismissed) ||
-    (phase === "claimed" && !!granted);
+    // P49 fix: the claimed phase also closes via Later/X — previously this
+    // branch ignored `dismissed`, so the dialog could never be closed after a
+    // claim and "Open case now" kept re-opening owned cases non-stop
+    (phase === "claimed" && !!granted && !dismissed);
 
   // Number() guard — a streak stored as a string would break the cycle math
   const streak = Number(economy?.streak) || 0;
@@ -83,7 +86,11 @@ export function DailyRewardDialog() {
     onSuccess: (data) => {
       invalidate();
       setGranted({ caseType: data.reward.caseType, caseName: data.reward.caseName });
-      setVipGranted(data.vipReward ? { caseName: data.vipReward.caseName, isTrading: data.vipReward.caseType === "trading" } : null);
+      setVipGranted(data.vipReward ? {
+        caseType: (data.vipReward.caseType === "trading" ? "trading" : "gold") as CaseType,
+        caseName: data.vipReward.caseName,
+        isTrading: data.vipReward.caseType === "trading",
+      } : null);
       setPhase("claimed");
     },
     onError: (error: any) => {
@@ -356,6 +363,16 @@ export function DailyRewardDialog() {
               >
                 {openMutation.isPending ? t("openingCase") : <><ChevronRight className="mr-2 h-5 w-5" />{t("openCaseNow")}</>}
               </Button>
+              {vipGranted && (
+                <Button
+                  size="lg"
+                  className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-400 font-semibold text-black hover:from-emerald-400 hover:to-emerald-300"
+                  disabled={openMutation.isPending}
+                  onClick={() => openMutation.mutate(vipGranted.caseType)}
+                >
+                  <Crown className="mr-2 h-5 w-5" /> VIP: {t("openCaseNow")} ({vipGranted.caseName})
+                </Button>
+              )}
               <button onClick={dismiss} className="text-xs text-muted-foreground underline-offset-2 hover:underline">
                 {t("later")}
               </button>
@@ -370,7 +387,7 @@ export function DailyRewardDialog() {
         caseType={openCaseType}
         onClose={() => {
           setCaseResult(null);
-          dismiss();
+          dismiss(); // P49 — closing the case also closes the reward dialog
           invalidate();
         }}
       />

@@ -17,13 +17,12 @@
  * · Mobile: one panel at a time with a tab bar — never tiny unreadable charts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Clock3, Copy, Crosshair, Link2, MoveHorizontal, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Copy, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import type { ServerOrder, ServerPosition } from "@/lib/trading-api";
 import { LAYOUTS, LAYOUT_ORDER, dividers, gridStyle, normWeights, pointerPct, pointerPctY, resizePair, type DividerSeg, type LayoutId } from "@/lib/chart-layouts";
-import { loadSyncSettings, saveSyncSettings } from "@/lib/chart-sync";
 import {
   WORKSPACE_EVENT, deleteWorkspacePreset, duplicateWorkspacePreset, fetchWorkspaces, loadLastActive,
   renameWorkspacePreset, saveLastActive, saveWorkspacePreset, type WorkspacePreset,
@@ -34,7 +33,6 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
 const LS_LAYOUT = "it_mc_layout";
-const LS_SYNC2 = "it_mc_sync_action";
 
 interface PanelState { symbol: string; timeframe: Timeframe; chartType?: ChartType }
 
@@ -96,10 +94,6 @@ export function MultiChartWorkspace({
   const [panels, setPanels] = useState<PanelState[]>([]);
   const [colW, setColW] = useState<number[]>([]);
   const [rowH, setRowH] = useState<number[]>([]);
-  const [sync2, setSync2] = useState<{ interval: boolean; symbol: boolean }>(() => {
-    try { return { interval: false, symbol: false, ...JSON.parse(localStorage.getItem(LS_SYNC2) || "{}") }; } catch { return { interval: false, symbol: false }; }
-  });
-  const [syncLook, setSyncLook] = useState(() => loadSyncSettings());
   const [presets, setPresets] = useState<WorkspacePreset[]>([]);
   const [savingName, setSavingName] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
@@ -164,12 +158,7 @@ export function MultiChartWorkspace({
       if (next[i - 1]) next[i - 1] = { ...next[i - 1], symbol: s };
       return next;
     });
-    // symbol sync mirrors the change to EVERY panel (P48 §3)
-    if (sync2.symbol) {
-      onSymbolChange(s);
-      setPanels((prev) => prev.map((p) => ({ ...p, symbol: s })));
-    }
-  }, [onSymbolChange, sync2.symbol]);
+  }, [onSymbolChange]);
 
   const setPanelTimeframe = useCallback((i: number, tf: Timeframe) => {
     if (i === 0) { onTimeframeChange(tf); return; }
@@ -178,12 +167,7 @@ export function MultiChartWorkspace({
       if (next[i - 1]) next[i - 1] = { ...next[i - 1], timeframe: tf };
       return next;
     });
-    // interval sync mirrors the change to EVERY panel (P48 §3)
-    if (sync2.interval) {
-      onTimeframeChange(tf);
-      setPanels((prev) => prev.map((p) => ({ ...p, timeframe: tf })));
-    }
-  }, [onTimeframeChange, sync2.interval]);
+  }, [onTimeframeChange]);
 
   const setPanelType = useCallback((i: number, t: ChartType) => {
     if (i === 0) return; // primary keeps the legacy global chart-type store
@@ -193,14 +177,6 @@ export function MultiChartWorkspace({
       return next;
     });
   }, []);
-
-  const toggleSync2 = (k: "interval" | "symbol") => {
-    setSync2((prev) => {
-      const next = { ...prev, [k]: !prev[k] };
-      try { localStorage.setItem(LS_SYNC2, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
-  };
 
   // ---- resize (P48 §1) ---------------------------------------------------------
   const onDividerDown = (seg: DividerSeg) => (e: React.PointerEvent) => {
@@ -332,38 +308,6 @@ export function MultiChartWorkspace({
               <LayoutGlyph id={id} />
             </button>
           ))}
-        </div>
-
-        {/* sync toggles — each independently switchable (P48 §3) */}
-        <div className="ml-1 flex items-center gap-0.5" role="group" aria-label="Synchronization">
-          <button
-            onClick={() => { const next = { ...syncLook, crosshair: !syncLook.crosshair }; setSyncLook(next); saveSyncSettings(next); }}
-            title="Synchronize crosshair across panels"
-            className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors", syncLook.crosshair ? "bg-sky-600/80 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200")}
-          >
-            <Crosshair className="h-3 w-3" /> Crosshair
-          </button>
-          <button
-            onClick={() => { const next = { ...syncLook, time: !syncLook.time }; setSyncLook(next); saveSyncSettings(next); }}
-            title="Synchronize time axis / visible range across panels"
-            className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors", syncLook.time ? "bg-sky-600/80 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200")}
-          >
-            <MoveHorizontal className="h-3 w-3" /> Time
-          </button>
-          <button
-            onClick={() => toggleSync2("interval")}
-            title="Changing a timeframe in one panel applies to all panels"
-            className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors", sync2.interval ? "bg-sky-600/80 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200")}
-          >
-            <Clock3 className="h-3 w-3" /> Interval
-          </button>
-          <button
-            onClick={() => toggleSync2("symbol")}
-            title="Changing an instrument in one panel applies to all panels"
-            className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors", sync2.symbol ? "bg-sky-600/80 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200")}
-          >
-            <Link2 className="h-3 w-3" /> Symbol
-          </button>
         </div>
 
         {/* workspace presets (P48 §4) */}

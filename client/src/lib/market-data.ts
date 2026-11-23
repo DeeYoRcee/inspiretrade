@@ -451,6 +451,8 @@ class QuotesProvider {
   private loadedAt = new Map<string, number>();
   private inflight = new Set<string>();
   private source = new Map<string, string>(); // "yahoo" | "stooq" — surfaced in the feed message
+  // P49 §1 — per-subscription live-tail recovery timestamps (event-driven catch-up)
+  private lastSpotCatchupAt = new Map<string, number>();
   private spotOffs = new Map<string, () => void>(); // per-key unsubscribe from the shared spot ticker
   private spotProviderBars = new Map<string, number>(); // code → Twelve Data backfill bars
   private identity = new Map<string, string>(); // "spot" | "futures" — what the response actually represented
@@ -662,13 +664,38 @@ class QuotesProvider {
             statsState.delayBy[key] = getSpotState().providerDelaySec;
             markTick();
             this.listeners.get(key)?.forEach((c) => cb({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: true }));
+          } else {
+            // P49 §1 — THE ~3-MINUTE-DELAY ROOT CAUSE (client side): when the
+            // cached tail fell more than 5 buckets behind (a browser-
+            // throttled background tab, the Sunday 22:00 UTC weekly open after
+            // a weekend-old tail, or a slow device that paused the poller),
+            // EVERY tick was rejected here and the ONLY recovery was the slow
+            // 180 s recorded-history resync below — the chart visibly sat
+            // ~3 minutes behind TradingView before catching up. The recorder
+            // itself keeps folding ticks into the local minute store every
+            // second, so the honest fix is event-driven: on the first
+            // rejection, immediately reload the recorded set (server ∪ local
+            // ∪ in-progress — its tail is the freshest real data that exists)
+            // and paint it. Throttled so a pathological feed cannot spam the
+            // server, and counted for the honest diagnostics badge.
+            lastSpotTailRejected++;
+            const nowMs = Date.now();
+            if (nowMs - (this.lastSpotCatchupAt.get(key) ?? 0) > 10000) {
+              this.lastSpotCatchupAt.set(key, nowMs);
+              void this.loadRecordedSpot(symbol, tf).then((fresh) => {
+                if (fresh?.length) this.listeners.get(key)?.forEach((c) => cb({ bars: fresh, lastBar: fresh[fresh.length - 1], isRealtime: false }));
+              }).catch(() => { /* transient — the next tick retries */ });
+            }
           }
         }
       });
       this.spotOffs.set(key, offSpot);
 
       // slow resync of the recorded history (other devices' observations merge
-      // in; 3 min cadence keeps RTDB reads negligible)
+      // in). P49 §1: 180 s → 30 s — with the event-driven catch-up above this
+      // is no longer the recovery path, but it still bounds how long a
+      // cross-device observation or a TwelveData backfill can stay unseen;
+      // 1 read per 30 s per open metals chart keeps RTDB reads negligible.
       spotResync = setInterval(async () => {
         if (this.inflight.has(key)) return;
         this.inflight.add(key);
@@ -679,7 +706,7 @@ class QuotesProvider {
         } catch { /* transient */ } finally {
           this.inflight.delete(key);
         }
-      }, 180000);
+      }, 30000);
       if (!this.timers.has(`${key}:rec`)) this.timers.set(`${key}:rec`, spotResync);
       else clearInterval(spotResync); // duplicate subscribe — drop the extra handle
     }
@@ -1123,6 +1150,8 @@ const fxSelfHealAt = new Map<string, number>(); // per-pair self-heal cooldown
 /** glitch-island bars rejected from the recorded spot history (last load) —
  *  surfaced in the feed badge so the data rejection is visible, not silent */
 let lastSpotIslandRejected = 0;
+// P49 §1 — live-tail merge rejections (recovery catch-ups) for the diagnostics badge
+let lastSpotTailRejected = 0;
 
 function loadLocalSpot(code: string): SpotCandle[] {
   try {
@@ -1415,10 +1444,11 @@ export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResul
     const deep = lastHistNote.get(`${symbol}:${tf}`);
     const secNote = TF_SECONDS[tf] < 60 ? "second candles build LIVE from 1s spot quotes (no second-grain history exists free)" : "";
     const glitch = lastSpotIslandRejected > 0 ? ` · ${lastSpotIslandRejected} glitch bars rejected` : "";
+    const rejected = lastSpotTailRejected > 0 ? ` · ${lastSpotTailRejected} tail recoveries` : "";
     // Phase 19 §6: name the underlier explicitly — Spot Gold/Silver (physical
     // spot, gold-api), never "Gold" which reads as the COMEX futures contract
     const metalName = symbol === "XAUUSD" ? "Spot Gold" : symbol === "XAGUSD" ? "Spot Silver" : `${symbol} Spot`;
-    const message = `${metalName} · gold-api live 1s · ${hist}${deep ? ` · deep history: ${deep}` : ""}${secNote ? ` · ${secNote}` : ""}${glitch}`;
+    const message = `${metalName} · gold-api live 1s · ${hist}${deep ? ` · deep history: ${deep}` : ""}${secNote ? ` · ${secNote}` : ""}${glitch}${rejected}`;
     return { bars, status: "polling", message, delaySec };
   }
   const { bars, source, identity } = await quotesProvider.load(symbol, tf);

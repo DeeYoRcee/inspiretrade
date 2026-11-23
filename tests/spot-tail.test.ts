@@ -166,3 +166,22 @@ test("mergeSpotTail with maxFill=5 leaves honest gaps beyond 5 missing buckets",
   const out = mergeSpotTail(bars2, 200.5, sec, 5);
   assert.ok(out && out.length === 4); // 2 fills + live
 });
+
+// P49 §1 — the exact rejection path behind the historic ~3-minute lag: when
+// the cached tail fell more than 5 buckets behind, every tick was rejected
+// (null) and the chart waited for the slow resync. These cases pin the
+// contract the event-driven recovery relies on.
+test("P49: mergeSpotTail rejects when the tail is >5 buckets stale", () => {
+  const now = Math.floor(Date.now() / 1000);
+  const sec = 60;
+  const bucket = Math.floor(now / sec) * sec;
+  const tail = bucket - 7 * sec; // 7 minutes behind
+  const bars = [{ time: tail, open: 3600, high: 3601, low: 3599, close: 3600, volume: 3 }];
+  assert.equal(mergeSpotTail(bars, 3600.5, sec, 5), null, "gap beyond the cap is rejected → recovery path");
+  // within the cap it still bridges and paints the live bucket
+  const near = [{ time: bucket - 3 * sec, open: 3600, high: 3601, low: 3599, close: 3600, volume: 3 }];
+  const merged = mergeSpotTail(near, 3600.5, sec, 5);
+  assert.ok(merged);
+  assert.equal(merged!.length, 4); // 2 flat fills + live bucket
+  assert.equal(merged!.at(-1)!.time, bucket);
+});

@@ -21,7 +21,7 @@ import {
 } from "lightweight-charts";
 import {
   loadFeed, subscribeFeed, binanceProvider, getConnectionState, markChartUpdate,
-  getSpotState,
+  getSpotState, spotMeasuredUpdateSec,
   type FeedStatus,
 } from "@/lib/market-data";
 import { getInstrument, TF_SECONDS, type Bar, type Timeframe } from "@shared/terminal";
@@ -2045,9 +2045,17 @@ export function PriceChart({
         const at = inst?.spotCode ? s.lastTickAt : getConnectionState().lastTickAt;
         const age = at ? Math.max(0, Math.round((Date.now() - at) / 1000)) : null;
         const stale = age != null && age > 120; // no update for 2 min → stale
+        // P49 §6 diagnostics: provider name + provider-stamp lag + MEASURED
+        // provider cadence (mean interval between distinct prices). Binance
+        // streams over WS (stamp = receipt); metals poll gold-api 1s and the
+        // provider's own updatedAt lag is the honest upstream latency number.
+        const provName = inst?.spotCode ? "gold-api" : inst?.feed === "binance" ? "Binance WS" : "quotes-api";
+        const cadence = inst?.spotCode ? spotMeasuredUpdateSec(inst.spotCode) : null;
         tickEl.textContent = at
           ? `· upd ${new Date(at).toLocaleTimeString([], { hour12: false })} · ${age}s ago` +
             (inst?.spotCode && s.providerDelaySec != null && s.providerDelaySec > 15 ? ` · feed +${s.providerDelaySec}s` : "") +
+            (cadence != null ? ` · Δ${cadence}s` : "") +
+            ` · ${provName}` +
             (stale ? " · STALE" : "")
           : "";
         tickEl.style.color = stale ? "#f87171" : "";
@@ -2222,11 +2230,6 @@ export function PriceChart({
         onUndo={undoDrawings}
         onRedo={redoDrawings}
         onScreenshot={screenshot}
-        favs={favTools}
-        activeTool={activeTool}
-        onActivateFav={(t) => setActiveTool(t)}
-        onToggleFav={toggleFavTool}
-        onReorderFav={reorderFavTools}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1">

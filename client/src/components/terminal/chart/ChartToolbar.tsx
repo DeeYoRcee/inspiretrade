@@ -14,7 +14,6 @@ import { INDICATOR_CATALOG, indicatorLabel, type IndicatorConfig, type Indicator
 import { cn } from "@/lib/utils";
 import { APPEARANCE_PRESETS, type ChartSettings } from "@/components/terminal/chart/dialogs";
 import { updateInstrumentSettings } from "@/lib/instrument-settings";
-import { ToolIcon, toolDisplayName } from "./LeftRail";
 
 
 
@@ -26,7 +25,6 @@ export function ChartToolbar({
   onOpenAlerts, onOpenReplay,
   chartType, onChartTypeChange,
   canUndo, canRedo, onUndo, onRedo, onScreenshot,
-  favs, activeTool, onActivateFav, onToggleFav, onReorderFav,
 }: {
   symbol: string;
   indicators: IndicatorConfig[];
@@ -52,13 +50,6 @@ export function ChartToolbar({
   onUndo: () => void;
   onRedo: () => void;
   onScreenshot: () => void;
-  /** user request: the favorited drawing tools also show in this top strip
-   * (same favorites list as the floating bar — click activates, star removes) */
-  favs: string[];
-  activeTool: DrawingType | "cursor";
-  onActivateFav: (t: DrawingType) => void;
-  onToggleFav: (id: string) => void;
-  onReorderFav: (from: number, to: number) => void;
 }) {
   const [indOpen, setIndOpen] = useState(false);
   const indRef = useRef<HTMLDivElement | null>(null);
@@ -67,9 +58,6 @@ export function ChartToolbar({
   // Phase 34b: chart theme dropdown (minimal preset collection)
   const [themeOpen, setThemeOpen] = useState(false);
   const themeRef = useRef<HTMLDivElement | null>(null);
-  // favorites drag-reorder source index (HTML5 dnd)
-  const favDragIdx = useRef<number | null>(null);
-
   useEffect(() => {
     if (!indOpen && !typeOpen && !themeOpen) return;
     const close = (e: MouseEvent) => {
@@ -185,52 +173,6 @@ export function ChartToolbar({
       <div className="mx-1 h-5 w-px bg-slate-800" />
       <ToolButton title="Undo drawing (Ctrl+Z)" onClick={onUndo} disabled={!canUndo}><Undo2 className="h-4 w-4" /></ToolButton>
       <ToolButton title="Redo drawing (Ctrl+Y)" onClick={onRedo} disabled={!canRedo}><Redo2 className="h-4 w-4" /></ToolButton>
-
-      {/* favorited drawing tools — same list as the floating bar, now also in
-          the top strip (click = activate, star = remove, drag = reorder) */}
-      {favs.length > 0 && (
-        <>
-          <div className="mx-1 h-5 w-px bg-slate-800" />
-          {favs.map((t, i) => (
-            <div
-              key={t}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.effectAllowed = "move";
-                try { e.dataTransfer.setData("text/plain", t); } catch { /* older engines */ }
-                favDragIdx.current = i;
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                const from = favDragIdx.current;
-                if (from == null || from === i) return;
-                onReorderFav(from, i);
-                favDragIdx.current = i;
-              }}
-              onDragEnd={() => { favDragIdx.current = null; }}
-              className="flex items-center"
-            >
-              <button
-                onClick={() => onActivateFav(t as DrawingType)}
-                title={toolDisplayName(t as DrawingType)}
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200",
-                  activeTool === t && "bg-sky-600/80 text-white hover:bg-sky-600",
-                )}
-              >
-                <ToolIcon id={t as DrawingType} className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => onToggleFav(t)}
-                title={`Remove ${toolDisplayName(t as DrawingType)} from favorites`}
-                className="-ml-0.5 flex h-4 w-3 items-center justify-center rounded text-amber-400/80 hover:text-amber-300"
-              >
-                <Star className="h-2.5 w-2.5 fill-current" />
-              </button>
-            </div>
-          ))}
-        </>
-      )}
 
       {/* right cluster — Phase 34b: chart theme dropdown leads it */}
       <div className="ml-auto flex items-center gap-0.5">
