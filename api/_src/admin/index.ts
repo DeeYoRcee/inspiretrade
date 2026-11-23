@@ -22,6 +22,7 @@ import withdrawals from "./withdrawals";
 import deposits from "./deposits";
 import chatDelete from "./chat-delete";
 import chatSend from "./chat-send";
+import support from "./support";
 import setUsername from "./set-username";
 import { mediaUpload, mediaGet } from "./media";
 import publishProfile from "./publish-profile";
@@ -110,6 +111,8 @@ export default async function handler(req: any, res: any) {
       return chatDelete(req, res);
     case "chat-send":
       return chatSend(req, res);
+    case "support":
+      return support(req, res);
     case "set-username":
       return setUsername(req, res);
     case "media-upload":

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Crown, MessageCircle, Reply, Send, Trash2, X } from "lucide-react";
+import { Crown, Headset, MessageCircle, Reply, Send, ShieldCheck, Trash2, X } from "lucide-react";
 import { usePublicProfile } from "@/hooks/use-public-profile";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -26,6 +26,8 @@ interface ChatMessage {
     at: number;
     /** P39 — Telegram-style reply quote (optional) */
     replyTo?: { id: string; author: string; text: string };
+    /** Phase 60: support-thread direction — "support" = a team reply */
+    from?: "user" | "support";
   }
 
 const MAX_LEN = 300;
@@ -159,6 +161,13 @@ export function GlobalChat() {
   const [cooldown, setCooldown] = useState(false);
   // P39 — the message currently being replied to
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // Phase 60 Task 4 — PRIVATE support inbox (per user): one user's support
+  // conversation is never visible to another; the owner reads/replies through
+  // the server-side admin endpoint, which bypasses the client rules.
+  const [tab, setTab] = useState<"chat" | "support">("chat");
+  const [supportMsgs, setSupportMsgs] = useState<ChatMessage[]>([]);
+  const [supportText, setSupportText] = useState("");
+  const [sendingSupport, setSendingSupport] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [, navigate] = useLocation();
@@ -185,10 +194,49 @@ export function GlobalChat() {
     return () => unsub();
   }, [user, open]);
 
+  // Support thread — only the signed-in user's OWN mailbox
+  useEffect(() => {
+    if (!user || !open || tab !== "support") return;
+    const q = query(ref(db, `supportInbox/${user.uid}`), limitToLast(100));
+    const unsub = onValue(
+      q,
+      (snap) => {
+        const data = (snap.val() || {}) as Record<string, Omit<ChatMessage, "id">>;
+        const list: ChatMessage[] = Object.entries(data)
+          .map(([id, msg]) => ({ ...msg, id, from: (msg as any).from === "support" ? "support" : "user" } as ChatMessage))
+          .sort((a, b) => (a.at || 0) - (b.at || 0));
+        setSupportMsgs(list);
+      },
+      () => setSupportMsgs([]),
+    );
+    return () => unsub();
+  }, [user, open, tab]);
+
+  const sendSupport = async () => {
+    const value = supportText.trim().slice(0, MAX_LEN);
+    if (!value || !user || sendingSupport) return;
+    setSendingSupport(true);
+    setSupportText("");
+    try {
+      await push(ref(db, `supportInbox/${user.uid}`), {
+        uid: user.uid,
+        name: displayName,
+        ...(profile?.username ? { username: profile.username } : {}),
+        text: value,
+        at: serverTimestamp(),
+        from: "user",
+      });
+    } catch {
+      alert(t("chatSendFailed"));
+    } finally {
+      setSendingSupport(false);
+    }
+  };
+
   // Autoscroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, open]);
+  }, [messages.length, supportMsgs.length, open, tab]);
 
   if (!user) return null;
 
@@ -290,12 +338,30 @@ export function GlobalChat() {
           className="fixed bottom-[9.25rem] end-5 z-50 flex h-[min(480px,calc(100dvh-11rem))] md:bottom-20 md:h-[min(480px,calc(100dvh-8rem))] w-[min(92vw,360px)] flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/95 shadow-2xl backdrop-blur-md"
         >
           <div className="flex items-center justify-between border-b border-border/50 bg-card/80 px-4 py-2.5">
-            <div className="flex items-center gap-2">
-              <MessageCircle className="h-4 w-4 text-primary" />
-              <span className="text-sm font-bold">{t("chat")}</span>
-              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
-                {messages.length}
-              </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setTab("chat")}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors",
+                  tab === "chat" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                {t("chat")}
+                <span className="rounded-full bg-emerald-500/15 px-1.5 text-[10px] font-bold text-emerald-400">
+                  {messages.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setTab("support")}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors",
+                  tab === "support" ? "bg-sky-500/15 text-sky-300" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Headset className="h-3.5 w-3.5" />
+                {t("supportTab")}
+              </button>
             </div>
             <button onClick={() => setOpen(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted">
               <X className="h-4 w-4" />
@@ -303,12 +369,45 @@ export function GlobalChat() {
           </div>
 
           <div ref={listRef} className="flex-1 space-y-2.5 overflow-y-auto px-3 py-3">
-            {messages.length === 0 && (
+            {tab === "support" && supportMsgs.length === 0 && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+                <Headset className="h-8 w-8 text-sky-400/70" />
+                <p className="font-semibold text-foreground">{t("supportEmptyTitle")}</p>
+                <p className="text-xs">{t("supportEmptyDesc")}</p>
+              </div>
+            )}
+            {tab === "support" && supportMsgs.map((m) => {
+              const mine = m.from !== "support";
+              return (
+                <div key={m.id} className={cn("flex gap-2", mine && "flex-row-reverse")}>
+                  <div className={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
+                    mine ? "bg-primary/15 text-primary" : "border-sky-400/40 bg-sky-500/15 text-sky-300",
+                  )}>
+                    {mine ? (m.name || "?").slice(0, 1).toUpperCase() : <ShieldCheck className="h-4 w-4" />}
+                  </div>
+                  <div className={cn("min-w-0 max-w-[75%]", mine && "text-right")}>
+                    <div className={cn("text-[10px] font-bold uppercase tracking-wide", mine ? "text-primary" : "text-sky-300")}>
+                      {mine ? (m.name || displayName) : "InspireTrade Support"}
+                    </div>
+                    <div
+                      className={cn(
+                        "mt-0.5 inline-block w-fit max-w-full break-words rounded-2xl px-3 py-1.5 text-sm leading-snug",
+                        mine ? "rounded-br-sm bg-primary text-primary-foreground" : "rounded-bl-sm border border-sky-400/30 bg-sky-500/10 text-foreground",
+                      )}
+                    >
+                      {m.text}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {tab === "chat" && messages.length === 0 && (
               <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
                 {t("chatEmpty")}
               </div>
             )}
-            {messages.map((m) => (
+            {tab === "chat" && messages.map((m) => (
               <div key={m.id} id={`chat-msg-${m.id}`} className={cn("group flex gap-2", m.uid === user.uid && "flex-row-reverse")}>
                 <ChatAvatar m={m} onOpen={() => openProfile(m)} />
                 <div className={cn("min-w-0 max-w-[75%]", m.uid === user.uid && "text-right")}>
@@ -400,7 +499,7 @@ export function GlobalChat() {
             <div ref={bottomRef} />
           </div>
 
-          {replyTo && (
+          {tab === "chat" && replyTo && (
             <div className="flex items-center gap-2 border-t border-border/50 bg-card/80 px-3 py-1.5">
               <div className="min-w-0 flex-1 rounded-lg border-l-2 border-primary/60 bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
                 <span className="font-semibold text-foreground/80">{replyTo.name}: </span>
@@ -412,31 +511,63 @@ export function GlobalChat() {
             </div>
           )}
           <div className="border-t border-border/50 bg-card/80 p-2.5">
-            <div className="flex items-center gap-2">
-              <input
-                value={text}
-                onChange={(e) => setText(e.target.value.slice(0, MAX_LEN))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                maxLength={MAX_LEN}
-                placeholder={t("chatPlaceholder")}
-                className="h-10 min-w-0 flex-1 rounded-xl border border-border/60 bg-background/60 px-3.5 text-sm outline-none placeholder:text-muted-foreground focus:border-primary/60"
-              />
-              <Button
-                size="icon"
-                onClick={send}
-                disabled={cooldown || !text.trim()}
-                aria-label={t("chatSend")}
-                className="h-10 w-10 shrink-0 rounded-xl"
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            </div>
-            {cooldown && <p className="mt-1 px-1 text-[10px] text-muted-foreground">{t("chatCooldown")}</p>}
+            {tab === "chat" ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={text}
+                    onChange={(e) => setText(e.target.value.slice(0, MAX_LEN))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        send();
+                      }
+                    }}
+                    maxLength={MAX_LEN}
+                    placeholder={t("chatPlaceholder")}
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-border/60 bg-background/60 px-3.5 text-sm outline-none placeholder:text-muted-foreground focus:border-primary/60"
+                  />
+                  <Button
+                    size="icon"
+                    onClick={send}
+                    disabled={cooldown || !text.trim()}
+                    aria-label={t("chatSend")}
+                    className="h-10 w-10 shrink-0 rounded-xl"
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+                {cooldown && <p className="mt-1 px-1 text-[10px] text-muted-foreground">{t("chatCooldown")}</p>}
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={supportText}
+                    onChange={(e) => setSupportText(e.target.value.slice(0, MAX_LEN))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void sendSupport();
+                      }
+                    }}
+                    maxLength={MAX_LEN}
+                    placeholder={t("supportPlaceholder")}
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-border/60 bg-background/60 px-3.5 text-sm outline-none placeholder:text-muted-foreground focus:border-sky-400/60"
+                  />
+                  <Button
+                    size="icon"
+                    onClick={() => void sendSupport()}
+                    disabled={sendingSupport || !supportText.trim()}
+                    aria-label={t("chatSend")}
+                    className="h-10 w-10 shrink-0 rounded-xl bg-sky-500 text-white hover:bg-sky-500/90"
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="mt-1 px-1 text-[10px] text-muted-foreground">{t("supportPrivacyNote")}</p>
+              </>
+            )}
           </div>
         </motion.div>
       )}

@@ -690,46 +690,6 @@ export default function ProfilePage() {
         <StatCell label={t("profileMemberSince")} value={memberSince} icon={CalendarDays} iconTone="text-violet-400" />
       </motion.div>
 
-      {/* Phase 31: Telegram-style public-profile mirror — when the public
-          profile is published, the profile page renders the EXACT same
-          presentation everyone else sees, driven by the same visibility
-          toggles (statistics / winRate / history / notes). Profit & loss
-          details stay hideable: turning Statistics or History off here
-          removes them from BOTH this view and the public page. */}
-      {settings?.enabled && username && (
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.08 }}
-          className="space-y-2"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-              {t("profilePublicPreview")}
-            </p>
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              {([["statistics", t("publicProfileStatistics"), BarChart3], ["winRate", t("publicProfileWinRate"), Target], ["history", t("publicProfileHistory"), History], ["notes", t("publicProfileNotes"), StickyNote]] as const).map(([flag, lbl, Icon]) => (
-                <button
-                  key={flag}
-                  disabled={pubBusy}
-                  title={t("publicProfileVisibility")}
-                  onClick={() => toggleVisibility(flag)}
-                  className={cn(
-                    "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition-all disabled:opacity-50",
-                    settings.visibility[flag]
-                      ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.22)]"
-                      : "border-border/60 bg-background/40 text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  {lbl.replace(/Description$/, "")}
-                </button>
-              ))}
-            </div>
-          </div>
-          <ProfilePresentation profile={publicSnapshot!} />
-        </motion.section>
-      )}
 
       {/* Telegram-style info card */}
       <motion.div
@@ -867,18 +827,7 @@ export default function ProfilePage() {
             </div>
 
             {/* Notes — public profile section (ex-PublicProfileSettings) */}
-            <div className="w-full space-y-1.5">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("publicProfileNotes")}</p>
-              <textarea
-                value={notesDraft}
-                onChange={(e) => setNotesDraft(e.target.value)}
-                maxLength={1200}
-                rows={3}
-                placeholder={t("publicProfileNotesDescription")}
-                className="w-full resize-none rounded-xl border border-input bg-background/60 px-3 py-2.5 text-sm outline-none transition placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-
+            
             {/* Username — Telegram style row */}
             <button
               type="button"

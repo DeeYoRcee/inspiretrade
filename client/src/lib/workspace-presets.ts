@@ -13,7 +13,8 @@ import { ref as dbRef, get, remove as dbRemove, set, update } from "firebase/dat
 import { db, auth } from "@/lib/firebase";
 import type { Timeframe } from "@shared/terminal";
 import type { LayoutId } from "@/lib/chart-layouts";
-import { sanitizePreset, type PanelCfg, type WorkspacePreset } from "@/lib/workspace-schema";
+import { sanitizePreset, exportWorkspaceFile, importWorkspaceFile, type PanelCfg, type WorkspacePreset } from "@/lib/workspace-schema";
+export { exportWorkspaceFile, importWorkspaceFile } from "@/lib/workspace-schema";
 
 export type { PanelCfg, WorkspacePreset };
 
@@ -66,6 +67,29 @@ export async function renameWorkspacePreset(id: string, name: string): Promise<v
   if (uid) await update(dbRef(db, `chartWorkspaces/${uid}/${id}`), { name: clean, updatedAt: Date.now() });
   else saveLocalWorkspaces(readLocalWorkspaces().map((w) => (w.id === id ? { ...w, name: clean, updatedAt: Date.now() } : w)));
   window.dispatchEvent(new CustomEvent(WORKSPACE_EVENT));
+}
+
+/** PHASE 60: mark one workspace as the user's default (clears the flag on the
+ * rest). The default is restored when no last-active snapshot exists. */
+export async function setDefaultWorkspace(id: string): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  const all = await fetchWorkspaces();
+  for (const w of all) {
+    if ((w.default ?? false) !== (w.id === id)) {
+      w.default = w.id === id;
+      w.updatedAt = Date.now();
+      if (uid) await set(dbRef(db, `chartWorkspaces/${uid}/${w.id}`), w);
+    }
+  }
+  saveLocalWorkspaces(all.map((w) => ({ ...w, default: w.id === id })));
+  window.dispatchEvent(new CustomEvent(WORKSPACE_EVENT));
+}
+
+/** PHASE 60: fetchWorkspaces does not surface the default flag ordering —
+ * dedicated helper for the restore path. */
+export async function getDefaultWorkspace(): Promise<WorkspacePreset | null> {
+  const all = await fetchWorkspaces();
+  return all.find((w) => w.default === true) ?? null;
 }
 
 export async function duplicateWorkspacePreset(src: WorkspacePreset): Promise<WorkspacePreset> {

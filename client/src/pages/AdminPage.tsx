@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import {
-  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen, Box, Trash2, Briefcase, LayoutDashboard, History } from "lucide-react";
+  ShieldCheck, Coins, PackageOpen, Send, Clock, CheckCircle2, XCircle, RefreshCw, ArrowDownToLine, Crown, UserRoundPen, Box, Trash2, Briefcase, LayoutDashboard, History, Headset } from "lucide-react";
 import { PropFirmAdmin } from "@/components/admin/PropFirmAdmin";
 import { PlatformAdmin } from "@/components/admin/PlatformAdmin";
+import { SupportInbox } from "@/components/admin/SupportInbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -290,6 +291,7 @@ export default function AdminPage() {
           <TabsTrigger value="cases" className="gap-1.5 rounded-full"><Box className="h-4 w-4" />{t("adminCasesTab")}</TabsTrigger>
           <TabsTrigger value="prop" className="gap-1.5 rounded-full"><Briefcase className="h-4 w-4" />{t("adminPropTab")}</TabsTrigger>
           <TabsTrigger value="platform" className="gap-1.5 rounded-full"><LayoutDashboard className="h-4 w-4" />{t("adminOverviewTab")}</TabsTrigger>
+          <TabsTrigger value="support" className="gap-1.5 rounded-full"><Headset className="h-4 w-4" />{t("supportTab")}</TabsTrigger>
         </TabsList>
 
         {/* Owner — CEO powers */}
@@ -610,6 +612,11 @@ export default function AdminPage() {
         {/* Phase 7 — platform management (overview, users, monitor, alerts, settings) */}
         <TabsContent value="platform">
           <PlatformAdmin />
+        </TabsContent>
+
+        {/* Phase 60 Task 4 — per-user private support inbox (owner view) */}
+        <TabsContent value="support">
+          <SupportInbox />
         </TabsContent>
 
         {/* Gift */}

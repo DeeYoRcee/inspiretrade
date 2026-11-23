@@ -22,6 +22,10 @@ import type { ServerOrder, ServerPosition } from "@/lib/trading-api";
 import { LAYOUTS, LAYOUT_ORDER, dividers, gridStyle, normWeights, pointerPct, pointerPctY, resizePair, type DividerSeg, type LayoutId } from "@/lib/chart-layouts";
 import { loadLastActive, saveLastActive } from "@/lib/workspace-presets";
 import { loadSyncSettings, saveSyncSettings, type SyncSettings } from "@/lib/chart-sync";
+import { WorkspaceDialog } from "@/components/terminal/chart/WorkspaceDialog";
+import type { WorkspacePreset } from "@/lib/workspace-presets";
+import { LayoutGrid } from "lucide-react";
+import { useLanguage } from "@/lib/language-context";
 import { Crosshair, Link2, Clock, Tag } from "lucide-react";
 import type { ChartType } from "@/lib/chart-types";
 import type { Timeframe } from "@shared/terminal";
@@ -90,6 +94,7 @@ export function MultiChartWorkspace({
   onLayoutChange?: (id: LayoutId) => void;
 }) {
   const narrow = useIsNarrow();
+  const { t } = useLanguage();
   const [layoutInner, setLayoutInner] = useState<LayoutId>(() => {
     try { const v = localStorage.getItem(LS_LAYOUT) as LayoutId | null; if (v && LAYOUT_ORDER.includes(v)) return v; } catch { /* ignore */ }
     return "1";
@@ -124,10 +129,58 @@ export function MultiChartWorkspace({
     });
   }, []);
 
+  // ---- PHASE 60: named workspace manager --------------------------------
+  const [wsOpen, setWsOpen] = useState(false);
+  const [activeWsId, setActiveWsId] = useState<string | null>(null);
+  const applyWorkspace = useCallback((w: WorkspacePreset) => {
+    // Phase 60: apply a saved grid — layout, per-panel instruments/TFs/types
+    // and the captured sync toggles. Fresh market data loads through the
+    // normal provider path (nothing stale is ever restored).
+    setLayout(w.layout);
+    const first = w.panels[0];
+    if (first) {
+      if (first.symbol !== symbol) onSymbolChange(first.symbol);
+      if (first.timeframe !== timeframe) onTimeframeChange(first.timeframe as Timeframe);
+    }
+    setPanels(w.panels.slice(1).map((p) => ({
+      symbol: p.symbol,
+      timeframe: p.timeframe as Timeframe,
+      chartType: p.chartType,
+    })));
+    if (w.colW?.length) setColW(w.colW);
+    if (w.rowH?.length) setRowH(w.rowH);
+    if (w.sync) {
+      saveSyncSettings({ crosshair: w.sync.crosshair, time: w.sync.time, symbol: w.sync.symbol, interval: w.sync.interval });
+      setSync({ crosshair: w.sync.crosshair, time: w.sync.time, symbol: w.sync.symbol, interval: w.sync.interval });
+    }
+    setActiveWsId(w.id);
+  }, [symbol, timeframe, onSymbolChange, onTimeframeChange]);
+
+  // ---- PHASE 60 Part 7: honest autosave indicator ------------------------
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+
   // initialize extra panels + restore the last-active workspace (P48 §4)
   useEffect(() => {
     void (async () => {
       const last = await loadLastActive().catch(() => null);
+      // Phase 60: fall back to the user's marked-DEFAULT workspace when no
+      // last-active snapshot exists (fresh account / cleared storage)
+      if (!last) {
+        const { getDefaultWorkspace } = await import("@/lib/workspace-presets");
+        const def = await getDefaultWorkspace().catch(() => null);
+        if (def && LAYOUT_ORDER.includes(def.layout) && def.layout !== "1") {
+          setLayout(def.layout);
+          setPanels(def.panels.slice(1).map((p) => ({
+            symbol: p.symbol,
+            timeframe: p.timeframe as Timeframe,
+            chartType: p.chartType,
+          })));
+          if (def.sync) {
+            saveSyncSettings({ crosshair: def.sync.crosshair, time: def.sync.time, symbol: def.sync.symbol, interval: def.sync.interval });
+            setSync({ crosshair: def.sync.crosshair, time: def.sync.time, symbol: def.sync.symbol, interval: def.sync.interval });
+          }
+        }
+      }
       if (last && LAYOUT_ORDER.includes(last.layout) && last.layout !== "1") {
         setLayout(last.layout);
         setPanels(last.panels.slice(1).map((p) => ({ symbol: p.symbol, timeframe: p.timeframe as Timeframe, chartType: p.chartType })));
@@ -156,12 +209,15 @@ export function MultiChartWorkspace({
   useEffect(() => {
     try { localStorage.setItem(LS_LAYOUT, layout); } catch { /* ignore */ }
     const t = setTimeout(() => {
-      void saveLastActive({
+      setSaveState("saving");
+      saveLastActive({
         layout,
         panels: [{ symbol, timeframe }, ...panels],
         colW: colW.length ? colW : undefined,
         rowH: rowH.length ? rowH : undefined,
-      }).catch(() => {});
+      })
+        .then(() => setSaveState("saved"))
+        .catch(() => setSaveState("idle")); // honest: no fake "saved" on failure
     }, 900);
     return () => clearTimeout(t);
   }, [layout, symbol, timeframe, panels, colW, rowH]);
@@ -302,8 +358,25 @@ export function MultiChartWorkspace({
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       {/* Phase 59: cross-chart sync toggles (P48 Part 3 finally has UI) */}
-      {!narrow && def.panels > 1 && (
+      {!narrow && (
         <div className="flex h-7 shrink-0 items-center justify-end gap-1.5 border-b border-slate-800/70 bg-slate-950/50 px-2">
+          {/* PHASE 60: honest autosave status — "Saving…" until the RTDB write
+              resolves, then a fading "Saved" chip. Never claims success early. */}
+          <span className={cn(
+            "text-[10px] font-semibold",
+            saveState === "saving" ? "text-amber-400" : saveState === "saved" ? "text-emerald-400" : "text-slate-600",
+          )}>
+            {saveState === "saving" ? t("wsSaving") : saveState === "saved" ? t("wsSaved") : ""}
+          </span>
+          <button
+            onClick={() => setWsOpen(true)}
+            title={t("wsTitle")}
+            className="inline-flex h-5 items-center gap-1 rounded-full border border-sky-400/60 bg-sky-400/15 px-2 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-400/25"
+          >
+            <LayoutGrid className="h-2.5 w-2.5" />
+            {t("wsTitle")}
+          </button>
+          <span className="mx-1 h-3.5 w-px bg-slate-700" />
           <span className="mr-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">Sync</span>
           {SYNC_TOGGLES.map(([k, label, Icon]) => (
             <button
@@ -323,6 +396,15 @@ export function MultiChartWorkspace({
           ))}
         </div>
       )}
+      {!narrow && def.panels > 1 && null}
+      <WorkspaceDialog
+        open={wsOpen}
+        onClose={() => setWsOpen(false)}
+        currentSymbol={symbol}
+        currentTimeframe={timeframe}
+        onApply={applyWorkspace}
+        activeId={activeWsId}
+      />
       {/* mobile: tab bar + one panel (never tiny unreadable charts, P48 §7) */}
       {narrow && def.panels > 1 && (
         <div className="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-slate-800 bg-slate-950/60 px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

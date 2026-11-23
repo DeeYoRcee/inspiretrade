@@ -18,6 +18,7 @@ import withdrawals from "./withdrawals";
 import deposits from "./deposits";
 import chatDelete from "./chat-delete";
 import chatSend from "./chat-send";
+import support from "./support";
 import setUsername from "./set-username";
 import usernameMarket from "./username-market";
 import caseAdmin from "./cases";
@@ -57,6 +58,8 @@ export default async function handler(req, res) {
             return chatDelete(req, res);
         case "chat-send":
             return chatSend(req, res);
+        case "support":
+            return support(req, res);
         case "set-username":
             return setUsername(req, res);
         case "usernameList":
