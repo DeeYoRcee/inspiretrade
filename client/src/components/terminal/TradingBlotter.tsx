@@ -18,7 +18,7 @@ import { tradingApi, type ServerOrder, type ServerPosition, type ServerTrade } f
 import { usePriceMap } from "@/lib/price-store";
 import { useAuth } from "@/hooks/use-auth";
 import { db, auth } from "@/lib/firebase";
-import { push, ref } from "firebase/database";
+import { get, push, ref, set } from "firebase/database";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -68,30 +68,58 @@ export function TradingBlotter({ symbol, className }: { symbol: string; classNam
   });
 
   // ---- auto-journal: every closed server trade lands in the user's journal ----
-  // Deduped by a per-uid localStorage marker so refreshes and refetches never
-  // create duplicate entries (the user can still journal manually too).
+  // Phase 57: entries carry source:"prop" + the server trade id. Deduped by a
+  // per-uid marker mirrored in RTDB (users/{uid}/journalSync — owner-writable)
+  // AND localStorage, so refreshes, refetches and OTHER DEVICES never create
+  // duplicate entries (the old localStorage-only marker duplicated across
+  // browsers). The user can still journal manually too.
   const autoSavedRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     const trades: ServerTrade[] | undefined = historyQ.data;
     if (!uid || !trades?.length) return;
-    if (!autoSavedRef.current) {
-      try { autoSavedRef.current = new Set(JSON.parse(localStorage.getItem(`it_journal_auto_${uid}`) || "[]")); }
-      catch { autoSavedRef.current = new Set(); }
-    }
-    const saved = autoSavedRef.current!;
-    let dirty = false;
-    for (const tr of trades) {
-      const key = `${tr.symbol}-${tr.entry}-${tr.closedAt}-${tr.side}`;
-      if (saved.has(key)) continue;
-      saved.add(key);
-      dirty = true;
-      void saveToJournal(tr, true);
-    }
-    if (dirty) {
-      try { localStorage.setItem(`it_journal_auto_${uid}`, JSON.stringify([...saved].slice(-500))); }
-      catch { /* quota — best effort */ }
-    }
+    let cancelled = false;
+    const boot = async () => {
+      if (!autoSavedRef.current) {
+        const merged = new Set<string>();
+        try { for (const k of JSON.parse(localStorage.getItem(`it_journal_auto_${uid}`) || "[]") as string[]) merged.add(k); }
+        catch { /* fresh */ }
+        try {
+          // cross-device dedupe: the RTDB mirror is the source of truth
+          const snap = await get(ref(db, `users/${uid}/journalSync`));
+          const val = snap.val() as Record<string, number> | null;
+          if (val && typeof val === "object") {
+            for (const k of Object.keys(val)) merged.add(k);
+          }
+        } catch { /* rules/offline — LS marker still guards */ }
+        if (cancelled) return;
+        autoSavedRef.current = merged;
+      }
+      const saved = autoSavedRef.current!;
+      let dirty = false;
+      for (const tr of trades) {
+        // server trade id is stable across devices; the derived key only as a
+        // fallback for historical records without an id
+        const key = tr.id ? `p:${tr.id}` : `d:${tr.symbol}-${tr.entry}-${tr.closedAt}-${tr.side}`;
+        if (saved.has(key)) continue;
+        saved.add(key);
+        dirty = true;
+        void saveToJournal(tr, true, key);
+      }
+      if (dirty) {
+        try { localStorage.setItem(`it_journal_auto_${uid}`, JSON.stringify([...saved].slice(-500))); }
+        catch { /* quota — best effort */ }
+        // persist the marker cross-device (bounded: 500 newest by timestamp)
+        try {
+          const marker: Record<string, number> = {};
+          const now = Date.now();
+          [...saved].slice(-500).forEach((k, i) => { marker[k] = now - (500 - i); });
+          await set(ref(db, `users/${uid}/journalSync`), marker);
+        } catch { /* offline — retried on the next history load */ }
+      }
+    };
+    void boot();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyQ.data]);
 
@@ -101,7 +129,7 @@ export function TradingBlotter({ symbol, className }: { symbol: string; classNam
     }
   }, [tab, account?.id, qc]);
 
-  const saveToJournal = async (tr: ServerTrade, silent = false) => {
+  const saveToJournal = async (tr: ServerTrade, silent = false, dedupeKey?: string) => {
     if (!auth.currentUser) return;
     try {
       await push(ref(db, `trades/${auth.currentUser.uid}`), {
@@ -118,7 +146,21 @@ export function TradingBlotter({ symbol, className }: { symbol: string; classNam
         instrumentName: getInstrument(tr.symbol)?.name ?? tr.symbol,
         emotion: "neutral",
         comment: `Terminal ${account?.label ?? "DEMO"} (${tr.reason})`,
+        // Phase 57: provenance — official prop trade, auto-synced + verified
+        source: "prop",
+        serverTradeId: tr.id,
+        ...(account?.id ? { propAccountId: account.id } : {}),
+        propAccountLabel: account?.label ?? "DEMO",
       });
+      // manual saves mark the same key so the auto-sync never double-journals
+      if (dedupeKey && autoSavedRef.current) {
+        autoSavedRef.current.add(dedupeKey);
+        try {
+          localStorage.setItem(`it_journal_auto_${auth.currentUser.uid}`, JSON.stringify([...autoSavedRef.current].slice(-500)));
+          await set(ref(db, `users/${auth.currentUser.uid}/journalSync`),
+            Object.fromEntries([...autoSavedRef.current].slice(-500).map((k, i, arr) => [k, Date.now() - (arr.length - i)])));
+        } catch { /* best effort */ }
+      }
       if (!silent) toast({ title: t("journalSaved") });
     } catch (e: any) {
       if (!silent) toast({ title: t("serverError"), description: String(e?.message || e), variant: "destructive" });

@@ -1,4 +1,6 @@
 import { useTrades, useDeleteTrade } from "@/hooks/use-trades";
+import { SourceBadge } from "@/components/trades/SourceBadge";
+import { sourceFilterPredicate } from "@/lib/trade-source";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,12 +16,13 @@ import { Trash2, TrendingUp, TrendingDown, Clock } from "lucide-react";
 import { format } from "date-fns";
 import { useLanguage } from "@/lib/language-context";
 
-export function TradeTable({ category = "ALL" }: { category?: string }) {
+export function TradeTable({ category = "ALL", sourceFilter = "all" }: { category?: string; sourceFilter?: string }) {
   const { t } = useLanguage();
   const { data: allTrades, isLoading } = useTrades();
   const { mutate: deleteTrade, isPending: isDeleting } = useDeleteTrade();
 
-  const trades = allTrades?.filter(t => category === "ALL" || t.category === category) || [];
+  const trades = (allTrades?.filter(t => category === "ALL" || t.category === category) || [])
+    .filter(sourceFilterPredicate(sourceFilter));
 
   if (isLoading) {
     return <Skeleton className="h-96 w-full rounded-2xl bg-card" />;
@@ -47,6 +50,7 @@ export function TradeTable({ category = "ALL" }: { category?: string }) {
             <TableRow className="border-border/50 hover:bg-transparent">
               <TableHead className="font-semibold uppercase tracking-wider text-xs">{t("date")}</TableHead>
               <TableHead className="font-semibold uppercase tracking-wider text-xs">{t("asset")}</TableHead>
+              <TableHead className="font-semibold uppercase tracking-wider text-xs">Source</TableHead>
               <TableHead className="font-semibold uppercase tracking-wider text-xs">{t("positionType")}</TableHead>
               <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">{t("entryPrice")}</TableHead>
               <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">{t("exitPrice")}</TableHead>
@@ -69,6 +73,9 @@ export function TradeTable({ category = "ALL" }: { category?: string }) {
                     {trade.instrumentName && (
                       <div className="text-xs text-muted-foreground">{trade.instrumentName}</div>
                     )}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <SourceBadge trade={trade} compact />
                   </TableCell>
                   <TableCell>
                     <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold ${

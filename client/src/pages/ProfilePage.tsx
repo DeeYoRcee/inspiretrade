@@ -8,12 +8,12 @@ import { MediaLightbox } from "@/components/media-lightbox";
 import type { PublicProfileSettings } from "@/lib/public-profile";
 import {
   Award, Camera, Clapperboard, Copy, Crown, Globe2, Instagram, Loader2, Package, Pencil, Send, Trash2, Twitter, Video, Activity, Target, TrendingUp, TrendingDown, CalendarDays,
+  X, History, StickyNote, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { saveUserProfile, useUserProfile } from "@/hooks/use-premium";
 import { useInventory } from "@/hooks/use-economy";
@@ -266,7 +266,6 @@ export default function ProfilePage() {
   }, [trades]);
 
   const publishedUsername = settings?.publishedUsername;
-  const isEnabled = settings?.enabled === true;
   const publicUrl = publishedUsername && typeof window !== "undefined"
     ? `${window.location.origin}/@${publishedUsername}`
     : "";
@@ -396,7 +395,7 @@ export default function ProfilePage() {
    *  snapshot only carries these AT publish time, so without this the public
    *  page would show stale assets until the user toggled something. */
   const republishIfEnabled = async () => {
-    if (!user || !isEnabled || !publishedUsername) return;
+    if (!user || !publishedUsername) return;
     await savePublicProfile.mutateAsync({
       username: publishedUsername,
       displayName: user?.displayName || publishedUsername,
@@ -479,35 +478,6 @@ export default function ProfilePage() {
       }
       queryClient.invalidateQueries({ queryKey: ["publicProfileSettings", user.uid] });
       toast({ title: t("profileSaved") });
-    } catch (error) {
-      toast({
-        title: t("error"),
-        description: error instanceof Error ? error.message : t("publicProfileSaveFailed"),
-        variant: "destructive",
-      });
-    }
-  };
-
-  const togglePublic = async (next: boolean) => {
-    if (!user) return;
-    if (next && !username) {
-      setUsernameDialogOpen(true);
-      toast({ title: t("publicProfileUsernameRequired") });
-      return;
-    }
-    const current = settings ?? createDefaultPublicProfileSettings();
-    // First publish: share the interesting sections so the public page is not empty.
-    const visibility = next && !Object.values(current.visibility).some(Boolean)
-      ? { statistics: true, strategy: true, winRate: true, history: true, notes: false }
-      : current.visibility;
-    try {
-      await savePublicProfile.mutateAsync({
-        username: username as string,
-        displayName: user.displayName || (username as string),
-        trades: trades ?? [],
-        settings: { ...current, enabled: next, visibility },
-      });
-      toast({ title: next ? t("publicProfileUpdated") : t("profileSaved") });
     } catch (error) {
       toast({
         title: t("error"),
@@ -733,24 +703,25 @@ export default function ProfilePage() {
           transition={{ duration: 0.3, delay: 0.08 }}
           className="space-y-2"
         >
-          <div className="flex items-center justify-between px-1">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
               {t("profilePublicPreview")}
             </p>
-            <div className="flex items-center gap-1">
-              {([["statistics", t("publicProfileStatistics")], ["winRate", t("publicProfileWinRate")], ["history", t("publicProfileHistory")], ["notes", t("publicProfileNotes")]] as const).map(([flag, lbl]) => (
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              {([["statistics", t("publicProfileStatistics"), BarChart3], ["winRate", t("publicProfileWinRate"), Target], ["history", t("publicProfileHistory"), History], ["notes", t("publicProfileNotes"), StickyNote]] as const).map(([flag, lbl, Icon]) => (
                 <button
                   key={flag}
                   disabled={pubBusy}
                   title={t("publicProfileVisibility")}
                   onClick={() => toggleVisibility(flag)}
                   className={cn(
-                    "rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50",
+                    "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition-all disabled:opacity-50",
                     settings.visibility[flag]
-                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
-                      : "border-border/60 bg-black/25 text-muted-foreground",
+                      ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.22)]"
+                      : "border-border/60 bg-background/40 text-muted-foreground hover:text-foreground",
                   )}
                 >
+                  <Icon className="h-3.5 w-3.5" />
                   {lbl.replace(/Description$/, "")}
                 </button>
               ))}
@@ -813,7 +784,13 @@ export default function ProfilePage() {
       {/* Telegram-style Edit Profile dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="glass-panel max-w-sm border-border/60">
-          <DialogHeader className="items-center text-center">
+          <DialogHeader className="relative items-center text-center">
+            <DialogClose
+              className="absolute end-0 top-0 flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/70 text-muted-foreground shadow-sm transition-colors hover:bg-background hover:text-foreground"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </DialogClose>
             <DialogTitle className="font-display">{t("profileEdit")}</DialogTitle>
             <DialogDescription>{t("publicProfileEnabledDescription")}</DialogDescription>
           </DialogHeader>
@@ -970,18 +947,7 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* Public profile toggle */}
-            <div className="flex w-full items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2.5">
-              <span className="text-sm font-medium">{t("publicProfileEnabled")}</span>
-              <Switch
-                checked={isEnabled}
-                onCheckedChange={togglePublic}
-                disabled={savePublicProfile.isPending}
-                aria-label={t("publicProfileEnabled")}
-              />
-            </div>
-
-            {isEnabled && publicUrl && (
+            {publicUrl && (
               <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-[#3390ec]/30 bg-[#3390ec]/5 px-3 py-2">
                 <span className="truncate text-xs font-medium text-[#3390ec]">{publicUrl.replace(/^https?:\/\//, "")}</span>
                 <Button variant="ghost" size="icon" onClick={copyLink} aria-label={t("publicProfileShare")} className="h-8 w-8 shrink-0 rounded-full text-[#3390ec]">

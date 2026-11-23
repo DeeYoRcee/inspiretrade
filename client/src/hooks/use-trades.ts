@@ -36,6 +36,16 @@ export const tradeSchema = z.object({
   mistakes: z.string().optional(),
   lessons: z.string().optional(),
   // ---- Phase 4 journal: deep review fields (all optional, backward-compatible)
+  // ---- Phase 57 unified journal: explicit trade source (prop auto-sync /
+  // external broker / manual). Optional for full backward compatibility —
+  // legacy rows without a source read as "manual" via tradeSource().
+  source: z.enum(["prop", "external", "manual"]).optional(),
+  /** external broker name (MT5, cTrader, IC Markets…), ≤60 chars */
+  brokerName: z.string().max(60).optional(),
+  /** provenance for auto-synced prop trades */
+  serverTradeId: z.string().optional(),
+  propAccountId: z.string().optional(),
+  propAccountLabel: z.string().optional(),
   tags: z.array(z.string()).optional(),
   mistakesList: z.array(z.string()).optional(),
   emotionBefore: z.string().optional(),

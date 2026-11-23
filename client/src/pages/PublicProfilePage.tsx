@@ -6,7 +6,7 @@ import { usePublicProfile } from "@/hooks/use-public-profile";
 import { useLanguage } from "@/lib/language-context";
 import { cn } from "@/lib/utils";
 
-export default function PublicProfilePage({ username }: { username: string }) {
+export default function PublicProfilePage({ username, embedded = false }: { username: string; embedded?: boolean }) {
   const { t } = useLanguage();
   const profileQuery = usePublicProfile(username);
 
@@ -18,7 +18,7 @@ export default function PublicProfilePage({ username }: { username: string }) {
       <div className="pointer-events-none absolute -right-40 -top-40 h-[34rem] w-[34rem] rounded-full bg-emerald-500/[0.07] blur-[100px]" />
       <div className="pointer-events-none absolute -bottom-48 -left-40 h-[32rem] w-[32rem] rounded-full bg-cyan-500/[0.05] blur-[100px]" />
 
-      <header className="relative z-10 border-b border-border/50 bg-background/75 backdrop-blur-xl print:hidden">
+      <header className={embedded ? "hidden" : "relative z-10 border-b border-border/50 bg-background/75 backdrop-blur-xl print:hidden"}>
         <div className="container mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" asChild className="rounded-xl" aria-label={t("backToDashboard")}>

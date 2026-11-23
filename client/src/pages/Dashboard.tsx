@@ -11,6 +11,9 @@ import { useState, useEffect } from "react";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTrades, useGlobalStats, useSyncUserStats, StatsPeriod } from "@/hooks/use-trades";
+import { computeSourceStats, sourceFilterPredicate, tradeSource, type JournalSourceStats } from "@/lib/trade-source";
+import { SourceDots } from "@/components/trades/SourceBadge";
+import { CsvImportDialog } from "@/components/trades/CsvImportDialog";
 import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   isWithinInterval, isSameDay, format, addDays, isToday
@@ -18,7 +21,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Camera, ChevronLeft, ChevronRight, Globe, Plus, TrendingUp, Users } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, Globe, Plus, TrendingUp, Users, FileUp } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
 
 type CalendarView = "monthly" | "weekly";
@@ -88,6 +91,9 @@ export default function Dashboard() {
   const { t } = useLanguage();
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [category, setCategory] = useState<string>("ALL");
+  // Phase 57 — unified journal source filter (all / prop / external / manual / broker:NAME)
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [csvOpen, setCsvOpen] = useState(false);
   const [calendarView, setCalendarView] = useState<CalendarView>("monthly");
   const [screenshotDate, setScreenshotDate] = useState<Date | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -103,7 +109,9 @@ export default function Dashboard() {
     }
   }, [trades?.length]);
 
-  const filteredTrades = trades?.filter(t => category === "ALL" || t.category === category) || [];
+  const filteredTrades = (trades?.filter(t => category === "ALL" || t.category === category) || [])
+    .filter(sourceFilterPredicate(sourceFilter));
+  const sourceStats: JournalSourceStats = computeSourceStats(trades || []);
 
   const weeklyTrades = filteredTrades.filter(t =>
     isWithinInterval(new Date(t.timestamp), {
@@ -390,8 +398,8 @@ export default function Dashboard() {
                         onClick={() => handleDayClick(date)}
                         className={cn(
                           "relative h-20 sm:h-24 rounded-lg flex flex-col items-center justify-start p-1.5 sm:p-2 transition-all text-left",
-                          isSelected && "ring-2 ring-primary ring-offset-1 ring-offset-background",
-                          todayDate && !isSelected && "bg-accent/60",
+                          isSelected && "ring-2 ring-foreground/50 ring-offset-1 ring-offset-background",
+                          todayDate && !isSelected && "bg-secondary/60",
                           hasTrades && dayPnL > 0
                             ? "border-[1.5px] border-success/80 shadow-[0_0_8px_rgba(34,197,94,0.25)]"
                             : hasTrades && dayPnL < 0
@@ -402,12 +410,12 @@ export default function Dashboard() {
                         <div className="flex flex-col items-center gap-0.5 w-full">
                           <span className={cn(
                             "text-[10px] font-medium",
-                            todayDate ? "text-primary" : "text-muted-foreground"
+                            todayDate ? "text-foreground" : "text-muted-foreground"
                           )}>
                             {format(date, "d")}
                           </span>
                           {todayDate && (
-                            <span className="w-1 h-1 rounded-full bg-primary" />
+                            <span className="w-1 h-1 rounded-full bg-foreground/60" />
                           )}
                         </div>
                         {hasTrades && (
@@ -419,6 +427,10 @@ export default function Dashboard() {
                           )}>
                             {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$
                           </span>
+                        )}
+                        {hasTrades && (
+                          /* Phase 57: source presence dots (prop/external/manual) */
+                          <span className="pb-1"><SourceDots sources={dayTrades.map(t => tradeSource(t))} /></span>
                         )}
                         {!hasTrades && (
                           <span className="text-[8px] text-muted-foreground/40">{format(date, "MMM")}</span>
@@ -476,8 +488,8 @@ export default function Dashboard() {
                     row: "flex w-full mt-2 gap-1",
                     cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 w-full h-14 sm:h-20",
                     day: "h-full w-full p-0 font-normal aria-selected:opacity-100 hover:bg-accent rounded-md transition-colors flex flex-col items-center justify-start py-1",
-                    day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
-                    day_today: "bg-accent text-accent-foreground",
+                    day_selected: "bg-accent text-accent-foreground ring-2 ring-ring/60 hover:bg-accent focus:bg-accent",
+                    day_today: "bg-secondary/70 text-secondary-foreground",
                     day_outside: "text-muted-foreground opacity-50",
                     day_disabled: "text-muted-foreground opacity-50",
                     day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
@@ -530,6 +542,9 @@ export default function Dashboard() {
                               {EMOTION_MAP[emotion]}
                             </span>
                           )}
+                          {hasTrades && (
+                            <span className="absolute bottom-0.5 left-0.5"><SourceDots sources={dayTrades.map(t => tradeSource(t))} /></span>
+                          )}
                         </div>
                       );
                     },
@@ -580,11 +595,68 @@ export default function Dashboard() {
         transition={{ delay: 0.3 }}
         className="w-full mt-8"
       >
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-2xl font-display font-bold text-foreground">{t("tradeHistory")}</h2>
-          <AddTradeDialog />
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setCsvOpen(true)}>
+              <FileUp className="h-4 w-4" /> Import CSV
+            </Button>
+            <AddTradeDialog />
+          </div>
         </div>
-        <TradeTable category={category} />
+        {/* Phase 57: journal source filter — All / Prop / External / Manual / broker */}
+        <div className="flex flex-wrap items-center gap-1.5 mb-4">
+          {([["all", "All"], ["prop", "Prop"], ["external", "External"], ["manual", "Manual"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setSourceFilter(key)}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition-all",
+                sourceFilter === key
+                  ? "border-primary/60 bg-primary/15 text-primary"
+                  : "border-border/60 bg-background/40 text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {label}
+              <span className="rounded-full bg-background/60 px-1.5 text-[10px] font-number text-muted-foreground">
+                {key === "all" ? sourceStats.all.count : sourceStats[key].count}
+              </span>
+            </button>
+          ))}
+          {sourceStats.brokers.map((b) => (
+            <button
+              key={b}
+              onClick={() => setSourceFilter(`broker:${b}`)}
+              className={cn(
+                "inline-flex h-7 max-w-[150px] items-center rounded-full border px-3 text-[11px] font-semibold transition-all",
+                sourceFilter === `broker:${b}`
+                  ? "border-sky-400/60 bg-sky-400/15 text-sky-300"
+                  : "border-border/60 bg-background/40 text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <span className="truncate">{b}</span>
+            </button>
+          ))}
+        </div>
+        {/* Phase 57: per-source stats — official prop performance always comes
+            from the server-authoritative records; this strip classifies the
+            journal mirrors only */}
+        <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([["all", "All trades"], ["prop", "Prop account"], ["external", "External brokers"], ["manual", "Manual"]] as const).map(([key, label]) => {
+            const st = sourceStats[key];
+            return (
+              <div key={key} className="rounded-2xl border border-border/50 bg-card/50 p-3 text-center">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
+                <p className={cn("mt-1 font-number text-lg font-bold", st.netPnl > 0 ? "text-success" : st.netPnl < 0 ? "text-destructive" : "text-foreground")}>
+                  {st.netPnl >= 0 ? "+" : ""}${st.netPnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </p>
+                <p className="text-[10px] text-muted-foreground">{st.count} trades · {st.winRate.toFixed(0)}% win</p>
+              </div>
+            );
+          })}
+        </div>
+        <TradeTable category={category} sourceFilter={sourceFilter} />
+        <CsvImportDialog open={csvOpen} onOpenChange={setCsvOpen} existingTrades={trades || []} />
       </motion.div>
 
       {/* Screenshot Dialog */}

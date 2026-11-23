@@ -347,8 +347,15 @@ function TitlesRoute() {
 }
 
 function PublicProfileRoute({ params }: { params: { handle: string } }) {
+  const { user, loading } = useAuth();
   if (!params.handle.startsWith("@")) return <NotFound />;
-  return <PublicProfilePage username={params.handle.slice(1)} />;
+  const username = params.handle.slice(1);
+  // unified profile: signed-in visitors see it in the app chrome (same look
+  // as the regular profile page); logged-out visitors keep the standalone page
+  if (loading) return <LoadingScreen />;
+  return user
+    ? <AppLayout><PublicProfilePage username={username} embedded /></AppLayout>
+    : <PublicProfilePage username={username} />;
 }
 
 function Router() {
