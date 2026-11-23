@@ -208,11 +208,18 @@ export function TradingPanel({
   };
 
   // P55 §11 — global shortcut events (dispatched by the TerminalPage handler)
+  // Phase 59 P1 SAFETY FIX: the []-deps listener captured the FIRST render's
+  // `submit`, which closed over the first render's lots/kind/SL/TP —
+  // Shift+B submitted a market order with the ORIGINAL field values, not what
+  // the ticket showed. Route through a ref that always points at the latest
+  // submit closure.
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
   useEffect(() => {
     const h = (e: Event) => {
       const action = (e as CustomEvent<{ action: string }>).detail?.action;
-      if (action === "buy") void submit("buy");
-      else if (action === "sell") void submit("sell");
+      if (action === "buy") void submitRef.current("buy");
+      else if (action === "sell") void submitRef.current("sell");
     };
     window.addEventListener("it-shortcut", h);
     return () => window.removeEventListener("it-shortcut", h);

@@ -466,6 +466,11 @@ export function createPositionFromGesture(
   const stop = isLong ? (draggedUp ? mirror : far) : (draggedUp ? far : mirror);
   const target = isLong ? (draggedUp ? far : mirror) : (draggedUp ? mirror : far);
   const entrySnapped: DrawingPoint = { time: entry.time, price: snapToTick(entry.price, tickSize) };
+  // Phase 59: a drag that lands within half a tick of entry used to snap stop
+  // AND target onto entry — zero-size zones, RR 0. Enforce the same
+  // directional gap the handle-drag clamps enforce (entry −/+ one tick).
+  stop.price = clampPositionPrice(type, 1, entrySnapped.price, stop.price, tickSize);
+  target.price = clampPositionPrice(type, 2, entrySnapped.price, target.price, tickSize);
   return [entrySnapped, stop, target];
 }
 
@@ -743,21 +748,30 @@ export function hitTest(
         break;
       }
       case "fib-retracement": {
+        // Phase 59: the default level set renders 1.272/1.618/2/2.618 OUTSIDE
+        // the anchor box and extend:right draws to the canvas edge — visible
+        // level lines must stay clickable, so the hit box gains 35% slack
+        // beyond the anchors (level ratio 2.618 ≈ +162% of the box)
         const lo = Math.min(pts[0].y, pts[1].y);
         const hi = Math.max(pts[0].y, pts[1].y);
         const x1 = Math.min(pts[0].x, pts[1].x);
         const x2 = Math.max(pts[0].x, pts[1].x);
-        const inX = p.x >= x1 - LINE_HIT && p.x <= x2 + LINE_HIT;
-        if (inX && p.y >= lo - LINE_HIT && p.y <= hi + LINE_HIT) return { index: i };
+        const slack = Math.max(hi - lo, 24) * 0.75 + LINE_HIT; // covers ratio ≤ 2.618
+        const xHi = d.style.extend === "right" ? Math.max(x2 + 1, canvasW) : x2;
+        const inX = p.x >= x1 - LINE_HIT && p.x <= xHi + LINE_HIT;
+        if (inX && p.y >= lo - slack && p.y <= hi + slack) return { index: i };
         break;
       }
       case "fib-extension": {
       if (pts.length < 3) break; // P39b: mid-creation preview may be short
-        // bounding box of the three anchors (generous — the fan spans it)
+        // bounding box of the three anchors + 75% slack for the outer fan
+        // levels (1.618/2.618 render beyond it), extend:right reaches the edge
         const xs = pts.map((q) => q.x);
         const ys = pts.map((q) => q.y);
-        const inX = p.x >= Math.min(...xs) - LINE_HIT && p.x <= Math.max(...xs) + LINE_HIT;
-        const inY = p.y >= Math.min(...ys) - LINE_HIT && p.y <= Math.max(...ys) + LINE_HIT;
+        const slack = Math.max(Math.max(...ys) - Math.min(...ys), 24) * 0.75 + LINE_HIT;
+        const xHi = d.style.extend === "right" ? Math.max(Math.max(...xs) + 1, canvasW) : Math.max(...xs);
+        const inX = p.x >= Math.min(...xs) - LINE_HIT && p.x <= xHi + LINE_HIT;
+        const inY = p.y >= Math.min(...ys) - slack && p.y <= Math.max(...ys) + slack;
         if (inX && inY) return { index: i };
         break;
       }

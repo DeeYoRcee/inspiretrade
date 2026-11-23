@@ -30,6 +30,42 @@ import { cn } from "@/lib/utils";
 
 type Tab = "positions" | "orders" | "history" | "stats";
 
+/**
+ * Phase 59 — number input that follows external (server) value changes while
+ * NOT focused, and commits on blur/Enter. The old uncontrolled defaultValue
+ * input went stale the moment the engine moved SL/TP (trailing stop, chart drag).
+ */
+function SyncNumberInput({ value, className, placeholder, onCommit }: {
+  value: number | string;
+  className?: string;
+  placeholder?: string;
+  onCommit: (v: number | null) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  // follow the server only while the user is not editing
+  useEffect(() => { if (!focused) setDraft(value === 0 ? "0" : String(value)); }, [value, focused]);
+  return (
+    <input
+      ref={ref}
+      type="number"
+      step="any"
+      className={className}
+      placeholder={placeholder}
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        const v = draft.trim() === "" ? null : Number(draft);
+        onCommit(v != null && Number.isFinite(v) ? v : null);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
+
 export function TradingBlotter({ symbol, className }: { symbol: string; className?: string }) {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -317,12 +353,23 @@ function PositionsTable({
               <td className="text-right font-number">{p.entry.toFixed(dg)}</td>
               <td className="text-right font-number">{mid != null ? mid.toFixed(dg) : "—"}</td>
               <td className="text-right">
-                <input type="number" step="any" className="num-input h-6 w-20 text-right" defaultValue={p.sl ?? ""} placeholder="—"
-                  onBlur={(e) => { const v = e.target.value ? Number(e.target.value) : null; if (v !== p.sl) onModify(p, { sl: v }); }} />
+                {/* Phase 59: sync-on-prop-change when not focused — the
+                    trailing-stop ratchet and chart-drag SL changes come from
+                    the server and the old uncontrolled input never showed them */}
+                <SyncNumberInput
+                  className="num-input h-6 w-20 text-right"
+                  value={p.sl ?? ""}
+                  placeholder="—"
+                  onCommit={(v) => { if (v !== p.sl) onModify(p, { sl: v }); }}
+                />
               </td>
               <td className="text-right">
-                <input type="number" step="any" className="num-input h-6 w-20 text-right" defaultValue={p.tp ?? ""} placeholder="—"
-                  onBlur={(e) => { const v = e.target.value ? Number(e.target.value) : null; if (v !== p.tp) onModify(p, { tp: v }); }} />
+                <SyncNumberInput
+                  className="num-input h-6 w-20 text-right"
+                  value={p.tp ?? ""}
+                  placeholder="—"
+                  onCommit={(v) => { if (v !== p.tp) onModify(p, { tp: v }); }}
+                />
               </td>
               <td className={cn("text-right font-number", swap < 0 && "text-red-400", swap > 0 && "text-emerald-400")}>{swap ? `${swap > 0 ? "+" : ""}$${swap.toFixed(2)}` : "—"}</td>
               <td className={cn("text-right font-number font-semibold", (pl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400")}>

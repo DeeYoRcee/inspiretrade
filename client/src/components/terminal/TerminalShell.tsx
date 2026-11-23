@@ -121,8 +121,16 @@ export function TerminalShell({
 }) {
   const wide = useIsWide();
   const [shell, setShell] = useState<ShellState>(loadShell);
+  // Phase 59 PERF: shell state changes on EVERY pointermove while dragging a
+  // divider — a synchronous JSON.stringify + localStorage write per mouse
+  // move janks the drag. Persist debounced (150 ms trailing).
+  const shellSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(shell)); } catch { /* private mode */ }
+    if (shellSaveTimer.current) clearTimeout(shellSaveTimer.current);
+    shellSaveTimer.current = setTimeout(() => {
+      try { localStorage.setItem(KEY, JSON.stringify(shell)); } catch { /* private mode */ }
+    }, 150);
+    return () => { if (shellSaveTimer.current) { clearTimeout(shellSaveTimer.current); shellSaveTimer.current = null; } };
   }, [shell]);
 
   const patch = useCallback((p: Partial<ShellState>) => setShell((s) => ({ ...s, ...p })), []);

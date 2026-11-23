@@ -358,9 +358,16 @@ export function useReplay() {
         void persistSession(sessionRef.current, barsRef.current.length, cursorRef.current, walletRef.current, sessionRef.current.timeframe);
       }
     };
-    document.addEventListener("visibilitychange", () => { if (document.hidden) save(); });
+    const onVis = () => { if (document.hidden) save(); };
+    document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", save);
-    return () => { save(); };
+    // Phase 59: REMOVE the listeners — every phase transition used to stack
+    // another anonymous pair for the lifetime of the page
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", save);
+      save();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 

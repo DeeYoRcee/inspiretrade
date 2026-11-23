@@ -204,8 +204,13 @@ export function DrawingPropsBar({
                   step="any"
                   value={drawing.points[i]?.price ?? 0}
                   onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || !drawing.points[i]) return;
+                    // Phase 59: Number("") === 0 used to COMMIT a level of 0 —
+                    // the risk math collapsed and the zero persisted to RTDB.
+                    // An empty/transient field keeps the previous level.
+                    const raw = e.target.value.trim();
+                    if (!raw || !drawing.points[i]) return;
+                    const v = Number(raw);
+                    if (!Number.isFinite(v) || v <= 0) return;
                     // P46 §1.4 — every level lands on the instrument tick
                     const snapped = snapToTick(v, positionEnv?.tickSize);
                     onChange({ points: drawing.points.map((q, k) => (k === i ? { ...q, price: snapped } : q)) });
@@ -533,7 +538,9 @@ export function DrawingPropsBar({
                     step="any"
                     title="Anchor price"
                     onChange={(e) => {
-                      const price = Number(e.target.value);
+                      const raw = e.target.value.trim();
+                      if (!raw) return; // Phase 59: "" must not become 0
+                      const price = Number(raw);
                       if (!Number.isFinite(price)) return;
                       onChange({ points: drawing.points.map((q, k) => (k === i ? { ...q, price } : q)) });
                     }}

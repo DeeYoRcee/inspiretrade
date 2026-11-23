@@ -38,6 +38,10 @@ async function refresh() {
     for (const [sym, row] of Object.entries(snapshot)) if (row.price && row.price > 0) mids[sym] = row.price;
     priceBusUpdateMany(mids);
     notify();
+  } catch {
+    // Phase 59: a failed snapshot must not throw out of the 45s interval tick
+    // (unhandled rejection + notify() skipped → the watchlist silently froze)
+    // — keep the previous rows; the next tick retries
   } finally {
     loading = false;
   }

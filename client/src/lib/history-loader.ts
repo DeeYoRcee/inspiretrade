@@ -18,6 +18,15 @@ import {
 
 const MAX_BARS = 20000;
 
+/** Phase 59: true when the provider interval IS already the target
+ * granularity — those bars must pass through untouched (weekly/monthly
+ * re-aggregation re-anchored weeks to Thursday and months to a 30-day grid). */
+export function sourceAlreadyAggregated(interval: string, aggMinutes: number): boolean {
+  if (interval === "1w") return aggMinutes === 10080; // 604800 s
+  if (interval === "1mo") return aggMinutes === 43200; // 2592000 s
+  return false;
+}
+
 export interface HistoryLoadResult {
   bars: Bar[];
   source: "binance" | "yahoo" | "stooq";
@@ -119,7 +128,11 @@ async function loadProxyRange(
     if (!res?.ok) throw new Error(res?.detail || "History unavailable for this window");
     if (res.source) source = res.source;
     let bars: Bar[] = res.bars || [];
-    if (agg && agg !== 1) bars = aggregateBars(bars, agg);
+    // Phase 59: never re-aggregate bars that are ALREADY at the target
+    // granularity — re-folding Yahoo's weekly stamps through the epoch floor
+    // re-anchored weeks to Thursday and months to a drifting 30-day grid,
+    // mislabeling every W1/1M candle in replay/backtest
+    if (agg && agg !== 1 && !sourceAlreadyAggregated(interval, agg)) bars = aggregateBars(bars, agg);
     collected.push(...bars);
     onProgress?.(i + 1, chunks.length);
     if (collected.length > MAX_BARS) { capped = true; break; }

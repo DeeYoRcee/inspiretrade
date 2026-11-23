@@ -15,7 +15,7 @@
  * they only run while the terminal is open, never during replay (look-ahead
  * safety), exactly like the cron's own docstring promises.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { subscribeFeed, quotesSnapshotBars } from "@/lib/market-data";
 import { priceBusUpdateMany } from "@/lib/price-store";
@@ -49,6 +49,25 @@ export function TradingAlertsEngine() {
   const dailyHLRef = useRef<{ at: number; hl: Map<string, { high: number; low: number }> }>({ at: 0, hl: new Map() });
   const firingRef = useRef<Set<string>>(new Set());
   const unsubFeedsRef = useRef<Array<() => void>>([]);
+  // Phase 59: subscribeAlerts writes a REF (no setState) — the old effect dep
+  // `[alertsRef.current.length]` never re-ran when an alert for a NEW symbol
+  // was added, leaving that alert without a live feed until an unrelated
+  // re-render. A version counter state makes the change explicit.
+  const [alertsVersion, setAlertsVersion] = useState(0);
+  const alertsSymbolsKeyRef = useRef("");
+
+  // ---- alert records (cross-device via RTDB) -------------------------------
+  useEffect(() => subscribeAlerts((list) => {
+    alertsRef.current = list;
+    // Phase 59: bump a version state when the watched SYMBOL SET changes so
+    // the feed effect below re-syncs (the old `[alertsRef.current.length]`
+    // dep never fired — new alerts got no live feed)
+    const key = [...new Set(list.filter((a) => a.kind === "price" || a.kind === "dailyHL").map((a) => a.symbol))].sort().join(",");
+    if (key !== alertsSymbolsKeyRef.current) {
+      alertsSymbolsKeyRef.current = key;
+      setAlertsVersion((v) => v + 1);
+    }
+  }), []);
 
   // ---- live feeds for every symbol a price/dailyHL alert watches ----------
   useEffect(() => {
@@ -74,10 +93,9 @@ export function TradingAlertsEngine() {
       for (const off of unsubFeedsRef.current) { try { off(); } catch { /* already gone */ } }
       unsubFeedsRef.current = [];
     };
-  }, [alertsRef.current.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [alertsVersion]);
 
-  // ---- alert records (cross-device via RTDB) -------------------------------
-  useEffect(() => subscribeAlerts((list) => { alertsRef.current = list; }), []);
+
 
   // ---- the evaluator loop ---------------------------------------------------
   useEffect(() => {

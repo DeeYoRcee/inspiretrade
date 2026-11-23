@@ -404,6 +404,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const env = renderEnvRef.current;
       const dEnv = env?.digits ?? digitsRef.current;
       for (const d of drawingsRef.current) {
+        if (hiddenAllRef.current) break; // Phase 59: hide-all also hides the axis tags
         if (!isPositionTool(d.type) || d.hidden || d.points.length < 3) continue;
         const tags: Array<[number, string, string]> = [
           [d.points[0].price, fmtPositionPrice(d.points[0].price, dEnv), d.style.color],
@@ -465,6 +466,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (toolRef.current) return lockedRef.current ? "not-allowed" : "crosshair";
     if (hiddenAllRef.current || lockedRef.current) return "default";
     const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
+    // Phase 59: feed the hover renderer — this ref was declared but never
+    // written, so the hover glow/handle dots never appeared
+    const hitId = hit != null ? drawingsRef.current[hit.index]?.id : undefined;
+    hoverRef.current = hit != null && hitId ? { id: hitId, handle: hit.handle } : null;
     if (hit?.handle != null) return "grab";
     if (hit) return "move";
     for (const t of tradeRef.current) {
@@ -675,13 +680,19 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const drag = dragRef.current;
     const target = attachEl();
     if (!drag) {
-      const c = cursorFor(p) === "default" ? cursorFallbackRef.current : cursorFor(p);
+      const c0 = cursorFor(p); // one hit-test per move (was two full passes)
+      const c = c0 === "default" ? cursorFallbackRef.current : c0;
       if (target && target.style.cursor !== c) target.style.cursor = c;
       // hover re-render is throttled by rAF below
       scheduleHover();
       return;
     }
-    e.stopPropagation();
+    // Phase 59: only real gestures (move/resize/pan-nudge) consume the event.
+    // A multi-point tool ARMED between clicks also uses mode:"draw" — there
+    // stopPropagation killed the chart's crosshair/legend until the object
+    // committed. In draw mode the pointer press is already consumed, so pan
+    // can't start; the crosshair must stay alive like on TradingView.
+    if (drag.mode !== "draw") e.stopPropagation();
     if (drag.mode === "draw") {
       // brush/highlighter are freehand: append a point every ≥4px of travel (capped at 800)
       if (drag.drawing && toolRef.current && TOOL_POINT_COUNT[toolRef.current] === -1 && toolRef.current === drag.drawing.type) {

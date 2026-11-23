@@ -199,6 +199,13 @@ export function bucketStart(nowSec: number, sec: number): number {
     const MONDAY_ANCHOR = 345600; // Mon 1970-01-05 00:00 UTC
     return Math.floor((nowSec - MONDAY_ANCHOR) / sec) * sec + MONDAY_ANCHOR;
   }
+  if (sec === 2592000) {
+    // Phase 59 P0: monthly candles open on the 1st of the UTC calendar month
+    // (28–31 days apart) — the old >=86400 day-floor rendered 1M as daily
+    // buckets, and a fixed 30-day grid drifted weeks off the real months.
+    const d = new Date(nowSec * 1000);
+    return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000);
+  }
   if (sec >= 86400) return Math.floor(nowSec / 86400) * 86400;
   return Math.floor(nowSec / sec) * sec;
 }

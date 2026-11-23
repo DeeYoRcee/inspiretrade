@@ -21,18 +21,22 @@
 export interface SyncSettings {
   crosshair: boolean;
   time: boolean;
+  /** workspace-level: changing one synced panel's instrument applies to all */
+  symbol: boolean;
+  /** workspace-level: changing one synced panel's timeframe applies to all */
+  interval: boolean;
 }
 
 const SYNC_KEY = "it_chart_sync";
 
-const DEFAULT_SYNC: SyncSettings = { crosshair: false, time: false };
+const DEFAULT_SYNC: SyncSettings = { crosshair: false, time: false, symbol: false, interval: false };
 
 export function loadSyncSettings(): SyncSettings {
   try {
     const raw = localStorage.getItem(SYNC_KEY);
     if (!raw) return { ...DEFAULT_SYNC };
     const p = JSON.parse(raw) as Partial<SyncSettings>;
-    return { crosshair: !!p.crosshair, time: !!p.time };
+    return { crosshair: !!p.crosshair, time: !!p.time, symbol: !!p.symbol, interval: !!p.interval };
   } catch {
     return { ...DEFAULT_SYNC };
   }
@@ -67,6 +71,8 @@ export function publishCrosshair(e: SyncCrosshairEvent): void {
   for (const cb of crosshairCbs) cb(e);
 }
 
+/** Phase 59: `from`/`to` are UTC epoch SECONDS (visible time range) — the old
+ * logical-index range mapped different timeframes/depths to different times. */
 export interface SyncRangeEvent { key: string; from: number; to: number; at: number }
 
 export function publishRange(e: SyncRangeEvent): void {

@@ -42,6 +42,7 @@ import {
 } from "@/lib/indicators";
 import {
   INDICATOR_CATALOG, newIndicatorConfig, withAlpha, type IndicatorConfig, type IndicatorType,
+  sanitizeIndicatorList,
 } from "@/lib/indicators-config";
 import {
   reorderDrawing, effectiveName, isVisibleOnTf, __sanitizeDrawingList,
@@ -209,7 +210,11 @@ function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: str
  * the last painted HA, and its time — ticks repaint the last bar without
  * corrupting the recursive anchor. */
 interface HaState { prev: { open: number; close: number }; last: { open: number; close: number } | null; lastTime: number }
-const haState: { current: HaState | null } = { current: null };
+/** Phase 59 P0 fix: ONE state PER chart instance. The old module-level
+ * singleton was shared by every PriceChart panel — two Heikin-Ashi charts in
+ * a multi-chart layout interleaved their live ticks through the SAME anchor,
+ * fabricating HA bodies from the wrong instrument's prev open/close. */
+type HaStateRef = { current: HaState | null };
 
 function haBar(prev: { open: number; close: number } | null, b: Bar) {
   const close = (b.open + b.high + b.low + b.close) / 4;
@@ -217,7 +222,7 @@ function haBar(prev: { open: number; close: number } | null, b: Bar) {
   return { time: b.time, open, close, high: Math.max(b.high, open, close), low: Math.min(b.low, open, close) };
 }
 
-function setMainData(series: MainSeriesApi, kind: MainKind, data: Bar[]): void {
+function setMainData(series: MainSeriesApi, kind: MainKind, data: Bar[], haState: HaStateRef): void {
   if (kind === "line" || kind === "area") {
     (series as ISeriesApi<"Line">).setData(data.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
   } else if (kind === "baseline") {
@@ -246,7 +251,7 @@ function setMainData(series: MainSeriesApi, kind: MainKind, data: Bar[]): void {
   }
 }
 
-function updateMain(series: MainSeriesApi, kind: MainKind, b: Bar): void {
+function updateMain(series: MainSeriesApi, kind: MainKind, b: Bar, haState: HaStateRef): void {
   if (kind === "line" || kind === "area") {
     (series as ISeriesApi<"Line">).update({ time: b.time as UTCTimestamp, value: b.close });
   } else if (kind === "baseline") {
@@ -354,6 +359,7 @@ export function PriceChart({
   const chartAreaRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<MainSeriesApi | null>(null);
+  const haStateRef = useRef<HaState | null>(null); // per-instance HA anchor (ref IS the HaStateRef)
   const mainKindRef = useRef<MainKind>("candle");
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   // bid/ask price lines (engine-consistent spread around the mid)
@@ -364,7 +370,7 @@ export function PriceChart({
   const lastMidRef = useRef<number | null>(null);
   const overlayRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const paneRef = useRef<Map<string, PaneHandle>>(new Map());
-  const lineHandlesRef = useRef<IPriceLine[]>([]);
+  const lineHandlesRef = useRef<Map<string, { handle: IPriceLine }>>(new Map()); // Phase 59: keyed for diffed updates
   const barsRef = useRef<Bar[]>([]);
   const tfSecRef = useRef(300);
   const timeIdxRef = useRef<Map<number, number>>(new Map());
@@ -412,6 +418,15 @@ export function PriceChart({
   });
   const [templates, setTemplates] = useState<DrawingTemplate[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Phase 59: synchronous mirror — ObjectTree's "Select all"/"Clear selection"
+  // loop onToggleSelect several times per tick; a render-closure read saw the
+  // SAME stale array each time, so "select all" kept only the last row.
+  const selectedIdsRef = useRef<string[]>([]);
+  const setSelectedIdsSync = useCallback((next: string[]) => {
+    selectedIdsRef.current = next;
+    setSelectedIds(next);
+    setSelectedDrawingId(next[next.length - 1] ?? null);
+  }, []);
   const [olderLoading, setOlderLoading] = useState(false);
   const copyRef = useRef<Drawing[]>([]);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
@@ -583,10 +598,12 @@ export function PriceChart({
     if (!uid) return;
     return subscribeDrawingDefaults(uid, setToolDefaultMap);
   }, [uid]);
-  const priceFormat = useMemo(
-    () => ({ type: "price" as const, precision: effDigits, minMove: Math.pow(10, -effDigits) }),
-    [effDigits],
-  );
+  // Phase 59: honor the instrument's real tick size — NAS100/SPX500 (digits 1,
+  // tickSize 0.25) used to get axis/labels stepping in 0.1
+  const priceFormat = useMemo(() => {
+    const tick = getInstrument(symbolRef.current)?.tickSize;
+    return { type: "price" as const, precision: effDigits, minMove: tick && tick > 0 ? tick : Math.pow(10, -effDigits) };
+  }, [effDigits, symbol]);
 
   // Defensive normalization: a stale/hybrid deploy or an RTDB-shaped payload can
   // hand us non-array marks/positions — a broken iterable must never black-screen
@@ -598,6 +615,17 @@ export function PriceChart({
   settingsRef.current = mergedSettings;
   const marksRef = useRef(safeMarks);
   marksRef.current = safeMarks;
+  // Phase 59 PERF: coalesce drawing-canvas redraws to one per frame — the
+  // tick path used to redraw synchronously up to twice per delivery while the
+  // redraw itself scans the full bar array
+  const redrawRafRef = useRef(0);
+  const scheduleCanvasRedraw = useCallback(() => {
+    if (redrawRafRef.current) return;
+    redrawRafRef.current = requestAnimationFrame(() => {
+      redrawRafRef.current = 0;
+      canvasRef.current?.redraw();
+    });
+  }, []);
   const positionsRef = useRef(safePositions);
   positionsRef.current = safePositions;
   const onModifyOrderRef = useRef(onModifyOrder);
@@ -790,6 +818,13 @@ export function PriceChart({
     const volume = volumeRef.current;
     try { if (volume) chart.removeSeries(volume); } catch { /* gone */ }
     try { chart.removeSeries(old); } catch { /* gone */ }
+    // Phase 59: the removed series owned the bid/ask + PDC price lines —
+    // LC keeps mutating the dead objects on applyOptions (no re-create), so
+    // the lines vanished permanently until a symbol switch. Null the refs so
+    // updateBidAsk re-creates them on the NEW series.
+    bidLineRef.current = null;
+    askLineRef.current = null;
+    pdcLineRef.current = null;
     const main = createMainSeries(chart, chartType, { upColor: settingsRef.current.upColor, downColor: settingsRef.current.downColor });
     candleRef.current = main.series;
     mainKindRef.current = main.kind;
@@ -886,6 +921,11 @@ export function PriceChart({
         // viewport anchored — no chart jump, no full reload (§5)
         const prependOlder = (older: Bar[]) => {
           if (!older.length) return;
+          // Phase 59: generation guard — a symbol/timeframe switch while the
+          // fetch is in flight must NEVER paint the previous instrument's
+          // candles onto the new chart (the chart instance deliberately
+          // survives symbol switches, so an instance check alone can't help)
+          if (symbolRef.current !== symNow || tfRef.current !== tfNow) return;
           const map = new Map<number, Bar>();
           for (const b of older) map.set(b.time, b);
           for (const b of data) map.set(b.time, b);
@@ -896,10 +936,18 @@ export function PriceChart({
           // re-fetches in a loop
           if (instNow.feed === "binance") binanceProvider.prependHistory(symNow, tfNow, older);
           else quotesPrependHistory(symNow, tfNow, older);
+          // preserve the user's zoom: shift the logical window right by the
+          // number of prepended bars (the old full-series setVisibleRange
+          // zoomed the viewport out 10-20x on EVERY prepend)
+          let saved: { from: number; to: number } | null = null;
+          try { saved = ts.getVisibleLogicalRange() as { from: number; to: number }; } catch { /* fresh chart */ }
           applyBarsToSeries("set");
-          const newFrom = barsRef.current[0].time as UTCTimestamp;
-          const oldTo = data[data.length - 1].time as UTCTimestamp;
-          try { ts.setVisibleRange({ from: newFrom, to: oldTo }); } catch { /* race — ignore */ }
+          if (saved) {
+            const added = barsRef.current.length - data.length;
+            if (added > 0) {
+              try { ts.setVisibleLogicalRange({ from: saved.from + added, to: saved.to + added }); } catch { /* race — ignore */ }
+            }
+          }
         };
         olderLoadingRef.current = true;
         setOlderLoading(true);
@@ -932,10 +980,12 @@ export function PriceChart({
     chart.subscribeCrosshairMove(onCross as any);
 
     const ro = new ResizeObserver(() => { canvasRef.current?.redraw(); });
+    // Phase 59: a pending rAF must not fire into a torn-down chart
     ro.observe(el);
     return () => {
       // order matters: kill every handle that could touch the chart AFTER remove()
       converterRef.current = null;
+      if (redrawRafRef.current) { cancelAnimationFrame(redrawRafRef.current); redrawRafRef.current = 0; }
       ro.disconnect();
       el.removeEventListener("dblclick", onDbl);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
@@ -947,7 +997,7 @@ export function PriceChart({
       candleRef.current = null;
       volumeRef.current = null;
       overlayRef.current.clear();
-      lineHandlesRef.current = [];
+      lineHandlesRef.current = new Map();
     };
     // symbol/timeframe are handled by the feed effect — the chart instance persists
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -963,13 +1013,20 @@ export function PriceChart({
     if (!chart) return;
     const onRange = (r: { from: number; to: number } | null) => {
       if (!r || isApplyingSync()) return;
-      publishRange({ key: panelKey, from: r.from, to: r.to, at: Date.now() });
+      // Phase 59: publish the visible TIME range (epoch seconds) — the old
+      // logical-index range made a 5m panel scroll a 1h panel to a completely
+      // different time window
+      try {
+        const vr = chart.timeScale().getVisibleRange();
+        if (!vr) return;
+        publishRange({ key: panelKey, from: Number(vr.from), to: Number(vr.to), at: Date.now() });
+      } catch { /* no data yet */ }
     };
     const unsubRange = chart.timeScale().subscribeVisibleLogicalRangeChange(onRange as never);
     const offRange = onSyncRange((e) => {
       if (e.key === panelKey || !loadSyncSettings().time || isApplyingSync()) return;
       markApplyingSync();
-      try { chart.timeScale().setVisibleLogicalRange({ from: e.from, to: e.to }); } catch { /* race */ }
+      try { chart.timeScale().setVisibleRange({ from: e.from as UTCTimestamp, to: e.to as UTCTimestamp }); } catch { /* race */ }
     });
     const offCross = onSyncCrosshair((e) => {
       if (e.key === panelKey || !loadSyncSettings().crosshair) return;
@@ -978,9 +1035,23 @@ export function PriceChart({
       try {
         if (e.time == null) { chart.clearCrosshairPosition(); return; }
         const t = Number(e.time);
-        const idx = timeIdxRef.current.get(t);
+        // Phase 59: snap to the NEAREST bar — a crosshair published from a 5m
+        // panel almost never lands exactly on a 1h bar's open time, so the
+        // exact-map lookup dropped the crosshair silently on cross-TF grids
+        const idx = timeIdxRef.current.get(t) ?? findBarIndex(barsRef.current, t);
         const close = idx != null ? barsRef.current[idx]?.close : undefined;
         if (close != null) chart.setCrosshairPosition(close, t as UTCTimestamp, s as never);
+        // route through the sub-panes too — they only followed LOCAL hovers
+        for (const [cfgId, pane] of paneRef.current.entries()) {
+          const vals = indValuesRef.current.get(cfgId);
+          const series = pane.series.find((x) => x);
+          if (!vals || !series) continue;
+          const arr = vals.values().next().value;
+          const v = idx != null && arr && idx < (arr as any[]).length ? (arr as any[])[idx] : null;
+          if (v != null) {
+            try { pane.chart.setCrosshairPosition(v as number, t as UTCTimestamp, series as never); } catch { /* pane race */ }
+          }
+        }
       } catch { /* teardown race */ }
     });
     return () => {
@@ -1117,7 +1188,7 @@ export function PriceChart({
     if (mode === "set") {
       (candle as ISeriesApi<"Candlestick">).applyOptions({ priceFormat: priceFormatRef.current } as any);
       applyMainTheme(candle, mainKindRef.current, settingsRef.current);
-      setMainData(candle, mainKindRef.current, data);
+      setMainData(candle, mainKindRef.current, data, haStateRef);
       // volume histogram = the visible "volume" indicator only (Phase 20)
       volume.setData(volumeVisibleRef.current ? data.map(toVolume) : []);
       // rebuild the time→index map (indicators + crosshair lookups)
@@ -1126,7 +1197,7 @@ export function PriceChart({
       timeIdxRef.current = idx;
     } else {
       const last = data[data.length - 1];
-      updateMain(candle, mainKindRef.current, last);
+      updateMain(candle, mainKindRef.current, last, haStateRef);
       if (volumeVisibleRef.current) volume.update(toVolume(last));
     }
 
@@ -1138,13 +1209,18 @@ export function PriceChart({
     const now = Date.now();
     const fresh = mode === "set" || data.length !== indLenRef.current || now - indTickRef.current >= 500;
     if (fresh) indTickRef.current = now;
+    const prevLen = indLenRef.current; // capture BEFORE overwrite (append detection)
     indLenRef.current = data.length;
     const wantedIds = new Set<string>();
+    const wantedOverlayKeys = new Set<string>();
     for (const cfg of indicatorsRef.current) {
       if (!cfg.visible) continue;
       wantedIds.add(cfg.id);
       const lastBar = data[data.length - 1];
-      const sig = `${JSON.stringify(cfg.params)}|${data.length}|${data[0]?.time}|${lastBar?.time}|${lastBar?.close}`;
+      // Phase 59: high/low in the signature — H/L-based indicators (ATR,
+      // Stochastic, Donchian, PSAR, Ichimoku…) froze intra-bar when the
+      // spike reverted to the same close
+      const sig = `${JSON.stringify(cfg.params)}|${data.length}|${data[0]?.time}|${lastBar?.time}|${lastBar?.close}|${lastBar?.high}|${lastBar?.low}`;
       const cached = indCacheRef.current.get(cfg.id);
       let values: Map<string, Point[]>;
       if (cached && (cached.sig === sig || !fresh)) {
@@ -1177,12 +1253,25 @@ export function PriceChart({
             seriesMap.set(id, s);
           }
         }
+        for (const key of keys) wantedOverlayKeys.add(`${cfg.id}:${key}`);
         for (const [key, arr] of values) {
           const s = seriesMap.get(`${cfg.id}:${key}`);
           if (!s) continue;
-          const points = seriesToLineData(data, arr);
-          if (mode === "set") s.setData(points);
-          else if (points.length) s.update(points[points.length - 1]);
+          if (mode === "set") s.setData(seriesToLineData(data, arr));
+          else if (arr.length && arr[arr.length - 1] != null) {
+            // Phase 59 PERF: build ONLY the point(s) being pushed — the old
+            // path rebuilt the full O(n) point array per series key per tick
+            // (Ichimoku = 5 keys × 20k bars ≈ 100k allocations/second/panel)
+            const mk = (i: number) => ({ time: data[i].time as UTCTimestamp, value: arr[i] });
+            // a delivery that APPENDED a bar may also revise the previous
+            // last bar's OHLC — its indicator point moved too (the recompute
+            // above already knows it; only the apply skipped it)
+            const grew = data.length > prevLen;
+            if (grew && arr.length >= 2 && arr[arr.length - 2] != null) {
+              try { s.update(mk(arr.length - 2) as any); } catch { /* ordering race — next full pass heals */ }
+            }
+            s.update(mk(arr.length - 1) as any);
+          }
         }
       }
       const pane = paneRef.current.get(cfg.id);
@@ -1202,10 +1291,27 @@ export function PriceChart({
               } as any);
             } catch { /* style race — next pass fixes it */ }
           }
-          const points = seriesToLineData(data, arr, key === "hist");
-          if (mode === "set") s.setData(points);
-          else if (points.length) s.update(points[points.length - 1]);
+          if (mode === "set") s.setData(seriesToLineData(data, arr, key === "hist"));
+          else if (arr.length && arr[arr.length - 1] != null) {
+            // Phase 59 PERF: same O(1) per-tick point build as the overlays
+            const asHist = key === "hist";
+            const mk = (i: number) => ({ time: data[i].time as UTCTimestamp, value: arr[i], ...(asHist ? { color: (arr[i] as number) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)" } : {}) });
+            const grew = data.length > prevLen;
+            if (grew && arr.length >= 2 && arr[arr.length - 2] != null) {
+              try { s.update(mk(arr.length - 2) as any); } catch { /* ordering race — next full pass heals */ }
+            }
+            s.update(mk(arr.length - 1) as any);
+          }
         }
+      }
+    }
+    // Phase 59: remove orphaned overlay series — Hide (visible:false) used to
+    // leave SMA/EMA/BB/PSAR lines drawn on the chart with only the legend
+    // entry gone (sub-panes were destroyed correctly; overlays were not)
+    for (const [key, orphan] of [...overlayRef.current]) {
+      if (!wantedOverlayKeys.has(key)) {
+        try { chartRef.current?.removeSeries(orphan); } catch { /* already gone */ }
+        overlayRef.current.delete(key);
       }
     }
     for (const k of [...indCacheRef.current.keys()]) if (!wantedIds.has(k)) indCacheRef.current.delete(k);
@@ -1262,7 +1368,7 @@ export function PriceChart({
       applyBarsToSeries("set");
       applyMarkers();
       updateLegend(null);
-      canvasRef.current?.redraw();
+      scheduleCanvasRedraw();
       setLoaded({ status: "polling", message: replayStatusRef.current ?? "Replay · historical data" });
       return;
     }
@@ -1276,7 +1382,7 @@ export function PriceChart({
         applyMarkers();
         updateLegend(null);
         updateBidAsk(bars.length ? bars[bars.length - 1].close : null);
-        canvasRef.current?.redraw();
+        scheduleCanvasRedraw();
         // Phase 19: open on a readable default window (~130 bars) instead of
         // the previous zoom state — the chart instance persists across
         // instrument/timeframe switches, so a zoomed-out M1 view carried over
@@ -1312,20 +1418,28 @@ export function PriceChart({
         void (async () => {
           try { await quotesWhenDeep(symbol, timeframe); } catch { return; }
           if (disposed) return;
+          const prevDeepLenRef = { current: barsRef.current.length };
           const deep = quotesSnapshotBars(symbol, timeframe);
           if (!deep || !deep.length || deep.length <= barsRef.current.length) return;
+          // keep the viewport the user is already looking at — the old forced
+          // 130-bar reset yanked the chart while they were scrolling/zooming
+          let savedRange: { from: number; to: number } | null = null;
+          try { savedRange = chartRef.current?.timeScale().getVisibleLogicalRange() as { from: number; to: number } ?? null; } catch { /* fresh */ }
           barsRef.current = deep;
           applyBarsToSeries("set");
           applyMarkers();
           updateLegend(null);
           updateBidAsk(deep[deep.length - 1].close);
-          canvasRef.current?.redraw();
-          try {
-            chartRef.current?.timeScale().setVisibleLogicalRange({
-              from: Math.max(0, deep.length - 130),
-              to: deep.length + 8,
-            });
-          } catch { /* keep the current viewport */ }
+          scheduleCanvasRedraw();
+          if (savedRange) {
+            try {
+              // the deep merge only PREPENDS older bars → shift the saved
+              // window right by the added count so the view stays put
+              const delta = deep.length - prevDeepLenRef.current;
+              if (delta > 0) chartRef.current?.timeScale().setVisibleLogicalRange({ from: savedRange.from + delta, to: savedRange.to + delta });
+              else chartRef.current?.timeScale().setVisibleLogicalRange(savedRange);
+            } catch { /* keep the current viewport */ }
+          }
         })();
 
         unsub = subscribeFeed(symbol, timeframe, ({ bars, lastBar }) => {
@@ -1354,11 +1468,11 @@ export function PriceChart({
               (prevLast.open !== newLast.open || prevLast.high !== newLast.high ||
                prevLast.low !== newLast.low || prevLast.close !== newLast.close ||
                prevLast.volume !== newLast.volume)) {
-              updateMain(candleRef.current!, mainKindRef.current, newLast);
+              updateMain(candleRef.current!, mainKindRef.current, newLast, haStateRef);
               if (volumeVisibleRef.current) volumeRef.current?.update(toVolume(newLast));
             }
             for (let i = prev.length; i < bars.length; i++) {
-              updateMain(candleRef.current!, mainKindRef.current, bars[i]);
+              updateMain(candleRef.current!, mainKindRef.current, bars[i], haStateRef);
               if (volumeVisibleRef.current) volumeRef.current?.update(toVolume(bars[i]));
             }
             const idx = timeIdxRef.current;
@@ -1706,14 +1820,27 @@ export function PriceChart({
   useEffect(() => {
     const candle = candleRef.current;
     if (!candle) return;
-    for (const line of lineHandlesRef.current) {
-      try { candle.removePriceLine(line); } catch { /* series gone */ }
-    }
-    lineHandlesRef.current = [];
+    // Phase 59: DIFF instead of recreate — use-trading's 10s heartbeat hands
+    // us fresh array identities for unchanged orders; the old remove-all +
+    // recreate blinked the axis labels on every heartbeat. A mark survives
+    // unless its (id, price, color, style, title) changed.
+    const keyOf = (m: any) => `${m.id ?? m.title}|${m.price}|${m.color}|${m.dashed ? "d" : "s"}|${m.title}`;
+    const want = new Map<string, any>();
     for (const m of safeMarks) {
       if (!Number.isFinite(m.price) || m.price <= 0) continue;
-      lineHandlesRef.current.push(
-        candle.createPriceLine({
+      want.set(keyOf(m), m);
+    }
+    const have = lineHandlesRef.current;
+    for (const [key, entry] of [...have.entries()]) {
+      if (!want.has(key)) {
+        try { candle.removePriceLine(entry.handle); } catch { /* series gone */ }
+        have.delete(key);
+      }
+    }
+    for (const [key, m] of want.entries()) {
+      if (have.has(key)) continue;
+      have.set(key, {
+        handle: candle.createPriceLine({
           price: m.price,
           color: m.color,
           lineWidth: 1,
@@ -1721,7 +1848,7 @@ export function PriceChart({
           axisLabelVisible: true,
           title: m.title,
         }),
-      );
+      });
     }
   }, [safeMarks, seriesEpoch]);
 
@@ -1859,8 +1986,12 @@ export function PriceChart({
   /** bulk delete — locked objects are NEVER deleted (safe & predictable) */
   const deleteManyTree = useCallback((ids: string[]) => {
     const set = new Set(ids);
+    // Phase 59: the CANONICAL delete — per-object locks are honored here and
+    // ONLY here (4 of 5 delete paths used to bypass `locked`). Selected ids
+    // clear through the sync mirror so stale closures can't resurrect them.
     commitDrawings(drawingsRef.current.filter((d) => !set.has(d.id) || d.locked || locked));
-  }, [commitDrawings, locked]);
+    setSelectedIdsSync([]);
+  }, [commitDrawings, locked, setSelectedIdsSync]);
 
   const duplicateDrawingById = useCallback((id: string) => {
     const src = drawingsRef.current.find((d) => d.id === id);
@@ -2007,7 +2138,12 @@ export function PriceChart({
     if (!el) return;
     const data = barsRef.current;
     if (!data.length) { el.innerHTML = ""; return; }
-    const idx = hoverTime != null ? (timeIdxRef.current.get(hoverTime) ?? data.length - 1) : data.length - 1;
+    // Phase 59: hover in a session gap shows the NEAREST bar (the old
+    // `?? data.length - 1` presented the last candle's OHLC as if it were
+    // under the crosshair)
+    const idx = hoverTime != null
+      ? (timeIdxRef.current.get(hoverTime) ?? findBarIndex(data, hoverTime) ?? data.length - 1)
+      : data.length - 1;
     const b = data[idx];
     const prev = data[Math.max(0, idx - 1)];
     const chg = prev ? ((b.close - prev.close) / prev.close) * 100 : 0;
@@ -2019,9 +2155,11 @@ export function PriceChart({
     // D1/W1/MN candles start at a day boundary — a HH:MM stamp is noise there
     // (TradingView shows the date only for daily+ bars)
     const tfSec2 = TF_SECONDS[timeframeRef.current] ?? 60;
+    // honor the per-instrument timezone override — the axis/crosshair already
+    // do (fmtDM/fmtHM); legend and axis must agree on the same candle
     const stamp = tfSec2 >= 86400
-      ? `${hh(ts2.getDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getMonth()]}${tfSec2 >= 2592000 ? ` ${ts2.getFullYear()}` : ""}`
-      : `${hh(ts2.getDate())} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts2.getMonth()]} ${hh(ts2.getHours())}:${hh(ts2.getMinutes())}`;
+      ? fmtDM(ts2) + (tfSec2 >= 2592000 ? ` ${fmtMY(ts2).split(" ")[1]}` : "")
+      : `${fmtDM(ts2)} ${fmtHM(ts2)}`;
     const instL2 = getInstrument(symbolRef.current);
     let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> <span class="text-slate-400">— ${instL2?.name ?? ""}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span> <span class="text-slate-500 font-number">${stamp}</span>`;
     if (b.volume) html += ` <span class="text-slate-500">Vol</span> <span class="font-number text-slate-400">${compactNum(b.volume)}</span>`;
@@ -2211,7 +2349,14 @@ export function PriceChart({
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const map: Record<string, DrawingType> = { t: "trend", h: "hline", v: "vline", r: "rect", f: "fib-retracement", x: "text", p: "channel", e: "fib-extension", i: "extended", m: "measure" };
       const k = map[e.key.toLowerCase()];
-      if (k) { setActiveTool(k); e.preventDefault(); }
+      if (k) {
+        setActiveTool(k);
+        e.preventDefault();
+        // Phase 59: CONSUME the event — TerminalPage's dispatcher is another
+        // listener on the SAME window node, so stopPropagation alone can't
+        // stop it; bare "t" armed the trend tool AND toggled the order ticket
+        e.stopImmediatePropagation();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -2249,8 +2394,12 @@ export function PriceChart({
   const applyLayout = useCallback((snap: LayoutSnapshot) => {
     onSymbolChange(snap.symbol);
     onTimeframeChange(snap.timeframe as Timeframe);
-    setIndicators(snap.indicators ?? []);
-    if (uid) saveIndicators(uid, snap.symbol, snap.indicators ?? []);
+    // Phase 59: RTDB layouts are user-editable data — an unknown indicator
+    // type used to throw at render (INDICATOR_CATALOG[...].pane) and brick
+    // the whole chart. Sanitize like every other snapshot path.
+    const layoutIndicators = sanitizeIndicatorList(snap.indicators ?? []);
+    setIndicators(layoutIndicators);
+    if (uid) saveIndicators(uid, snap.symbol, layoutIndicators);
     if (snap.settings) setSettings(applyGridDefaultOff({ ...DEFAULT_SETTINGS, ...(snap.settings as unknown as Partial<ChartSettings>) }));
   }, [onSymbolChange, onTimeframeChange, uid]);
 
@@ -2314,13 +2463,11 @@ export function PriceChart({
           hasSelected={!!selectedDrawingId || selectedIds.length > 0}
           onDeleteSelected={() => {
             // P38 §3 — toolbar Delete for the SELECTED drawing (mouse-first;
-            // the keyboard Delete path already existed)
+            // the keyboard Delete path already existed). Phase 59: routed
+            // through the canonical locked-aware delete.
             const ids = selectedIds.length ? selectedIds : (selectedDrawingId ? [selectedDrawingId] : []);
             if (!ids.length) return;
-            const drop = new Set(ids);
-            commitDrawings(drawingsRef.current.filter((d) => !drop.has(d.id)));
-            setSelectedIds([]);
-            setSelectedDrawingId(null);
+            deleteManyTree(ids);
           }}
           onDeleteAll={() => {
             if (!drawingsRef.current.length) return;
@@ -2363,12 +2510,8 @@ export function PriceChart({
             commitDrawings([...kept, ...added]);
           }}
           selectedIds={selectedIds}
-          onSelectIds={(ids) => { setSelectedIds(ids); setSelectedDrawingId(ids[ids.length - 1] ?? null); }}
-          onDeleteMany={(ids) => {
-            const drop = new Set(ids);
-            commitDrawings(drawingsRef.current.filter((d) => !drop.has(d.id)));
-            setSelectedIds([]);
-          }}
+          onSelectIds={(ids) => setSelectedIdsSync(ids)}
+          onDeleteMany={(ids) => deleteManyTree(ids)}
           activeTool={activeTool === "cursor" ? null : activeTool}
           // Phase 31: TradingView behaviour — after a drawing commits the
           // tool ALWAYS returns to the cursor; hold Shift while committing to
@@ -2383,7 +2526,7 @@ export function PriceChart({
           })}
           selectedId={selectedDrawingId}
           onSelect={(id) => { setSelectedDrawingId(id); setSelectedIds([]); }}
-          onDelete={(id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id))}
+          onDelete={(id) => deleteManyTree([id])}
           onEdit={(id) => setEditingDrawing(drawingsRef.current.find((d) => d.id === id) ?? null)}
           onContextMenu={(clientX, clientY, hitId) => {
             const conv = converterRef.current;
@@ -2515,11 +2658,13 @@ export function PriceChart({
                 commitDrawings([...drawingsRef.current, copy]);
                 setSelectedDrawingId(copy.id);
               }}
-              onDelete={() => { commitDrawings(drawingsRef.current.filter((d) => d.id !== sel.id)); setSelectedDrawingId(null); setSelectedIds([]); }}
+              onDelete={() => deleteManyTree([sel.id])}
               onEditText={() => {
-                const text = window.prompt("Text", sel.text || "") ?? "";
-                if (!text.trim()) return;
-                commitDrawings(drawingsRef.current.map((d) => (d.id === sel.id ? { ...d, text: text.trim().slice(0, 200) } : d)));
+                // Phase 59: open the in-app properties dialog (it carries the
+                // text editor) — the blocking window.prompt was the last
+                // leftover of a flow Phase 27 removed at creation time
+                const cur = drawingsRef.current.find((d) => d.id === sel.id);
+                if (cur) setEditingDrawing(cur);
               }}
             />
           );
@@ -2554,11 +2699,11 @@ export function PriceChart({
             groups={groups}
             onSelect={(id) => { setSelectedDrawingId(id); setSelectedIds([]); }}
             onToggleSelect={(id) => {
-              const cur = new Set(selectedIds);
+              // Phase 59: read through the synchronous ref mirror — this
+              // handler is called in a LOOP by Select-all/Clear-selection
+              const cur = new Set(selectedIdsRef.current);
               if (cur.has(id)) cur.delete(id); else cur.add(id);
-              const next = [...cur];
-              setSelectedIds(next);
-              setSelectedDrawingId(next[next.length - 1] ?? null);
+              setSelectedIdsSync([...cur]);
             }}
             onLocate={locateDrawing}
             onRename={(id, name) => patchDrawing(id, { name: name.trim().slice(0, 60) || undefined })}
@@ -2769,7 +2914,7 @@ export function PriceChart({
         actions={{
           addHLine: addHLineAt,
           addText: addTextAt,
-          deleteDrawing: (id) => commitDrawings(drawingsRef.current.filter((d) => d.id !== id)),
+          deleteDrawing: (id) => deleteManyTree([id]), // locked-aware canonical delete
           duplicateDrawing: duplicateDrawingById,
           toggleHide: toggleDrawingHidden,
           clearDrawings: () => { commitDrawings([]); if (uid) clearDrawingsRemote(uid, symbolRef.current); },

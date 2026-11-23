@@ -45,13 +45,13 @@ function dedupSort(bars: Bar[]): Bar[] {
  * Same-time ticks update the last element IN PLACE (no copy, no sort) — the
  * old copy+sort per tick was O(n log n) of main-thread work per chart.
  */
-function upsert(bars: Bar[], bar: Bar): Bar[] {
+function upsert(bars: Bar[], bar: Bar, maxBars = 6000): Bar[] {
   // canonical hot-path implementation (shared/candle-core.ts, unit-tested):
   // same-bucket in-place update · append on timeframe close · safe out-of-order insert
   return upsertBar(bars, bar, {
     onDuplicate: () => statsState.duplicateBars++,
     onOutOfOrder: () => statsState.outOfOrderTicks++,
-  }) as Bar[];
+  }, maxBars) as Bar[];
 }
 
 /**
@@ -85,6 +85,8 @@ class BinanceProvider {
   private wsWorks = false; // current endpoint delivered at least one frame
   private backoff = 1000;
   private lastMsgAt = 0;
+  // Phase 59: per-key freshness stamps (combined socket serves many streams)
+  private lastMsgAtByKey = new Map<string, number>();
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private polls = new Map<string, ReturnType<typeof setInterval>>();
@@ -96,11 +98,15 @@ class BinanceProvider {
     const key = `${symbol}:${tf}`;
     // short-lived fresh cache — instant timeframe switching / remounts
     const fresh = this.history.get(key);
-    if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) return fresh;
+    // Phase 59: deliver a COPY. The cached array is the same object upsertBar
+    // mutates in place — when the chart received the raw reference, its
+    // "same array" aliasing detection silently disabled the pureAppend fast
+    // path (timeIdx upkeep + prev-bar revision repaints) for Binance charts.
+    if (fresh && Date.now() - (this.loadedAt.get(key) ?? 0) < 15000) return fresh.slice();
     const bars = await this.fetchRecent(symbol, tf, 1000);
     this.history.set(key, bars);
     this.loadedAt.set(key, Date.now());
-    return bars;
+    return bars.slice();
   }
 
   /**
@@ -208,14 +214,24 @@ class BinanceProvider {
   private async resync(key: string, isRealtime = true) {
     const m = this.meta.get(key);
     if (!m || !this.listeners.get(key)?.size) return;
-    const recentRaw = await this.fetchRecent(m.symbol, m.tf, 2);
+    // Phase 59: fetch enough klines to cover the actual outage gap. The old
+    // hardcoded "last 2 klines" made any disruption longer than 2 candle
+    // periods (background-tab throttle, NAT blip, endpoint failover) a
+    // PERMANENT hole — the missing candles were never fetched again.
+    const existing = this.history.get(key) || [];
+    const step = TF_SECONDS[m.tf] ?? 60;
+    const lastT = existing.length ? existing[existing.length - 1].time : 0;
+    const missed = lastT
+      ? Math.min(300, Math.max(2, Math.ceil((Date.now() / 1000 - lastT) / step) + 1))
+      : 2;
+    const recentRaw = await this.fetchRecent(m.symbol, m.tf, missed);
     if (!recentRaw.length) return;
     let bars = this.history.get(key) || [];
     let changed = false;
     for (const b of recentRaw) {
       const prev = bars.find((x) => x.time === b.time);
       if (!prev || prev.close !== b.close || prev.high !== b.high || prev.low !== b.low || prev.volume !== b.volume) changed = true;
-      bars = upsert(bars, b);
+      bars = upsert(bars, b, 20000);
     }
     if (!changed) return;
     this.history.set(key, bars);
@@ -248,7 +264,11 @@ class BinanceProvider {
     // poll upserts the last 2 klines and keeps the candle moving.
     if (!this.polls.has(key)) {
       this.polls.set(key, setInterval(() => {
-        if (this.history.get(key)?.length && Date.now() - this.lastMsgAt < 5000) return;
+        // per-key freshness: `lastMsgAt` is global — with one dead stream and
+        // several live ones on the combined socket the dead key could never
+        // REST-resync. Track the last frame seen for THIS stream's key.
+        const lastForKey = this.lastMsgAtByKey.get(key) ?? this.lastMsgAt;
+        if (this.history.get(key)?.length && Date.now() - lastForKey < 5000) return;
         void this.resync(key, false).catch(() => { /* transient — next tick retries */ });
       }, 2000));
     }
@@ -321,11 +341,15 @@ class BinanceProvider {
           ? this.streamToKey.get(payload.stream)
           : (this.streamToKey.size === 1 ? [...this.streamToKey.values()][0] : undefined);
         if (!key) return;
+        this.lastMsgAtByKey.set(key, Date.now()); // per-key freshness (dead-stream detection)
         const bar: Bar = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v, takerBuy: k.V != null ? +k.V : undefined };
         const chk = checkBar(bar);
         if (!chk.ok) { statsState.invalidBars++; return; } // corrupted frame — never reach the chart
         if (chk.repaired) { statsState.repairedBars++; bar.high = Math.max(bar.high, bar.open, bar.close); bar.low = Math.min(bar.low, bar.open, bar.close); }
-        const bars = upsert(this.history.get(key) || [], bar);
+        // Phase 59: 20000-bar live cap (was 6000) — at 6000 the very next WS
+        // frame spliced out freshly prepended scroll-back candles (they
+        // appeared then vanished ~1s later on every deep-scroll attempt)
+        const bars = upsert(this.history.get(key) || [], bar, 20000);
         this.history.set(key, bars);
         this.loadedAt.set(key, Date.now());
         markTick();
@@ -453,7 +477,7 @@ class QuotesProvider {
   private source = new Map<string, string>(); // "yahoo" | "stooq" — surfaced in the feed message
   // P49 §1 — per-subscription live-tail recovery timestamps (event-driven catch-up)
   private lastSpotCatchupAt = new Map<string, number>();
-  private spotOffs = new Map<string, () => void>(); // per-key unsubscribe from the shared spot ticker
+  private spotOffs = new Map<string, (() => void)[]>(); // per-key unsubscribes from the shared spot ticker
   private spotProviderBars = new Map<string, number>(); // code → Twelve Data backfill bars
   private identity = new Map<string, string>(); // "spot" | "futures" — what the response actually represented
   // Phase 24 D3: scroll-back extensions kept SEPARATELY and re-merged into
@@ -468,7 +492,10 @@ class QuotesProvider {
     for (const b of this.extended.get(key) || []) map.set(b.time, b);
     for (const b of this.history.get(key) || []) map.set(b.time, b); // live series wins on overlap
     for (const b of older) { if (!map.has(b.time)) map.set(b.time, b); }
-    const merged = [...map.values()].sort((a, b) => a.time - b.time);
+    let merged = [...map.values()].sort((a, b) => a.time - b.time);
+    // Phase 59: bound the extension store (was unbounded for the whole
+    // session — every panned symbol:tf kept its full older-history copy)
+    if (merged.length > 20000) merged = merged.slice(merged.length - 20000);
     this.extended.set(key, merged);
     // extended also seeds history directly so reads between polls see it
     this.history.set(key, merged);
@@ -554,7 +581,20 @@ class QuotesProvider {
     // The old TF_SECONDS[tf]/TF_SECONDS[agg] ratio only happens to be minutes
     // for the 1m base: from the 1h base it passed 2/4 "minutes" → 2- and
     // 4-MINUTE buckets → the 2h and 4h charts actually rendered 1h candles.
-    if (agg) bars = aggregateBars(bars, TF_SECONDS[tf] / 60);
+    if (agg) {
+      // Phase 59: session-anchored folds for session-stamped bases. Yahoo's
+      // hourly index bars (^NDX/^DJI/^GSPC) are stamped at the US session
+      // open (13:30/14:30 UTC, DST-dependent) — a plain epoch floor put
+      // 13:30–15:59 data into the "12:00" H2 candle and split sessions
+      // mid-hour. Align the bucket grid to the FIRST bar of the base series
+      // (UTC-aligned feeds yield offset 0 → identical behavior as before).
+      const baseSec = TF_SECONDS[agg as Timeframe];
+      const targetSec = TF_SECONDS[tf];
+      const anchorSec = inst.assetClass === "index" && baseSec && targetSec > baseSec && bars.length
+        ? bars[0].time % targetSec
+        : undefined;
+      bars = aggregateBars(bars, targetSec / 60, anchorSec);
+    }
     bars = dedupSort(bars);
     const merged = this.mergeExtended(key, bars); // Phase 24 D3: scroll-back survives the 2s poll
     this.history.set(key, merged);
@@ -689,7 +729,12 @@ class QuotesProvider {
           }
         }
       });
-      this.spotOffs.set(key, offSpot);
+      // multiple subscribers of the same key may each register a tick handler
+      // (spotTickerOn dedupes the underlying 1s poll per code) — keep ALL the
+      // handles so one unsubscribe cannot orphan the others
+      const offs = this.spotOffs.get(key) ?? [];
+      offs.push(offSpot);
+      this.spotOffs.set(key, offs);
 
       // slow resync of the recorded history (other devices' observations merge
       // in). P49 §1: 180 s → 30 s — with the event-driven catch-up above this
@@ -711,13 +756,24 @@ class QuotesProvider {
       else clearInterval(spotResync); // duplicate subscribe — drop the extra handle
     }
     return () => {
-      const timer = this.timers.get(key);
-      if (timer) clearInterval(timer);
-      this.timers.delete(key);
-      this.spotOffs.get(key)?.();
-      this.spotOffs.delete(key);
-      if (spotResync) { clearInterval(spotResync); this.timers.delete(`${key}:rec`); }
-      this.listeners.get(key)?.delete(cb);
+      // Phase 59: refcounted teardown — the shared 2s/10s poll, the spot
+      // ticker and the recorded-history resync serve EVERY subscriber of the
+      // same symbol:tf (multi-chart grids, the alerts engine). The old
+      // unconditional teardown let the FIRST panel that switched symbols or
+      // unmounted freeze every other subscriber's feed. Only the LAST
+      // unsubscribe tears the shared machinery down.
+      const set = this.listeners.get(key);
+      set?.delete(cb);
+      if (set && set.size === 0) {
+        const timer = this.timers.get(key);
+        if (timer) clearInterval(timer);
+        this.timers.delete(key);
+        const offs = this.spotOffs.get(key);
+        if (offs) for (const off of offs) { try { off(); } catch { /* already dead */ } }
+        this.spotOffs.delete(key);
+        if (spotResync) { clearInterval(spotResync); this.timers.delete(`${key}:rec`); }
+        this.forgetExtended(key); // memory bound on scroll-back extensions
+      }
     };
   }
 
@@ -1047,6 +1103,7 @@ const spotTicker = new Map<string, {
   timer: ReturnType<typeof setInterval> | null;
   inflight: boolean;
   fails: number;
+  lastFailAt?: number;
   lastPrice: number;
   lastChangeAt: number;
   intervals: number[];
@@ -1062,6 +1119,9 @@ function spotTickerOn(code: string, key: string, handler: SpotHandler): () => vo
   if (!e.timer) {
     void spotPoll(code); // immediate first observation
     e.timer = setInterval(() => void spotPoll(code), 1000);
+    // Phase 59: the 1s cadence is fixed — backoff instead is applied INSIDE
+    // spotPoll by skipping ticks while the endpoint is down (e.fails grows,
+    // tick interval stays stable for the healthy case)
   }
   return () => {
     const cur = spotTicker.get(code);
@@ -1075,6 +1135,14 @@ function spotTickerOn(code: string, key: string, handler: SpotHandler): () => vo
 async function spotPoll(code: string): Promise<void> {
   const e = spotTicker.get(code);
   if (!e || e.inflight) return;
+  // Phase 59: exponential backoff while the endpoint is down — the old fixed
+  // 1s retry fired 86,400 requests/day against a dead host. Healthy service
+  // (fails === 0) keeps the honest 1s cadence; failures stretch to 30s max.
+  if (e.fails > 0) {
+    const backoffMs = Math.min(30000, 1000 * Math.pow(2, Math.min(5, e.fails)));
+    const sinceFail = Date.now() - (e.lastFailAt ?? 0);
+    if (sinceFail < backoffMs) return;
+  }
   e.inflight = true;
   try {
     const controller = new AbortController();
@@ -1116,6 +1184,7 @@ async function spotPoll(code: string): Promise<void> {
     for (const h of e.handlers.values()) h(price, providerAt);
   } catch {
     e.fails += 1;
+    e.lastFailAt = Date.now(); // Phase 59: backoff clock starts at the failure
     if (e.fails >= 5) setSpotState({ state: "disconnected", lastTickAt: getSpotState().lastTickAt, providerDelaySec: null });
   } finally {
     e.inflight = false;

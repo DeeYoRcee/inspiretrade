@@ -244,12 +244,34 @@ export function mergeFxStoreDaily(
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
-export function aggregateBars(bars: Bar[], factorMinutes: number): Bar[] {
+/**
+ * Phase 59 — bucket alignment helper. Weekly bars MUST anchor to Monday and
+ * monthly bars to the 1st of the UTC calendar month (the plain epoch floor
+ * anchors weeks to Thursday — epoch 0 — and months to a drifting 30-day
+ * grid). `anchorSec` (Phase 59) optionally aligns the bucket grid to a
+ * session boundary instead of the epoch: Yahoo's hourly index bars are
+ * stamped at the US session open (13:30/14:30 UTC), so 2h/4h folds without
+ * an anchor split the session mid-hour and put the wrong bars in H2/H4.
+ */
+function foldBucket(time: number, bucket: number, anchorSec?: number): number {
+  if (bucket === 604800) {
+    const MONDAY_ANCHOR = 345600;
+    return Math.floor((time - MONDAY_ANCHOR) / bucket) * bucket + MONDAY_ANCHOR;
+  }
+  if (bucket === 2592000) {
+    const d = new Date(time * 1000);
+    return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000);
+  }
+  if (anchorSec != null) return Math.floor((time - anchorSec) / bucket) * bucket + anchorSec;
+  return Math.floor(time / bucket) * bucket;
+}
+
+export function aggregateBars(bars: Bar[], factorMinutes: number, anchorSec?: number): Bar[] {
   const bucket = factorMinutes * 60;
   const out: Bar[] = [];
   let cur: Bar | null = null;
   for (const b of bars) {
-    const t = Math.floor(b.time / bucket) * bucket;
+    const t = foldBucket(b.time, bucket, anchorSec);
     if (!cur || cur.time !== t) {
       if (cur) out.push(cur);
       cur = { time: t, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume ?? 0 };

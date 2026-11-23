@@ -21,6 +21,8 @@ import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import type { ServerOrder, ServerPosition } from "@/lib/trading-api";
 import { LAYOUTS, LAYOUT_ORDER, dividers, gridStyle, normWeights, pointerPct, pointerPctY, resizePair, type DividerSeg, type LayoutId } from "@/lib/chart-layouts";
 import { loadLastActive, saveLastActive } from "@/lib/workspace-presets";
+import { loadSyncSettings, saveSyncSettings, type SyncSettings } from "@/lib/chart-sync";
+import { Crosshair, Link2, Clock, Tag } from "lucide-react";
 import type { ChartType } from "@/lib/chart-types";
 import type { Timeframe } from "@shared/terminal";
 import { cn } from "@/lib/utils";
@@ -106,6 +108,22 @@ export function MultiChartWorkspace({
   const gridRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; axis: "c" | "r"; idx: number; base: number[] } | null>(null);
 
+  // ---- Phase 59: the P48 sync feature shipped WITHOUT any UI — the bus was
+  // permanently off. Toggles for crosshair / time / symbol / interval.
+  const [sync, setSync] = useState<SyncSettings>(() => loadSyncSettings());
+  useEffect(() => {
+    const on = () => setSync(loadSyncSettings());
+    window.addEventListener("it_chart_sync_changed", on);
+    return () => window.removeEventListener("it_chart_sync_changed", on);
+  }, []);
+  const toggleSync = useCallback((k: keyof SyncSettings) => {
+    setSync((cur) => {
+      const next = { ...cur, [k]: !cur[k] };
+      saveSyncSettings(next);
+      return next;
+    });
+  }, []);
+
   // initialize extra panels + restore the last-active workspace (P48 §4)
   useEffect(() => {
     void (async () => {
@@ -149,21 +167,32 @@ export function MultiChartWorkspace({
   }, [layout, symbol, timeframe, panels, colW, rowH]);
 
   const setPanelSymbol = useCallback((i: number, s: string) => {
-    if (i === 0) onSymbolChange(s);
-    else setPanels((prev) => {
+    if (i === 0) {
+      onSymbolChange(s);
+      // symbol sync: the primary change cascades to every workspace panel
+      if (loadSyncSettings().symbol) setPanels((prev) => prev.map((p) => ({ ...p, symbol: s })));
+      return;
+    }
+    setPanels((prev) => {
       const next = [...prev];
       if (next[i - 1]) next[i - 1] = { ...next[i - 1], symbol: s };
       return next;
     });
+    if (loadSyncSettings().symbol) onSymbolChange(s); // panel change → primary too
   }, [onSymbolChange]);
 
   const setPanelTimeframe = useCallback((i: number, tf: Timeframe) => {
-    if (i === 0) { onTimeframeChange(tf); return; }
+    if (i === 0) {
+      onTimeframeChange(tf);
+      if (loadSyncSettings().interval) setPanels((prev) => prev.map((p) => ({ ...p, timeframe: tf })));
+      return;
+    }
     setPanels((prev) => {
       const next = [...prev];
       if (next[i - 1]) next[i - 1] = { ...next[i - 1], timeframe: tf };
       return next;
     });
+    if (loadSyncSettings().interval) onTimeframeChange(tf);
   }, [onTimeframeChange]);
 
   const setPanelType = useCallback((i: number, t: ChartType) => {
@@ -264,8 +293,36 @@ export function MultiChartWorkspace({
     );
   };
 
+  const SYNC_TOGGLES: Array<[keyof SyncSettings, string, typeof Crosshair]> = [
+    ["crosshair", "Crosshair", Crosshair],
+    ["time", "Time range", Clock],
+    ["symbol", "Symbol", Tag],
+    ["interval", "Interval", Link2],
+  ];
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
+      {/* Phase 59: cross-chart sync toggles (P48 Part 3 finally has UI) */}
+      {!narrow && def.panels > 1 && (
+        <div className="flex h-7 shrink-0 items-center justify-end gap-1.5 border-b border-slate-800/70 bg-slate-950/50 px-2">
+          <span className="mr-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">Sync</span>
+          {SYNC_TOGGLES.map(([k, label, Icon]) => (
+            <button
+              key={k}
+              onClick={() => toggleSync(k)}
+              title={`${label} sync across panels`}
+              className={cn(
+                "inline-flex h-5 items-center gap-1 rounded-full border px-2 text-[10px] font-semibold transition-colors",
+                sync[k]
+                  ? "border-sky-400/60 bg-sky-400/15 text-sky-300"
+                  : "border-slate-700/70 bg-slate-900/60 text-slate-500 hover:text-slate-300",
+              )}
+            >
+              <Icon className="h-2.5 w-2.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       {/* mobile: tab bar + one panel (never tiny unreadable charts, P48 §7) */}
       {narrow && def.panels > 1 && (
         <div className="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-slate-800 bg-slate-950/60 px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
