@@ -49,8 +49,8 @@ const clampPct = (v: unknown, lo: number, hi: number): number | null => {
 /** Sanitize an admin-supplied challenge template (all inputs untrusted). */
 export function sanitizeChallengeType(raw: any): Omit<ChallengeTypeInfo, "id" | "createdAt" | "updatedAt"> {
   const size = Math.round(Number(raw.size));
-  if (!Number.isFinite(size) || ![5000, 10000, 25000, 50000, 100000].includes(size)) {
-    throw new HttpError(400, "BAD_SIZE", "Account size must be one of $5,000 / $10,000 / $25,000 / $50,000 / $100,000");
+  if (!Number.isFinite(size) || ![5000, 10000, 25000, 50000, 100000, 200000].includes(size)) {
+    throw new HttpError(400, "BAD_SIZE", "Account size must be one of $5,000 / $10,000 / $25,000 / $50,000 / $100,000 / $200,000");
   }
   const name = String(raw.name || "").trim().slice(0, 60);
   if (name.length < 2) throw new HttpError(400, "BAD_NAME", "Challenge name must be at least 2 characters");

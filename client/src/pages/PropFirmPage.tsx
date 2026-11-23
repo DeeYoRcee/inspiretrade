@@ -36,7 +36,7 @@ type Phase6Type = {
 
 // Fallback shown to signed-out visitors — real formats come from the server
 // (admin-configured challenge types) once authenticated.
-const DEMO_TYPES: Phase6Type[] = [5000, 10000, 25000, 50000, 100000].map((size) => ({
+const DEMO_TYPES: Phase6Type[] = [5000, 10000, 25000, 50000, 100000, 200000].map((size) => ({
   id: `demo-${size}`,
   name: `${size / 1000}K Challenge`,
   size,

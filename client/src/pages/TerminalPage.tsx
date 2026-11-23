@@ -24,7 +24,8 @@ import { useReplay } from "@/hooks/use-replay";
 import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
 import { TradingPanel } from "@/components/terminal/TradingPanel";
 import { TradingBlotter } from "@/components/terminal/TradingBlotter";
-import { Watchlist, MarketInfoPanel } from "@/components/terminal/Watchlist";
+import { Watchlist } from "@/components/terminal/Watchlist";
+import { MarketInfoPanel } from "@/components/terminal/MarketInfoPanel";
 import { TerminalShell, type ShellPanel } from "@/components/terminal/TerminalShell";
 import AlertsPanel from "@/components/terminal/AlertsPanel";
 import { NewAccountDialog } from "@/components/terminal/NewAccountDialog";
@@ -48,7 +49,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
 import { InstrumentSettingsPanel } from "@/components/terminal/InstrumentSettingsPanel";
-import { MultiChartWorkspace } from "@/components/terminal/MultiChartWorkspace";
+import { MultiChartWorkspace, LayoutPicker } from "@/components/terminal/MultiChartWorkspace";
+import type { LayoutId } from "@/lib/chart-layouts";
 import { loadShortcuts, matchesShortcut } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
@@ -87,10 +89,17 @@ export default function TerminalPage() {
   const [newAccountOpen, setNewAccountOpen] = useState(false);
   const [mode, setMode] = useState<TerminalMode>((() => { const saved = localStorage.getItem(MODE_KEY) as TerminalMode | null; return saved && MODES.some((mm) => mm.id === saved) ? saved : "live"; })());
   // right rail panel (watchlist / ticket / alerts / info) — persisted
-  const [rightPanel, setRightPanel] = useState<ShellPanel>(() => {
-    const v = localStorage.getItem(PANEL_KEY);
-    return v === "watchlist" || v === "ticket" || v === "alerts" || v === "info" ? v : "ticket";
+  // P56 UX — the 6-layout grid picker now lives in the events strip; the
+  // workspace owns the same state through layout/onLayoutChange
+  const [mcLayout, setMcLayout] = useState<LayoutId>(() => {
+    try { const v = localStorage.getItem("it_mc_layout") as LayoutId | null; if (v) return v; } catch { /* ignore */ }
+    return "1";
   });
+  useEffect(() => { try { localStorage.setItem("it_mc_layout", mcLayout); } catch { /* ignore */ } }, [mcLayout]);
+
+  // user request: the terminal ALWAYS opens with no watchlist/ticket panel
+  // open (the reference screenshot state); the rail is one click away
+  const [rightPanel, setRightPanel] = useState<ShellPanel>(null);
   const selectPanel = (p: ShellPanel) => {
     setRightPanel(p);
     try { if (p) localStorage.setItem(PANEL_KEY, p); else localStorage.removeItem(PANEL_KEY); } catch { /* private mode */ }
@@ -275,7 +284,7 @@ export default function TerminalPage() {
         onNewAccount={() => setNewAccountOpen(true)}
       />
       {/* Phase 5 event strip: upcoming high-impact releases + relevant news */}
-      <EventStrip symbol={chartSymbol} onOpenCalendar={() => setMode("calendar")} />
+      <EventStrip symbol={chartSymbol} rightSlot={<LayoutPicker layout={mcLayout} onChange={setMcLayout} />} />
 
       {mode === "live" ? (
         <TerminalShell
@@ -296,7 +305,7 @@ export default function TerminalPage() {
               : rightPanel === "info" ? (
                 <div className="h-full w-full overflow-y-auto">
                   <p className="border-b border-slate-800 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">Instrument details</p>
-                  <MarketInfoPanel symbol={symbol} />
+                  <MarketInfoPanel symbol={symbol} timeframe={timeframe} />
                 </div>
               )
               : null
@@ -322,6 +331,8 @@ export default function TerminalPage() {
                 accountBalance={metrics?.balance ?? null}
                 onOpenAlerts={() => selectPanel("alerts")}
                 onOpenReplay={() => setMode("replay")}
+                layout={mcLayout}
+                onLayoutChange={setMcLayout}
               />
             </div>
           }

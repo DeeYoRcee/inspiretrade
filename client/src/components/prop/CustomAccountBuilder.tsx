@@ -26,11 +26,11 @@ import { cn } from "@/lib/utils";
 import { CHALLENGES_ENABLED } from "@shared/roles";
 
 /** Server clamps startingBalance to 5,000…5,000,000 (store.createAccount). */
-const SIZE_STOPS = [5000, 10000, 25000, 50000, 100000];
+const SIZE_STOPS = [5000, 10000, 25000, 50000, 100000, 200000];
 
 /** PLACEHOLDER — replace with the owner's real price list. */
 const BASE_PRICE: Record<number, number> = {
-  5000: 29, 10000: 49, 25000: 89, 50000: 149, 100000: 249,
+  5000: 29, 10000: 49, 25000: 89, 50000: 149, 100000: 249, 200000: 449,
 };
 
 /** Server-allowed leverages (ALLOWED_LEVERAGES in trading/store.ts). */
