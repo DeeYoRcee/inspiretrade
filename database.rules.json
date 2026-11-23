@@ -293,6 +293,12 @@
     ".write": "$uid === auth.uid"
    }
   },
+  "musicPrefs": {
+   "$uid": {
+    ".read": "$uid === auth.uid",
+    ".write": "$uid === auth.uid"
+   }
+  },
   "terminalAlerts": {
    "$uid": {
     ".read": "$uid === auth.uid",

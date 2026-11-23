@@ -728,11 +728,11 @@ var require_bn = __commonJS({
         }
       } catch (e) {
       }
-      BN.isBN = function isBN(num) {
-        if (num instanceof BN) {
+      BN.isBN = function isBN(num2) {
+        if (num2 instanceof BN) {
           return true;
         }
-        return num !== null && typeof num === "object" && num.constructor.wordSize === BN.wordSize && Array.isArray(num.words);
+        return num2 !== null && typeof num2 === "object" && num2.constructor.wordSize === BN.wordSize && Array.isArray(num2.words);
       };
       BN.max = function max(left, right) {
         if (left.cmp(right) > 0) return left;
@@ -1253,12 +1253,12 @@ var require_bn = __commonJS({
         var hi = this._countBits(w);
         return (this.length - 1) * 26 + hi;
       };
-      function toBitArray(num) {
-        var w = new Array(num.bitLength());
+      function toBitArray(num2) {
+        var w = new Array(num2.bitLength());
         for (var bit = 0; bit < w.length; bit++) {
           var off = bit / 26 | 0;
           var wbit = bit % 26;
-          w[bit] = (num.words[off] & 1 << wbit) >>> wbit;
+          w[bit] = (num2.words[off] & 1 << wbit) >>> wbit;
         }
         return w;
       }
@@ -1299,60 +1299,60 @@ var require_bn = __commonJS({
         }
         return this;
       };
-      BN.prototype.iuor = function iuor(num) {
-        while (this.length < num.length) {
+      BN.prototype.iuor = function iuor(num2) {
+        while (this.length < num2.length) {
           this.words[this.length++] = 0;
         }
-        for (var i = 0; i < num.length; i++) {
-          this.words[i] = this.words[i] | num.words[i];
+        for (var i = 0; i < num2.length; i++) {
+          this.words[i] = this.words[i] | num2.words[i];
         }
         return this.strip();
       };
-      BN.prototype.ior = function ior(num) {
-        assert2((this.negative | num.negative) === 0);
-        return this.iuor(num);
+      BN.prototype.ior = function ior(num2) {
+        assert2((this.negative | num2.negative) === 0);
+        return this.iuor(num2);
       };
-      BN.prototype.or = function or(num) {
-        if (this.length > num.length) return this.clone().ior(num);
-        return num.clone().ior(this);
+      BN.prototype.or = function or(num2) {
+        if (this.length > num2.length) return this.clone().ior(num2);
+        return num2.clone().ior(this);
       };
-      BN.prototype.uor = function uor(num) {
-        if (this.length > num.length) return this.clone().iuor(num);
-        return num.clone().iuor(this);
+      BN.prototype.uor = function uor(num2) {
+        if (this.length > num2.length) return this.clone().iuor(num2);
+        return num2.clone().iuor(this);
       };
-      BN.prototype.iuand = function iuand(num) {
+      BN.prototype.iuand = function iuand(num2) {
         var b;
-        if (this.length > num.length) {
-          b = num;
+        if (this.length > num2.length) {
+          b = num2;
         } else {
           b = this;
         }
         for (var i = 0; i < b.length; i++) {
-          this.words[i] = this.words[i] & num.words[i];
+          this.words[i] = this.words[i] & num2.words[i];
         }
         this.length = b.length;
         return this.strip();
       };
-      BN.prototype.iand = function iand(num) {
-        assert2((this.negative | num.negative) === 0);
-        return this.iuand(num);
+      BN.prototype.iand = function iand(num2) {
+        assert2((this.negative | num2.negative) === 0);
+        return this.iuand(num2);
       };
-      BN.prototype.and = function and(num) {
-        if (this.length > num.length) return this.clone().iand(num);
-        return num.clone().iand(this);
+      BN.prototype.and = function and(num2) {
+        if (this.length > num2.length) return this.clone().iand(num2);
+        return num2.clone().iand(this);
       };
-      BN.prototype.uand = function uand(num) {
-        if (this.length > num.length) return this.clone().iuand(num);
-        return num.clone().iuand(this);
+      BN.prototype.uand = function uand(num2) {
+        if (this.length > num2.length) return this.clone().iuand(num2);
+        return num2.clone().iuand(this);
       };
-      BN.prototype.iuxor = function iuxor(num) {
+      BN.prototype.iuxor = function iuxor(num2) {
         var a;
         var b;
-        if (this.length > num.length) {
+        if (this.length > num2.length) {
           a = this;
-          b = num;
+          b = num2;
         } else {
-          a = num;
+          a = num2;
           b = this;
         }
         for (var i = 0; i < b.length; i++) {
@@ -1366,17 +1366,17 @@ var require_bn = __commonJS({
         this.length = a.length;
         return this.strip();
       };
-      BN.prototype.ixor = function ixor(num) {
-        assert2((this.negative | num.negative) === 0);
-        return this.iuxor(num);
+      BN.prototype.ixor = function ixor(num2) {
+        assert2((this.negative | num2.negative) === 0);
+        return this.iuxor(num2);
       };
-      BN.prototype.xor = function xor(num) {
-        if (this.length > num.length) return this.clone().ixor(num);
-        return num.clone().ixor(this);
+      BN.prototype.xor = function xor(num2) {
+        if (this.length > num2.length) return this.clone().ixor(num2);
+        return num2.clone().ixor(this);
       };
-      BN.prototype.uxor = function uxor(num) {
-        if (this.length > num.length) return this.clone().iuxor(num);
-        return num.clone().iuxor(this);
+      BN.prototype.uxor = function uxor(num2) {
+        if (this.length > num2.length) return this.clone().iuxor(num2);
+        return num2.clone().iuxor(this);
       };
       BN.prototype.inotn = function inotn(width) {
         assert2(typeof width === "number" && width >= 0);
@@ -1413,25 +1413,25 @@ var require_bn = __commonJS({
         }
         return this.strip();
       };
-      BN.prototype.iadd = function iadd(num) {
+      BN.prototype.iadd = function iadd(num2) {
         var r;
-        if (this.negative !== 0 && num.negative === 0) {
+        if (this.negative !== 0 && num2.negative === 0) {
           this.negative = 0;
-          r = this.isub(num);
+          r = this.isub(num2);
           this.negative ^= 1;
           return this._normSign();
-        } else if (this.negative === 0 && num.negative !== 0) {
-          num.negative = 0;
-          r = this.isub(num);
-          num.negative = 1;
+        } else if (this.negative === 0 && num2.negative !== 0) {
+          num2.negative = 0;
+          r = this.isub(num2);
+          num2.negative = 1;
           return r._normSign();
         }
         var a, b;
-        if (this.length > num.length) {
+        if (this.length > num2.length) {
           a = this;
-          b = num;
+          b = num2;
         } else {
-          a = num;
+          a = num2;
           b = this;
         }
         var carry = 0;
@@ -1456,35 +1456,35 @@ var require_bn = __commonJS({
         }
         return this;
       };
-      BN.prototype.add = function add(num) {
+      BN.prototype.add = function add(num2) {
         var res;
-        if (num.negative !== 0 && this.negative === 0) {
-          num.negative = 0;
-          res = this.sub(num);
-          num.negative ^= 1;
+        if (num2.negative !== 0 && this.negative === 0) {
+          num2.negative = 0;
+          res = this.sub(num2);
+          num2.negative ^= 1;
           return res;
-        } else if (num.negative === 0 && this.negative !== 0) {
+        } else if (num2.negative === 0 && this.negative !== 0) {
           this.negative = 0;
-          res = num.sub(this);
+          res = num2.sub(this);
           this.negative = 1;
           return res;
         }
-        if (this.length > num.length) return this.clone().iadd(num);
-        return num.clone().iadd(this);
+        if (this.length > num2.length) return this.clone().iadd(num2);
+        return num2.clone().iadd(this);
       };
-      BN.prototype.isub = function isub(num) {
-        if (num.negative !== 0) {
-          num.negative = 0;
-          var r = this.iadd(num);
-          num.negative = 1;
+      BN.prototype.isub = function isub(num2) {
+        if (num2.negative !== 0) {
+          num2.negative = 0;
+          var r = this.iadd(num2);
+          num2.negative = 1;
           return r._normSign();
         } else if (this.negative !== 0) {
           this.negative = 0;
-          this.iadd(num);
+          this.iadd(num2);
           this.negative = 1;
           return this._normSign();
         }
-        var cmp = this.cmp(num);
+        var cmp = this.cmp(num2);
         if (cmp === 0) {
           this.negative = 0;
           this.length = 1;
@@ -1494,9 +1494,9 @@ var require_bn = __commonJS({
         var a, b;
         if (cmp > 0) {
           a = this;
-          b = num;
+          b = num2;
         } else {
-          a = num;
+          a = num2;
           b = this;
         }
         var carry = 0;
@@ -1521,16 +1521,16 @@ var require_bn = __commonJS({
         }
         return this.strip();
       };
-      BN.prototype.sub = function sub(num) {
-        return this.clone().isub(num);
+      BN.prototype.sub = function sub(num2) {
+        return this.clone().isub(num2);
       };
-      function smallMulTo(self, num, out) {
-        out.negative = num.negative ^ self.negative;
-        var len = self.length + num.length | 0;
+      function smallMulTo(self, num2, out) {
+        out.negative = num2.negative ^ self.negative;
+        var len = self.length + num2.length | 0;
         out.length = len;
         len = len - 1 | 0;
         var a = self.words[0] | 0;
-        var b = num.words[0] | 0;
+        var b = num2.words[0] | 0;
         var r = a * b;
         var lo = r & 67108863;
         var carry = r / 67108864 | 0;
@@ -1538,11 +1538,11 @@ var require_bn = __commonJS({
         for (var k = 1; k < len; k++) {
           var ncarry = carry >>> 26;
           var rword = carry & 67108863;
-          var maxJ = Math.min(k, num.length - 1);
+          var maxJ = Math.min(k, num2.length - 1);
           for (var j = Math.max(0, k - self.length + 1); j <= maxJ; j++) {
             var i = k - j | 0;
             a = self.words[i] | 0;
-            b = num.words[j] | 0;
+            b = num2.words[j] | 0;
             r = a * b + rword;
             ncarry += r / 67108864 | 0;
             rword = r & 67108863;
@@ -1557,9 +1557,9 @@ var require_bn = __commonJS({
         }
         return out.strip();
       }
-      var comb10MulTo = function comb10MulTo2(self, num, out) {
+      var comb10MulTo = function comb10MulTo2(self, num2, out) {
         var a = self.words;
-        var b = num.words;
+        var b = num2.words;
         var o = out.words;
         var c = 0;
         var lo;
@@ -1625,7 +1625,7 @@ var require_bn = __commonJS({
         var b9 = b[9] | 0;
         var bl9 = b9 & 8191;
         var bh9 = b9 >>> 13;
-        out.negative = self.negative ^ num.negative;
+        out.negative = self.negative ^ num2.negative;
         out.length = 19;
         lo = Math.imul(al0, bl0);
         mid = Math.imul(al0, bh0);
@@ -2112,20 +2112,20 @@ var require_bn = __commonJS({
       if (!Math.imul) {
         comb10MulTo = smallMulTo;
       }
-      function bigMulTo(self, num, out) {
-        out.negative = num.negative ^ self.negative;
-        out.length = self.length + num.length;
+      function bigMulTo(self, num2, out) {
+        out.negative = num2.negative ^ self.negative;
+        out.length = self.length + num2.length;
         var carry = 0;
         var hncarry = 0;
         for (var k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           var rword = carry & 67108863;
-          var maxJ = Math.min(k, num.length - 1);
+          var maxJ = Math.min(k, num2.length - 1);
           for (var j = Math.max(0, k - self.length + 1); j <= maxJ; j++) {
             var i = k - j;
             var a = self.words[i] | 0;
-            var b = num.words[j] | 0;
+            var b = num2.words[j] | 0;
             var r = a * b;
             var lo = r & 67108863;
             ncarry = ncarry + (r / 67108864 | 0) | 0;
@@ -2146,21 +2146,21 @@ var require_bn = __commonJS({
         }
         return out.strip();
       }
-      function jumboMulTo(self, num, out) {
+      function jumboMulTo(self, num2, out) {
         var fftm = new FFTM();
-        return fftm.mulp(self, num, out);
+        return fftm.mulp(self, num2, out);
       }
-      BN.prototype.mulTo = function mulTo(num, out) {
+      BN.prototype.mulTo = function mulTo(num2, out) {
         var res;
-        var len = this.length + num.length;
-        if (this.length === 10 && num.length === 10) {
-          res = comb10MulTo(this, num, out);
+        var len = this.length + num2.length;
+        if (this.length === 10 && num2.length === 10) {
+          res = comb10MulTo(this, num2, out);
         } else if (len < 63) {
-          res = smallMulTo(this, num, out);
+          res = smallMulTo(this, num2, out);
         } else if (len < 1024) {
-          res = bigMulTo(this, num, out);
+          res = bigMulTo(this, num2, out);
         } else {
-          res = jumboMulTo(this, num, out);
+          res = jumboMulTo(this, num2, out);
         }
         return res;
       };
@@ -2305,25 +2305,25 @@ var require_bn = __commonJS({
         out.length = x.length + y.length;
         return out.strip();
       };
-      BN.prototype.mul = function mul(num) {
+      BN.prototype.mul = function mul(num2) {
         var out = new BN(null);
-        out.words = new Array(this.length + num.length);
-        return this.mulTo(num, out);
+        out.words = new Array(this.length + num2.length);
+        return this.mulTo(num2, out);
       };
-      BN.prototype.mulf = function mulf(num) {
+      BN.prototype.mulf = function mulf(num2) {
         var out = new BN(null);
-        out.words = new Array(this.length + num.length);
-        return jumboMulTo(this, num, out);
+        out.words = new Array(this.length + num2.length);
+        return jumboMulTo(this, num2, out);
       };
-      BN.prototype.imul = function imul(num) {
-        return this.clone().mulTo(num, this);
+      BN.prototype.imul = function imul(num2) {
+        return this.clone().mulTo(num2, this);
       };
-      BN.prototype.imuln = function imuln(num) {
-        assert2(typeof num === "number");
-        assert2(num < 67108864);
+      BN.prototype.imuln = function imuln(num2) {
+        assert2(typeof num2 === "number");
+        assert2(num2 < 67108864);
         var carry = 0;
         for (var i = 0; i < this.length; i++) {
-          var w = (this.words[i] | 0) * num;
+          var w = (this.words[i] | 0) * num2;
           var lo = (w & 67108863) + (carry & 67108863);
           carry >>= 26;
           carry += w / 67108864 | 0;
@@ -2334,14 +2334,14 @@ var require_bn = __commonJS({
           this.words[i] = carry;
           this.length++;
         }
-        if (num === 0) {
+        if (num2 === 0) {
           this.length = 1;
           this._normSign();
         }
         return this;
       };
-      BN.prototype.muln = function muln(num) {
-        return this.clone().imuln(num);
+      BN.prototype.muln = function muln(num2) {
+        return this.clone().imuln(num2);
       };
       BN.prototype.sqr = function sqr() {
         return this.mul(this);
@@ -2349,8 +2349,8 @@ var require_bn = __commonJS({
       BN.prototype.isqr = function isqr() {
         return this.imul(this.clone());
       };
-      BN.prototype.pow = function pow(num) {
-        var w = toBitArray(num);
+      BN.prototype.pow = function pow(num2) {
+        var w = toBitArray(num2);
         if (w.length === 0) return new BN(1);
         var res = this;
         for (var i = 0; i < w.length; i++, res = res.sqr()) {
@@ -2493,25 +2493,25 @@ var require_bn = __commonJS({
       BN.prototype.maskn = function maskn(bits) {
         return this.clone().imaskn(bits);
       };
-      BN.prototype.iaddn = function iaddn(num) {
-        assert2(typeof num === "number");
-        assert2(num < 67108864);
-        if (num < 0) return this.isubn(-num);
+      BN.prototype.iaddn = function iaddn(num2) {
+        assert2(typeof num2 === "number");
+        assert2(num2 < 67108864);
+        if (num2 < 0) return this.isubn(-num2);
         if (this.negative !== 0) {
-          if (this.length === 1 && (this.words[0] | 0) < num) {
-            this.words[0] = num - (this.words[0] | 0);
+          if (this.length === 1 && (this.words[0] | 0) < num2) {
+            this.words[0] = num2 - (this.words[0] | 0);
             this.negative = 0;
             return this;
           }
           this.negative = 0;
-          this.isubn(num);
+          this.isubn(num2);
           this.negative = 1;
           return this;
         }
-        return this._iaddn(num);
+        return this._iaddn(num2);
       };
-      BN.prototype._iaddn = function _iaddn(num) {
-        this.words[0] += num;
+      BN.prototype._iaddn = function _iaddn(num2) {
+        this.words[0] += num2;
         for (var i = 0; i < this.length && this.words[i] >= 67108864; i++) {
           this.words[i] -= 67108864;
           if (i === this.length - 1) {
@@ -2523,17 +2523,17 @@ var require_bn = __commonJS({
         this.length = Math.max(this.length, i + 1);
         return this;
       };
-      BN.prototype.isubn = function isubn(num) {
-        assert2(typeof num === "number");
-        assert2(num < 67108864);
-        if (num < 0) return this.iaddn(-num);
+      BN.prototype.isubn = function isubn(num2) {
+        assert2(typeof num2 === "number");
+        assert2(num2 < 67108864);
+        if (num2 < 0) return this.iaddn(-num2);
         if (this.negative !== 0) {
           this.negative = 0;
-          this.iaddn(num);
+          this.iaddn(num2);
           this.negative = 1;
           return this;
         }
-        this.words[0] -= num;
+        this.words[0] -= num2;
         if (this.length === 1 && this.words[0] < 0) {
           this.words[0] = -this.words[0];
           this.negative = 1;
@@ -2545,11 +2545,11 @@ var require_bn = __commonJS({
         }
         return this.strip();
       };
-      BN.prototype.addn = function addn(num) {
-        return this.clone().iaddn(num);
+      BN.prototype.addn = function addn(num2) {
+        return this.clone().iaddn(num2);
       };
-      BN.prototype.subn = function subn(num) {
-        return this.clone().isubn(num);
+      BN.prototype.subn = function subn(num2) {
+        return this.clone().isubn(num2);
       };
       BN.prototype.iabs = function iabs() {
         this.negative = 0;
@@ -2558,15 +2558,15 @@ var require_bn = __commonJS({
       BN.prototype.abs = function abs() {
         return this.clone().iabs();
       };
-      BN.prototype._ishlnsubmul = function _ishlnsubmul(num, mul, shift) {
-        var len = num.length + shift;
+      BN.prototype._ishlnsubmul = function _ishlnsubmul(num2, mul, shift) {
+        var len = num2.length + shift;
         var i;
         this._expand(len);
         var w;
         var carry = 0;
-        for (i = 0; i < num.length; i++) {
+        for (i = 0; i < num2.length; i++) {
           w = (this.words[i + shift] | 0) + carry;
-          var right = (num.words[i] | 0) * mul;
+          var right = (num2.words[i] | 0) * mul;
           w -= right & 67108863;
           carry = (w >> 26) - (right / 67108864 | 0);
           this.words[i + shift] = w & 67108863;
@@ -2587,10 +2587,10 @@ var require_bn = __commonJS({
         this.negative = 1;
         return this.strip();
       };
-      BN.prototype._wordDiv = function _wordDiv(num, mode) {
-        var shift = this.length - num.length;
+      BN.prototype._wordDiv = function _wordDiv(num2, mode) {
+        var shift = this.length - num2.length;
         var a = this.clone();
-        var b = num;
+        var b = num2;
         var bhi = b.words[b.length - 1] | 0;
         var bhiBits = this._countBits(bhi);
         shift = 26 - bhiBits;
@@ -2644,8 +2644,8 @@ var require_bn = __commonJS({
           mod: a
         };
       };
-      BN.prototype.divmod = function divmod(num, mode, positive) {
-        assert2(!num.isZero());
+      BN.prototype.divmod = function divmod(num2, mode, positive) {
+        assert2(!num2.isZero());
         if (this.isZero()) {
           return {
             div: new BN(0),
@@ -2653,15 +2653,15 @@ var require_bn = __commonJS({
           };
         }
         var div, mod, res;
-        if (this.negative !== 0 && num.negative === 0) {
-          res = this.neg().divmod(num, mode);
+        if (this.negative !== 0 && num2.negative === 0) {
+          res = this.neg().divmod(num2, mode);
           if (mode !== "mod") {
             div = res.div.neg();
           }
           if (mode !== "div") {
             mod = res.mod.neg();
             if (positive && mod.negative !== 0) {
-              mod.iadd(num);
+              mod.iadd(num2);
             }
           }
           return {
@@ -2669,8 +2669,8 @@ var require_bn = __commonJS({
             mod
           };
         }
-        if (this.negative === 0 && num.negative !== 0) {
-          res = this.divmod(num.neg(), mode);
+        if (this.negative === 0 && num2.negative !== 0) {
+          res = this.divmod(num2.neg(), mode);
           if (mode !== "mod") {
             div = res.div.neg();
           }
@@ -2679,12 +2679,12 @@ var require_bn = __commonJS({
             mod: res.mod
           };
         }
-        if ((this.negative & num.negative) !== 0) {
-          res = this.neg().divmod(num.neg(), mode);
+        if ((this.negative & num2.negative) !== 0) {
+          res = this.neg().divmod(num2.neg(), mode);
           if (mode !== "div") {
             mod = res.mod.neg();
             if (positive && mod.negative !== 0) {
-              mod.isub(num);
+              mod.isub(num2);
             }
           }
           return {
@@ -2692,74 +2692,74 @@ var require_bn = __commonJS({
             mod
           };
         }
-        if (num.length > this.length || this.cmp(num) < 0) {
+        if (num2.length > this.length || this.cmp(num2) < 0) {
           return {
             div: new BN(0),
             mod: this
           };
         }
-        if (num.length === 1) {
+        if (num2.length === 1) {
           if (mode === "div") {
             return {
-              div: this.divn(num.words[0]),
+              div: this.divn(num2.words[0]),
               mod: null
             };
           }
           if (mode === "mod") {
             return {
               div: null,
-              mod: new BN(this.modn(num.words[0]))
+              mod: new BN(this.modn(num2.words[0]))
             };
           }
           return {
-            div: this.divn(num.words[0]),
-            mod: new BN(this.modn(num.words[0]))
+            div: this.divn(num2.words[0]),
+            mod: new BN(this.modn(num2.words[0]))
           };
         }
-        return this._wordDiv(num, mode);
+        return this._wordDiv(num2, mode);
       };
-      BN.prototype.div = function div(num) {
-        return this.divmod(num, "div", false).div;
+      BN.prototype.div = function div(num2) {
+        return this.divmod(num2, "div", false).div;
       };
-      BN.prototype.mod = function mod(num) {
-        return this.divmod(num, "mod", false).mod;
+      BN.prototype.mod = function mod(num2) {
+        return this.divmod(num2, "mod", false).mod;
       };
-      BN.prototype.umod = function umod(num) {
-        return this.divmod(num, "mod", true).mod;
+      BN.prototype.umod = function umod(num2) {
+        return this.divmod(num2, "mod", true).mod;
       };
-      BN.prototype.divRound = function divRound(num) {
-        var dm = this.divmod(num);
+      BN.prototype.divRound = function divRound(num2) {
+        var dm = this.divmod(num2);
         if (dm.mod.isZero()) return dm.div;
         var mod = dm.mod.abs();
-        var half = num.abs().iushrn(1);
-        var r2 = num.words[0] & 1;
+        var half = num2.abs().iushrn(1);
+        var r2 = num2.words[0] & 1;
         var cmp = mod.cmp(half);
         if (cmp < 0 || r2 === 1 && cmp === 0) return dm.div;
         var up = new BN(1);
-        up.negative = this.negative ^ num.negative;
+        up.negative = this.negative ^ num2.negative;
         return dm.div.iadd(up);
       };
-      BN.prototype.modn = function modn(num) {
-        assert2(num <= 67108863);
-        var p = (1 << 26) % num;
+      BN.prototype.modn = function modn(num2) {
+        assert2(num2 <= 67108863);
+        var p = (1 << 26) % num2;
         var acc = 0;
         for (var i = this.length - 1; i >= 0; i--) {
-          acc = (p * acc + (this.words[i] | 0)) % num;
+          acc = (p * acc + (this.words[i] | 0)) % num2;
         }
         return acc;
       };
-      BN.prototype.idivn = function idivn(num) {
-        assert2(num <= 67108863);
+      BN.prototype.idivn = function idivn(num2) {
+        assert2(num2 <= 67108863);
         var carry = 0;
         for (var i = this.length - 1; i >= 0; i--) {
           var w = (this.words[i] | 0) + carry * 67108864;
-          this.words[i] = w / num | 0;
-          carry = w % num;
+          this.words[i] = w / num2 | 0;
+          carry = w % num2;
         }
         return this.strip();
       };
-      BN.prototype.divn = function divn(num) {
-        return this.clone().idivn(num);
+      BN.prototype.divn = function divn(num2) {
+        return this.clone().idivn(num2);
       };
       BN.prototype.egcd = function egcd(p) {
         assert2(p.negative === 0);
@@ -2877,11 +2877,11 @@ var require_bn = __commonJS({
         }
         return res;
       };
-      BN.prototype.gcd = function gcd(num) {
-        if (this.isZero()) return num.abs();
-        if (num.isZero()) return this.abs();
+      BN.prototype.gcd = function gcd(num2) {
+        if (this.isZero()) return num2.abs();
+        if (num2.isZero()) return this.abs();
         var a = this.clone();
-        var b = num.clone();
+        var b = num2.clone();
         a.negative = 0;
         b.negative = 0;
         for (var shift = 0; a.isEven() && b.isEven(); shift++) {
@@ -2907,8 +2907,8 @@ var require_bn = __commonJS({
         } while (true);
         return b.iushln(shift);
       };
-      BN.prototype.invm = function invm(num) {
-        return this.egcd(num).a.umod(num);
+      BN.prototype.invm = function invm(num2) {
+        return this.egcd(num2).a.umod(num2);
       };
       BN.prototype.isEven = function isEven() {
         return (this.words[0] & 1) === 0;
@@ -2916,8 +2916,8 @@ var require_bn = __commonJS({
       BN.prototype.isOdd = function isOdd() {
         return (this.words[0] & 1) === 1;
       };
-      BN.prototype.andln = function andln(num) {
-        return this.words[0] & num;
+      BN.prototype.andln = function andln(num2) {
+        return this.words[0] & num2;
       };
       BN.prototype.bincn = function bincn(bit) {
         assert2(typeof bit === "number");
@@ -2946,8 +2946,8 @@ var require_bn = __commonJS({
       BN.prototype.isZero = function isZero() {
         return this.length === 1 && this.words[0] === 0;
       };
-      BN.prototype.cmpn = function cmpn(num) {
-        var negative = num < 0;
+      BN.prototype.cmpn = function cmpn(num2) {
+        var negative = num2 < 0;
         if (this.negative !== 0 && !negative) return -1;
         if (this.negative === 0 && negative) return 1;
         this.strip();
@@ -2956,29 +2956,29 @@ var require_bn = __commonJS({
           res = 1;
         } else {
           if (negative) {
-            num = -num;
+            num2 = -num2;
           }
-          assert2(num <= 67108863, "Number is too big");
+          assert2(num2 <= 67108863, "Number is too big");
           var w = this.words[0] | 0;
-          res = w === num ? 0 : w < num ? -1 : 1;
+          res = w === num2 ? 0 : w < num2 ? -1 : 1;
         }
         if (this.negative !== 0) return -res | 0;
         return res;
       };
-      BN.prototype.cmp = function cmp(num) {
-        if (this.negative !== 0 && num.negative === 0) return -1;
-        if (this.negative === 0 && num.negative !== 0) return 1;
-        var res = this.ucmp(num);
+      BN.prototype.cmp = function cmp(num2) {
+        if (this.negative !== 0 && num2.negative === 0) return -1;
+        if (this.negative === 0 && num2.negative !== 0) return 1;
+        var res = this.ucmp(num2);
         if (this.negative !== 0) return -res | 0;
         return res;
       };
-      BN.prototype.ucmp = function ucmp(num) {
-        if (this.length > num.length) return 1;
-        if (this.length < num.length) return -1;
+      BN.prototype.ucmp = function ucmp(num2) {
+        if (this.length > num2.length) return 1;
+        if (this.length < num2.length) return -1;
         var res = 0;
         for (var i = this.length - 1; i >= 0; i--) {
           var a = this.words[i] | 0;
-          var b = num.words[i] | 0;
+          var b = num2.words[i] | 0;
           if (a === b) continue;
           if (a < b) {
             res = -1;
@@ -2989,38 +2989,38 @@ var require_bn = __commonJS({
         }
         return res;
       };
-      BN.prototype.gtn = function gtn(num) {
-        return this.cmpn(num) === 1;
+      BN.prototype.gtn = function gtn(num2) {
+        return this.cmpn(num2) === 1;
       };
-      BN.prototype.gt = function gt(num) {
-        return this.cmp(num) === 1;
+      BN.prototype.gt = function gt(num2) {
+        return this.cmp(num2) === 1;
       };
-      BN.prototype.gten = function gten(num) {
-        return this.cmpn(num) >= 0;
+      BN.prototype.gten = function gten(num2) {
+        return this.cmpn(num2) >= 0;
       };
-      BN.prototype.gte = function gte(num) {
-        return this.cmp(num) >= 0;
+      BN.prototype.gte = function gte(num2) {
+        return this.cmp(num2) >= 0;
       };
-      BN.prototype.ltn = function ltn(num) {
-        return this.cmpn(num) === -1;
+      BN.prototype.ltn = function ltn(num2) {
+        return this.cmpn(num2) === -1;
       };
-      BN.prototype.lt = function lt(num) {
-        return this.cmp(num) === -1;
+      BN.prototype.lt = function lt(num2) {
+        return this.cmp(num2) === -1;
       };
-      BN.prototype.lten = function lten(num) {
-        return this.cmpn(num) <= 0;
+      BN.prototype.lten = function lten(num2) {
+        return this.cmpn(num2) <= 0;
       };
-      BN.prototype.lte = function lte(num) {
-        return this.cmp(num) <= 0;
+      BN.prototype.lte = function lte(num2) {
+        return this.cmp(num2) <= 0;
       };
-      BN.prototype.eqn = function eqn(num) {
-        return this.cmpn(num) === 0;
+      BN.prototype.eqn = function eqn(num2) {
+        return this.cmpn(num2) === 0;
       };
-      BN.prototype.eq = function eq(num) {
-        return this.cmp(num) === 0;
+      BN.prototype.eq = function eq(num2) {
+        return this.cmp(num2) === 0;
       };
-      BN.red = function red(num) {
-        return new Red(num);
+      BN.red = function red(num2) {
+        return new Red(num2);
       };
       BN.prototype.toRed = function toRed(ctx) {
         assert2(!this.red, "Already a number in reduction context");
@@ -3039,35 +3039,35 @@ var require_bn = __commonJS({
         assert2(!this.red, "Already a number in reduction context");
         return this._forceRed(ctx);
       };
-      BN.prototype.redAdd = function redAdd(num) {
+      BN.prototype.redAdd = function redAdd(num2) {
         assert2(this.red, "redAdd works only with red numbers");
-        return this.red.add(this, num);
+        return this.red.add(this, num2);
       };
-      BN.prototype.redIAdd = function redIAdd(num) {
+      BN.prototype.redIAdd = function redIAdd(num2) {
         assert2(this.red, "redIAdd works only with red numbers");
-        return this.red.iadd(this, num);
+        return this.red.iadd(this, num2);
       };
-      BN.prototype.redSub = function redSub(num) {
+      BN.prototype.redSub = function redSub(num2) {
         assert2(this.red, "redSub works only with red numbers");
-        return this.red.sub(this, num);
+        return this.red.sub(this, num2);
       };
-      BN.prototype.redISub = function redISub(num) {
+      BN.prototype.redISub = function redISub(num2) {
         assert2(this.red, "redISub works only with red numbers");
-        return this.red.isub(this, num);
+        return this.red.isub(this, num2);
       };
-      BN.prototype.redShl = function redShl(num) {
+      BN.prototype.redShl = function redShl(num2) {
         assert2(this.red, "redShl works only with red numbers");
-        return this.red.shl(this, num);
+        return this.red.shl(this, num2);
       };
-      BN.prototype.redMul = function redMul(num) {
+      BN.prototype.redMul = function redMul(num2) {
         assert2(this.red, "redMul works only with red numbers");
-        this.red._verify2(this, num);
-        return this.red.mul(this, num);
+        this.red._verify2(this, num2);
+        return this.red.mul(this, num2);
       };
-      BN.prototype.redIMul = function redIMul(num) {
+      BN.prototype.redIMul = function redIMul(num2) {
         assert2(this.red, "redMul works only with red numbers");
-        this.red._verify2(this, num);
-        return this.red.imul(this, num);
+        this.red._verify2(this, num2);
+        return this.red.imul(this, num2);
       };
       BN.prototype.redSqr = function redSqr() {
         assert2(this.red, "redSqr works only with red numbers");
@@ -3094,10 +3094,10 @@ var require_bn = __commonJS({
         this.red._verify1(this);
         return this.red.neg(this);
       };
-      BN.prototype.redPow = function redPow(num) {
-        assert2(this.red && !num.red, "redPow(normalNum)");
+      BN.prototype.redPow = function redPow(num2) {
+        assert2(this.red && !num2.red, "redPow(normalNum)");
         this.red._verify1(this);
-        return this.red.pow(this, num);
+        return this.red.pow(this, num2);
       };
       var primes = {
         k256: null,
@@ -3117,8 +3117,8 @@ var require_bn = __commonJS({
         tmp.words = new Array(Math.ceil(this.n / 13));
         return tmp;
       };
-      MPrime.prototype.ireduce = function ireduce(num) {
-        var r = num;
+      MPrime.prototype.ireduce = function ireduce(num2) {
+        var r = num2;
         var rlen;
         do {
           this.split(r, this.tmp);
@@ -3144,8 +3144,8 @@ var require_bn = __commonJS({
       MPrime.prototype.split = function split(input, out) {
         input.iushrn(this.n, 0, out);
       };
-      MPrime.prototype.imulK = function imulK(num) {
-        return num.imul(this.k);
+      MPrime.prototype.imulK = function imulK(num2) {
+        return num2.imul(this.k);
       };
       function K256() {
         MPrime.call(
@@ -3182,24 +3182,24 @@ var require_bn = __commonJS({
           input.length -= 9;
         }
       };
-      K256.prototype.imulK = function imulK(num) {
-        num.words[num.length] = 0;
-        num.words[num.length + 1] = 0;
-        num.length += 2;
+      K256.prototype.imulK = function imulK(num2) {
+        num2.words[num2.length] = 0;
+        num2.words[num2.length + 1] = 0;
+        num2.length += 2;
         var lo = 0;
-        for (var i = 0; i < num.length; i++) {
-          var w = num.words[i] | 0;
+        for (var i = 0; i < num2.length; i++) {
+          var w = num2.words[i] | 0;
           lo += w * 977;
-          num.words[i] = lo & 67108863;
+          num2.words[i] = lo & 67108863;
           lo = w * 64 + (lo / 67108864 | 0);
         }
-        if (num.words[num.length - 1] === 0) {
-          num.length--;
-          if (num.words[num.length - 1] === 0) {
-            num.length--;
+        if (num2.words[num2.length - 1] === 0) {
+          num2.length--;
+          if (num2.words[num2.length - 1] === 0) {
+            num2.length--;
           }
         }
-        return num;
+        return num2;
       };
       function P224() {
         MPrime.call(
@@ -3225,19 +3225,19 @@ var require_bn = __commonJS({
         );
       }
       inherits(P25519, MPrime);
-      P25519.prototype.imulK = function imulK(num) {
+      P25519.prototype.imulK = function imulK(num2) {
         var carry = 0;
-        for (var i = 0; i < num.length; i++) {
-          var hi = (num.words[i] | 0) * 19 + carry;
+        for (var i = 0; i < num2.length; i++) {
+          var hi = (num2.words[i] | 0) * 19 + carry;
           var lo = hi & 67108863;
           hi >>>= 26;
-          num.words[i] = lo;
+          num2.words[i] = lo;
           carry = hi;
         }
         if (carry !== 0) {
-          num.words[num.length++] = carry;
+          num2.words[num2.length++] = carry;
         }
-        return num;
+        return num2;
       };
       BN._prime = function prime(name) {
         if (primes[name]) return primes[name];
@@ -3320,9 +3320,9 @@ var require_bn = __commonJS({
         }
         return res;
       };
-      Red.prototype.shl = function shl(a, num) {
+      Red.prototype.shl = function shl(a, num2) {
         this._verify1(a);
-        return this.imod(a.ushln(num));
+        return this.imod(a.ushln(num2));
       };
       Red.prototype.imul = function imul(a, b) {
         this._verify2(a, b);
@@ -3388,9 +3388,9 @@ var require_bn = __commonJS({
           return this.imod(inv);
         }
       };
-      Red.prototype.pow = function pow(a, num) {
-        if (num.isZero()) return new BN(1).toRed(this);
-        if (num.cmpn(1) === 0) return a.clone();
+      Red.prototype.pow = function pow(a, num2) {
+        if (num2.isZero()) return new BN(1).toRed(this);
+        if (num2.cmpn(1) === 0) return a.clone();
         var windowSize = 4;
         var wnd = new Array(1 << windowSize);
         wnd[0] = new BN(1).toRed(this);
@@ -3401,12 +3401,12 @@ var require_bn = __commonJS({
         var res = wnd[0];
         var current = 0;
         var currentLen = 0;
-        var start = num.bitLength() % 26;
+        var start = num2.bitLength() % 26;
         if (start === 0) {
           start = 26;
         }
-        for (i = num.length - 1; i >= 0; i--) {
-          var word = num.words[i];
+        for (i = num2.length - 1; i >= 0; i--) {
+          var word = num2.words[i];
           for (var j = start - 1; j >= 0; j--) {
             var bit = word >> j & 1;
             if (res !== wnd[0]) {
@@ -3428,17 +3428,17 @@ var require_bn = __commonJS({
         }
         return res;
       };
-      Red.prototype.convertTo = function convertTo(num) {
-        var r = num.umod(this.m);
-        return r === num ? r.clone() : r;
+      Red.prototype.convertTo = function convertTo(num2) {
+        var r = num2.umod(this.m);
+        return r === num2 ? r.clone() : r;
       };
-      Red.prototype.convertFrom = function convertFrom(num) {
-        var res = num.clone();
+      Red.prototype.convertFrom = function convertFrom(num2) {
+        var res = num2.clone();
         res.red = null;
         return res;
       };
-      BN.mont = function mont(num) {
-        return new Mont(num);
+      BN.mont = function mont(num2) {
+        return new Mont(num2);
       };
       function Mont(m) {
         Red.call(this, m);
@@ -3454,11 +3454,11 @@ var require_bn = __commonJS({
         this.minv = this.r.sub(this.minv);
       }
       inherits(Mont, Red);
-      Mont.prototype.convertTo = function convertTo(num) {
-        return this.imod(num.ushln(this.shift));
+      Mont.prototype.convertTo = function convertTo(num2) {
+        return this.imod(num2.ushln(this.shift));
       };
-      Mont.prototype.convertFrom = function convertFrom(num) {
-        var r = this.imod(num.mul(this.rinv));
+      Mont.prototype.convertFrom = function convertFrom(num2) {
+        var r = this.imod(num2.mul(this.rinv));
         r.red = null;
         return r;
       };
@@ -4056,16 +4056,16 @@ var require_node2 = __commonJS({
       state.optional = true;
       return this;
     };
-    Node.prototype.explicit = function explicit(num) {
+    Node.prototype.explicit = function explicit(num2) {
       const state = this._baseState;
       assert2(state.explicit === null && state.implicit === null);
-      state.explicit = num;
+      state.explicit = num2;
       return this;
     };
-    Node.prototype.implicit = function implicit(num) {
+    Node.prototype.implicit = function implicit(num2) {
       const state = this._baseState;
       assert2(state.explicit === null && state.implicit === null);
-      state.implicit = num;
+      state.implicit = num2;
       return this;
     };
     Node.prototype.obj = function obj() {
@@ -4544,11 +4544,11 @@ var require_der2 = __commonJS({
       }
       return this._createEncoderBuffer(objid);
     };
-    function two(num) {
-      if (num < 10)
-        return "0" + num;
+    function two(num2) {
+      if (num2 < 10)
+        return "0" + num2;
       else
-        return num;
+        return num2;
     }
     DERNode.prototype._encodeTime = function encodeTime(time, tag) {
       let str;
@@ -4581,43 +4581,43 @@ var require_der2 = __commonJS({
     DERNode.prototype._encodeNull = function encodeNull() {
       return this._createEncoderBuffer("");
     };
-    DERNode.prototype._encodeInt = function encodeInt(num, values) {
-      if (typeof num === "string") {
+    DERNode.prototype._encodeInt = function encodeInt(num2, values) {
+      if (typeof num2 === "string") {
         if (!values)
           return this.reporter.error("String int or enum given, but no values map");
-        if (!values.hasOwnProperty(num)) {
-          return this.reporter.error("Values map doesn't contain: " + JSON.stringify(num));
+        if (!values.hasOwnProperty(num2)) {
+          return this.reporter.error("Values map doesn't contain: " + JSON.stringify(num2));
         }
-        num = values[num];
+        num2 = values[num2];
       }
-      if (typeof num !== "number" && !Buffer2.isBuffer(num)) {
-        const numArray = num.toArray();
-        if (!num.sign && numArray[0] & 128) {
+      if (typeof num2 !== "number" && !Buffer2.isBuffer(num2)) {
+        const numArray = num2.toArray();
+        if (!num2.sign && numArray[0] & 128) {
           numArray.unshift(0);
         }
-        num = Buffer2.from(numArray);
+        num2 = Buffer2.from(numArray);
       }
-      if (Buffer2.isBuffer(num)) {
-        let size2 = num.length;
-        if (num.length === 0)
+      if (Buffer2.isBuffer(num2)) {
+        let size2 = num2.length;
+        if (num2.length === 0)
           size2++;
         const out2 = Buffer2.alloc(size2);
-        num.copy(out2);
-        if (num.length === 0)
+        num2.copy(out2);
+        if (num2.length === 0)
           out2[0] = 0;
         return this._createEncoderBuffer(out2);
       }
-      if (num < 128)
-        return this._createEncoderBuffer(num);
-      if (num < 256)
-        return this._createEncoderBuffer([0, num]);
+      if (num2 < 128)
+        return this._createEncoderBuffer(num2);
+      if (num2 < 256)
+        return this._createEncoderBuffer([0, num2]);
       let size = 1;
-      for (let i = num; i >= 256; i >>= 8)
+      for (let i = num2; i >= 256; i >>= 8)
         size++;
       const out = new Array(size);
       for (let i = out.length - 1; i >= 0; i--) {
-        out[i] = num & 255;
-        num >>= 8;
+        out[i] = num2 & 255;
+        num2 >>= 8;
       }
       if (out[0] & 128) {
         out.unshift(0);
@@ -4959,11 +4959,11 @@ var require_der3 = __commonJS({
       if ((len & 128) === 0) {
         return len;
       }
-      const num = len & 127;
-      if (num > 4)
+      const num2 = len & 127;
+      if (num2 > 4)
         return buf.error("length octect is too long");
       len = 0;
-      for (let i = 0; i < num; i++) {
+      for (let i = 0; i < num2; i++) {
         len <<= 8;
         const j = buf.readUInt8(fail);
         if (buf.isError(j))
@@ -7402,6 +7402,107 @@ function handle(fn) {
 function assertPost(req) {
   if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST only");
 }
+function firestore() {
+  ensureApp();
+  return admin.firestore();
+}
+
+// shared/roles.ts
+var PLATFORM_SETTINGS_DEFAULTS = {
+  maintenanceMode: false,
+  registrationOpen: true,
+  symbolsMode: "all",
+  customSymbols: [],
+  defaultAccountBalance: 1e4,
+  defaultChallenge: {
+    profitTargetPct: 10,
+    dailyLossLimitPct: 5,
+    maxDrawdownPct: 10,
+    minTradingDays: 3,
+    maxTradingDays: 30,
+    maxOpenPositions: 10
+  },
+  allowedLeverages: [10, 20, 30, 50, 100, 200, 500],
+  defaultLeverage: 100,
+  maxLotPerOrder: null,
+  commissionPerLotUsd: 0,
+  spreadMultiplier: 1,
+  updatedAt: null,
+  updatedBy: null
+};
+var num = (v, lo, hi, fallback) => {
+  const n = Number(v);
+  if (v == null || v === "" || !Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+};
+var optNum = (v, lo, hi) => {
+  const n = Number(v);
+  if (v == null || v === "" || !Number.isFinite(n)) return null;
+  return Math.min(hi, Math.max(lo, n));
+};
+var KNOWN_LEVERAGES = [10, 20, 30, 50, 100, 200, 500];
+function sanitizePlatformSettings(raw, current) {
+  const base = current || PLATFORM_SETTINGS_DEFAULTS;
+  const allowed = Array.isArray(raw?.allowedLeverages) ? KNOWN_LEVERAGES.filter((l) => raw.allowedLeverages.includes(l)) : base.allowedLeverages;
+  const custom = Array.isArray(raw?.customSymbols) ? Array.from(new Set(raw.customSymbols.map((s) => String(s).trim().toUpperCase()).filter(Boolean))).slice(0, 60) : base.customSymbols;
+  const dc = raw?.defaultChallenge || {};
+  return {
+    maintenanceMode: raw?.maintenanceMode === void 0 ? base.maintenanceMode : !!raw.maintenanceMode,
+    registrationOpen: raw?.registrationOpen === void 0 ? base.registrationOpen : !!raw.registrationOpen,
+    symbolsMode: raw?.symbolsMode === "custom" ? "custom" : raw?.symbolsMode === "all" ? "all" : base.symbolsMode,
+    customSymbols: custom,
+    defaultAccountBalance: num(raw?.defaultAccountBalance, 5e3, 1e6, base.defaultAccountBalance),
+    defaultChallenge: {
+      profitTargetPct: dc.profitTargetPct === void 0 ? base.defaultChallenge.profitTargetPct : optNum(dc.profitTargetPct, 0.5, 100),
+      dailyLossLimitPct: dc.dailyLossLimitPct === void 0 ? base.defaultChallenge.dailyLossLimitPct : optNum(dc.dailyLossLimitPct, 0.5, 50),
+      maxDrawdownPct: dc.maxDrawdownPct === void 0 ? base.defaultChallenge.maxDrawdownPct : optNum(dc.maxDrawdownPct, 0.5, 50),
+      minTradingDays: num(dc.minTradingDays, 0, 60, base.defaultChallenge.minTradingDays),
+      maxTradingDays: dc.maxTradingDays === void 0 ? base.defaultChallenge.maxTradingDays : optNum(dc.maxTradingDays, 0, 365),
+      maxOpenPositions: dc.maxOpenPositions === void 0 ? base.defaultChallenge.maxOpenPositions : optNum(dc.maxOpenPositions, 1, 30)
+    },
+    allowedLeverages: allowed.length ? allowed : base.allowedLeverages,
+    defaultLeverage: allowed.includes(Number(raw?.defaultLeverage)) ? Number(raw.defaultLeverage) : allowed.includes(base.defaultLeverage) ? base.defaultLeverage : base.defaultLeverage,
+    maxLotPerOrder: raw?.maxLotPerOrder === void 0 ? base.maxLotPerOrder : optNum(raw.maxLotPerOrder, 0.01, 100),
+    commissionPerLotUsd: num(raw?.commissionPerLotUsd, 0, 100, base.commissionPerLotUsd),
+    spreadMultiplier: num(raw?.spreadMultiplier, 0.5, 5, base.spreadMultiplier),
+    updatedAt: Date.now(),
+    updatedBy: null
+  };
+}
+
+// api/_src/lib/platform.ts
+async function writeAdminAlert(alert, throttleKey, cooldownMs = 10 * 6e4) {
+  try {
+    if (throttleKey) {
+      const stateRef = rtdb().ref(`adminAlertsState/${throttleKey.replace(/[.#$/[\]]/g, "_")}`);
+      const last = (await stateRef.once("value")).val();
+      if (typeof last === "number" && Date.now() - last < cooldownMs) return false;
+      await stateRef.set(Date.now());
+    }
+    await rtdb().ref("adminAlerts").push({ ...alert, at: Date.now(), read: false });
+    return true;
+  } catch (e) {
+    console.error("[api] admin alert write failed", e);
+    return false;
+  }
+}
+var cache = null;
+var CACHE_MS = 6e4;
+async function getPlatformSettings(force = false) {
+  if (!force && cache && Date.now() - cache.at < CACHE_MS) return cache.settings;
+  let settings = PLATFORM_SETTINGS_DEFAULTS;
+  try {
+    const snap = await firestore().collection("platformSettings").doc("global").get();
+    if (snap.exists) {
+      const raw = snap.data() || {};
+      settings = sanitizePlatformSettings({ ...PLATFORM_SETTINGS_DEFAULTS, ...raw });
+    }
+  } catch (e) {
+    console.error("[api] platform settings read failed \u2014 using defaults", e);
+  }
+  cache = { at: Date.now(), settings };
+  return settings;
+}
 
 // shared/terminal.ts
 var INSTRUMENTS = [
@@ -7446,8 +7547,1026 @@ var SPOT_PRICE_BANDS = {
   XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
 };
 
+// shared/sessions.ts
+var SESSIONS = [
+  { id: "sydney", city: "Sydney", tz: "Australia/Sydney", flag: "\u{1F1E6}\u{1F1FA}", openMin: 7 * 60, closeMin: 16 * 60 },
+  { id: "tokyo", city: "Tokyo", tz: "Asia/Tokyo", flag: "\u{1F1EF}\u{1F1F5}", openMin: 9 * 60, closeMin: 18 * 60 },
+  { id: "london", city: "London", tz: "Europe/London", flag: "\u{1F1EC}\u{1F1E7}", openMin: 8 * 60, closeMin: 17 * 60 },
+  { id: "newyork", city: "New York", tz: "America/New_York", flag: "\u{1F1FA}\u{1F1F8}", openMin: 8 * 60, closeMin: 17 * 60 }
+];
+var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function tzWallClock(tz, instant) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short"
+  });
+  const parts = dtf.formatToParts(new Date(instant));
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  const h = Number(get("hour")) % 24;
+  return {
+    y: Number(get("year")),
+    mo: Number(get("month")),
+    d: Number(get("day")),
+    h,
+    mi: Number(get("minute")),
+    s: Number(get("second")),
+    weekday: Math.max(0, WEEKDAYS.indexOf(get("weekday")))
+  };
+}
+
+// shared/market-hours.ts
+var HOLIDAYS = {};
+var NY = "America/New_York";
+var FX_OPEN_DOW = 0;
+var FX_OPEN_MIN = 17 * 60;
+var FX_CLOSE_DOW = 5;
+var FX_CLOSE_MIN = 17 * 60;
+var METAL_OPEN_MIN = 18 * 60;
+var METAL_BREAK_FROM = 17 * 60;
+var METAL_BREAK_TO = 18 * 60;
+var INDEX_SESSIONS = {
+  NAS100: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  US30: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  SPX500: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+  GER40: { tz: "Europe/Berlin", fromMin: 9 * 60, toMin: 17 * 60 + 30 },
+  UK100: { tz: "Europe/London", fromMin: 8 * 60, toMin: 16 * 60 + 30 }
+};
+function isHoliday(symbol, at) {
+  const days = HOLIDAYS[symbol];
+  if (!days || !days.length) return false;
+  const d = tzWallClock("UTC", at);
+  const iso = `${String(d.y).padStart(4, "0")}-${String(d.mo).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+  return days.includes(iso);
+}
+function fxWindow(inst, at) {
+  const w = tzWallClock(NY, at);
+  const mins = w.h * 60 + w.mi;
+  const metal = inst.assetClass === "metal";
+  if (w.weekday === 6) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_CLOSE_DOW && mins >= FX_CLOSE_MIN) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_OPEN_DOW && mins < (metal ? METAL_OPEN_MIN : FX_OPEN_MIN)) {
+    return { open: false, reason: "weekend" };
+  }
+  if (metal && w.weekday >= 1 && w.weekday <= 4 && mins >= METAL_BREAK_FROM && mins < METAL_BREAK_TO) {
+    return { open: false, reason: "daily-break" };
+  }
+  return { open: true, reason: "open" };
+}
+function windowAt(symbol, inst, at) {
+  if (!inst) return { open: false, reason: "unknown" };
+  if (inst.assetClass === "crypto") return { open: true, reason: "open" };
+  if (isHoliday(symbol, at)) return { open: false, reason: "holiday" };
+  if (inst.assetClass === "index") {
+    const s = INDEX_SESSIONS[symbol];
+    if (!s) return { open: true, reason: "open" };
+    const w = tzWallClock(s.tz, at);
+    const mins = w.h * 60 + w.mi;
+    const open = w.weekday >= 1 && w.weekday <= 5 && mins >= s.fromMin && mins < s.toMin;
+    return { open, reason: open ? "open" : "weekend" };
+  }
+  if (inst.assetClass === "forex" || inst.assetClass === "metal") return fxWindow(inst, at);
+  return { open: true, reason: "open" };
+}
+function marketHours(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  const w = windowAt(symbol, inst, at);
+  return { ...w, nextOpenMs: w.open ? null : nextOpen(symbol, at) };
+}
+function nextOpen(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  if (windowAt(symbol, inst, at).open) return null;
+  const step = 15 * 6e4;
+  for (let t = Math.ceil(at / step) * step, n = 0; n < 9 * 96; n++, t += step) {
+    if (windowAt(symbol, inst, t).open) return t;
+  }
+  return null;
+}
+
+// shared/trading-engine.ts
+var SPREAD_PIPS = {
+  XAUUSD: 2.5,
+  XAGUSD: 3,
+  EURUSD: 0.8,
+  GBPUSD: 1,
+  USDJPY: 1,
+  AUDUSD: 1.2,
+  NZDUSD: 1.5,
+  USDCAD: 1.5,
+  USDCHF: 1.5,
+  BTCUSD: 12,
+  ETHUSD: 2,
+  SOLUSD: 0.5,
+  XRPUSD: 0.3,
+  NAS100: 1.5,
+  US30: 2.5,
+  SPX500: 0.5,
+  GER40: 1.5,
+  UK100: 1.5
+};
+var DEFAULT_LEVERAGE = 100;
+var STOP_OUT_LEVEL_PCT = 20;
+function quoteFromMid(mid, spec, source, live, time = Date.now()) {
+  const spread = (SPREAD_PIPS[spec.symbol] ?? 2) * spec.pipSize;
+  return { mid, bid: mid - spread / 2, ask: mid + spread / 2, time, source, live };
+}
+function quoteFromTwoSided(bid, ask, mult, source, live, time = Date.now()) {
+  const mid = (bid + ask) / 2;
+  const half = (ask - bid) / 2 * Math.max(1, mult);
+  return { mid, bid: mid - half, ask: mid + half, time, source, live };
+}
+function convQuoteToUsd(quoteCcy, prices) {
+  if (!quoteCcy || quoteCcy === "USD") return 1;
+  const px = (sym) => prices[sym] || 0;
+  switch (quoteCcy) {
+    case "JPY":
+      return px("USDJPY") ? 1 / px("USDJPY") : 0;
+    case "CHF":
+      return px("USDCHF") ? 1 / px("USDCHF") : 0;
+    case "CAD":
+      return px("USDCAD") ? 1 / px("USDCAD") : 0;
+    case "EUR":
+      return px("EURUSD");
+    case "GBP":
+      return px("GBPUSD");
+    default:
+      return 0;
+  }
+}
+function positionPnlUsd(spec, side, lots, entry, exit, prices) {
+  const diff = side === "buy" ? exit - entry : entry - exit;
+  const conv = convQuoteToUsd(spec.quote, prices);
+  const v = diff * lots * spec.contractSize * conv;
+  return Math.round(v * 100) / 100;
+}
+function marginUsdFor(spec, lots, price, prices, leverage = DEFAULT_LEVERAGE) {
+  const size = lots * spec.contractSize;
+  const notionalUsd = spec.assetClass === "forex" && spec.symbol.startsWith("USD") ? size : size * price * convQuoteToUsd(spec.quote, prices);
+  const v = notionalUsd / Math.max(1, leverage);
+  return Math.round(v * 100) / 100;
+}
+function exitPriceFor(side, q) {
+  return side === "buy" ? q.bid : q.ask;
+}
+function floatingPnlUsd(pos, q, prices) {
+  const spec = getInstrument(pos.symbol);
+  if (!spec) return 0;
+  return positionPnlUsd(spec, pos.side, pos.lots, pos.entry, exitPriceFor(pos.side, q), prices);
+}
+function computeMetrics(balance, positions, quotes, prices, leverage = DEFAULT_LEVERAGE) {
+  let floating = 0;
+  let used = 0;
+  let openCount = 0;
+  for (const p of positions) {
+    const q = quotes[p.symbol];
+    const spec = getInstrument(p.symbol);
+    if (!spec) continue;
+    openCount++;
+    used += marginUsdFor(spec, p.lots, q ? q.mid : p.entry, prices, leverage);
+    if (q) floating += floatingPnlUsd(p, q, prices);
+  }
+  const equity = balance + floating;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  return {
+    balance: r2(balance),
+    floatingPnl: r2(floating),
+    equity: r2(equity),
+    usedMargin: r2(used),
+    freeMargin: r2(equity - used),
+    marginLevel: used > 0 ? r2(equity / used * 100) : null,
+    openCount
+  };
+}
+function checkExitTrigger(pos, q) {
+  const closePx = exitPriceFor(pos.side, q);
+  if (pos.side === "buy") {
+    if (pos.sl != null && closePx <= pos.sl) return "sl";
+    if (pos.tp != null && closePx >= pos.tp) return "tp";
+  } else {
+    if (pos.sl != null && closePx >= pos.sl) return "sl";
+    if (pos.tp != null && closePx <= pos.tp) return "tp";
+  }
+  return null;
+}
+function checkPendingTrigger(order, q) {
+  return order.side === "buy" ? order.kind === "limit" ? q.ask <= order.price : q.ask >= order.price : order.kind === "limit" ? q.bid >= order.price : q.bid <= order.price;
+}
+function evaluateAccount(args) {
+  const { balance, positions, orders, quotes } = args;
+  const prices = args.prices ?? {};
+  const leverage = args.leverage ?? DEFAULT_LEVERAGE;
+  const out = { fills: [], exits: [], stopOut: false, stopOutIds: [], slUpdates: [], expired: [] };
+  const metrics = computeMetrics(balance, positions, quotes, prices, leverage);
+  if (metrics.usedMargin > 0 && metrics.marginLevel != null && metrics.marginLevel <= STOP_OUT_LEVEL_PCT) {
+    out.stopOut = true;
+    out.stopOutIds = positions.map((p) => p.id);
+    return out;
+  }
+  out.expired = orders.filter((o) => o.expiryAt != null && o.expiryAt <= Date.now()).map((o) => o.id);
+  for (const o of orders) {
+    if (o.expiryAt != null && o.expiryAt <= Date.now()) continue;
+    const q = quotes[o.symbol];
+    if (q && checkPendingTrigger(o, q)) out.fills.push({ orderId: o.id, entry: o.side === "buy" ? q.ask : q.bid, quoteTime: q.time });
+  }
+  out.slUpdates = [];
+  for (const p of positions) {
+    const q = quotes[p.symbol];
+    if (!q) continue;
+    const ts = Number(p.tsPct) || 0;
+    if (ts > 0 && ts <= 10) {
+      const candidate = Math.round((p.side === "buy" ? q.bid * (1 - ts / 100) : q.ask * (1 + ts / 100)) * 100) / 100;
+      if (trailingSlCandidate(p, candidate)) out.slUpdates.push({ positionId: p.id, sl: candidate });
+    }
+    const reason = checkExitTrigger(p, q);
+    if (reason) out.exits.push({ positionId: p.id, exit: exitPriceFor(p.side, q), reason, quoteTime: q.time });
+  }
+  return out;
+}
+function trailingSlCandidate(pos, candidate) {
+  if (!Number.isFinite(candidate) || candidate <= 0) return false;
+  if (pos.sl == null) return true;
+  return pos.side === "buy" ? candidate > pos.sl : candidate < pos.sl;
+}
+function dayKey(ts = Date.now()) {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+var SWAP_USD_PER_LOT_NIGHT = {
+  XAUUSD: { long: -8.4, short: 1.6 },
+  XAGUSD: { long: -7.5, short: -1 },
+  EURUSD: { long: -5.3, short: 3.1 },
+  GBPUSD: { long: -3.8, short: 1.4 },
+  USDJPY: { long: 8.9, short: -13 },
+  AUDUSD: { long: -6.6, short: 4 },
+  NZDUSD: { long: -5.9, short: 2.9 },
+  USDCAD: { long: -2.1, short: -7.9 },
+  USDCHF: { long: 6.4, short: -11.2 },
+  BTCUSD: { long: -32, short: -18 },
+  ETHUSD: { long: -21, short: -12 },
+  SOLUSD: { long: -8, short: -5 },
+  XRPUSD: { long: -5, short: -3 },
+  NAS100: { long: -2.9, short: 1.1 },
+  US30: { long: -3.7, short: 1.3 },
+  SPX500: { long: -1.9, short: 0.7 },
+  GER40: { long: -1.6, short: -0.7 },
+  UK100: { long: -8.3, short: -2.4 }
+};
+function nightsHeld(openedAt, now) {
+  if (!(now > openedAt)) return 0;
+  const d1 = new Date(openedAt);
+  const d2 = new Date(now);
+  const u1 = Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth(), d1.getUTCDate());
+  const u2 = Date.UTC(d2.getUTCFullYear(), d2.getUTCMonth(), d2.getUTCDate());
+  return Math.floor((u2 - u1) / 864e5);
+}
+function swapForPosition(spec, side, lots, openedAt, now = Date.now()) {
+  const rate = SWAP_USD_PER_LOT_NIGHT[spec.symbol];
+  if (!rate) return 0;
+  const nights = nightsHeld(openedAt, now);
+  if (nights <= 0) return 0;
+  const perNight = side === "buy" ? rate.long : rate.short;
+  return Math.round(perNight * lots * nights * 100) / 100;
+}
+function evaluatePropRules(args) {
+  const { rules, startingBalance, equity, dayStartBalance, tradingDays, openPositions } = args;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  const peakEquity = Math.max(args.peakEquity, equity);
+  const out = {
+    status: args.status,
+    failedReason: null,
+    hardBreach: false,
+    dailyBreach: false,
+    overallBreach: false,
+    targetReached: false,
+    canPass: false,
+    dailyLossUsd: 0,
+    dailyLossLimitUsd: null,
+    drawdownUsd: 0,
+    maxDrawdownUsd: null,
+    targetUsd: null,
+    tradingDays,
+    peakEquity: r2(peakEquity),
+    dailyLossUsed: 0,
+    drawdownUsed: 0,
+    targetProgress: 0
+  };
+  if (!rules) return out;
+  if (rules.dailyLossLimitPct != null && rules.dailyLossLimitPct > 0) {
+    const limit = r2(dayStartBalance * (rules.dailyLossLimitPct / 100));
+    const loss = r2(dayStartBalance - equity);
+    out.dailyLossUsd = loss;
+    out.dailyLossLimitUsd = limit;
+    out.dailyLossUsed = limit > 0 ? Math.max(0, loss / limit) : 0;
+    if (loss >= limit && limit > 0) {
+      out.dailyBreach = true;
+      out.failedReason = `Daily loss limit breached: -$${loss.toFixed(2)} of -$${limit.toFixed(2)} allowed today`;
+    }
+  }
+  if (rules.maxDrawdownPct != null && rules.maxDrawdownPct > 0) {
+    const limit = r2(startingBalance * (rules.maxDrawdownPct / 100));
+    const dd = r2(startingBalance - equity);
+    out.drawdownUsd = dd;
+    out.maxDrawdownUsd = limit;
+    out.drawdownUsed = limit > 0 ? Math.max(0, dd / limit) : 0;
+    if (dd >= limit && limit > 0) {
+      out.overallBreach = true;
+      out.failedReason = `Maximum drawdown breached: -$${dd.toFixed(2)} of -$${limit.toFixed(2)} allowed overall`;
+    }
+  }
+  if (rules.profitTargetPct != null && rules.profitTargetPct > 0) {
+    const target = r2(startingBalance * (rules.profitTargetPct / 100));
+    out.targetUsd = target;
+    out.targetReached = equity >= startingBalance + target;
+    out.targetProgress = target > 0 ? Math.max(0, (equity - startingBalance) / target) : 0;
+    out.canPass = out.targetReached && tradingDays >= Math.max(0, rules.minTradingDays) && openPositions === 0;
+  }
+  if (args.periodExpired && !out.hardBreach) {
+    out.failedReason = `Trading period expired (${rules.maxTradingDays} days) without reaching the profit target`;
+    out.status = "failed";
+    out.hardBreach = true;
+    out.canPass = false;
+    return out;
+  }
+  out.hardBreach = out.dailyBreach || out.overallBreach;
+  if (out.hardBreach) {
+    out.status = "failed";
+    out.canPass = false;
+  } else if (out.canPass && args.status !== "failed") {
+    out.status = "passed";
+  } else if (args.status !== "failed") {
+    out.status = "active";
+  }
+  return out;
+}
+function periodExpired(rules, startedAt, now = Date.now()) {
+  if (!rules || rules.maxTradingDays == null || rules.maxTradingDays <= 0) return false;
+  const start = Number(startedAt) || 0;
+  if (!start) return false;
+  return now >= start + rules.maxTradingDays * 864e5;
+}
+function bumpTradeStats(stats, pnl) {
+  const s = stats && typeof stats === "object" ? { ...stats } : { totalTrades: 0, wins: 0, losses: 0 };
+  s.totalTrades = (s.totalTrades || 0) + 1;
+  if (pnl > 0) s.wins = (s.wins || 0) + 1;
+  else if (pnl < 0) s.losses = (s.losses || 0) + 1;
+  return s;
+}
+
+// api/_src/lib/truefx.ts
+var TRUEFX_URL = "https://webrates.truefx.com/rates/connect.html?f=csv";
+var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var TRUEFX_BIG_FIGURE_RE = /^\d+\.(?:\d{2})?$/;
+function parseTrueFxRow(f, ctx) {
+  if (f.length < 8) return null;
+  const pair = f[0]?.trim();
+  if (!pair || !pair.includes("/")) return null;
+  const code = pair.replace("/", "");
+  if (!TRUEFX_BIG_FIGURE_RE.test(String(f[2])) || !TRUEFX_BIG_FIGURE_RE.test(String(f[4]))) return null;
+  const bid = Number.parseFloat(String(f[2]) + String(f[3]));
+  const ask = Number.parseFloat(String(f[4]) + String(f[5]));
+  if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) return null;
+  const last = ctx?.lastGood?.[code];
+  if (last && last > 0 && Math.abs(bid / last - 1) > 0.015) {
+    const nowMs = ctx?.nowMs ?? Date.now();
+    const acceptedAt = ctx?.lastGoodAt?.[code] ?? 0;
+    if (nowMs - acceptedAt < 3e5) return null;
+  }
+  const ts = Number(f[1]);
+  const open = Number.isFinite(Number(f[8])) ? Number(f[8]) : null;
+  return { code, quote: { bid, ask, mid: (bid + ask) / 2, ts: Number.isFinite(ts) ? ts : 0, open } };
+}
+var CACHE_TTL_MS = 2e3;
+var cache2 = null;
+var inflight = null;
+var truefxQuotes = async () => {
+  const now = Date.now();
+  if (cache2 && now - cache2.at < CACHE_TTL_MS) return cache2.quotes;
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8e3);
+    try {
+      const res = await fetch(TRUEFX_URL, { headers: { "User-Agent": UA, Accept: "text/csv" }, signal: controller.signal });
+      if (!res.ok) return cache2?.quotes ?? {};
+      const text = await res.text();
+      const out = {};
+      const lg = {};
+      const lga = {};
+      for (const [code, q] of Object.entries(cache2?.quotes ?? {})) {
+        lg[code] = q.bid;
+        lga[code] = cache2?.at ?? 0;
+      }
+      for (const line of text.split("\n")) {
+        const parsed = parseTrueFxRow(line.split(","), { lastGood: lg, lastGoodAt: lga, nowMs: Date.now() });
+        if (!parsed) continue;
+        out[parsed.code] = parsed.quote;
+        lg[parsed.code] = parsed.quote.bid;
+        lga[parsed.code] = Date.now();
+      }
+      if (Object.keys(out).length) cache2 = { at: Date.now(), quotes: out };
+      return out;
+    } catch {
+      return cache2?.quotes ?? {};
+    } finally {
+      clearTimeout(timer);
+      inflight = null;
+    }
+  })();
+  return inflight;
+};
+
+// api/_src/trading/prices.ts
+var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+var BINANCE_HOSTS = ["api.binance.com", "data-api.binance.vision"];
+var CRYPTO_TTL = 3e3;
+var SPOT_TTL = 5e3;
+var YAHOO_TTL = 45e3;
+var cache3 = /* @__PURE__ */ new Map();
+async function fetchJson(url, timeoutMs = 6e3, headers = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers });
+    if (!res.ok) throw new Error(`upstream ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function fetchCryptoMids(binanceSyms) {
+  let lastErr;
+  for (let i = 0; i < BINANCE_HOSTS.length; i++) {
+    try {
+      const host = BINANCE_HOSTS[i];
+      const q = encodeURIComponent(JSON.stringify(binanceSyms));
+      const arr = await fetchJson(`https://${host}/api/v3/ticker/price?symbols=${q}`);
+      const out = {};
+      for (const row of arr) if (Number.isFinite(+row.price)) out[row.symbol] = +row.price;
+      return out;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("binance unreachable");
+}
+var GOLD_CODES = { XAUUSD: "XAU", XAGUSD: "XAG" };
+async function fetchSpot(code) {
+  const res = await fetchJson(`https://api.gold-api.com/price/${code}`);
+  const price = Number(res?.price);
+  if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
+  return price;
+}
+async function fetchYahooMid(yahooSym) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSym)}?range=1d&interval=1d`;
+  const json = await fetchJson(url, 8e3, { "User-Agent": UA2 });
+  const meta = json?.chart?.result?.[0]?.meta;
+  const price = Number(meta?.regularMarketPrice);
+  if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_YAHOO");
+  return price;
+}
+async function getMids(symbols) {
+  const out = {};
+  const now = Date.now();
+  const want = [];
+  for (const s of symbols) {
+    const cached = cache3.get(s);
+    if (cached && now - cached.time < (cached.live ? Math.min(CRYPTO_TTL, SPOT_TTL) : YAHOO_TTL)) out[s] = cached;
+    else want.push(s);
+  }
+  if (want.length) {
+    const crypto2 = want.filter((s) => getInstrument(s)?.feed === "binance");
+    const spot = want.filter((s) => GOLD_CODES[s]);
+    const yahoo = want.filter((s) => {
+      const inst = getInstrument(s);
+      return inst && inst.feed !== "binance" && !GOLD_CODES[s];
+    });
+    await Promise.all([
+      (async () => {
+        if (!crypto2.length) return;
+        const binanceSyms = crypto2.map((s) => getInstrument(s).binance);
+        const byBinance = await fetchCryptoMids(binanceSyms);
+        for (const s of crypto2) {
+          const p = byBinance[getInstrument(s).binance];
+          if (Number.isFinite(p)) {
+            out[s] = { mid: p, source: "binance", live: true, time: Date.now() };
+            cache3.set(s, out[s]);
+          }
+        }
+      })(),
+      (async () => {
+        for (const s of spot) {
+          try {
+            const p = await fetchSpot(GOLD_CODES[s]);
+            out[s] = { mid: p, source: "gold-api", live: true, time: Date.now() };
+            cache3.set(s, out[s]);
+          } catch {
+          }
+        }
+      })(),
+      (async () => {
+        const fxSyms = yahoo.filter((s) => getInstrument(s)?.assetClass === "forex");
+        const rest = yahoo.filter((s) => !fxSyms.includes(s));
+        let tfx = {};
+        if (fxSyms.length) {
+          try {
+            tfx = await truefxQuotes();
+          } catch {
+          }
+        }
+        for (const s of fxSyms) {
+          const bare = s.replace(/=X$/i, "");
+          const t = tfx[bare];
+          if (t && t.ts > 0 && Date.now() - t.ts < 9e4 && t.ask > t.bid && t.bid > 0) {
+            out[s] = { mid: t.mid, bid: t.bid, ask: t.ask, source: "truefx", live: true, time: Date.now() };
+            cache3.set(s, out[s]);
+            continue;
+          }
+          await fetchYahooFor(s, out);
+        }
+        for (const s of rest) await fetchYahooFor(s, out);
+      })()
+    ]);
+  }
+  return out;
+}
+async function fetchYahooFor(sym, out) {
+  const inst = getInstrument(sym);
+  if (!inst?.yahoo) return;
+  try {
+    const p = await fetchYahooMid(inst.yahoo);
+    const info = { mid: p, source: "yahoo", live: false, time: Date.now() };
+    out[sym] = info;
+    cache3.set(sym, info);
+  } catch {
+  }
+}
+function withConversionSymbols(symbols) {
+  const set = new Set(symbols);
+  for (const s of symbols) {
+    const inst = getInstrument(s);
+    if (!inst || inst.quote === "USD") continue;
+    if (inst.quote === "EUR") set.add("EURUSD");
+    else if (inst.quote === "GBP") set.add("GBPUSD");
+    else if (inst.quote === "JPY") set.add("USDJPY");
+    else if (inst.quote === "CHF") set.add("USDCHF");
+    else if (inst.quote === "CAD") set.add("USDCAD");
+  }
+  return [...set];
+}
+async function getQuotes(symbols) {
+  const mids = await getMids(withConversionSymbols(symbols));
+  const settings = await getPlatformSettings();
+  const mult = settings.spreadMultiplier || 1;
+  const out = {};
+  for (const [sym, info] of Object.entries(mids)) {
+    const inst = getInstrument(sym);
+    if (!inst) continue;
+    let q;
+    if (info.bid != null && info.ask != null && info.ask > info.bid) {
+      q = quoteFromTwoSided(info.bid, info.ask, mult, info.source, info.live, info.time);
+    } else {
+      q = quoteFromMid(info.mid, inst, info.source, info.live, info.time);
+      if (mult !== 1) {
+        const spread = (q.ask - q.bid) * mult;
+        q.bid = q.mid - spread / 2;
+        q.ask = q.mid + spread / 2;
+      }
+    }
+    out[sym] = q;
+  }
+  return out;
+}
+var ALL_SYMBOLS = INSTRUMENTS.map((i) => i.symbol);
+
+// api/_src/trading/store.ts
+var db = () => firestore();
+var accountsCol = (uid) => db().collection("users").doc(uid).collection("accounts");
+var posCol = (uid, aid) => accountsCol(uid).doc(aid).collection("positions");
+var ordCol = (uid, aid) => accountsCol(uid).doc(aid).collection("orders");
+var tradeCol = (uid, aid) => accountsCol(uid).doc(aid).collection("trades");
+var eventCol = (uid, aid) => accountsCol(uid).doc(aid).collection("events");
+function writeEventTx(tx, uid, aid, type, data = {}) {
+  tx.set(eventCol(uid, aid).doc(), {
+    type,
+    at: Date.now(),
+    ...data
+  });
+}
+async function quotesForState(state, extra = []) {
+  const symbols = withConversionSymbols([
+    ...state.positions.map((p) => p.symbol),
+    ...state.orders.map((o) => o.symbol),
+    ...extra
+  ]);
+  const quotes = await getQuotes(symbols);
+  const prices = {};
+  for (const [sym, q] of Object.entries(quotes)) prices[sym] = q.mid;
+  return { quotes, prices };
+}
+function requireQuote(quotes, symbol) {
+  const q = quotes[symbol];
+  if (!q) throw new HttpError(503, "NO_QUOTE", `No executable price for ${symbol} right now \u2014 try again`);
+  return q;
+}
+function writeTradeDoc(tx, uid, aid, o) {
+  tx.set(tradeCol(uid, aid).doc(), { ...o });
+}
+function recordClose(state, tx, uid, aid, o) {
+  const commission = Math.round((o.lots || 0) * (state.commissionRate || 0) * 100) / 100;
+  if (commission > 0) {
+    o.commission = commission;
+    state.account.balance = Math.round((state.account.balance - commission) * 100) / 100;
+  }
+  writeTradeDoc(tx, uid, aid, o);
+  writeEventTx(tx, uid, aid, "position_closed", {
+    positionId: o.positionId ?? null,
+    symbol: o.symbol,
+    side: o.side,
+    lots: o.lots,
+    entry: o.entry,
+    exit: o.exit,
+    pnl: o.pnl,
+    swap: o.swap,
+    commission: o.commission ?? 0,
+    reason: o.reason,
+    openedAt: o.openedAt,
+    closedAt: o.closedAt
+  });
+  bumpTradingDay(state.account, o.closedAt);
+  state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
+  if (state.account.type === "CHALLENGE") {
+    tx.set(firestore().collection("leaderboardLog").doc(), {
+      at: o.closedAt,
+      uid,
+      aid,
+      net: Math.round((o.pnl + o.swap - (o.commission || 0)) * 100) / 100
+    });
+  }
+}
+function settleSwap(state, pos, now) {
+  const spec = getInstrument(pos.symbol);
+  if (!spec) return pos.swapAccrued ?? 0;
+  const nights = Math.max(nightsHeld(pos.openedAt, now), 0);
+  const charged = pos.swapNights ?? 0;
+  if (nights <= charged) return pos.swapAccrued ?? 0;
+  const owed = swapForPosition(spec, pos.side, pos.lots, pos.openedAt + charged * 864e5, now);
+  state.account.balance = Math.round((state.account.balance + owed) * 100) / 100;
+  pos.swapAccrued = Math.round(((pos.swapAccrued ?? 0) + owed) * 100) / 100;
+  pos.swapNights = nights;
+  return pos.swapAccrued;
+}
+function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
+  const leverage = state.account.leverage || DEFAULT_LEVERAGE;
+  const now = Date.now();
+  const result = evaluateAccount({
+    balance: state.account.balance,
+    positions: state.positions,
+    orders: state.orders,
+    quotes,
+    prices,
+    leverage
+  });
+  const closed = [];
+  const toClose = [];
+  if (result.stopOut) {
+    for (const p of state.positions) {
+      const q = requireQuote(quotes, p.symbol);
+      toClose.push({ pos: p, exit: exitPriceFor(p.side, q), reason: "stopout" });
+    }
+  } else {
+    for (const e of result.exits) {
+      const pos = state.positions.find((p) => p.id === e.positionId);
+      if (pos) toClose.push({ pos, exit: e.exit, reason: e.reason });
+    }
+  }
+  for (const { pos, exit, reason } of toClose) {
+    const spec = getInstrument(pos.symbol);
+    const swap = settleSwap(state, pos, now);
+    const pnl = positionPnlUsd(spec, pos.side, pos.lots, pos.entry, exit, prices);
+    state.account.balance = Math.round((state.account.balance + pnl) * 100) / 100;
+    closed.push({
+      symbol: pos.symbol,
+      side: pos.side,
+      lots: pos.lots,
+      entry: pos.entry,
+      exit,
+      pnl,
+      swap,
+      reason,
+      openedAt: pos.openedAt,
+      closedAt: now,
+      positionId: pos.id
+    });
+    tx.delete(posCol(uid, aid).doc(pos.id));
+    state.positions = state.positions.filter((p) => p.id !== pos.id);
+  }
+  for (const o of closed) {
+    recordClose(state, tx, uid, aid, o);
+  }
+  for (const u of result.slUpdates || []) {
+    const pos = state.positions.find((p) => p.id === u.positionId);
+    if (!pos || pos.sl === u.sl) continue;
+    pos.sl = u.sl;
+    pos.slModifiedAt = now;
+    tx.update(posCol(uid, aid).doc(pos.id), { sl: u.sl, slModifiedAt: now });
+    writeEventTx(tx, uid, aid, "trailing_updated", {
+      positionId: pos.id,
+      symbol: pos.symbol,
+      sl: u.sl
+    });
+  }
+  result.fills = result.fills.filter((f) => {
+    const order = state.orders.find((o) => o.id === f.orderId);
+    if (!order) return false;
+    return marketHours(order.symbol).open;
+  });
+  for (const oid of result.expired || []) {
+    const order = state.orders.find((o) => o.id === oid);
+    if (!order) continue;
+    tx.delete(ordCol(uid, aid).doc(oid));
+    writeEventTx(tx, uid, aid, "order_expired", { orderId: oid, symbol: order.symbol });
+    state.orders = state.orders.filter((o) => o.id !== oid);
+  }
+  for (const f of result.fills) {
+    const order = state.orders.find((o) => o.id === f.orderId);
+    if (!order) continue;
+    const posRef = posCol(uid, aid).doc();
+    const pos = {
+      id: posRef.id,
+      symbol: order.symbol,
+      side: order.side,
+      lots: order.lots,
+      entry: f.entry,
+      sl: order.sl,
+      tp: order.tp,
+      tsPct: order.tsPct ?? 0,
+      openedAt: now,
+      swapAccrued: 0,
+      swapNights: 0
+    };
+    tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, tsPct: pos.tsPct, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
+    tx.delete(ordCol(uid, aid).doc(order.id));
+    writeEventTx(tx, uid, aid, "pending_filled", {
+      orderId: order.id,
+      positionId: posRef.id,
+      symbol: order.symbol,
+      side: order.side,
+      lots: order.lots,
+      entry: f.entry,
+      kind: order.kind,
+      trigger: order.price
+    });
+    state.orders = state.orders.filter((o) => o.id !== order.id);
+    state.positions.push(pos);
+  }
+  for (const p of state.positions) {
+    const spec = getInstrument(p.symbol);
+    if (!spec) continue;
+    const nights = Math.max(nightsHeld(p.openedAt, now), 0);
+    if (nights > (p.swapNights ?? 0)) {
+      const chargedNights = nights - (p.swapNights ?? 0);
+      const swapBefore = p.swapAccrued ?? 0;
+      settleSwap(state, p, now);
+      tx.update(posCol(uid, aid).doc(p.id), { swapAccrued: p.swapAccrued, swapNights: p.swapNights });
+      writeEventTx(tx, uid, aid, "swap_charged", {
+        positionId: p.id,
+        symbol: p.symbol,
+        nights: chargedNights,
+        amount: Math.round(((p.swapAccrued ?? 0) - swapBefore) * 100) / 100
+      });
+    }
+  }
+  const today = dayKey();
+  const dayStart = { ...state.account.dayStart || {} };
+  if (dayStart[today] == null) dayStart[today] = state.account.balance;
+  state.account.dayStart = dayStart;
+  const rules = state.account.rules ?? null;
+  if (rules && state.account.status !== "failed") {
+    const prevStatus = state.account.status || "active";
+    const leverage2 = state.account.leverage || DEFAULT_LEVERAGE;
+    const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage2);
+    const ruleState = evaluatePropRules({
+      rules,
+      status: state.account.status || "active",
+      balance: state.account.balance,
+      equity: metrics.equity,
+      startingBalance: state.account.startingBalance,
+      dayStartBalance: dayStart[today] ?? state.account.balance,
+      peakEquity: state.account.peakEquity ?? state.account.balance,
+      tradingDays: Object.keys(state.account.tradingDays || {}).length,
+      openPositions: state.positions.length,
+      openLots: state.positions.reduce((s, p) => s + p.lots, 0),
+      periodExpired: periodExpired(rules, state.account.startedAt || state.account.createdAt, now)
+    });
+    state.account.peakEquity = ruleState.peakEquity;
+    state.account.status = ruleState.status;
+    state.account.failedReason = ruleState.status === "failed" ? ruleState.failedReason : null;
+    if (ruleState.status !== prevStatus && ruleState.status === "passed") {
+      void writeAdminAlert({
+        type: "challenge_passed",
+        severity: "info",
+        text: `Challenge PASSED \u2014 profit target reached on ${state.account.challengeName || state.account.label}`,
+        uid,
+        details: { aid, balance: state.account.balance }
+      });
+    } else if (ruleState.status !== prevStatus && ruleState.status === "failed") {
+      void writeAdminAlert({
+        type: "challenge_failed",
+        severity: "critical",
+        text: `Challenge FAILED \u2014 ${state.account.failedReason || "rule breached"}`,
+        uid,
+        details: { aid, reason: state.account.failedReason }
+      });
+    }
+    if (ruleState.hardBreach) {
+      writeEventTx(tx, uid, aid, "challenge_breached", {
+        reason: ruleState.failedReason || null,
+        status: ruleState.status
+      });
+      for (const p of [...state.positions]) {
+        const q = requireQuote(quotes, p.symbol);
+        const spec = getInstrument(p.symbol);
+        const swap = settleSwap(state, p, now);
+        const exit = exitPriceFor(p.side, q);
+        const pnl = positionPnlUsd(spec, p.side, p.lots, p.entry, exit, prices);
+        state.account.balance = Math.round((state.account.balance + pnl) * 100) / 100;
+        const outcome = {
+          symbol: p.symbol,
+          side: p.side,
+          lots: p.lots,
+          entry: p.entry,
+          exit,
+          pnl,
+          swap,
+          reason: "rule-breach",
+          openedAt: p.openedAt,
+          closedAt: now,
+          positionId: p.id
+        };
+        closed.push(outcome);
+        recordClose(state, tx, uid, aid, outcome);
+        tx.delete(posCol(uid, aid).doc(p.id));
+      }
+      state.positions = [];
+      for (const o of state.orders) tx.delete(ordCol(uid, aid).doc(o.id));
+      state.orders = [];
+    }
+    return { closed, filled: result.fills.length, ruleState };
+  }
+  return { closed, filled: result.fills.length, ruleState: null };
+}
+function bumpTradingDay(account, closedAt) {
+  const key = dayKey(closedAt);
+  const days = { ...account.tradingDays || {} };
+  days[key] = (days[key] || 0) + 1;
+  account.tradingDays = days;
+}
+function persistAccountTx(tx, uid, aid, state, quotes, prices) {
+  const leverage = state.account.leverage || DEFAULT_LEVERAGE;
+  const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
+  tx.update(accountsCol(uid).doc(aid), {
+    balance: state.account.balance,
+    dayStart: state.account.dayStart,
+    status: state.account.status || "active",
+    rules: state.account.rules ?? null,
+    failedReason: state.account.failedReason ?? null,
+    peakEquity: state.account.peakEquity ?? state.account.balance,
+    tradingDays: state.account.tradingDays || {},
+    stats: state.account.stats || { totalTrades: 0, wins: 0, losses: 0 },
+    adminSuspended: !!state.account.adminSuspended,
+    startedAt: state.account.startedAt || state.account.createdAt || Date.now(),
+    challengeTypeId: state.account.challengeTypeId ?? null,
+    challengeName: state.account.challengeName ?? null,
+    balanceUpdatedAt: Date.now(),
+    metrics: { ...metrics, updatedAt: Date.now() }
+  });
+  return metrics;
+}
+async function readState(uid, aid) {
+  const accSnap = await accountsCol(uid).doc(aid).get();
+  if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
+  const [posSnap, ordSnap, settings] = await Promise.all([
+    posCol(uid, aid).get(),
+    ordCol(uid, aid).get(),
+    getPlatformSettings()
+  ]);
+  const positions = posSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const orders = ordSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return {
+    id: aid,
+    account: accSnap.data(),
+    positions,
+    orders,
+    commissionRate: settings.commissionPerLotUsd || 0
+  };
+}
+async function evaluate(uid, aid) {
+  const dbRef = db();
+  const accRef = accountsCol(uid).doc(aid);
+  const preState = await readState(uid, aid);
+  const { quotes, prices } = await quotesForState(preState);
+  return dbRef.runTransaction(async (tx) => {
+    const state = await txGetState(tx, uid, aid);
+    const before = state.account.balance;
+    const { closed } = applyEvaluationTx(tx, uid, aid, state, quotes, prices);
+    const metrics = persistAccountTx(tx, uid, aid, state, quotes, prices);
+    return { metrics, realized: Math.round((state.account.balance - before) * 100) / 100, closed };
+  });
+}
+async function txGetState(tx, uid, aid) {
+  const accRef = accountsCol(uid).doc(aid);
+  const [accSnap, posSnap, ordSnap] = await Promise.all([
+    tx.get(accRef),
+    tx.get(posCol(uid, aid)),
+    tx.get(ordCol(uid, aid))
+  ]);
+  if (!accSnap.exists) throw new HttpError(404, "NO_ACCOUNT", "Account not found");
+  const settings = await getPlatformSettings();
+  return {
+    id: aid,
+    account: accSnap.data(),
+    positions: posSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    orders: ordSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    commissionRate: settings.commissionPerLotUsd || 0
+  };
+}
+
+// api/_src/trading/cron.ts
+async function runTradingCron(budgetMs = 8e3) {
+  const started = Date.now();
+  const dbx = firestore();
+  const targets = /* @__PURE__ */ new Map();
+  const addTargets = (snap, prio) => {
+    for (const d of snap.docs) {
+      const accRef = d.ref.parent.parent;
+      if (!accRef) continue;
+      const uid = accRef.parent.parent?.id ?? "";
+      const aid = accRef.id;
+      if (!uid || !aid) continue;
+      const key = `${uid}:${aid}`;
+      const prev2 = targets.get(key);
+      if (!prev2 || prev2.prio > prio) targets.set(key, { uid, aid, prio });
+    }
+  };
+  addTargets(await dbx.collectionGroup("positions").limit(300).get(), 0);
+  addTargets(await dbx.collectionGroup("orders").limit(300).get(), 0);
+  addTargets(await dbx.collectionGroup("accounts").where("status", "==", "active").limit(300).get(), 1);
+  const ordered = [...targets.values()].sort((a, b) => a.prio - b.prio);
+  let processed = 0;
+  let failed = 0;
+  const errors = [];
+  for (const t of ordered) {
+    if (Date.now() - started > budgetMs) break;
+    try {
+      await evaluate(t.uid, t.aid);
+      processed++;
+    } catch (e) {
+      failed++;
+      if (errors.length < 5) errors.push(`${t.aid}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const monRef = dbx.collection("platformMonitoring").doc("tradingCron");
+  const prev = (await monRef.get()).data();
+  const runMs = Date.now() - started;
+  const remaining = Math.max(0, ordered.length - processed - failed);
+  await monRef.set({ lastRunAt: started, runMs, processed, failed, remaining }, { merge: true });
+  if (prev?.lastRunAt && started - prev.lastRunAt > 15 * 6e4) {
+    void writeAdminAlert({
+      type: "engine_error",
+      severity: "warning",
+      text: `Trading cron gap detected: previous evaluation ran ${Math.round((started - prev.lastRunAt) / 6e4)} min late`,
+      details: { processed, failed }
+    }, "cron_gap", 60 * 6e4);
+  }
+  return { ok: true, targets: ordered.length, processed, failed, remaining, runMs, errors };
+}
+
+// api/_src/lib/rate-limit.ts
+var buckets = /* @__PURE__ */ new Map();
+function rateLimit(key, limit, windowMs) {
+  const now = Date.now();
+  const arr = (buckets.get(key) || []).filter((t) => now - t < windowMs);
+  if (arr.length >= limit) {
+    buckets.set(key, arr);
+    return false;
+  }
+  arr.push(now);
+  buckets.set(key, arr);
+  if (buckets.size > 5e3) {
+    for (const [k, v] of buckets) {
+      if (!v.length || now - v[v.length - 1] > windowMs) buckets.delete(k);
+    }
+  }
+  return true;
+}
+
 // api/_src/news/index.ts
-var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+var UA3 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var GOOGLE_NEWS = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:7d")}&hl=en-US&gl=US&ceid=US:en`;
 var FEEDS = [
   { url: "https://www.investing.com/rss/news_1.rss", source: "Investing", google: false },
@@ -7576,7 +8695,7 @@ async function fetchFeed(url, feed) {
   const timer = setTimeout(() => controller.abort(), 8e3);
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/rss+xml, application/xml, text/xml, */*" },
+      headers: { "User-Agent": UA3, Accept: "application/rss+xml, application/xml, text/xml, */*" },
       signal: controller.signal
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -7600,7 +8719,7 @@ async function fetchCalendar() {
     const timer = setTimeout(() => controller.abort(), 8e3);
     const res = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
       headers: {
-        "User-Agent": UA,
+        "User-Agent": UA3,
         Accept: "application/json, text/plain, */*",
         Referer: "https://www.forexfactory.com/calendar"
       },
@@ -7657,7 +8776,7 @@ async function collectNewsCron() {
 var ECON_TTL = 10 * 60 * 1e3;
 
 // api/_src/alerts-cron.ts
-var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36";
+var UA4 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36";
 var VAPID_SUBJECT = "mailto:support@inspiretrade.app";
 function pushConfigured() {
   return !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
@@ -7730,6 +8849,29 @@ async function pushRegistration(req, res) {
     } catch {
     }
   }
+  if (action === "support-send") {
+    const text = String(body?.text || "").trim().slice(0, 300);
+    if (!text) throw new HttpError(400, "EMPTY_MESSAGE", "Message text is required");
+    if (!rateLimit(`${user.uid}:support-send`, 5, 6e4)) {
+      throw new HttpError(429, "RATE_LIMITED", "Too many messages \u2014 try again in a minute");
+    }
+    const msg = {
+      uid: user.uid,
+      name: String(body?.name || "User").slice(0, 60),
+      text,
+      from: "user",
+      at: Date.now()
+    };
+    if (body?.username) msg.username = String(body.username).slice(0, 20);
+    await rtdb().ref(`supportInbox/${user.uid}`).push(msg);
+    res.status(200).json({ ok: true });
+    return;
+  }
+  if (action === "support-history") {
+    const snap = await rtdb().ref(`supportInbox/${user.uid}`).limitToLast(100).once("value");
+    res.status(200).json({ ok: true, messages: snap.val() || {} });
+    return;
+  }
   if (action === "subscribe") {
     const endpoint = String(body?.subscription?.endpoint || "");
     if (!endpoint.startsWith("https://")) {
@@ -7761,6 +8903,12 @@ var alerts_cron_default = handle(async (req, res) => {
   if (secret) {
     const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     if (got !== secret) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+  let tradingCron = null;
+  try {
+    tradingCron = await runTradingCron(6e4);
+  } catch (e) {
+    tradingCron = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
   const pushOn = pushConfigured();
   if (pushOn) {
@@ -7841,7 +8989,7 @@ var alerts_cron_default = handle(async (req, res) => {
   }
   if (yahooNeeded.size) {
     await Promise.allSettled([...yahooNeeded].map(async (sym) => {
-      const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d`, { headers: { "User-Agent": UA2, Accept: "application/json" } });
+      const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d`, { headers: { "User-Agent": UA4, Accept: "application/json" } });
       if (!r.ok) return;
       const data = await r.json();
       const result = data?.chart?.result?.[0];
@@ -7950,7 +9098,7 @@ var alerts_cron_default = handle(async (req, res) => {
     } catch {
     }
   }
-  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn });
+  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn, tradingCron });
 });
 export {
   alerts_cron_default as default

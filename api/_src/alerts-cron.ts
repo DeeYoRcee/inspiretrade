@@ -35,6 +35,8 @@
 // CJS package into the bundled output.
 import * as webpush from "web-push";
 import { rtdb, handle, requireUser, assertPost, HttpError } from "./lib/firebase";
+import { runTradingCron } from "./trading/cron";
+import { rateLimit } from "./lib/rate-limit";
 import { INSTRUMENTS, getInstrument } from "../../shared/terminal";
 import { collectNewsCron } from "./news/index";
 
@@ -128,6 +130,35 @@ async function pushRegistration(req: any, res: any): Promise<void> {
     } catch { /* fall through to BAD_ACTION */ }
   }
 
+  // PHASE 62 §9 + support-chat fix — the support inbox relay. The deployed
+  // RTDB rules are older than the repo's database.rules.json (the admin must
+  // publish them), so direct client writes to supportInbox/{uid} fail with
+  // PERMISSION_DENIED; the server (admin SDK) is never denied. These actions
+  // make sending/reading support messages work regardless of the rules state.
+  if (action === "support-send") {
+    const text = String(body?.text || "").trim().slice(0, 300);
+    if (!text) throw new HttpError(400, "EMPTY_MESSAGE", "Message text is required");
+    if (!rateLimit(`${user.uid}:support-send`, 5, 60_000)) {
+      throw new HttpError(429, "RATE_LIMITED", "Too many messages — try again in a minute");
+    }
+    const msg: Record<string, unknown> = {
+      uid: user.uid,
+      name: String(body?.name || "User").slice(0, 60),
+      text,
+      from: "user",
+      at: Date.now(),
+    };
+    if (body?.username) msg.username = String(body.username).slice(0, 20);
+    await rtdb().ref(`supportInbox/${user.uid}`).push(msg);
+    res.status(200).json({ ok: true });
+    return;
+  }
+  if (action === "support-history") {
+    const snap = await rtdb().ref(`supportInbox/${user.uid}`).limitToLast(100).once("value");
+    res.status(200).json({ ok: true, messages: snap.val() || {} });
+    return;
+  }
+
   if (action === "subscribe") {
     const endpoint = String(body?.subscription?.endpoint || "");
     if (!endpoint.startsWith("https://")) {
@@ -167,6 +198,16 @@ export default handle(async (req, res) => {
   if (secret) {
     const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     if (got !== secret) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+
+  // PHASE 62 §3 — the daily Vercel cron is the guaranteed catch-up floor:
+  // evaluate every account's SL/TP/pending/stop-out/swap/challenge rules
+  // server-side at least once a day, even with no external scheduler wired.
+  let tradingCron: Awaited<ReturnType<typeof runTradingCron>> | { ok: false; error: string } | null = null;
+  try {
+    tradingCron = await runTradingCron(60_000); // this function has no user latency budget
+  } catch (e) {
+    tradingCron = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 
   const pushOn = pushConfigured();
@@ -384,5 +425,5 @@ export default handle(async (req, res) => {
     } catch { /* news push unavailable this run — price alerts already delivered */ }
   }
 
-  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn });
+  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn, tradingCron });
 });

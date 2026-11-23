@@ -180,10 +180,15 @@ export function computeMetrics(
   for (const p of positions) {
     const q = quotes[p.symbol];
     const spec = getInstrument(p.symbol);
-    if (!spec || !q) continue;
+    if (!spec) continue;
     openCount++;
-    floating += floatingPnlUsd(p, q, prices);
-    used += marginUsdFor(spec, p.lots, q.mid, prices, leverage);
+    // PHASE 62 §4 — a missing/stale quote must never UNDERSTATE risk:
+    // margin anchors to the last known price (mid when quoted, entry
+    // otherwise) so stop-out and prop-rule metrics degrade to the WORST
+    // case, while floating P/L stays honestly 0 for unquoted positions
+    // (no fabricated prices — see prices.ts).
+    used += marginUsdFor(spec, p.lots, q ? q.mid : p.entry, prices, leverage);
+    if (q) floating += floatingPnlUsd(p, q, prices);
   }
   const equity = balance + floating;
   const r2 = (x: number) => Math.round(x * 100) / 100;

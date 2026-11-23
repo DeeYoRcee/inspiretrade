@@ -13,6 +13,10 @@
     {
       "source": "/api/health",
       "destination": "/api/trading"
+    },
+    {
+      "source": "/api/support",
+      "destination": "/api/alerts-cron"
     }
   ],
   "crons": [

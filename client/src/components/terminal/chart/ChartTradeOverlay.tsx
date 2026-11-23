@@ -19,7 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Settings2 } from "lucide-react";
 import { getInstrument } from "@shared/terminal";
 import { tradingApi } from "@/lib/trading-api";
-import { useTrading } from "@/hooks/use-trading";
+import { useServerQuote } from "@/hooks/use-server-quote";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -40,8 +40,10 @@ function loadPrefs(): TradePrefs {
 
 export function ChartTradeOverlay({ symbol, accountId }: { symbol: string; accountId: string | null }) {
   const { toast } = useToast();
-  const { account } = useTrading();
-  const quote = account?.quotes?.[symbol] ?? null;
+  // PHASE 61 §2 (fixed in the reliability pass): the accounts endpoint does
+  // NOT carry per-symbol quotes — poll the server quote action directly
+  // (the same authoritative source the ticket and the market panel use).
+  const quote = useServerQuote(symbol);
   const inst = getInstrument(symbol);
   const dg = inst?.digits ?? 2;
 

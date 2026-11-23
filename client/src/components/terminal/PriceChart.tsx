@@ -79,7 +79,7 @@ import { loadSyncSettings, onSyncCrosshair, onSyncRange, publishCrosshair, publi
 import { publishChartSnapshot } from "@/components/terminal/TradingAlertsEngine";
 import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useTrading } from "@/hooks/use-trading";
+import { useServerQuote } from "@/hooks/use-server-quote";
 import { ChartTradeOverlay } from "@/components/terminal/chart/ChartTradeOverlay";
 
 export interface PriceMark {
@@ -572,11 +572,10 @@ export function PriceChart({
   symbolRef.current = symbol;
   const tfRef = useRef(timeframe);
   tfRef.current = timeframe;
-  // PHASE 61 §2 — genuine server Bid/Ask (shared trading store, module
-  // singleton — no provider needed) for the bid/ask lines + quick overlay.
-  // Stale >90s or non-live feeds fall back to the local spread estimate.
-  const tradingAccount = useTrading().account;
-  const serverQuote = tradingAccount?.quotes?.[symbol] ?? null;
+  // PHASE 61 §2 — genuine server Bid/Ask (3s poll of the server quote
+  // action) for the bid/ask lines + quick overlay. Stale >90s or non-live
+  // feeds fall back to the local spread estimate.
+  const serverQuote = useServerQuote(symbol);
   const serverQuoteRef = useRef(serverQuote);
   serverQuoteRef.current = serverQuote;
   // PHASE 61 §2 — the store's quotes refresh on a heartbeat; re-hang the

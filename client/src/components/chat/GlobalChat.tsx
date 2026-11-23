@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/lib/language-context";
 import { useUserProfile } from "@/hooks/use-premium";
 import { authedFetch } from "@/lib/api";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { ref, push, get, onValue, query, limitToLast, remove, serverTimestamp } from "firebase/database";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
@@ -197,19 +197,42 @@ export function GlobalChat() {
   // Support thread — only the signed-in user's OWN mailbox
   useEffect(() => {
     if (!user || !open || tab !== "support") return;
+    // PHASE 62 — primary path: the RTDB listener. Fallback: the /api/support
+    // relay (admin SDK writes are never blocked by database rules) when the
+    // deployed rules predate the supportInbox node (PERMISSION_DENIED).
     const q = query(ref(db, `supportInbox/${user.uid}`), limitToLast(100));
+    let relayTimer: ReturnType<typeof setInterval> | null = null;
+    const applyMap = (data: Record<string, Omit<ChatMessage, "id">>) => {
+      const list: ChatMessage[] = Object.entries(data || {})
+        .map(([id, msg]) => ({ ...msg, id, from: (msg as any).from === "support" ? "support" : "user" } as ChatMessage))
+        .sort((a, b) => (a.at || 0) - (b.at || 0));
+      setSupportMsgs(list);
+    };
+    const startRelayPoll = () => {
+      const pull = async () => {
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          const res = await fetch("/api/support?action=support-history", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          if (!res.ok) return;
+          const j = await res.json();
+          applyMap((j.messages || {}) as Record<string, Omit<ChatMessage, "id">>);
+        } catch { /* offline — retry on next tick */ }
+      };
+      void pull();
+      relayTimer = setInterval(pull, 5000);
+    };
     const unsub = onValue(
       q,
       (snap) => {
-        const data = (snap.val() || {}) as Record<string, Omit<ChatMessage, "id">>;
-        const list: ChatMessage[] = Object.entries(data)
-          .map(([id, msg]) => ({ ...msg, id, from: (msg as any).from === "support" ? "support" : "user" } as ChatMessage))
-          .sort((a, b) => (a.at || 0) - (b.at || 0));
-        setSupportMsgs(list);
+        if (relayTimer) { clearInterval(relayTimer); relayTimer = null; }
+        applyMap((snap.val() || {}) as Record<string, Omit<ChatMessage, "id">>);
       },
-      () => setSupportMsgs([]),
+      () => startRelayPoll(),
     );
-    return () => unsub();
+    return () => {
+      unsub();
+      if (relayTimer) clearInterval(relayTimer);
+    };
   }, [user, open, tab]);
 
   const sendSupport = async () => {
@@ -217,17 +240,29 @@ export function GlobalChat() {
     if (!value || !user || sendingSupport) return;
     setSendingSupport(true);
     setSupportText("");
+    const payload = {
+      uid: user.uid,
+      name: displayName,
+      ...(profile?.username ? { username: profile.username } : {}),
+      text: value,
+      from: "user",
+    };
     try {
-      await push(ref(db, `supportInbox/${user.uid}`), {
-        uid: user.uid,
-        name: displayName,
-        ...(profile?.username ? { username: profile.username } : {}),
-        text: value,
-        at: serverTimestamp(),
-        from: "user",
-      });
+      await push(ref(db, `supportInbox/${user.uid}`), { ...payload, at: serverTimestamp() });
     } catch {
-      alert(t("chatSendFailed"));
+      // PHASE 62 — deployed rules may not yet carry supportInbox; the
+      // server relay writes with the admin SDK and is never denied.
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch("/api/support?action=support-send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ ...payload, at: Date.now() }),
+        });
+        if (!res.ok) throw new Error("relay failed");
+      } catch {
+        alert(t("chatSendFailed"));
+      }
     } finally {
       setSendingSupport(false);
     }

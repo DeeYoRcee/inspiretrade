@@ -36,6 +36,25 @@ const accountsCol = (uid: string) => db().collection("users").doc(uid).collectio
 const posCol = (uid: string, aid: string) => accountsCol(uid).doc(aid).collection("positions");
 const ordCol = (uid: string, aid: string) => accountsCol(uid).doc(aid).collection("orders");
 const tradeCol = (uid: string, aid: string) => accountsCol(uid).doc(aid).collection("trades");
+const eventCol = (uid: string, aid: string) => accountsCol(uid).doc(aid).collection("events");
+
+/**
+ * PHASE 62 §9 — server-side trading event audit log. Written INSIDE the
+ * same Firestore transaction as the state mutation, so an event can never
+ * exist without its effect (and vice versa) — duplicate records are
+ * structurally impossible under tx semantics. Clients have no write path
+ * to this collection: the authoritative execution history is append-only.
+ */
+function writeEventTx(
+  tx: any, uid: string, aid: string,
+  type: string, data: Record<string, unknown> = {},
+) {
+  tx.set(eventCol(uid, aid).doc(), {
+    type,
+    at: Date.now(),
+    ...data,
+  });
+}
 
 interface AccountDoc {
   label: string;
@@ -125,6 +144,11 @@ function recordClose(state: AccountState, tx: any, uid: string, aid: string, o: 
     state.account.balance = Math.round((state.account.balance - commission) * 100) / 100;
   }
   writeTradeDoc(tx, uid, aid, o);
+  writeEventTx(tx, uid, aid, "position_closed", {
+    positionId: o.positionId ?? null, symbol: o.symbol, side: o.side, lots: o.lots,
+    entry: o.entry, exit: o.exit, pnl: o.pnl, swap: o.swap, commission: o.commission ?? 0,
+    reason: o.reason, openedAt: o.openedAt, closedAt: o.closedAt,
+  });
   bumpTradingDay(state.account, o.closedAt);
   state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
   if (state.account.type === "CHALLENGE") {
@@ -228,6 +252,9 @@ function applyEvaluationTx(
     pos.sl = u.sl;
     pos.slModifiedAt = now;
     tx.update(posCol(uid, aid).doc(pos.id), { sl: u.sl, slModifiedAt: now });
+    writeEventTx(tx, uid, aid, "trailing_updated", {
+      positionId: pos.id, symbol: pos.symbol, sl: u.sl,
+    });
   }
 
   // ---- pending fills -------------------------------------------------------
@@ -244,6 +271,7 @@ function applyEvaluationTx(
     const order = state.orders.find((o) => o.id === oid);
     if (!order) continue;
     tx.delete(ordCol(uid, aid).doc(oid));
+    writeEventTx(tx, uid, aid, "order_expired", { orderId: oid, symbol: order.symbol });
     state.orders = state.orders.filter((o) => o.id !== oid);
   }
   for (const f of result.fills) {
@@ -257,6 +285,10 @@ function applyEvaluationTx(
     };
     tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, tsPct: pos.tsPct, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
     tx.delete(ordCol(uid, aid).doc(order.id));
+    writeEventTx(tx, uid, aid, "pending_filled", {
+      orderId: order.id, positionId: posRef.id, symbol: order.symbol, side: order.side,
+      lots: order.lots, entry: f.entry, kind: order.kind, trigger: order.price,
+    });
     state.orders = state.orders.filter((o) => o.id !== order.id);
     state.positions.push(pos);
   }
@@ -267,8 +299,14 @@ function applyEvaluationTx(
     if (!spec) continue;
     const nights = Math.max(nightsHeld(p.openedAt, now), 0);
     if (nights > (p.swapNights ?? 0)) {
+      const chargedNights = nights - (p.swapNights ?? 0);
+      const swapBefore = p.swapAccrued ?? 0;
       settleSwap(state, p, now);
       tx.update(posCol(uid, aid).doc(p.id), { swapAccrued: p.swapAccrued, swapNights: p.swapNights });
+      writeEventTx(tx, uid, aid, "swap_charged", {
+        positionId: p.id, symbol: p.symbol, nights: chargedNights,
+        amount: Math.round(((p.swapAccrued ?? 0) - swapBefore) * 100) / 100,
+      });
     }
   }
 
@@ -318,6 +356,9 @@ function applyEvaluationTx(
 
     if (ruleState.hardBreach) {
       // terminate the account: close the whole book at market, kill pendings
+      writeEventTx(tx, uid, aid, "challenge_breached", {
+        reason: ruleState.failedReason || null, status: ruleState.status,
+      });
       for (const p of [...state.positions]) {
         const q = requireQuote(quotes, p.symbol);
         const spec = getInstrument(p.symbol)!;
@@ -725,16 +766,18 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
         requestId: req.requestId ?? null,
       };
       tx.set(posRef, pos);
-      const m2 = computeMetrics(state.account.balance, [...state.positions, { id: posRef.id, ...pos }], quotes, prices, leverage);
-      tx.update(accRef, {
-        dayStart: state.account.dayStart,
-        peakEquity: state.account.peakEquity ?? state.account.balance,
-        tradingDays: state.account.tradingDays || {},
-        status: state.account.status || "active",
-        metrics: { ...m2, updatedAt: Date.now() },
-        balanceUpdatedAt: Date.now(),
+      // PHASE 62 HIGH-fix: the account write MUST go through persistAccountTx
+      // — applyEvaluationTx above can already realize SL/TP closes, stop-out,
+      // swap and commission that mutate state.account.balance; the old inline
+      // update omitted `balance` (and failedReason/stats), silently dropping
+      // the pre-evaluation P/L credit.
+      state.positions = [...state.positions, { id: posRef.id, ...pos }];
+      const metricsOut = persistAccountTx(tx, uid, req.accountId, state, quotes, prices);
+      writeEventTx(tx, uid, req.accountId, "position_opened", {
+        positionId: posRef.id, symbol: spec.symbol, side: req.side, lots,
+        entry: v.entry, sl: pos.sl, tp: pos.tp, requestId: req.requestId ?? null,
       });
-      return { position: { id: posRef.id, ...pos }, order: null, entry: v.entry, quote, closed: [] as CloseOutcome[] };
+      return { position: { id: posRef.id, ...pos }, order: null, entry: v.entry, quote, closed: [] as CloseOutcome[], metrics: metricsOut };
     }
 
     if (state.orders.length >= MAX_PENDING_ORDERS) {
@@ -754,8 +797,15 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
       requestId: req.requestId ?? null,
     };
     tx.set(ordRef, order);
-    tx.update(accRef, { dayStart: state.account.dayStart });
-    return { position: null, order: { id: ordRef.id, ...order }, entry: v.entry, quote, closed: [] as CloseOutcome[] };
+    // PHASE 62 — same persistAccountTx invariant for the pending path (the
+    // pre-evaluation may have mutated balance/dayStart/status too).
+    const metricsOut = persistAccountTx(tx, uid, req.accountId, state, quotes, prices);
+    writeEventTx(tx, uid, req.accountId, "order_placed", {
+      orderId: ordRef.id, symbol: spec.symbol, side: req.side, kind, lots,
+      price: order.price, sl: order.sl, tp: order.tp, expiryAt: order.expiryAt,
+      requestId: req.requestId ?? null,
+    });
+    return { position: null, order: { id: ordRef.id, ...order }, entry: v.entry, quote, closed: [] as CloseOutcome[], metrics: metricsOut };
   });
 }
 

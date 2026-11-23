@@ -38,6 +38,8 @@ import { HttpError } from "../lib/firebase";
 import { assertRole } from "../admin/platform-guard";
 import * as store from "./store";
 import { orderBodyToPlaceOrderRequest, modifyOrderBodyToPatch } from "./route-bodies";
+import { rateLimit } from "../lib/rate-limit";
+import { runTradingCron } from "./cron";
 import { getQuotes } from "./prices";
 import * as propAdmin from "./admin";
 import * as leaderboard from "./leaderboard";
@@ -78,6 +80,24 @@ async function requireAccountAccess(_user: AuthedUser, uid: string, accountId: s
   void _user;
 }
 
+// PHASE 62 §7 — per-user sliding-window rate limits on the mutation routes
+// (in-process, per instance — blunts abuse and runaway loops).
+const RL = {
+  order: [30, 60_000] as const,
+  close: [30, 60_000] as const,
+  closeAll: [6, 60_000] as const,
+  modify: [60, 60_000] as const,
+  modifyOrder: [60, 60_000] as const,
+  cancel: [30, 60_000] as const,
+  create: [5, 60_000] as const,
+};
+function rlGuard(user: AuthedUser, kind: keyof typeof RL) {
+  const [limit, windowMs] = RL[kind];
+  if (!rateLimit(`${user.uid}:${kind}`, limit, windowMs)) {
+    throw Object.assign(new HttpError(429, "RATE_LIMITED", `Too many ${kind} requests — slow down and try again shortly`), { status: 429 });
+  }
+}
+
 const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) => Promise<void>> = {
   async quote(req, res) {
     // Phase 19 §1: the ticket's PRE-trade bid/ask must mirror the engine —
@@ -99,6 +119,7 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     json(res, 200, { trades: await store.history(user.uid, accountId, limit) });
   },
   async create(_req, res, user, body) {
+    rlGuard(user, "create");
     // P38 — challenge purchases are temporarily switched off (pre-launch).
     // Only CHALLENGE creation is blocked: DEMO onboarding (rules === null)
     // keeps working, and admin-gifted challenges call store.createAccount
@@ -112,6 +133,7 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     }) });
   },
   async order(_req, res, user, body) {
+    rlGuard(user, "order");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     // PHASE 61 §10 — body normalization lives in route-bodies.ts (pure,
     // regression-tested): expiryAt / tsPct / requestId must reach the store.
@@ -119,6 +141,7 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     json(res, 200, result);
   },
   async close(_req, res, user, body) {
+    rlGuard(user, "close");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.positionId) throw Object.assign(new Error("positionId is required"), { status: 400 });
     const result = await store.closePosition(
@@ -128,10 +151,12 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     json(res, 200, result);
   },
   async "close-all"(req, res, user, body) {
+    rlGuard(user, "closeAll");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     json(res, 200, await store.closeAll(user.uid, String(body.accountId)));
   },
   async modify(_req, res, user, body) {
+    rlGuard(user, "modify");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.positionId) throw Object.assign(new Error("positionId is required"), { status: 400 });
     const result = await store.modifyPosition(
@@ -143,6 +168,7 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     json(res, 200, result);
   },
   async "modify-order"(req, res, user, body) {
+    rlGuard(user, "modifyOrder");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
     const numOrNull = (v: unknown) => (v == null || v === "" ? null : Number(v));
@@ -150,6 +176,7 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     json(res, 200, await store.modifyOrder(user.uid, String(body.accountId), String(body.orderId), modifyOrderBodyToPatch(body)));
   },
   async cancel(_req, res, user, body) {
+    rlGuard(user, "cancel");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
     json(res, 200, await store.cancelOrder(user.uid, String(body.accountId), String(body.orderId)));
@@ -255,6 +282,26 @@ export default handle(async (req, res) => {
   if (action === "platform-status") {
     const settings = await getPlatformSettings();
     return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED });
+  }
+
+  // PHASE 62 §3 — server-authoritative trade-lifecycle evaluation entry
+  // point. Runs WITHOUT a user token: guarded by the same CRON_SECRET
+  // Bearer pattern as alerts-cron (Vercel Cron sends it natively). An
+  // external minute-level scheduler (Upstash QStash / cron-job.org) hits
+  // /api/trading?action=cron-evaluate; the vercel.json daily cron is the
+  // guaranteed catch-up floor.
+  if (action === "cron-evaluate") {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      if (got !== secret) return json(res, 401, { ok: false, error: "UNAUTHORIZED" });
+    }
+    try {
+      const result = await runTradingCron(8_000);
+      return json(res, 200, result);
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   // admin surface — role matrix enforced server-side (never frontend checks)

@@ -4,6 +4,18 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  // Dev-only: /api/* proxies to the deployed Vercel functions so the local
+  // terminal runs against the REAL server-authoritative trading engine
+  // (vite dev has no serverless runtime). The production build ignores this.
+  server: {
+    proxy: {
+      "/api": {
+        target: "https://inspiretrade.vercel.app",
+        changeOrigin: true,
+        secure: true,
+      },
+    },
+  },
   resolve: {
     // .tsx/.ts MUST win over stale .jsx/.js artifacts — vite's default order
     // prefers .js/.jsx, which let old compiled twins shadow the TypeScript

@@ -584,10 +584,10 @@ function computeMetrics(balance, positions, quotes, prices, leverage = DEFAULT_L
   for (const p of positions) {
     const q = quotes[p.symbol];
     const spec = getInstrument(p.symbol);
-    if (!spec || !q) continue;
+    if (!spec) continue;
     openCount++;
-    floating += floatingPnlUsd(p, q, prices);
-    used += marginUsdFor(spec, p.lots, q.mid, prices, leverage);
+    used += marginUsdFor(spec, p.lots, q ? q.mid : p.entry, prices, leverage);
+    if (q) floating += floatingPnlUsd(p, q, prices);
   }
   const equity = balance + floating;
   const r2 = (x) => Math.round(x * 100) / 100;
@@ -1089,6 +1089,14 @@ var accountsCol = (uid) => db().collection("users").doc(uid).collection("account
 var posCol = (uid, aid) => accountsCol(uid).doc(aid).collection("positions");
 var ordCol = (uid, aid) => accountsCol(uid).doc(aid).collection("orders");
 var tradeCol = (uid, aid) => accountsCol(uid).doc(aid).collection("trades");
+var eventCol = (uid, aid) => accountsCol(uid).doc(aid).collection("events");
+function writeEventTx(tx, uid, aid, type, data = {}) {
+  tx.set(eventCol(uid, aid).doc(), {
+    type,
+    at: Date.now(),
+    ...data
+  });
+}
 async function quotesForState(state, extra = []) {
   const symbols = withConversionSymbols([
     ...state.positions.map((p) => p.symbol),
@@ -1115,6 +1123,20 @@ function recordClose(state, tx, uid, aid, o) {
     state.account.balance = Math.round((state.account.balance - commission) * 100) / 100;
   }
   writeTradeDoc(tx, uid, aid, o);
+  writeEventTx(tx, uid, aid, "position_closed", {
+    positionId: o.positionId ?? null,
+    symbol: o.symbol,
+    side: o.side,
+    lots: o.lots,
+    entry: o.entry,
+    exit: o.exit,
+    pnl: o.pnl,
+    swap: o.swap,
+    commission: o.commission ?? 0,
+    reason: o.reason,
+    openedAt: o.openedAt,
+    closedAt: o.closedAt
+  });
   bumpTradingDay(state.account, o.closedAt);
   state.account.stats = bumpTradeStats(state.account.stats, o.pnl);
   if (state.account.type === "CHALLENGE") {
@@ -1199,6 +1221,11 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
     pos.sl = u.sl;
     pos.slModifiedAt = now;
     tx.update(posCol(uid, aid).doc(pos.id), { sl: u.sl, slModifiedAt: now });
+    writeEventTx(tx, uid, aid, "trailing_updated", {
+      positionId: pos.id,
+      symbol: pos.symbol,
+      sl: u.sl
+    });
   }
   result.fills = result.fills.filter((f) => {
     const order = state.orders.find((o) => o.id === f.orderId);
@@ -1209,6 +1236,7 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
     const order = state.orders.find((o) => o.id === oid);
     if (!order) continue;
     tx.delete(ordCol(uid, aid).doc(oid));
+    writeEventTx(tx, uid, aid, "order_expired", { orderId: oid, symbol: order.symbol });
     state.orders = state.orders.filter((o) => o.id !== oid);
   }
   for (const f of result.fills) {
@@ -1230,6 +1258,16 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
     };
     tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, tsPct: pos.tsPct, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
     tx.delete(ordCol(uid, aid).doc(order.id));
+    writeEventTx(tx, uid, aid, "pending_filled", {
+      orderId: order.id,
+      positionId: posRef.id,
+      symbol: order.symbol,
+      side: order.side,
+      lots: order.lots,
+      entry: f.entry,
+      kind: order.kind,
+      trigger: order.price
+    });
     state.orders = state.orders.filter((o) => o.id !== order.id);
     state.positions.push(pos);
   }
@@ -1238,8 +1276,16 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
     if (!spec) continue;
     const nights = Math.max(nightsHeld(p.openedAt, now), 0);
     if (nights > (p.swapNights ?? 0)) {
+      const chargedNights = nights - (p.swapNights ?? 0);
+      const swapBefore = p.swapAccrued ?? 0;
       settleSwap(state, p, now);
       tx.update(posCol(uid, aid).doc(p.id), { swapAccrued: p.swapAccrued, swapNights: p.swapNights });
+      writeEventTx(tx, uid, aid, "swap_charged", {
+        positionId: p.id,
+        symbol: p.symbol,
+        nights: chargedNights,
+        amount: Math.round(((p.swapAccrued ?? 0) - swapBefore) * 100) / 100
+      });
     }
   }
   const today = dayKey();
@@ -1285,6 +1331,10 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
       });
     }
     if (ruleState.hardBreach) {
+      writeEventTx(tx, uid, aid, "challenge_breached", {
+        reason: ruleState.failedReason || null,
+        status: ruleState.status
+      });
       for (const p of [...state.positions]) {
         const q = requireQuote(quotes, p.symbol);
         const spec = getInstrument(p.symbol);
@@ -1644,16 +1694,19 @@ async function placeOrder(uid, req) {
         requestId: req.requestId ?? null
       };
       tx.set(posRef, pos);
-      const m2 = computeMetrics(state.account.balance, [...state.positions, { id: posRef.id, ...pos }], quotes, prices, leverage);
-      tx.update(accRef, {
-        dayStart: state.account.dayStart,
-        peakEquity: state.account.peakEquity ?? state.account.balance,
-        tradingDays: state.account.tradingDays || {},
-        status: state.account.status || "active",
-        metrics: { ...m2, updatedAt: Date.now() },
-        balanceUpdatedAt: Date.now()
+      state.positions = [...state.positions, { id: posRef.id, ...pos }];
+      const metricsOut2 = persistAccountTx(tx, uid, req.accountId, state, quotes, prices);
+      writeEventTx(tx, uid, req.accountId, "position_opened", {
+        positionId: posRef.id,
+        symbol: spec.symbol,
+        side: req.side,
+        lots,
+        entry: v.entry,
+        sl: pos.sl,
+        tp: pos.tp,
+        requestId: req.requestId ?? null
       });
-      return { position: { id: posRef.id, ...pos }, order: null, entry: v.entry, quote, closed: [] };
+      return { position: { id: posRef.id, ...pos }, order: null, entry: v.entry, quote, closed: [], metrics: metricsOut2 };
     }
     if (state.orders.length >= MAX_PENDING_ORDERS) {
       throw new HttpError(409, "TOO_MANY_ORDERS", `Maximum ${MAX_PENDING_ORDERS} pending orders`);
@@ -1675,8 +1728,20 @@ async function placeOrder(uid, req) {
       requestId: req.requestId ?? null
     };
     tx.set(ordRef, order);
-    tx.update(accRef, { dayStart: state.account.dayStart });
-    return { position: null, order: { id: ordRef.id, ...order }, entry: v.entry, quote, closed: [] };
+    const metricsOut = persistAccountTx(tx, uid, req.accountId, state, quotes, prices);
+    writeEventTx(tx, uid, req.accountId, "order_placed", {
+      orderId: ordRef.id,
+      symbol: spec.symbol,
+      side: req.side,
+      kind,
+      lots,
+      price: order.price,
+      sl: order.sl,
+      tp: order.tp,
+      expiryAt: order.expiryAt,
+      requestId: req.requestId ?? null
+    });
+    return { position: null, order: { id: ordRef.id, ...order }, entry: v.entry, quote, closed: [], metrics: metricsOut };
   });
 }
 async function closePosition(uid, accountId, positionId, lots) {
@@ -1879,6 +1944,76 @@ function modifyOrderBodyToPatch(body) {
     tsPct: body.tsPct !== void 0 ? numOrUndef(body.tsPct) : void 0,
     expiryAt: body.expiryAt !== void 0 ? numOrNull(body.expiryAt) : void 0
   };
+}
+
+// api/_src/lib/rate-limit.ts
+var buckets = /* @__PURE__ */ new Map();
+function rateLimit(key, limit, windowMs) {
+  const now = Date.now();
+  const arr = (buckets.get(key) || []).filter((t) => now - t < windowMs);
+  if (arr.length >= limit) {
+    buckets.set(key, arr);
+    return false;
+  }
+  arr.push(now);
+  buckets.set(key, arr);
+  if (buckets.size > 5e3) {
+    for (const [k, v] of buckets) {
+      if (!v.length || now - v[v.length - 1] > windowMs) buckets.delete(k);
+    }
+  }
+  return true;
+}
+
+// api/_src/trading/cron.ts
+init_firebase();
+async function runTradingCron(budgetMs = 8e3) {
+  const started = Date.now();
+  const dbx = firestore();
+  const targets = /* @__PURE__ */ new Map();
+  const addTargets = (snap, prio) => {
+    for (const d of snap.docs) {
+      const accRef = d.ref.parent.parent;
+      if (!accRef) continue;
+      const uid = accRef.parent.parent?.id ?? "";
+      const aid = accRef.id;
+      if (!uid || !aid) continue;
+      const key = `${uid}:${aid}`;
+      const prev2 = targets.get(key);
+      if (!prev2 || prev2.prio > prio) targets.set(key, { uid, aid, prio });
+    }
+  };
+  addTargets(await dbx.collectionGroup("positions").limit(300).get(), 0);
+  addTargets(await dbx.collectionGroup("orders").limit(300).get(), 0);
+  addTargets(await dbx.collectionGroup("accounts").where("status", "==", "active").limit(300).get(), 1);
+  const ordered = [...targets.values()].sort((a, b) => a.prio - b.prio);
+  let processed = 0;
+  let failed = 0;
+  const errors = [];
+  for (const t of ordered) {
+    if (Date.now() - started > budgetMs) break;
+    try {
+      await evaluate(t.uid, t.aid);
+      processed++;
+    } catch (e) {
+      failed++;
+      if (errors.length < 5) errors.push(`${t.aid}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const monRef = dbx.collection("platformMonitoring").doc("tradingCron");
+  const prev = (await monRef.get()).data();
+  const runMs = Date.now() - started;
+  const remaining = Math.max(0, ordered.length - processed - failed);
+  await monRef.set({ lastRunAt: started, runMs, processed, failed, remaining }, { merge: true });
+  if (prev?.lastRunAt && started - prev.lastRunAt > 15 * 6e4) {
+    void writeAdminAlert({
+      type: "engine_error",
+      severity: "warning",
+      text: `Trading cron gap detected: previous evaluation ran ${Math.round((started - prev.lastRunAt) / 6e4)} min late`,
+      details: { processed, failed }
+    }, "cron_gap", 60 * 6e4);
+  }
+  return { ok: true, targets: ordered.length, processed, failed, remaining, runMs, errors };
 }
 
 // api/_src/trading/admin.ts
@@ -2281,6 +2416,21 @@ async function requireAccountAccess(_user, uid, accountId) {
   if (!accountId) throw Object.assign(new Error("accountId is required"), { status: 400 });
   void _user;
 }
+var RL = {
+  order: [30, 6e4],
+  close: [30, 6e4],
+  closeAll: [6, 6e4],
+  modify: [60, 6e4],
+  modifyOrder: [60, 6e4],
+  cancel: [30, 6e4],
+  create: [5, 6e4]
+};
+function rlGuard(user, kind) {
+  const [limit, windowMs] = RL[kind];
+  if (!rateLimit(`${user.uid}:${kind}`, limit, windowMs)) {
+    throw Object.assign(new HttpError(429, "RATE_LIMITED", `Too many ${kind} requests \u2014 slow down and try again shortly`), { status: 429 });
+  }
+}
 var routes = {
   async quote(req, res) {
     const url = new URL(req.url || "/", "http://localhost");
@@ -2299,6 +2449,7 @@ var routes = {
     json(res, 200, { trades: await history(user.uid, accountId, limit) });
   },
   async create(_req, res, user, body) {
+    rlGuard(user, "create");
     if (!CHALLENGES_ENABLED && body.rules != null) {
       throw new HttpError(503, "CHALLENGES_DISABLED", "Challenge purchases are temporarily unavailable \u2014 they will open at launch.");
     }
@@ -2308,11 +2459,13 @@ var routes = {
     }) });
   },
   async order(_req, res, user, body) {
+    rlGuard(user, "order");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     const result = await placeOrder(user.uid, orderBodyToPlaceOrderRequest(body));
     json(res, 200, result);
   },
   async close(_req, res, user, body) {
+    rlGuard(user, "close");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.positionId) throw Object.assign(new Error("positionId is required"), { status: 400 });
     const result = await closePosition(
@@ -2324,10 +2477,12 @@ var routes = {
     json(res, 200, result);
   },
   async "close-all"(req, res, user, body) {
+    rlGuard(user, "closeAll");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     json(res, 200, await closeAll(user.uid, String(body.accountId)));
   },
   async modify(_req, res, user, body) {
+    rlGuard(user, "modify");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.positionId) throw Object.assign(new Error("positionId is required"), { status: 400 });
     const result = await modifyPosition(
@@ -2341,6 +2496,7 @@ var routes = {
     json(res, 200, result);
   },
   async "modify-order"(req, res, user, body) {
+    rlGuard(user, "modifyOrder");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
     const numOrNull2 = (v) => v == null || v === "" ? null : Number(v);
@@ -2348,6 +2504,7 @@ var routes = {
     json(res, 200, await modifyOrder(user.uid, String(body.accountId), String(body.orderId), modifyOrderBodyToPatch(body)));
   },
   async cancel(_req, res, user, body) {
+    rlGuard(user, "cancel");
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
     json(res, 200, await cancelOrder(user.uid, String(body.accountId), String(body.orderId)));
@@ -2442,6 +2599,19 @@ var index_default = handle(async (req, res) => {
   if (action === "platform-status") {
     const settings = await getPlatformSettings();
     return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED });
+  }
+  if (action === "cron-evaluate") {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      if (got !== secret) return json(res, 401, { ok: false, error: "UNAUTHORIZED" });
+    }
+    try {
+      const result = await runTradingCron(8e3);
+      return json(res, 200, result);
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
   }
   if (action.startsWith("admin-")) {
     const route2 = adminRoutes[action];

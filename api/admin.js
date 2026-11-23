@@ -1256,10 +1256,10 @@ function computeMetrics(balance, positions, quotes, prices, leverage = DEFAULT_L
   for (const p of positions) {
     const q = quotes[p.symbol];
     const spec = getInstrument(p.symbol);
-    if (!spec || !q) continue;
+    if (!spec) continue;
     openCount++;
-    floating += floatingPnlUsd(p, q, prices);
-    used += marginUsdFor(spec, p.lots, q.mid, prices, leverage);
+    used += marginUsdFor(spec, p.lots, q ? q.mid : p.entry, prices, leverage);
+    if (q) floating += floatingPnlUsd(p, q, prices);
   }
   const equity = balance + floating;
   const r2 = (x) => Math.round(x * 100) / 100;
