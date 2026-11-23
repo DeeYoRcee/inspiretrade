@@ -159,8 +159,16 @@ async function pushRegistration(req: any, res: any): Promise<void> {
     return;
   }
   if (action === "support-history") {
-    const snap = await rtdb().ref(`supportInbox/${user.uid}`).limitToLast(100).once("value");
-    res.status(200).json({ ok: true, messages: snap.val() || {} });
+    // PHASE 62: full snapshot + in-code tail (the limitToLast query variant
+    // returned an empty set even for verified writes — root cause never
+    // fully isolated; a plain get() is the reliable path and these mailboxes
+    // are small)
+    const snap = await rtdb().ref(`supportInbox/${user.uid}`).get();
+    const data = (snap.val() || {}) as Record<string, unknown>;
+    const keys = Object.keys(data).sort().slice(-100);
+    const messages: Record<string, unknown> = {};
+    for (const k of keys) messages[k] = data[k];
+    res.status(200).json({ ok: true, messages, existed: snap.exists() });
     return;
   }
 

@@ -8879,8 +8879,12 @@ async function pushRegistration(req, res) {
     return;
   }
   if (action === "support-history") {
-    const snap = await rtdb().ref(`supportInbox/${user.uid}`).limitToLast(100).once("value");
-    res.status(200).json({ ok: true, messages: snap.val() || {} });
+    const snap = await rtdb().ref(`supportInbox/${user.uid}`).get();
+    const data = snap.val() || {};
+    const keys = Object.keys(data).sort().slice(-100);
+    const messages = {};
+    for (const k of keys) messages[k] = data[k];
+    res.status(200).json({ ok: true, messages, existed: snap.exists() });
     return;
   }
   if (action === "subscribe") {
