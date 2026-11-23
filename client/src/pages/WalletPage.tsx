@@ -62,6 +62,18 @@ import { formatINSP } from "@/lib/number-format";
 export default function WalletPage() {
   const { t } = useLanguage();
   const { toast } = useToast();
+  // Navbar "Referral" deep-link (/wallet#referral) — wouter's location does
+  // not carry the hash, so watch window.location.hash directly (mount + change)
+  useEffect(() => {
+    const go = () => {
+      if (!window.location.hash.includes("referral")) return;
+      const el = document.getElementById("referral");
+      if (el) setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 350);
+    };
+    go();
+    window.addEventListener("hashchange", go);
+    return () => window.removeEventListener("hashchange", go);
+  }, []);
   const { data: economy } = useEconomy();
   const coins = economy?.coins ?? 0;
 
@@ -366,7 +378,7 @@ export default function WalletPage() {
       {/* Referral — Phase 34b: full-width page-level section. It used to sit
           INSIDE the deposit/withdraw grid above, which squeezed both cards
           into one half-width column on desktop (looked stacked and broken). */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div id="referral" className="grid scroll-mt-24 gap-6 lg:grid-cols-2">
         <ReferralCard />
         <ReferralMilestones />
       </div>
