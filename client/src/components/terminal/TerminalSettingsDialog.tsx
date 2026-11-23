@@ -304,7 +304,7 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                     options={[{ value: "compact", label: "Compact" }, { value: "cozy", label: "Cozy" }]}
                     onChange={(v) => updateTerminalSettings({ appearance: { density: v as "compact" | "cozy" } })} />
                 </Show>
-                <Show label="Animated theme backdrops" hint="Video backgrounds for Money Rain / F1 / Knight themes">
+                <Show label="Animated theme backdrops" hint="Video backgrounds for Money Rain / F1 themes">
                   <Toggle label="Animated theme backdrops" checked={ts.appearance.themeBackdrop}
                     onChange={(v) => updateTerminalSettings({ appearance: { themeBackdrop: v } })} />
                 </Show>

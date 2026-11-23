@@ -554,6 +554,14 @@ export function PriceChart({
 
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  // P60 fix — symbolRef/tfRef are read by the priceFormat useMemo BELOW, and
+  // a useMemo factory executes during render: declaring the refs ~700 lines
+  // down (Phase 59) raised "Cannot access 'symbolRef' before initialization"
+  // on EVERY chart mount and killed the whole terminal. Declared first here.
+  const symbolRef = useRef(symbol);
+  symbolRef.current = symbol;
+  const tfRef = useRef(timeframe);
+  tfRef.current = timeframe;
   const inst = useMemo(() => getInstrument(symbol), [symbol]);
   const digits = inst?.digits ?? 2;
   // Phase 34: per-instrument decimal override (instrument settings panel)
@@ -1330,10 +1338,7 @@ export function PriceChart({
   priceFormatRef.current = priceFormat;
   const indicatorsRef = useRef(indicators);
   indicatorsRef.current = indicators;
-  const symbolRef = useRef(symbol);
-  symbolRef.current = symbol;
-  const tfRef = useRef(timeframe);
-  tfRef.current = timeframe;
+  // symbolRef / tfRef are declared at the TOP of this component (P60 TDZ fix)
 
   // ---- feed load + live subscribe ---------------------------------------------
   useEffect(() => {

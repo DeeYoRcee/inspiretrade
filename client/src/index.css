@@ -84,10 +84,8 @@
   :root[data-theme="ocean"]   { --term-bg: #07131f; --term-pane: #06101b; --term-solid: #0c1a28; --term-panel: rgb(12 26 40 / 0.92); --term-panel-95: rgb(12 26 40 / 0.96); --term-border: rgb(56 89 119 / 0.5); --term-border2: rgb(30 58 83 / 0.6); }
   :root[data-theme="forest"]  { --term-bg: #0b1711; --term-pane: #0a140e; --term-solid: #12241a; --term-panel: rgb(18 36 26 / 0.92); --term-panel-95: rgb(18 36 26 / 0.96); --term-border: rgb(52 90 66 / 0.5); --term-border2: rgb(24 46 33 / 0.6); }
   :root[data-theme="vader"]  { --term-bg: #070404; --term-pane: #050303; --term-solid: #140a0a; --term-panel: rgb(20 10 10 / 0.92); --term-panel-95: rgb(20 10 10 / 0.96); --term-border: rgb(153 27 27 / 0.45); --term-border2: rgb(64 20 20 / 0.6); }
-  :root[data-theme="aurora"]  { --term-bg: #04141c; --term-pane: #031118; --term-solid: #0a2029; --term-panel: rgb(10 32 41 / 0.92); --term-panel-95: rgb(10 32 41 / 0.96); --term-border: rgb(45 212 168 / 0.35); --term-border2: rgb(19 55 66 / 0.6); }
   :root[data-theme="neon"]    { --term-bg: #0d0618; --term-pane: #0b0515; --term-solid: #180c2b; --term-panel: rgb(24 12 43 / 0.92); --term-panel-95: rgb(24 12 43 / 0.96); --term-border: rgb(232 121 249 / 0.35); --term-border2: rgb(50 26 84 / 0.6); }
   :root[data-theme="cosmos"]  { --term-bg: #05060f; --term-pane: #04050d; --term-solid: #0b0d1e; --term-panel: rgb(11 13 30 / 0.92); --term-panel-95: rgb(11 13 30 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(30 33 66 / 0.6); }
-  :root[data-theme="knight"]  { --term-bg: #0a0a0a; --term-pane: #070707; --term-solid: #121212; --term-panel: rgb(16 16 16 / 0.92); --term-panel-95: rgb(16 16 16 / 0.96); --term-border: rgb(64 64 64 / 0.5); --term-border2: rgb(36 36 36 / 0.6); }
   :root[data-theme="money"]   { --term-bg: #04140d; --term-pane: #03110a; --term-solid: #082418; --term-panel: rgb(8 36 24 / 0.92); --term-panel-95: rgb(8 36 24 / 0.96); --term-border: rgb(47 191 113 / 0.4); --term-border2: rgb(20 61 40 / 0.6); }
   :root[data-theme="f1"]      { --term-bg: #120404; --term-pane: #0f0303; --term-solid: #220707; --term-panel: rgb(34 7 7 / 0.92); --term-panel-95: rgb(34 7 7 / 0.96); --term-border: rgb(220 38 38 / 0.45); --term-border2: rgb(74 20 20 / 0.6); }
 
@@ -274,10 +272,6 @@ img[src="/logo.png"] {
 }
 
 /* ===== animated themes — "3D / video-like" backgrounds, pure CSS (no video files) ===== */
-:root[data-theme="aurora"] {
-  color-scheme: dark;
-  --background: 192 65% 6%; --foreground: 180 25% 96%; --card: 192 50% 10%; --card-foreground: 180 25% 96%; --popover: 192 50% 11%; --popover-foreground: 180 25% 96%; --primary: 168 80% 52%; --primary-foreground: 190 60% 8%; --secondary: 192 30% 17%; --secondary-foreground: 180 25% 96%; --muted: 192 28% 16%; --muted-foreground: 185 15% 70%; --accent: 192 32% 20%; --accent-foreground: 180 25% 96%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 160 70% 50%; --success-foreground: 0 0% 100%; --border: 185 30% 24%; --input: 185 30% 24%; --ring: 168 80% 52%;
-}
 :root[data-theme="neon"] {
   color-scheme: dark;
   --background: 268 45% 8%; --foreground: 300 30% 97%; --card: 268 40% 13%; --card-foreground: 300 30% 97%; --popover: 268 40% 14%; --popover-foreground: 300 30% 97%; --primary: 315 95% 65%; --primary-foreground: 268 50% 10%; --secondary: 268 25% 20%; --secondary-foreground: 300 30% 97%; --muted: 268 25% 19%; --muted-foreground: 280 15% 72%; --accent: 288 30% 24%; --accent-foreground: 300 30% 97%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 160 70% 50%; --success-foreground: 0 0% 100%; --border: 285 40% 30%; --input: 285 40% 30%; --ring: 315 95% 65%;
@@ -286,17 +280,7 @@ img[src="/logo.png"] {
   color-scheme: dark;
   --background: 235 40% 6%; --foreground: 230 25% 96%; --card: 235 38% 10%; --card-foreground: 230 25% 96%; --popover: 235 38% 11%; --popover-foreground: 230 25% 96%; --primary: 45 95% 62%; --primary-foreground: 235 50% 8%; --secondary: 235 25% 17%; --secondary-foreground: 230 25% 96%; --muted: 235 25% 16%; --muted-foreground: 228 15% 70%; --accent: 240 30% 22%; --accent-foreground: 230 25% 96%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 160 70% 50%; --success-foreground: 0 0% 100%; --border: 235 25% 24%; --input: 235 25% 24%; --ring: 45 95% 62%;
 }
-:root[data-theme="knight"] {
-  color-scheme: dark;
-  /* iron-night steel with armor-gold primary */
-  --background: 222 20% 6%; --foreground: 218 16% 94%; --card: 221 18% 10%; --card-foreground: 218 16% 94%; --popover: 221 18% 11%; --popover-foreground: 218 16% 94%; --primary: 42 78% 58%; --primary-foreground: 228 30% 8%; --secondary: 221 14% 17%; --secondary-foreground: 218 16% 94%; --muted: 221 14% 16%; --muted-foreground: 220 10% 68%; --accent: 216 22% 22%; --accent-foreground: 218 16% 94%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 150 62% 50%; --success-foreground: 0 0% 100%; --border: 220 15% 26%; --input: 220 15% 26%; --ring: 42 78% 58%;
-}
 
-@keyframes it-aurora-drift {
-  0% { transform: translate3d(-4%, -2%, 0) scale(1) rotate(0deg); }
-  50% { transform: translate3d(3%, 4%, 0) scale(1.08) rotate(6deg); }
-  100% { transform: translate3d(-2%, 2%, 0) scale(1.03) rotate(-4deg); }
-}
 @keyframes it-neon-scroll {
   from { background-position: 0 0, 0 0; }
   to { background-position: 0 44px, 0 44px; }
@@ -309,25 +293,6 @@ img[src="/logo.png"] {
   0%, 100% { opacity: 0.75; }
   50% { opacity: 1; }
 }
-@keyframes it-knight-fog {
-  0% { transform: translate3d(-3%, 1%, 0) scale(1.05); }
-  50% { transform: translate3d(2.5%, -1.5%, 0) scale(1.12); }
-  100% { transform: translate3d(-1.5%, 2%, 0) scale(1.04); }
-}
-
-/* Aurora — drifting northern-lights blobs */
-:root[data-theme="aurora"] body::before {
-  content: "";
-  position: fixed; inset: -25%;
-  z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(38% 42% at 18% 28%, hsl(160 85% 45% / 0.32), transparent 70%),
-    radial-gradient(34% 40% at 78% 22%, hsl(190 90% 50% / 0.28), transparent 70%),
-    radial-gradient(42% 46% at 55% 80%, hsl(280 70% 55% / 0.24), transparent 72%);
-  filter: blur(48px) saturate(130%);
-  animation: it-aurora-drift 24s ease-in-out infinite alternate;
-}
-
 /* Neon Grid — retro 3D floor flying toward the viewer */
 :root[data-theme="neon"] body::after {
   content: "";
@@ -379,38 +344,6 @@ img[src="/logo.png"] {
   animation: it-cosmos-drift 60s linear infinite alternate;
 }
 
-/* Knight — iron night: moonlit sky, castle silhouette with battlements,
-   torch glow on the walls and slow drifting fog. These layers paint OVER the
-   ThemeBackdrop video (Steam-style looping background) as a subtle tint. */
-:root[data-theme="knight"] body::after {
-  content: "";
-  position: fixed; inset: 0;
-  z-index: -2; pointer-events: none;
-  opacity: 0.4;
-  background:
-    /* moon halo */
-    radial-gradient(30% 22% at 76% 14%, hsl(46 55% 70% / 0.16), transparent 72%),
-    /* sky */
-    linear-gradient(180deg, hsl(222 22% 8%) 0%, hsl(221 18% 13%) 55%, hsl(220 16% 10%) 100%),
-    /* warm torch light licking the base */
-    radial-gradient(42% 18% at 50% 104%, hsl(28 80% 50% / 0.12), transparent 70%),
-    /* far keep — soft dark ridge on the horizon */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='36'%3E%3Cpath d='M0 36 V16 h10 v-8 h14 v8 h12 v-8 h14 v8 h12 v-8 h14 v8 h12 v-8 h14 v8 h12 v-8 h14 v8 h12 V36 z' fill='%23181c26'/%3E%3C/svg%3E") center bottom / auto 9vh repeat-x,
-    /* near wall with battlement teeth */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='24'%3E%3Cpath d='M0 24 V9 h7 v-6 h9 v6 h8 v-6 h9 v6 h7 V24 z' fill='%23111520'/%3E%3C/svg%3E") center bottom / auto 6.5vh repeat-x;
-}
-:root[data-theme="knight"] body::before {
-  content: "";
-  position: fixed; inset: -20% 0 -8% 0;
-  z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(46% 30% at 22% 88%, hsl(216 24% 30% / 0.38), transparent 70%),
-    radial-gradient(40% 26% at 78% 92%, hsl(214 20% 28% / 0.34), transparent 70%);
-  filter: blur(6px);
-  animation: it-knight-fog 26s ease-in-out infinite alternate;
-}
-:root[data-theme="knight"] .glass-panel { box-shadow: 0 12px 34px hsl(228 40% 3% / 0.5), inset 0 1px hsl(46 60% 60% / 0.06); }
-:root[data-theme="knight"] header { border-bottom-color: hsl(42 60% 55% / 0.14) !important; }
 
 /* ---- P39: Darth Vader — breathing helmet silhouette + pulsing red glow ---- */
 :root[data-theme="vader"] body::before {
@@ -448,8 +381,6 @@ img[src="/logo.png"] {
   from { transform: scale(1); opacity: 0.72; }
   to { transform: scale(1.05); opacity: 0.95; }
 }
-:root[data-theme="knight"] .hover-glow:hover { box-shadow: 0 0 24px -6px hsl(42 78% 58% / 0.35); }
-
 /* theme picker dots — real swatches per theme (settings page + navbar) */
 /* ---- Animated themes (Phase 20) ------------------------------------------
    Money Rain: an emerald wealth glow pulsing over the looping money.mp4
@@ -502,19 +433,13 @@ img[src="/logo.png"] {
 .theme-dot-ocean { background: linear-gradient(135deg, #06283d, #22b8cf); }
 .theme-dot-forest { background: linear-gradient(135deg, #0e2417, #34d17c); }
 .theme-dot-vader { background: linear-gradient(135deg, #050505 35%, #dc2626 75%); }
-.theme-dot-aurora { background: linear-gradient(135deg, #04141c, #2dd4a8); }
 .theme-dot-neon { background: linear-gradient(135deg, #1b0a2e, #e879f9); }
 .theme-dot-cosmos { background: linear-gradient(135deg, #05060f, #eab308); }
-.theme-dot-knight { background: linear-gradient(135deg, #2a3348 40%, #d4a437); }
 
-@media (prefers-reduced-motion: reduce) {
-  :root[data-theme="aurora"] body::before,
-  :root[data-theme="neon"] body::before,
+@media (prefers-reduced-motion: reduce) {  :root[data-theme="neon"] body::before,
   :root[data-theme="neon"] body::after,
   :root[data-theme="cosmos"] body::before,
-  :root[data-theme="cosmos"] body::after,
-  :root[data-theme="knight"] body::before,
-  :root[data-theme="vader"] body::before,
+  :root[data-theme="cosmos"] body::after,  :root[data-theme="vader"] body::before,
   :root[data-theme="vader"] body::after {
     animation: none;
   }
@@ -575,7 +500,7 @@ html.density-cozy .wl-row { padding-top: 0.4rem; padding-bottom: 0.4rem; }
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
 .pt-safe { padding-top: env(safe-area-inset-top); }
 /* P43 — respect reduced motion for the always-on theme background layers
-   (aurora/neon/cosmos/knight/vader had no guard; money/f1 already did) */
+    */
 @media (prefers-reduced-motion: reduce) {
   body::before, body::after { animation: none !important; }
 }

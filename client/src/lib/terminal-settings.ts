@@ -37,7 +37,7 @@ export interface TerminalSettings {
     /** base UI font size px (12-16), applied to the terminal shell */
     fontSize: number;
     density: "compact" | "cozy";
-    /** animated theme backdrops (money/f1/knight videos) on/off */
+    /** animated theme backdrops (money/f1 videos) on/off */
     themeBackdrop: boolean;
   };
   trading: {

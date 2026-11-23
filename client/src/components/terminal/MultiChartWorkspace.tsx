@@ -25,7 +25,6 @@ import { loadSyncSettings, saveSyncSettings, type SyncSettings } from "@/lib/cha
 import { WorkspaceDialog } from "@/components/terminal/chart/WorkspaceDialog";
 import type { WorkspacePreset } from "@/lib/workspace-presets";
 import { LayoutGrid } from "lucide-react";
-import { useLanguage } from "@/lib/language-context";
 import { Crosshair, Link2, Clock, Tag } from "lucide-react";
 import type { ChartType } from "@/lib/chart-types";
 import type { Timeframe } from "@shared/terminal";
@@ -94,7 +93,6 @@ export function MultiChartWorkspace({
   onLayoutChange?: (id: LayoutId) => void;
 }) {
   const narrow = useIsNarrow();
-  const { t } = useLanguage();
   const [layoutInner, setLayoutInner] = useState<LayoutId>(() => {
     try { const v = localStorage.getItem(LS_LAYOUT) as LayoutId | null; if (v && LAYOUT_ORDER.includes(v)) return v; } catch { /* ignore */ }
     return "1";
@@ -366,15 +364,15 @@ export function MultiChartWorkspace({
             "text-[10px] font-semibold",
             saveState === "saving" ? "text-amber-400" : saveState === "saved" ? "text-emerald-400" : "text-slate-600",
           )}>
-            {saveState === "saving" ? t("wsSaving") : saveState === "saved" ? t("wsSaved") : ""}
+            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : ""}
           </span>
           <button
             onClick={() => setWsOpen(true)}
-            title={t("wsTitle")}
+            title="Workspaces"
             className="inline-flex h-5 items-center gap-1 rounded-full border border-sky-400/60 bg-sky-400/15 px-2 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-400/25"
           >
             <LayoutGrid className="h-2.5 w-2.5" />
-            {t("wsTitle")}
+            Workspaces
           </button>
           <span className="mx-1 h-3.5 w-px bg-slate-700" />
           <span className="mr-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">Sync</span>

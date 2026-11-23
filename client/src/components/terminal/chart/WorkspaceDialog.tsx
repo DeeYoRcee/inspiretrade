@@ -13,7 +13,6 @@ import {
   Check, Copy, Download, FileUp, LayoutGrid, Loader2, Pencil, Plus, Star, Trash2, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useLanguage } from "@/lib/language-context";
 import { useToast } from "@/hooks/use-toast";
 import {
   deleteWorkspacePreset, duplicateWorkspacePreset, exportWorkspaceFile, fetchWorkspaces,
@@ -41,7 +40,6 @@ export function WorkspaceDialog({
   onApply: (w: WorkspacePreset) => void;
   activeId: string | null;
 }) {
-  const { t } = useLanguage();
   const { toast } = useToast();
   const [list, setList] = useState<WorkspacePreset[]>([]);
   const [busy, setBusy] = useState(false);
@@ -67,7 +65,7 @@ export function WorkspaceDialog({
   if (!open) return null;
 
   const createFromCurrent = async () => {
-    const name = window.prompt(t("wsNamePrompt"), `${currentSymbol} ${currentTimeframe.toUpperCase()}`);
+    const name = window.prompt("Workspace name", `${currentSymbol} ${currentTimeframe.toUpperCase()}`);
     if (!name?.trim()) return;
     setBusy(true);
     try {
@@ -78,7 +76,7 @@ export function WorkspaceDialog({
         panels: [{ symbol: currentSymbol, timeframe: currentTimeframe }],
         updatedAt: Date.now(),
       });
-      toast({ title: t("wsCreated") });
+      toast({ title: "Workspace saved" });
     } finally { setBusy(false); }
   };
 
@@ -109,9 +107,9 @@ export function WorkspaceDialog({
       setBusy(true);
       await saveWorkspacePreset(w); // saved under the CURRENT uid — ownership safe
       refresh();
-      toast({ title: t("wsImported"), description: w.name });
+      toast({ title: "Workspace imported", description: w.name });
     } catch (e: any) {
-      toast({ title: t("wsImportFailed"), description: String(e?.message || ""), variant: "destructive" });
+      toast({ title: "Import failed", description: String(e?.message || ""), variant: "destructive" });
     } finally { setBusy(false); }
   };
 
@@ -125,10 +123,10 @@ export function WorkspaceDialog({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-slate-200">
             <LayoutGrid className="h-4 w-4 text-sky-400" />
-            {t("wsTitle")}
+            {"Workspaces"}
           </div>
           <div className="flex items-center gap-1">
-            <button title={t("wsImportTitle")} onClick={() => fileRef.current?.click()} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-200">
+            <button title={"Import workspace JSON"} onClick={() => fileRef.current?.click()} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-200">
               <FileUp className="h-4 w-4" />
             </button>
             <input ref={fileRef} type="file" accept="application/json,.json" className="hidden"
@@ -141,7 +139,7 @@ export function WorkspaceDialog({
 
         {/* presets gallery */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-2">
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("wsPresetsTitle")}</p>
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">{"Start from a preset"}</p>
           <div className="grid grid-cols-2 gap-1.5">
             {PRESETS.map((p) => (
               <button key={p.name} disabled={busy} onClick={() => void applyPreset(p)}
@@ -156,10 +154,10 @@ export function WorkspaceDialog({
         {/* saved workspaces */}
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("wsSavedTitle")}</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{"Saved workspaces"}</p>
             <button disabled={busy} onClick={() => void createFromCurrent()}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 font-semibold text-sky-300 hover:bg-sky-500/10 disabled:opacity-50">
-              <Plus className="h-3 w-3" />{t("wsCreateCurrent")}
+              <Plus className="h-3 w-3" />{"New from current"}
             </button>
           </div>
           <div className="max-h-56 space-y-1 overflow-y-auto">
@@ -189,17 +187,17 @@ export function WorkspaceDialog({
                   </div>
                 ) : confirmDelete === w.id ? (
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-red-300">{`${t("wsDeleteConfirm")}: ${w.name}`}</span>
+                    <span className="text-red-300">{`${"Delete workspace"}: ${w.name}`}</span>
                     <div className="flex gap-1">
                       <button onClick={() => void deleteWorkspacePreset(w.id).then(refresh)}
-                        className="rounded border border-red-500/60 px-2 py-0.5 font-semibold text-red-400 hover:bg-red-500/10">{t("wsDeleteYes")}</button>
+                        className="rounded border border-red-500/60 px-2 py-0.5 font-semibold text-red-400 hover:bg-red-500/10">{"Delete"}</button>
                       <button onClick={() => setConfirmDelete(null)}
-                        className="rounded border border-slate-600 px-2 py-0.5 font-semibold text-slate-300 hover:bg-slate-800">{t("wsDeleteNo")}</button>
+                        className="rounded border border-slate-600 px-2 py-0.5 font-semibold text-slate-300 hover:bg-slate-800">{"Keep"}</button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center justify-between gap-1">
-                    <button onClick={() => { onApply(w); onClose(); }} className="min-w-0 flex-1 text-left" title={t("wsSwitch")}>
+                    <button onClick={() => { onApply(w); onClose(); }} className="min-w-0 flex-1 text-left" title={"Open this workspace"}>
                       <div className="flex items-center gap-1.5 truncate font-semibold text-slate-200">
                         {w.default && <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />}
                         {w.name}
@@ -209,15 +207,15 @@ export function WorkspaceDialog({
                       </div>
                     </button>
                     <div className="flex shrink-0 items-center gap-0.5">
-                      <button title={t("wsSetDefault")} onClick={() => void setDefaultWorkspace(w.id).then(refresh)}
+                      <button title={"Mark as default"} onClick={() => void setDefaultWorkspace(w.id).then(refresh)}
                         className={cn("rounded p-1 hover:bg-slate-800", w.default ? "text-amber-400" : "text-slate-500 hover:text-amber-300")}>
                         <Star className={cn("h-3.5 w-3.5", w.default && "fill-current")} />
                       </button>
-                      <button title={t("wsRename")} onClick={() => { setRenameId(w.id); setRenameVal(w.name); }}
+                      <button title={"Rename"} onClick={() => { setRenameId(w.id); setRenameVal(w.name); }}
                         className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200"><Pencil className="h-3.5 w-3.5" /></button>
-                      <button title={t("wsDuplicate")} onClick={() => void duplicateWorkspacePreset(w).then(() => { toast({ title: t("wsDuplicated") }); refresh(); })}
+                      <button title={"Duplicate"} onClick={() => void duplicateWorkspacePreset(w).then(() => { toast({ title: "Workspace duplicated" }); refresh(); })}
                         className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200"><Copy className="h-3.5 w-3.5" /></button>
-                      <button title={t("wsExport")} onClick={() => {
+                      <button title={"Export JSON"} onClick={() => {
                         const blob = new Blob([JSON.stringify(exportWorkspaceFile(w), null, 2)], { type: "application/json" });
                         const a = document.createElement("a");
                         a.href = URL.createObjectURL(blob);
@@ -225,7 +223,7 @@ export function WorkspaceDialog({
                         a.click();
                         URL.revokeObjectURL(a.href);
                       }} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200"><Download className="h-3.5 w-3.5" /></button>
-                      <button title={t("wsDelete")} onClick={() => setConfirmDelete(w.id)}
+                      <button title={"Delete"} onClick={() => setConfirmDelete(w.id)}
                         className="rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                   </div>
@@ -233,7 +231,7 @@ export function WorkspaceDialog({
               </div>
             ))}
             {!busy && !list.length && (
-              <p className="py-3 text-center text-slate-500">{t("wsNoSaved")}</p>
+              <p className="py-3 text-center text-slate-500">{"No saved workspaces yet — create one from a preset above."}</p>
             )}
           </div>
         </div>

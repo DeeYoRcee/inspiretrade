@@ -14,17 +14,14 @@ export interface ProfileBackground {
 }
 
 export const PROFILE_BACKGROUNDS: ProfileBackground[] = [
-  { id: "aurora", name: "Aurora", src: "/videos/aurora.mp4", tint: "linear-gradient(140deg, #02121b, #0b5e3c 55%, #063e55)" },
   { id: "gold", name: "Gold", src: "/videos/gold.mp4", tint: "linear-gradient(140deg, #0d0703, #7a4a08 55%, #b3730f)" },
   { id: "ocean", name: "Ocean", src: "/videos/ocean.mp4", tint: "linear-gradient(140deg, #020a14, #0a3d66 55%, #0b7f9e)" },
   { id: "nebula", name: "Nebula", src: "/videos/nebula.mp4", tint: "linear-gradient(140deg, #0c0316, #5b1785 55%, #9b2fa8)" },
-  // cinematic pack — knight & storm epics (procedural seamless loops)
-  { id: "knight", name: "Knight", src: "/videos/knight.mp4", tint: "linear-gradient(140deg, #07090d, #1d2736 55%, #3c2f14)" },
   { id: "storm", name: "Storm", src: "/videos/storm.mp4", tint: "linear-gradient(140deg, #0a0a10, #262838 55%, #1c2a52)" },
   { id: "embers", name: "Embers", src: "/videos/embers.mp4", tint: "linear-gradient(140deg, #0c0503, #301006 55%, #7a3008)" },
   // "frost" removed per user request — profiles already carrying the id fall
   // through getProfileBackground() to the plain (no-video) look
-  // Phase 29-UI request: a Formula-1 and a sword/knight pick for the gallery
+  // Phase 29-UI request: a Formula-1 and a sword pick for the gallery
   { id: "f1", name: "Formula 1", src: "/videos/f1.mp4", tint: "linear-gradient(140deg, #120404, #7a1414 55%, #b3270f)" },
   { id: "sword", name: "Sword", src: "/videos/sword.mp4", tint: "linear-gradient(140deg, #07090d, #232c3d 55%, #584317)" },
 ];

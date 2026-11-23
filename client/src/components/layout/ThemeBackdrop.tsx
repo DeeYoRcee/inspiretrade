@@ -4,7 +4,7 @@ import { useTerminalSettings } from "@/lib/terminal-settings";
 
 /**
  * Steam-style animated theme backdrop. Two kinds of scene:
- *  - video themes (knight, f1) play their looping mp4 behind the whole app,
+ *  - video themes (f1) play their looping mp4 behind the whole app,
  *    dimmed by a readability veil so every text layer stays crisp;
  *  - the money theme is a CANVAS scene (Phase 29-UI): the old money.mp4 mixed
  *    flipping gold coins into the falling bills and the veil washed both out.
@@ -13,7 +13,6 @@ import { useTerminalSettings } from "@/lib/terminal-settings";
  *    document is hidden so a background tab never burns battery.
  */
 const THEME_VIDEOS: Record<string, { src: string; opacity: number; veil: string }> = {
-  knight: { src: "/videos/sword.mp4", opacity: 0.5, veil: "linear-gradient(180deg, rgba(11,14,20,0.62), rgba(11,14,20,0.34) 45%, rgba(11,14,20,0.66))" },
   f1: { src: "/videos/f1.mp4", opacity: 0.55, veil: "linear-gradient(180deg, rgba(18,4,4,0.62), rgba(60,8,8,0.30) 45%, rgba(18,4,4,0.66))" },
 };
 const MONEY_VEIL = "linear-gradient(180deg, rgba(4,20,13,0.42), rgba(10,50,32,0.16) 45%, rgba(4,20,13,0.46))";

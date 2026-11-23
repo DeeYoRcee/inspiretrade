@@ -7,7 +7,7 @@ import { ref, getDatabase } from "firebase/database";
 import { MediaLightbox } from "@/components/media-lightbox";
 import type { PublicProfileSettings } from "@/lib/public-profile";
 import {
-  Award, Camera, Clapperboard, Copy, Crown, Globe2, Instagram, Loader2, Package, Pencil, Send, Trash2, Twitter, Video, Activity, Target, TrendingUp, TrendingDown, CalendarDays,
+  Camera, Clapperboard, Copy, Crown, Instagram, Loader2, Pencil, Send, Trash2, Twitter, Video, Activity, Target, TrendingUp, TrendingDown, CalendarDays,
   X, History, StickyNote, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/use-auth";
 import { saveUserProfile, useUserProfile } from "@/hooks/use-premium";
-import { useInventory } from "@/hooks/use-economy";
 import { ALL_FRAGMENTS } from "@shared/fragments";
 import { useTrades } from "@/hooks/use-trades";
 import { usePublicProfileSettings, useSavePublicProfile } from "@/hooks/use-public-profile";
@@ -152,11 +151,6 @@ export default function ProfilePage() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const { data: profile } = useUserProfile();
-  const { data: inventory } = useInventory();
-  const ownedFragments = useMemo(
-    () => Object.entries(inventory || {}).filter(([, n]) => (n ?? 0) > 0) as [string, number][],
-    [inventory],
-  );
   const { data: trades } = useTrades();
   const { data: settings } = usePublicProfileSettings();
   const savePublicProfile = useSavePublicProfile();
@@ -718,28 +712,6 @@ export default function ProfilePage() {
       </motion.div>
 
       {/* Actions */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.15 }}
-        className="grid gap-2 sm:grid-cols-2"
-      >
-        <Button className="rounded-xl" onClick={openEdit}>
-          <Pencil className="mr-2 h-4 w-4" />
-          {t("profileEditPublic")}
-        </Button>
-        {publishedUsername ? (
-          <Button variant="outline" className="rounded-xl" onClick={() => navigate(`/@${publishedUsername}`)}>
-            <Globe2 className="mr-2 h-4 w-4" />
-            {t("profileViewPublic")}
-          </Button>
-        ) : (
-          <Button variant="outline" className="rounded-xl" onClick={() => navigate("/certificate")}>
-            <Award className="mr-2 h-4 w-4" />
-            {t("certificate")}
-          </Button>
-        )}
-      </motion.div>
 
       {/* Telegram-style Edit Profile dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -913,32 +885,6 @@ export default function ProfilePage() {
         </DialogContent>
       </Dialog>
 
-      {/* Account → Inventory (fragments summary + link to the full page) */}
-      <motion.section
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass-panel rounded-2xl border-border/50 p-5"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-base font-bold"><Package className="h-5 w-5 text-primary" />{t("inventory")}</h2>
-          <Button variant="outline" size="sm" className="rounded-xl" onClick={() => navigate("/inventory")}>{t("openInventory")}</Button>
-        </div>
-        {ownedFragments.length ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {ownedFragments.map(([id, count]) => {
-              const frag = ALL_FRAGMENTS.find((f) => f.id === id);
-              return (
-                <span key={id} className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-card/50 px-2.5 py-1.5 text-xs">
-                  <b>{frag?.name ?? id}</b>
-                  <span className="font-number text-muted-foreground">×{count}</span>
-                </span>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="mt-2 text-xs text-muted-foreground">{t("inventoryEmptyHint")}</p>
-        )}
-      </motion.section>
 
       {/* Set username dialog (moved here from the Account menu) */}
       <UsernameDialog

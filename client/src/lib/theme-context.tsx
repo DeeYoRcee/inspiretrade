@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
-export const THEMES = ["dark", "light", "ocean", "forest", "vader", "aurora", "neon", "cosmos", "knight", "money", "f1"] as const;
+export const THEMES = ["dark", "light", "ocean", "forest", "vader", "neon", "cosmos", "money", "f1"] as const;
 export type Theme = (typeof THEMES)[number];
 
 export const THEME_LABELS: Record<Theme, string> = {
@@ -11,10 +11,8 @@ export const THEME_LABELS: Record<Theme, string> = {
   ocean: "Ocean",
   forest: "Forest",
   vader: "Skywalker",
-  aurora: "Aurora",
   neon: "Neon Grid",
   cosmos: "Cosmos",
-  knight: "Knight",
   money: "Money Rain",
   f1: "Formula 1",
 };
@@ -50,7 +48,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.toggle("dark", theme !== "light");
     try { localStorage.setItem("tj-theme", theme); } catch { /* Continue without persisted storage. */ }
 
-    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", ocean: "#07131f", forest: "#0b1711", vader: "#050505", aurora: "#04141c", neon: "#0d0618", cosmos: "#05060f", knight: "#0b0e14", money: "#04140d", f1: "#120404" };
+    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", ocean: "#07131f", forest: "#0b1711", vader: "#050505", neon: "#0d0618", cosmos: "#05060f", money: "#04140d", f1: "#120404" };
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => meta.setAttribute("content", colors[theme]));
   }, [theme]);
 
