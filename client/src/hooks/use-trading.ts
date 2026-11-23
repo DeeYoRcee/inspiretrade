@@ -136,7 +136,7 @@ export const tradingActions = {
     patch({ activeId: id });
     if (currentUid) localStorage.setItem(storageKey(currentUid), id);
   },
-  placeOrder(args: { symbol: string; side: Side; lots: number; kind: OrderKind; price?: number | null; sl?: number | null; tp?: number | null }) {
+  placeOrder(args: { symbol: string; side: Side; lots: number; kind: OrderKind; price?: number | null; sl?: number | null; tp?: number | null; expiryAt?: number | null }) {
     const acc = activeAccount();
     if (!acc) return Promise.resolve(null);
     return run(() => tradingApi.placeOrder({ accountId: acc.id, ...args }));

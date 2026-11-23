@@ -31,7 +31,7 @@ import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-s
 import { quotesHistOlder, quotesPrependHistory, quotesWhenDeep, quotesSnapshotBars } from "@/lib/market-data";
 import { authedFetch } from "@/lib/api";
 import { priceBusUpdate } from "@/lib/price-store";
-import { tradingApi, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
+import { tradingApi, type ServerPosition, ServerOrder, type ServerTrade } from "@/lib/trading-api";
 import { useAuth } from "@/hooks/use-auth";
 import {
   atr, bollinger, bollingerWidth, ema, macd as macdCalc, momentum, rsi as rsiCalc, sma,
@@ -168,19 +168,22 @@ function createMainSeries(chart: IChartApi, type: ChartType, s: { upColor: strin
   };
 }
 
-/** Theme the main series from user settings (per kind). */
-function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: string; downColor: string }): void {
+/** Theme the main series from user settings (per kind). P55 §7: the border
+ *  and wick colors may be overridden independently (undefined = candle color). */
+function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: string; downColor: string; borderColor?: string; wickColor?: string }): void {
+  const bU = s.borderColor ?? s.upColor, bD = s.borderColor ?? s.downColor;
+  const wU = s.wickColor ?? s.upColor, wD = s.wickColor ?? s.downColor;
   if (kind === "candle") {
     (series as ISeriesApi<"Candlestick">).applyOptions({
       upColor: s.upColor, downColor: s.downColor,
-      borderUpColor: s.upColor, borderDownColor: s.downColor,
-      wickUpColor: s.upColor, wickDownColor: s.downColor,
+      borderUpColor: bU, borderDownColor: bD,
+      wickUpColor: wU, wickDownColor: wD,
     });
   } else if (kind === "hollow") {
     (series as ISeriesApi<"Candlestick">).applyOptions({
       upColor: "rgba(0,0,0,0)",
-      borderUpColor: s.upColor, wickUpColor: s.upColor,
-      downColor: s.downColor, borderDownColor: s.downColor, wickDownColor: s.downColor,
+      borderUpColor: bU, wickUpColor: wU,
+      downColor: s.downColor, borderDownColor: bD, wickDownColor: wD,
     });
   } else if (kind === "line") {
     (series as ISeriesApi<"Line">).applyOptions({ color: s.upColor, lineWidth: 2 });
@@ -196,8 +199,8 @@ function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: str
   } else if (kind === "heikin") {
     (series as ISeriesApi<"Candlestick">).applyOptions({
       upColor: s.upColor, downColor: s.downColor,
-      borderUpColor: s.upColor, borderDownColor: s.downColor,
-      wickUpColor: s.upColor, wickDownColor: s.downColor,
+      borderUpColor: bU, borderDownColor: bD,
+      wickUpColor: wU, wickDownColor: wD,
     });
   }
 }
@@ -288,7 +291,11 @@ export function PriceChart({
   marks,
   accountId,
   positions,
+  orders = [],
   onModifyPosition,
+  onModifyOrder,
+  onClosePosition,
+  onCancelOrder,
   onSymbolChange,
   onTimeframeChange,
   onOpenAlerts,
@@ -310,7 +317,12 @@ export function PriceChart({
   marks: PriceMark[];
   accountId: string | null;
   positions: ServerPosition[];
-  onModifyPosition: (positionId: string, patch: { sl?: number | null; tp?: number | null }) => Promise<unknown>;
+  /** P54 §3 — pending orders render as draggable lines with a details panel */
+  orders?: ServerOrder[];
+  onModifyPosition: (positionId: string, patch: { sl?: number | null; tp?: number | null; tsPct?: number }) => Promise<unknown>;
+  onModifyOrder?: (orderId: string, patch: { price?: number; sl?: number | null; tp?: number | null }) => Promise<unknown>;
+  onClosePosition?: (positionId: string) => Promise<unknown>;
+  onCancelOrder?: (orderId: string) => Promise<unknown>;
   onSymbolChange: (symbol: string) => void;
   onTimeframeChange: (tf: Timeframe) => void;
   /** toolbar alert button → open the alerts panel (right rail) */
@@ -588,6 +600,16 @@ export function PriceChart({
   marksRef.current = safeMarks;
   const positionsRef = useRef(safePositions);
   positionsRef.current = safePositions;
+  const onModifyOrderRef = useRef(onModifyOrder);
+  onModifyOrderRef.current = onModifyOrder;
+  // P54 §6 — one in-flight order action at a time: a double-click must never
+  // submit the same modification twice; released shortly after the call ends
+  const tradeBusyRef = useRef(false);
+  const withTradeLock = useCallback(async (fn: () => Promise<unknown>) => {
+    if (tradeBusyRef.current) return;
+    tradeBusyRef.current = true;
+    try { await fn(); } finally { setTimeout(() => { tradeBusyRef.current = false; }, 400); }
+  }, []);
   const onModifyRef = useRef(onModifyPosition);
   onModifyRef.current = onModifyPosition;
 
@@ -641,7 +663,7 @@ export function PriceChart({
     if (!chart || !candle) return;
     chart.applyOptions({
       // Phase 34: appearance (background / grid / crosshair) now user-settable
-      layout: { background: { type: ColorType.Solid, color: mergedSettings.bgColor ?? COLORS.bg }, textColor: COLORS.text, fontSize: 11 },
+      layout: { background: { type: ColorType.Solid, color: mergedSettings.bgColor ?? COLORS.bg }, textColor: mergedSettings.textColor ?? COLORS.text, fontSize: 11 },
       grid: mergedSettings.grid
         ? { vertLines: { color: mergedSettings.gridColor ?? COLORS.grid }, horzLines: { color: mergedSettings.gridColor ?? COLORS.grid } }
         : { vertLines: { visible: false }, horzLines: { visible: false } },
@@ -1704,6 +1726,7 @@ export function PriceChart({
   }, [safeMarks, seriesEpoch]);
 
   // ---- trade lines (positions) ---------------------------------------------------
+  const safeOrders = Array.isArray(orders) ? orders : [];
   const tradeLines = useMemo<TradeLine[]>(() => {
     const out: TradeLine[] = [];
     for (const p of safePositions) {
@@ -1712,13 +1735,32 @@ export function PriceChart({
       if (p.sl) out.push({ positionId: p.id, kind: "sl", price: p.sl, color: "#ef4444", label: "SL", digits });
       if (p.tp) out.push({ positionId: p.id, kind: "tp", price: p.tp, color: "#22c55e", label: "TP", digits });
     }
+    // P54 §3 — pending orders: draggable entry (→ modify-order price), SL/TP
+    for (const o of safeOrders) {
+      const color = "#f59e0b";
+      out.push({ positionId: o.id, kind: "order-entry", price: o.price, color, label: `${o.kind === "limit" ? "LIMIT" : "STOP"} ${o.side.toUpperCase()} ${o.lots}`, digits });
+      if (o.sl) out.push({ positionId: o.id, kind: "order-sl", price: o.sl, color: "#ef4444", label: "SL", digits });
+      if (o.tp) out.push({ positionId: o.id, kind: "order-tp", price: o.tp, color: "#22c55e", label: "TP", digits });
+    }
     return out;
-  }, [safePositions, digits]);
+  }, [safePositions, safeOrders, digits]);
 
   const handleTradeLineMove = useCallback((positionId: string, kind: TradeLine["kind"], price: number) => {
+    // pending-order lines route to the modify-order endpoint; a rejected
+    // modification simply never confirms — the order refetch restores the
+    // real levels (the parent keeps the authoritative state)
+    if (kind === "order-entry") { void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(positionId, { price }))); return; }
+    if (kind === "order-sl") { void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(positionId, { sl: price }))); return; }
+    if (kind === "order-tp") { void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(positionId, { tp: price }))); return; }
     if (kind === "entry") return;
     const patch = kind === "sl" ? { sl: price } : { tp: price };
-    void onModifyRef.current(positionId, patch);
+    void withTradeLock(() => onModifyRef.current(positionId, patch));
+  }, []);
+
+  // ---- P54 §3 — order/position details panel (click on a trade line) -------
+  const [tradeDetails, setTradeDetails] = useState<{ kind: "position" | "order"; id: string } | null>(null);
+  const handleTradeLineClick = useCallback((t: TradeLine) => {
+    setTradeDetails({ kind: t.kind.startsWith("order") ? "order" : "position", id: t.positionId });
   }, []);
 
   // ---- drawings persistence -------------------------------------------------------
@@ -2064,6 +2106,25 @@ export function PriceChart({
     return () => clearInterval(timer);
   }, []);
 
+  // ---- P55 §11 — chart-action shortcuts (dispatched from TerminalPage) ----
+  useEffect(() => {
+    const h = (e: Event) => {
+      const action = (e as CustomEvent<{ action: string }>).detail?.action;
+      if (action === "undo") undoDrawings();
+      else if (action === "redo") redoDrawings();
+      else if (action === "fullscreen") toggleFullscreen();
+      else if (action === "crosshair") setCursorMode("cross");
+      else if (action === "toggleStayDrawing") {
+        const next = !stayDrawingRef.current;
+        stayDrawingRef.current = next;
+        setStayDrawing(next);
+        try { localStorage.setItem("it-stay-drawing", next ? "1" : "0"); } catch { /* private mode */ }
+      }
+    };
+    window.addEventListener("it-shortcut", h);
+    return () => window.removeEventListener("it-shortcut", h);
+  });
+
   // ---- P38 §1 — "Stay in Drawing Mode" --------------------------------------
   // Default: after finishing one drawing the tool returns to Select, so a
   // click can never accidentally start a second object. This toggle (persisted)
@@ -2336,6 +2397,7 @@ export function PriceChart({
           }}
           tradeLines={tradeLines}
           onTradeLineMove={handleTradeLineMove}
+          onTradeLineClick={handleTradeLineClick}
           tfSeconds={TF_SECONDS[timeframe] ?? 0}
           digits={digits}
           renderEnv={renderEnv}
@@ -2353,6 +2415,71 @@ export function PriceChart({
           onToggleFav={toggleFavTool}
           onReorder={reorderFavTools}
         />
+        {/* P54 §3 — order/position details panel (opened by clicking a trade
+            line on the chart; a drag still modifies through the backend) */}
+        {tradeDetails && (() => {
+          const pos = tradeDetails.kind === "position" ? safePositions.find((p) => p.id === tradeDetails.id) : null;
+          const ord = tradeDetails.kind === "order" ? safeOrders.find((o) => o.id === tradeDetails.id) : null;
+          if (!pos && !ord) return null;
+          const last = barsRef.current?.at(-1)?.close ?? null;
+          const dg = digits;
+          const busyTrade = tradeBusyRef.current;
+          return (
+            <div data-chart-ui className="absolute right-12 top-9 z-40 w-56 rounded-xl border border-slate-700 bg-[#0d1526]/95 p-3 text-xs shadow-2xl backdrop-blur">
+              <div className="mb-2 flex items-center justify-between">
+                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold",
+                  (pos?.side ?? ord?.side) === "buy" ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400")}>
+                  {ord ? `${ord.kind.toUpperCase()} ${ord.side.toUpperCase()} ${ord.lots.toFixed(2)} ${ord.symbol}`
+                       : `${pos!.side.toUpperCase()} ${pos!.lots.toFixed(2)} ${pos!.symbol}`}
+                </span>
+                <button onClick={() => setTradeDetails(null)} aria-label="Close details" className="rounded p-0.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300"><X className="h-3 w-3" /></button>
+              </div>
+              {ord ? (
+                <div className="space-y-1 text-[11px] text-slate-300">
+                  <div className="flex justify-between"><span className="text-slate-500">Trigger</span><span className="font-number">{ord.price.toFixed(dg)}</span></div>
+                  {ord.sl != null && <div className="flex justify-between"><span className="text-slate-500">Stop loss</span><span className="font-number">{ord.sl.toFixed(dg)}</span></div>}
+                  {ord.tp != null && <div className="flex justify-between"><span className="text-slate-500">Take profit</span><span className="font-number">{ord.tp.toFixed(dg)}</span></div>}
+                  {last != null && <div className="flex justify-between"><span className="text-slate-500">Distance</span><span className="font-number">{(((ord.price - last) / last) * 100).toFixed(2)}%</span></div>}
+                  <button
+                    disabled={busyTrade || !onCancelOrder}
+                    onClick={() => { setTradeDetails(null); void withTradeLock(() => Promise.resolve(onCancelOrder?.(ord.id))); }}
+                    className="mt-2 w-full rounded bg-destructive/15 py-1 font-semibold text-red-400 hover:bg-destructive/25 disabled:opacity-40"
+                  >Cancel order</button>
+                </div>
+              ) : (
+                <div className="space-y-1 text-[11px] text-slate-300">
+                  <div className="flex justify-between"><span className="text-slate-500">Entry</span><span className="font-number">{pos!.entry.toFixed(dg)}</span></div>
+                  {pos!.sl != null && <div className="flex justify-between"><span className="text-slate-500">Stop loss</span><span className="font-number">{pos!.sl.toFixed(dg)}</span></div>}
+                  {pos!.tp != null && <div className="flex justify-between"><span className="text-slate-500">Take profit</span><span className="font-number">{pos!.tp.toFixed(dg)}</span></div>}
+                  {last != null && <div className="flex justify-between"><span className="text-slate-500">Last</span><span className="font-number">{last.toFixed(dg)}</span></div>}
+                  <div className="mt-2 grid grid-cols-3 gap-1">
+                    <button
+                      disabled={busyTrade || (pos!.side === "buy" ? pos!.sl != null && pos!.sl >= pos!.entry : pos!.sl != null && pos!.sl <= pos!.entry)}
+                      onClick={() => void withTradeLock(() => onModifyRef.current(pos!.id, { sl: pos!.entry }))}
+                      className="rounded border border-border/60 py-1 font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                      title="Breakeven — SL to entry"
+                    >BE</button>
+                    {([0.5, 1, 2] as const).map((v) => (
+                      <button
+                        key={v}
+                        disabled={busyTrade}
+                        onClick={() => void withTradeLock(() => onModifyRef.current(pos!.id, { tsPct: v }))}
+                        className={cn("rounded border py-1 font-semibold hover:bg-slate-800 disabled:opacity-40",
+                          pos!.tsPct === v ? "border-emerald-500/60 text-emerald-400" : "border-border/60 text-slate-300")}
+                        title={`Trailing stop ${v}%`}
+                      >TS {v}%</button>
+                    ))}
+                  </div>
+                  <button
+                    disabled={busyTrade || !onClosePosition}
+                    onClick={() => { setTradeDetails(null); void withTradeLock(() => Promise.resolve(onClosePosition?.(pos!.id))); }}
+                    className="mt-1 w-full rounded bg-destructive/15 py-1 font-semibold text-red-400 hover:bg-destructive/25 disabled:opacity-40"
+                  >Close position</button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Phase 35 §6 — drawings restore feedback is now INVISIBLE per user
             request: the restore flow itself (subscribe → LWW merge) keeps

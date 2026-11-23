@@ -245,7 +245,7 @@ function PositionsTable({
   busy: boolean;
   onClose: (p: ServerPosition) => void;
   onCloseHalf: (p: ServerPosition) => void;
-  onModify: (p: ServerPosition, patch: { sl?: number | null; tp?: number | null }) => void;
+  onModify: (p: ServerPosition, patch: { sl?: number | null; tp?: number | null; tsPct?: number }) => void;
 }) {
   const { t } = useLanguage();
   if (!positions.length) return <div className="py-8 text-center text-muted-foreground">{t("noOpenPositions")}</div>;
@@ -288,6 +288,32 @@ function PositionsTable({
               </td>
               <td>
                 <div className="flex items-center justify-end gap-1">
+                  {/* P54 §4 — breakeven: SL to the entry price (server re-validates
+                      against the live price and rejects with a clear error if the
+                      market has already moved past entry) */}
+                  <button
+                    disabled={busy || (p.side === "buy" ? p.sl != null && p.sl >= p.entry : p.sl != null && p.sl <= p.entry)}
+                    onClick={() => onModify(p, { sl: p.entry })}
+                    className="rounded border border-border/60 px-1.5 py-0.5 font-semibold text-muted-foreground hover:text-foreground disabled:opacity-40"
+                    title="Breakeven — move Stop Loss to the entry price"
+                  >BE</button>
+                  {/* P54 §4 — trailing stop: ratcheting SL in % of price (0 = off) */}
+                  <select
+                    aria-label="Trailing stop"
+                    title="Trailing stop — the stop follows the price in your favor"
+                    disabled={busy}
+                    value={p.tsPct ? String(p.tsPct) : "0"}
+                    onChange={(e) => onModify(p, { tsPct: Number(e.target.value) })}
+                    className={cn(
+                      "h-5 rounded border border-border/60 bg-transparent px-0.5 text-[10px] font-semibold",
+                      p.tsPct ? "text-emerald-400" : "text-muted-foreground",
+                    )}
+                  >
+                    <option value="0">TS off</option>
+                    <option value="0.5">TS 0.5%</option>
+                    <option value="1">TS 1%</option>
+                    <option value="2">TS 2%</option>
+                  </select>
                   {p.lots >= 0.02 && (
                     <button disabled={busy} onClick={() => onCloseHalf(p)} className="rounded border border-border/60 px-1.5 py-0.5 font-semibold text-muted-foreground hover:text-foreground disabled:opacity-40" title="Close half">½</button>
                   )}
@@ -421,10 +447,45 @@ function ModifyOrderDialog({
 
 function HistoryTable({ q, onJournal }: { q: { isLoading: boolean; data?: ServerTrade[] | null }; onJournal: (tr: ServerTrade) => void }) {
   const { t } = useLanguage();
+  // P54 §5 — history filters: instrument, direction, close reason, date range
+  const [fSymbol, setFSymbol] = useState("all");
+  const [fSide, setFSide] = useState("all");
+  const [fReason, setFReason] = useState("all");
+  const [fDays, setFDays] = useState(0); // 0 = all time
+  const all = q.data ?? [];
+  const symbols = useMemo(() => [...new Set(all.map((x) => x.symbol))].sort(), [all]);
+  const reasons = useMemo(() => [...new Set(all.map((x) => x.reason))].sort(), [all]);
+  const rows = useMemo(() => all.filter((tr) =>
+    (fSymbol === "all" || tr.symbol === fSymbol) &&
+    (fSide === "all" || tr.side === fSide) &&
+    (fReason === "all" || tr.reason === fReason) &&
+    (fDays <= 0 || tr.closedAt >= Date.now() - fDays * 86400_000),
+  ), [all, fSymbol, fSide, fReason, fDays]);
   if (q.isLoading) return <div className="py-8 text-center text-muted-foreground">Loading…</div>;
-  if (!q.data?.length) return <div className="py-8 text-center text-muted-foreground">{t("noHistory")}</div>;
+  if (!all.length) return <div className="py-8 text-center text-muted-foreground">{t("noHistory")}</div>;
   return (
-    <div className="overflow-x-auto"><table className="w-full min-w-[720px] border-collapse text-[11px]">
+    <div>
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border/40 px-2 py-1.5 text-[11px]">
+        <select value={fSymbol} onChange={(e) => setFSymbol(e.target.value)} aria-label="Filter by instrument" className="h-6 rounded border border-border/60 bg-transparent px-1 text-slate-300">
+          <option value="all">All instruments</option>
+          {symbols.map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <select value={fSide} onChange={(e) => setFSide(e.target.value)} aria-label="Filter by direction" className="h-6 rounded border border-border/60 bg-transparent px-1 text-slate-300">
+          <option value="all">Buy & Sell</option><option value="buy">Buy</option><option value="sell">Sell</option>
+        </select>
+        <select value={fReason} onChange={(e) => setFReason(e.target.value)} aria-label="Filter by close reason" className="h-6 rounded border border-border/60 bg-transparent px-1 text-slate-300">
+          <option value="all">All reasons</option>
+          {reasons.map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <select value={String(fDays)} onChange={(e) => setFDays(Number(e.target.value))} aria-label="Filter by date" className="h-6 rounded border border-border/60 bg-transparent px-1 text-slate-300">
+          <option value="0">All time</option><option value="1">Last 24h</option><option value="7">7 days</option><option value="30">30 days</option>
+        </select>
+        <span className="ml-auto text-[10px] text-muted-foreground">{rows.length} / {all.length}</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="py-6 text-center text-muted-foreground">No trades match the filters</div>
+      ) : (
+      <div className="overflow-x-auto"><table className="w-full min-w-[720px] border-collapse text-[11px]">
       <thead className="sticky top-0 bg-slate-900/95 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
         <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-semibold">
           <th>Closed</th><th>Symbol</th><th>Side</th><th className="text-right">Volume</th>
@@ -433,7 +494,7 @@ function HistoryTable({ q, onJournal }: { q: { isLoading: boolean; data?: Server
         </tr>
       </thead>
       <tbody>
-        {q.data.map((tr) => {
+        {rows.map((tr) => {
           const dg = getInstrument(tr.symbol)?.digits ?? 2;
           return (
             <tr key={tr.id} className="border-t border-border/30 hover:bg-card/40 [&>td]:px-2 [&>td]:py-1">
@@ -454,6 +515,8 @@ function HistoryTable({ q, onJournal }: { q: { isLoading: boolean; data?: Server
         })}
       </tbody>
     </table></div>
+      )}
+    </div>
   );
 }
 

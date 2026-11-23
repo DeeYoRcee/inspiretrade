@@ -107,6 +107,7 @@ const RAIL_BUTTONS: { id: Exclude<ShellPanel, null>; icon: React.ReactNode; titl
 
 export function TerminalShell({
   chart, blotter, panel, activePanel, onPanelSelect,
+  hideRail = false, hideBlotter = false,
 }: {
   chart: React.ReactNode;
   blotter: React.ReactNode;
@@ -114,6 +115,9 @@ export function TerminalShell({
   panel: React.ReactNode;
   activePanel: ShellPanel;
   onPanelSelect: (p: ShellPanel) => void;
+  /** P55 §9 — interface visibility prefs (Terminal settings → Look & feel) */
+  hideRail?: boolean;
+  hideBlotter?: boolean;
 }) {
   const wide = useIsWide();
   const [shell, setShell] = useState<ShellState>(loadShell);
@@ -175,7 +179,7 @@ export function TerminalShell({
       {/* center — chart + bottom blotter */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="min-h-0 flex-1">{chart}</div>
-        {shell.bottomOpen ? (
+        {hideBlotter ? null : shell.bottomOpen ? (
           <>
             <Divider orientation="h" onDelta={(d) => patch({ bottom: clamp(shell.bottom - d, 140, 480) })}>
               <button
@@ -219,7 +223,8 @@ export function TerminalShell({
         </>
       )}
 
-      {/* right icon rail */}
+      {/* right icon rail — hideable via interface prefs (P55 §9) */}
+      {hideRail ? null : (
       <div className="flex w-10 shrink-0 flex-col items-center gap-0.5 border-l border-slate-800 bg-[#0b1220] py-1.5">
         {RAIL_BUTTONS.map((b) => (
           <button
@@ -246,6 +251,7 @@ export function TerminalShell({
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }

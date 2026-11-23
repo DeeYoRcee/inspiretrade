@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 export const THEMES = ["dark", "light", "ocean", "forest", "vader", "aurora", "neon", "cosmos", "knight", "money", "f1"] as const;
 export type Theme = (typeof THEMES)[number];
@@ -53,7 +55,44 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   const toggleTheme = () => setTheme((current) => THEMES[(THEMES.indexOf(current) + 1) % THEMES.length]);
-  return <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>{children}</ThemeContext.Provider>;
+
+  // P55 §13 — theme syncs across devices via RTDB `users/{uid}/prefs/theme`.
+  // A local change always wins immediately and is pushed with an updatedAt
+  // stamp; the remote value is read ONCE per login and only applied when it is
+  // NEWER than the local stamp (a stale device never overwrites a newer choice).
+  const setThemeSync = (t: Theme) => {
+    setTheme(t);
+    try { localStorage.setItem("tj-theme-at", String(Date.now())); } catch { /* private mode */ }
+  };
+
+  useEffect(() => {
+    const u = auth.currentUser;
+    if (!u) return;
+    void import("firebase/database").then(({ getDatabase, ref, set }) => {
+      void set(ref(getDatabase(), `users/${u.uid}/prefs/theme`), { theme, updatedAt: Date.now() }).catch(() => { /* offline → LS only */ });
+    }).catch(() => { /* firebase unavailable */ });
+  }, [theme]);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!u) return;
+      void import("firebase/database").then(({ getDatabase, ref, get }) => {
+        void get(ref(getDatabase(), `users/${u.uid}/prefs/theme`)).then((snap) => {
+          if (!snap.exists()) return;
+          const remote = snap.val() as { theme?: string; updatedAt?: number };
+          if (!remote?.theme || !isTheme(remote.theme)) return;
+          let localStamp = 0;
+          try { localStamp = Number(localStorage.getItem("tj-theme-at") ?? 0); } catch { /* private mode */ }
+          if ((remote.updatedAt ?? 0) <= localStamp) return;
+          try { localStorage.setItem("tj-theme-at", String(remote.updatedAt ?? Date.now())); } catch { /* private mode */ }
+          setTheme(remote.theme);
+        }).catch(() => { /* offline → local choice stays */ });
+      }).catch(() => { /* firebase unavailable */ });
+    });
+    return () => unsub();
+  }, []);
+
+  return <ThemeContext.Provider value={{ theme, setTheme: setThemeSync, toggleTheme }}>{children}</ThemeContext.Provider>;
 }
 
 export const useTheme = () => useContext(ThemeContext);

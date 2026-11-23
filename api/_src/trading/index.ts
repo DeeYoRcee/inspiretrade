@@ -145,6 +145,7 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
       user.uid, String(body.accountId), String(body.positionId),
       body.sl !== undefined ? body.sl : undefined,
       body.tp !== undefined ? body.tp : undefined,
+      body.tsPct !== undefined ? body.tsPct : undefined,
     );
     json(res, 200, result);
   },

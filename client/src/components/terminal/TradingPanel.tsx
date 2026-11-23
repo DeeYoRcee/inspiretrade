@@ -31,6 +31,12 @@ export interface EventGuardInfo {
   minutesUntil: number;
 }
 
+/** end of the current UTC day in ms — the "Day" expiry boundary */
+function endOfUtcDay(): number {
+  const d = new Date();
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - 1;
+}
+
 export function TradingPanel({
   symbol, className, eventGuard,
 }: {
@@ -73,6 +79,8 @@ export function TradingPanel({
   );
   const [lots, setLots] = useState(() => per.defaultLot ?? ts.trading.defaultLot);
   const [limitPrice, setLimitPrice] = useState("");
+  // P54 §2 — pending-order expiry: GTC (default) or end of the current UTC day
+  const [expiry, setExpiry] = useState<"gtc" | "day">("gtc");
   const [slPrice, setSlPrice] = useState("");
   const [tpPrice, setTpPrice] = useState("");
   const [riskPct, setRiskPct] = useState(() => per.defaultRisk ?? ts.trading.defaultRisk);
@@ -119,6 +127,8 @@ export function TradingPanel({
   const rr = estRisk && estReward ? estReward / estRisk : null;
 
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // the side chosen at submit time (a shortcut may override the UI side)
+  const confirmSideRef = useRef<"buy" | "sell">("buy");
 
   // SL/TP prefill from the instrument's pip-based defaults — once per symbol,
   // the first time a live entry price exists (buy = SL below / TP above)
@@ -157,12 +167,18 @@ export function TradingPanel({
       })()
     : null;
 
-  const doSubmit = async () => {
+  // P55 §11 — keyboard shortcuts set the side explicitly; every submit path
+  // flows through here with the effective side (confirm dialog included)
+  const sideRef = useRef(side);
+  sideRef.current = side;
+  const doSubmit = async (sideOverride?: "buy" | "sell") => {
+    const eff = sideOverride ?? sideRef.current;
     if (busy || locked || marketClosed) return;
     const kind: OrderKind = orderKind;
     const res = await placeOrder({
-      symbol, side, lots: lotsNum, kind,
+      symbol, side: eff, lots: lotsNum, kind,
       price: orderKind !== "market" && limitPrice ? Number(limitPrice) : null,
+      expiryAt: orderKind !== "market" && expiry === "day" ? endOfUtcDay() : null,
       sl: slPx, tp: tpPrice ? Number(tpPrice) : null,
     });
     if (res) {
@@ -175,7 +191,9 @@ export function TradingPanel({
   // confirmation is set in Terminal Settings; pending orders fire directly;
   // the opt-in event guard ALWAYS confirms (safety beats speed near releases)
   const [confirmMode, setConfirmMode] = useState<"market" | "event">("market");
-  const submit = async () => {
+  const submit = async (sideOverride?: "buy" | "sell") => {
+    if (sideOverride) confirmSideRef.current = sideOverride;
+    if (sideOverride && sideOverride !== sideRef.current) setSide(sideOverride);
     if (eventGuard) {
       setConfirmMode("event");
       setConfirmOpen(true);
@@ -186,8 +204,19 @@ export function TradingPanel({
       setConfirmOpen(true);
       return;
     }
-    await doSubmit();
+    await doSubmit(sideOverride);
   };
+
+  // P55 §11 — global shortcut events (dispatched by the TerminalPage handler)
+  useEffect(() => {
+    const h = (e: Event) => {
+      const action = (e as CustomEvent<{ action: string }>).detail?.action;
+      if (action === "buy") void submit("buy");
+      else if (action === "sell") void submit("sell");
+    };
+    window.addEventListener("it-shortcut", h);
+    return () => window.removeEventListener("it-shortcut", h);
+  }, []);
 
   const marginRequired = displayEntry != null && inst
     ? (lotsNum * inst.contractSize * displayEntry) / (account?.leverage || 100)
@@ -251,11 +280,17 @@ export function TradingPanel({
               <button key={k} onClick={() => setOrderKind(k)} disabled={locked || marketClosed} className={cn("flex-1 rounded-lg border px-2 py-1 text-[11px] font-semibold capitalize disabled:opacity-40", orderKind === k ? "border-emerald-500/50 text-emerald-400" : "border-border/60 text-muted-foreground")}>{k}</button>
             ))}
           </div>
-          {orderKind !== "market" && (
+          {orderKind !== "market" && (<>
             <Field label={`${orderKind === "limit" ? "Limit" : "Stop"} trigger price`}>
               <input type="number" step="any" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} className="num-input" placeholder={price?.toFixed(d)} />
             </Field>
-          )}
+            <Field label="Expiry">
+              <select value={expiry} onChange={(e) => setExpiry(e.target.value as "gtc" | "day")} className="num-input">
+                <option value="gtc">Good till cancelled</option>
+                <option value="day">End of day</option>
+              </select>
+            </Field>
+          </>)}
           <div className="grid grid-cols-2 gap-1.5">
             <Field label="Lots">
               <div className="flex items-stretch gap-1">
@@ -288,7 +323,7 @@ export function TradingPanel({
             {metrics && <div className="flex justify-between"><span>Free margin</span><b className="font-number text-foreground">${metrics.freeMargin.toFixed(2)}</b></div>}
           </div>
           <button
-            onClick={submit}
+            onClick={() => void submit()}
             disabled={busy || price == null || locked}
             className={cn("w-full rounded-lg py-2.5 font-bold transition-opacity disabled:opacity-40", side === "buy" ? "bg-emerald-500 text-black" : "bg-red-500 text-black")}
           >
@@ -326,7 +361,7 @@ export function TradingPanel({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { setConfirmOpen(false); void doSubmit(); }}>Place order</AlertDialogAction>
+            <AlertDialogAction onClick={() => { setConfirmOpen(false); void doSubmit(confirmSideRef.current); }}>Place order</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

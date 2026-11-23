@@ -26,6 +26,8 @@ export interface ServerPosition {
   entry: number;
   sl: number | null;
   tp: number | null;
+  /** trailing-stop distance in % of price (0 = off) — P54 §4 */
+  tsPct?: number;
   openedAt: number;
   /** accumulated overnight swap (USD, signed) — server-settled */
   swapAccrued?: number;
@@ -41,6 +43,8 @@ export interface ServerOrder {
   price: number;
   sl: number | null;
   tp: number | null;
+  tsPct?: number;
+  expiryAt?: number | null;
   createdAt: number;
 }
 
@@ -101,6 +105,8 @@ export interface PlaceOrderArgs {
   price?: number | null;
   sl?: number | null;
   tp?: number | null;
+  /** P54 §2 — optional pending-order expiry (UNIX ms); GTC omits it */
+  expiryAt?: number | null;
   comment?: string;
 }
 
@@ -135,10 +141,10 @@ export const tradingApi = {
       "/api/trading?action=close-all", { accountId },
     ),
 
-  modifyPosition: (accountId: string, positionId: string, patch: { sl?: number | null; tp?: number | null }) =>
+  modifyPosition: (accountId: string, positionId: string, patch: { sl?: number | null; tp?: number | null; tsPct?: number }) =>
     authedFetch<{ ok: boolean }>("/api/trading?action=modify", { accountId, positionId, ...patch }),
 
-  modifyOrder: (accountId: string, orderId: string, patch: { price?: number; lots?: number; sl?: number | null; tp?: number | null }) =>
+  modifyOrder: (accountId: string, orderId: string, patch: { price?: number; lots?: number; sl?: number | null; tp?: number | null; tsPct?: number }) =>
     authedFetch<{ ok: boolean }>("/api/trading?action=modify-order", { accountId, orderId, ...patch }),
 
   cancelOrder: (accountId: string, orderId: string) =>

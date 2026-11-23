@@ -35,6 +35,11 @@ export interface ChartSettings {
   bgColor: string;
   gridColor: string;
   crosshairColor: string;
+  // ---- P55 §7: fine-grained appearance (undefined = inherit the candle
+  // colors / theme text — backward compatible with every saved setting)
+  borderColor?: string;
+  wickColor?: string;
+  textColor?: string;
   // Phase 34: per-instrument override shadows merged from instrument settings
   precision?: number;
   lastPrice?: boolean;

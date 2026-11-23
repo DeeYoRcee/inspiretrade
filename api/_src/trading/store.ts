@@ -65,7 +65,7 @@ interface AccountDoc {
   dayStart: Record<string, number>;
 }
 
-type StorePosition = PositionLike & { comment?: string | null; swapAccrued?: number; swapNights?: number };
+type StorePosition = PositionLike & { comment?: string | null; swapAccrued?: number; swapNights?: number; slModifiedAt?: number };
 
 interface AccountState {
   id: string;
@@ -220,6 +220,16 @@ function applyEvaluationTx(
     recordClose(state, tx, uid, aid, o);
   }
 
+  // P54 §4 — persist trailing-stop ratchet updates (only for positions that
+  // are still open — an exit this tick wins, the next tick re-ratchets)
+  for (const u of result.slUpdates || []) {
+    const pos = state.positions.find((p) => p.id === u.positionId);
+    if (!pos || pos.sl === u.sl) continue;
+    pos.sl = u.sl;
+    pos.slModifiedAt = now;
+    tx.update(posCol(uid, aid).doc(pos.id), { sl: u.sl, slModifiedAt: now });
+  }
+
   // ---- pending fills -------------------------------------------------------
   // Phase 27 §6: a pending order NEVER triggers against a frozen closed-market
   // quote (weekend FX/metals). The order stays armed and fills at the reopen —
@@ -229,16 +239,23 @@ function applyEvaluationTx(
     if (!order) return false;
     return marketHours(order.symbol).open;
   });
+  // P54 §2 — expire stale pending orders (removed, not faked into history)
+  for (const oid of result.expired || []) {
+    const order = state.orders.find((o) => o.id === oid);
+    if (!order) continue;
+    tx.delete(ordCol(uid, aid).doc(oid));
+    state.orders = state.orders.filter((o) => o.id !== oid);
+  }
   for (const f of result.fills) {
     const order = state.orders.find((o) => o.id === f.orderId);
     if (!order) continue;
     const posRef = posCol(uid, aid).doc();
     const pos: StorePosition = {
       id: posRef.id, symbol: order.symbol, side: order.side, lots: order.lots,
-      entry: f.entry, sl: order.sl, tp: order.tp, openedAt: now,
+      entry: f.entry, sl: order.sl, tp: order.tp, tsPct: order.tsPct ?? 0, openedAt: now,
       swapAccrued: 0, swapNights: 0,
     };
-    tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
+    tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, tsPct: pos.tsPct, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
     tx.delete(ordCol(uid, aid).doc(order.id));
     state.orders = state.orders.filter((o) => o.id !== order.id);
     state.positions.push(pos);
@@ -712,6 +729,12 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
     const order = {
       symbol: spec.symbol, side: req.side, kind, lots,
       price: Number(req.price), sl: req.sl ?? null, tp: req.tp ?? null,
+      tsPct: Math.min(10, Math.max(0, Number((req as any).tsPct) || 0)),
+      // P54 §2 — optional expiry: "Day" dies at the end of the current UTC
+      // day; GTC omits it. Server-enforced at evaluation time.
+      expiryAt: Number.isFinite(Number((req as any).expiryAt)) && Number((req as any).expiryAt) > Date.now()
+        ? Math.min(Number((req as any).expiryAt), Date.now() + 31 * 86400_000)
+        : null,
       createdAt: Date.now(),
     };
     tx.set(ordRef, order);
@@ -767,7 +790,7 @@ export async function closePosition(uid: string, accountId: string, positionId: 
   });
 }
 
-export async function modifyPosition(uid: string, accountId: string, positionId: string, sl: number | null | undefined, tp: number | null | undefined) {
+export async function modifyPosition(uid: string, accountId: string, positionId: string, sl: number | null | undefined, tp: number | null | undefined, tsPct?: number) {
   const preState = await readState(uid, accountId);
   const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx: any) => {
@@ -783,15 +806,20 @@ export async function modifyPosition(uid: string, accountId: string, positionId:
     const tpNum = tp !== undefined ? num(tp) : pos.tp;
     const v = validatePositionModify({ pos, quote, sl: slNum, tp: tpNum });
     if (!v.ok) throw new HttpError(400, "BAD_SLTP", v.error || "Invalid SL/TP");
-    tx.update(posCol(uid, accountId).doc(positionId), { sl: slNum, tp: tpNum, slModifiedAt: Date.now() });
+    // P54 §4 — trailing stop distance (percent of price; 0/null = off)
+    const tsNum = tsPct === undefined ? pos.tsPct ?? 0 : Number(tsPct) || 0;
+    if (!Number.isFinite(tsNum) || tsNum < 0 || tsNum > 10) {
+      throw new HttpError(400, "BAD_SLTP", "Trailing stop distance must be 0–10%");
+    }
+    tx.update(posCol(uid, accountId).doc(positionId), { sl: slNum, tp: tpNum, tsPct: tsNum, slModifiedAt: Date.now() });
     const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
-    return { ok: true, sl: slNum, tp: tpNum, metrics };
+    return { ok: true, sl: slNum, tp: tpNum, tsPct: tsNum, metrics };
   });
 }
 
 export async function modifyOrder(
   uid: string, accountId: string, orderId: string,
-  patch: { price?: number | null; sl?: number | null; tp?: number | null; lots?: number | null },
+  patch: { price?: number | null; sl?: number | null; tp?: number | null; lots?: number | null; tsPct?: number | null },
 ) {
   const preState = await readState(uid, accountId);
   const { quotes, prices } = await quotesForState(preState);
@@ -818,7 +846,8 @@ export async function modifyOrder(
     if (!rulesCheck.ok) throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
     const v = validateOrderModify({ order, quote, price: newPrice, sl: newSl, tp: newTp });
     if (!v.ok) throw new HttpError(400, "BAD_ORDER", v.error || "Invalid order modification");
-    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, modifiedAt: Date.now() };
+    const newTs = patch.tsPct != null ? Math.min(10, Math.max(0, Number(patch.tsPct) || 0)) : order.tsPct ?? 0;
+    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, tsPct: newTs, modifiedAt: Date.now() };
     tx.update(ordCol(uid, accountId).doc(orderId), updated);
     const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
     return { ok: true, order: { ...order, ...updated, modifiedAt: undefined }, metrics };

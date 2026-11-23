@@ -49,6 +49,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
 import { InstrumentSettingsPanel } from "@/components/terminal/InstrumentSettingsPanel";
 import { MultiChartWorkspace } from "@/components/terminal/MultiChartWorkspace";
+import { loadShortcuts, matchesShortcut } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
 import { getTerminalSettings } from "@/lib/terminal-settings";
@@ -81,7 +82,7 @@ export default function TerminalPage() {
   const {
     accounts, account, positions, orders, metrics,
     loading, busy, setActiveId, resetAccount, refreshNow,
-    modifyPosition,
+    modifyPosition, modifyOrder, cancelOrder, closePosition,
   } = useTrading();
   const [newAccountOpen, setNewAccountOpen] = useState(false);
   const [mode, setMode] = useState<TerminalMode>((() => { const saved = localStorage.getItem(MODE_KEY) as TerminalMode | null; return saved && MODES.some((mm) => mm.id === saved) ? saved : "live"; })());
@@ -123,6 +124,20 @@ export default function TerminalPage() {
   const symbolRef = useRef(symbol);
   symbolRef.current = symbol;
 
+  // P55 §11 — panel shortcuts (openTicket / openWatchlist / openAlerts) toggle
+  // the right rail; a second press on the active panel's shortcut closes it
+  useEffect(() => {
+    const h = (e: Event) => {
+      const action = (e as CustomEvent<{ action: string }>).detail?.action;
+      if (action === "openTicket") selectPanel(rightPanel === "ticket" ? null : "ticket");
+      else if (action === "openWatchlist") selectPanel(rightPanel === "watchlist" ? null : "watchlist");
+      else if (action === "openAlerts") selectPanel(rightPanel === "alerts" ? null : "alerts");
+      else return;
+    };
+    window.addEventListener("it-shortcut", h);
+    return () => window.removeEventListener("it-shortcut", h);
+  });
+
   useEffect(() => { localStorage.setItem(SYMBOL_KEY, symbol); }, [symbol]);
   useEffect(() => { localStorage.setItem(TF_KEY, timeframe); }, [timeframe]);
   useEffect(() => { localStorage.setItem(MODE_KEY, mode); }, [mode]);
@@ -130,10 +145,33 @@ export default function TerminalPage() {
   // TradingView-style timeframe hotkeys — the number row switches timeframes
   // (1m 3m 5m 15m 30m 1h 2h 4h 1d 1W; "0" = 10th). Skips text inputs and
   // modifier combos so typing and system shortcuts stay untouched.
+  // P55 §11 — PLUS the customizable action bindings: a matching key presses
+  // the action through a window event (ticket/panel listeners act on it).
+  // P55 §9 — interface visibility prefs (Terminal settings → Look & feel)
+  const [interface_, setInterface_] = useState(() => getTerminalSettings().interface);
+  useEffect(() => {
+    const refresh = () => setInterface_(getTerminalSettings().interface);
+    window.addEventListener("it-terminal-settings-changed", refresh);
+    return () => window.removeEventListener("it-terminal-settings-changed", refresh);
+  }, []);
+  const shortcutsRef = useRef(loadShortcuts());
+  useEffect(() => {
+    const refresh = () => { shortcutsRef.current = loadShortcuts(); };
+    window.addEventListener("it-shortcuts-changed", refresh);
+    return () => window.removeEventListener("it-shortcuts-changed", refresh);
+  }, []);
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target as HTMLElement | null)?.isContentEditable) return;
+      // P55 §11 — customizable actions first (may carry modifiers)
+      for (const [action, binding] of Object.entries(shortcutsRef.current)) {
+        if (binding && matchesShortcut(e, binding)) {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("it-shortcut", { detail: { action } }));
+          return;
+        }
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const idx = "1234567890".indexOf(e.key);
       const tfs = availableTimeframes(symbolRef.current); if (idx < 0 || idx >= tfs.length) return;
@@ -243,6 +281,8 @@ export default function TerminalPage() {
         <TerminalShell
           activePanel={rightPanel}
           onPanelSelect={selectPanel}
+          hideBlotter={!interface_?.bottomBlotter}
+          hideRail={!interface_?.rightRail}
           panel={
             rightPanel === "watchlist" ? <Watchlist symbol={symbol} onSymbolChange={setSymbol} onBrowse={() => setExplorerOpen(true)} className="h-full w-full" />
               : rightPanel === "ticket" ? (
@@ -276,6 +316,9 @@ export default function TerminalPage() {
                 positions={positions}
                 accountId={account?.id ?? null}
                 onModifyPosition={modifyPosition}
+                onModifyOrder={modifyOrder}
+                onCancelOrder={cancelOrder}
+                onClosePosition={closePosition}
                 accountBalance={metrics?.balance ?? null}
                 onOpenAlerts={() => selectPanel("alerts")}
                 onOpenReplay={() => setMode("replay")}

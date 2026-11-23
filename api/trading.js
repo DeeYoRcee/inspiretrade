@@ -651,24 +651,37 @@ function evaluateAccount(args) {
   const { balance, positions, orders, quotes } = args;
   const prices = args.prices ?? {};
   const leverage = args.leverage ?? DEFAULT_LEVERAGE;
-  const out = { fills: [], exits: [], stopOut: false, stopOutIds: [] };
+  const out = { fills: [], exits: [], stopOut: false, stopOutIds: [], slUpdates: [], expired: [] };
   const metrics = computeMetrics(balance, positions, quotes, prices, leverage);
   if (metrics.usedMargin > 0 && metrics.marginLevel != null && metrics.marginLevel <= STOP_OUT_LEVEL_PCT) {
     out.stopOut = true;
     out.stopOutIds = positions.map((p) => p.id);
     return out;
   }
+  out.expired = orders.filter((o) => o.expiryAt != null && o.expiryAt <= Date.now()).map((o) => o.id);
   for (const o of orders) {
+    if (o.expiryAt != null && o.expiryAt <= Date.now()) continue;
     const q = quotes[o.symbol];
     if (q && checkPendingTrigger(o, q)) out.fills.push({ orderId: o.id, entry: o.side === "buy" ? q.ask : q.bid, quoteTime: q.time });
   }
+  out.slUpdates = [];
   for (const p of positions) {
     const q = quotes[p.symbol];
     if (!q) continue;
+    const ts = Number(p.tsPct) || 0;
+    if (ts > 0 && ts <= 10) {
+      const candidate = Math.round((p.side === "buy" ? q.bid * (1 - ts / 100) : q.ask * (1 + ts / 100)) * 100) / 100;
+      if (trailingSlCandidate(p, candidate)) out.slUpdates.push({ positionId: p.id, sl: candidate });
+    }
     const reason = checkExitTrigger(p, q);
     if (reason) out.exits.push({ positionId: p.id, exit: exitPriceFor(p.side, q), reason, quoteTime: q.time });
   }
   return out;
+}
+function trailingSlCandidate(pos, candidate) {
+  if (!Number.isFinite(candidate) || candidate <= 0) return false;
+  if (pos.sl == null) return true;
+  return pos.side === "buy" ? candidate > pos.sl : candidate < pos.sl;
 }
 function dayKey(ts = Date.now()) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -1180,11 +1193,24 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
   for (const o of closed) {
     recordClose(state, tx, uid, aid, o);
   }
+  for (const u of result.slUpdates || []) {
+    const pos = state.positions.find((p) => p.id === u.positionId);
+    if (!pos || pos.sl === u.sl) continue;
+    pos.sl = u.sl;
+    pos.slModifiedAt = now;
+    tx.update(posCol(uid, aid).doc(pos.id), { sl: u.sl, slModifiedAt: now });
+  }
   result.fills = result.fills.filter((f) => {
     const order = state.orders.find((o) => o.id === f.orderId);
     if (!order) return false;
     return marketHours(order.symbol).open;
   });
+  for (const oid of result.expired || []) {
+    const order = state.orders.find((o) => o.id === oid);
+    if (!order) continue;
+    tx.delete(ordCol(uid, aid).doc(oid));
+    state.orders = state.orders.filter((o) => o.id !== oid);
+  }
   for (const f of result.fills) {
     const order = state.orders.find((o) => o.id === f.orderId);
     if (!order) continue;
@@ -1197,11 +1223,12 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
       entry: f.entry,
       sl: order.sl,
       tp: order.tp,
+      tsPct: order.tsPct ?? 0,
       openedAt: now,
       swapAccrued: 0,
       swapNights: 0
     };
-    tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
+    tx.set(posRef, { symbol: pos.symbol, side: pos.side, lots: pos.lots, entry: pos.entry, sl: pos.sl, tp: pos.tp, tsPct: pos.tsPct, openedAt: pos.openedAt, swapAccrued: 0, swapNights: 0 });
     tx.delete(ordCol(uid, aid).doc(order.id));
     state.orders = state.orders.filter((o) => o.id !== order.id);
     state.positions.push(pos);
@@ -1635,6 +1662,10 @@ async function placeOrder(uid, req) {
       price: Number(req.price),
       sl: req.sl ?? null,
       tp: req.tp ?? null,
+      tsPct: Math.min(10, Math.max(0, Number(req.tsPct) || 0)),
+      // P54 §2 — optional expiry: "Day" dies at the end of the current UTC
+      // day; GTC omits it. Server-enforced at evaluation time.
+      expiryAt: Number.isFinite(Number(req.expiryAt)) && Number(req.expiryAt) > Date.now() ? Math.min(Number(req.expiryAt), Date.now() + 31 * 864e5) : null,
       createdAt: Date.now()
     };
     tx.set(ordRef, order);
@@ -1692,7 +1723,7 @@ async function closePosition(uid, accountId, positionId, lots) {
     return { closed: outcome, metrics, exit, quote };
   });
 }
-async function modifyPosition(uid, accountId, positionId, sl, tp) {
+async function modifyPosition(uid, accountId, positionId, sl, tp, tsPct) {
   const preState = await readState(uid, accountId);
   const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx) => {
@@ -1706,9 +1737,13 @@ async function modifyPosition(uid, accountId, positionId, sl, tp) {
     const tpNum = tp !== void 0 ? num2(tp) : pos.tp;
     const v = validatePositionModify({ pos, quote, sl: slNum, tp: tpNum });
     if (!v.ok) throw new HttpError(400, "BAD_SLTP", v.error || "Invalid SL/TP");
-    tx.update(posCol(uid, accountId).doc(positionId), { sl: slNum, tp: tpNum, slModifiedAt: Date.now() });
+    const tsNum = tsPct === void 0 ? pos.tsPct ?? 0 : Number(tsPct) || 0;
+    if (!Number.isFinite(tsNum) || tsNum < 0 || tsNum > 10) {
+      throw new HttpError(400, "BAD_SLTP", "Trailing stop distance must be 0\u201310%");
+    }
+    tx.update(posCol(uid, accountId).doc(positionId), { sl: slNum, tp: tpNum, tsPct: tsNum, slModifiedAt: Date.now() });
     const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
-    return { ok: true, sl: slNum, tp: tpNum, metrics };
+    return { ok: true, sl: slNum, tp: tpNum, tsPct: tsNum, metrics };
   });
 }
 async function modifyOrder(uid, accountId, orderId, patch) {
@@ -1736,7 +1771,8 @@ async function modifyOrder(uid, accountId, orderId, patch) {
     if (!rulesCheck.ok) throw new HttpError(403, "RULE_REJECTED", rulesCheck.error || "Prop rule breached");
     const v = validateOrderModify({ order, quote, price: newPrice, sl: newSl, tp: newTp });
     if (!v.ok) throw new HttpError(400, "BAD_ORDER", v.error || "Invalid order modification");
-    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, modifiedAt: Date.now() };
+    const newTs = patch.tsPct != null ? Math.min(10, Math.max(0, Number(patch.tsPct) || 0)) : order.tsPct ?? 0;
+    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, tsPct: newTs, modifiedAt: Date.now() };
     tx.update(ordCol(uid, accountId).doc(orderId), updated);
     const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
     return { ok: true, order: { ...order, ...updated, modifiedAt: void 0 }, metrics };
@@ -2251,7 +2287,8 @@ var routes = {
       String(body.accountId),
       String(body.positionId),
       body.sl !== void 0 ? body.sl : void 0,
-      body.tp !== void 0 ? body.tp : void 0
+      body.tp !== void 0 ? body.tp : void 0,
+      body.tsPct !== void 0 ? body.tsPct : void 0
     );
     json(res, 200, result);
   },

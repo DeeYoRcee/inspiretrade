@@ -48,6 +48,11 @@ export interface TerminalSettings {
     entrySoundOnOrder: boolean;
     defaultOrderType: "market" | "limit";
   };
+  /** P55 §9 — terminal layout visibility (restore default = both true) */
+  interface: {
+    bottomBlotter: boolean;
+    rightRail: boolean;
+  };
 }
 
 export const TERMINAL_SETTINGS_VERSION = 1;
@@ -58,6 +63,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   general: { defaultSymbol: "BTCUSD", defaultTf: "5m", timezone: "", numberFormat: "plain" },
   appearance: { fontSize: 16, density: "compact", themeBackdrop: true },
   trading: { defaultLot: "0.10", defaultRisk: "1", confirmOrders: true, oneClick: false, entrySoundOnOrder: false, defaultOrderType: "market" },
+    interface: { bottomBlotter: true, rightRail: true },
 };
 
 // ---------------------------------------------------------------------------
@@ -117,6 +123,14 @@ function sanitize(raw: unknown): TerminalSettings {
       entrySoundOnOrder: asBool(t.entrySoundOnOrder, false),
       defaultOrderType: asEnum(t.defaultOrderType, ["market", "limit"] as const, "market"),
     },
+    // P55 §9 — interface visibility (older saved settings default to shown)
+    interface: (() => {
+      const i = (r.interface && typeof r.interface === "object" ? r.interface : {}) as Record<string, any>;
+      return {
+        bottomBlotter: i.bottomBlotter === undefined ? true : asBool(i.bottomBlotter, true),
+        rightRail: i.rightRail === undefined ? true : asBool(i.rightRail, true),
+      };
+    })(),
   };
 }
 
@@ -246,8 +260,11 @@ export function updateTerminalSettings(patch: TerminalSettingsPatch) {
     general: { ...current.general, ...(patch.general || {}) },
     appearance: { ...current.appearance, ...(patch.appearance || {}) },
     trading: { ...current.trading, ...(patch.trading || {}) },
+    interface: { ...current.interface, ...(patch.interface || {}) },
     savedAt: Date.now(),
   }));
+  // P55 §9 — live consumers (TerminalPage) refresh on this event
+  window.dispatchEvent(new CustomEvent("it-terminal-settings-changed"));
 }
 
 export type TerminalSettingsSection = keyof TerminalSettingsPatch;

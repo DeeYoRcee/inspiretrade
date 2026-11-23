@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { RotateCcw, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { getInstrument } from "@shared/terminal";
 import {
   DEFAULT_SETTINGS, APPEARANCE_PRESETS, applyGridDefaultOff, type ChartSettings,
@@ -106,12 +107,27 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 function ColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   // hex only for the native picker; rgba crosshair values fall back to a swatch
   const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#16213a";
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? value;
   return (
     <span className="inline-flex items-center gap-2">
       <span className="h-6 w-6 overflow-hidden rounded-md border border-slate-700/70" style={{ background: value }}>
-        <input type="color" value={hex} onChange={(e) => onChange(e.target.value)} className="h-full w-full cursor-pointer opacity-0" aria-label="color" />
+        <input type="color" value={hex} onChange={(e) => { setDraft(null); onChange(e.target.value); }} className="h-full w-full cursor-pointer opacity-0" aria-label="color" />
       </span>
-      <span className="w-16 truncate font-mono text-[10px] text-slate-500">{value}</span>
+      {/* P55 §7 — direct HEX entry; commits when the value is a valid #rrggbb */}
+      <input
+        value={shown}
+        onChange={(e) => {
+          const v = e.target.value;
+          setDraft(v);
+          if (/^#[0-9a-fA-F]{6}$/.test(v)) { setDraft(null); onChange(v); }
+        }}
+        onBlur={() => setDraft(null)}
+        spellCheck={false}
+        aria-label="hex color"
+        className="h-6 w-[72px] rounded-md border border-slate-700/70 bg-transparent px-1.5 font-mono text-[10px] text-slate-400 focus:border-primary/60 focus:outline-none"
+        placeholder="#rrggbb"
+      />
     </span>
   );
 }
@@ -275,6 +291,37 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
             <Row label="Background"><ColorInput value={global.bgColor} onChange={(v) => setGlobalCfg({ bgColor: v })} /></Row>
             <Row label="Grid color"><ColorInput value={global.gridColor} onChange={(v) => setGlobalCfg({ gridColor: v })} /></Row>
             <Row label="Crosshair"><ColorInput value={global.crosshairColor} onChange={(v) => setGlobalCfg({ crosshairColor: v })} /></Row>
+            {/* P55 §7 — fine-grained candle/label styling (undefined inherits) */}
+            <Row label="Candle border" hint="Empty = candle color">
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setGlobalCfg({ borderColor: undefined })}
+                  className={cn("rounded border px-1.5 py-0.5 text-[10px] font-semibold", !global.borderColor ? "border-primary/60 text-primary" : "border-border/60 text-muted-foreground")}
+                  title="Inherit the candle colors"
+                >Auto</button>
+                <ColorInput value={global.borderColor ?? global.upColor} onChange={(v) => setGlobalCfg({ borderColor: v })} />
+              </div>
+            </Row>
+            <Row label="Candle wick" hint="Empty = candle color">
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setGlobalCfg({ wickColor: undefined })}
+                  className={cn("rounded border px-1.5 py-0.5 text-[10px] font-semibold", !global.wickColor ? "border-primary/60 text-primary" : "border-border/60 text-muted-foreground")}
+                  title="Inherit the candle colors"
+                >Auto</button>
+                <ColorInput value={global.wickColor ?? global.upColor} onChange={(v) => setGlobalCfg({ wickColor: v })} />
+              </div>
+            </Row>
+            <Row label="Text & labels" hint="Price/time axis and legend text">
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setGlobalCfg({ textColor: undefined })}
+                  className={cn("rounded border px-1.5 py-0.5 text-[10px] font-semibold", !global.textColor ? "border-primary/60 text-primary" : "border-border/60 text-muted-foreground")}
+                  title="Inherit the terminal theme text color"
+                >Auto</button>
+                <ColorInput value={global.textColor ?? "#d4dae5"} onChange={(v) => setGlobalCfg({ textColor: v })} />
+              </div>
+            </Row>
           </Section>
 
           <Section title="Reset">

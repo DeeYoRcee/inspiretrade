@@ -28,6 +28,8 @@ import { useQuotes } from "@/lib/quotes-context";
 import { marketStatus } from "@/lib/market-status";
 import type { ChartSettings } from "@/components/terminal/chart/dialogs";
 import { DEFAULT_SETTINGS, magnetModeOf, applyGridDefaultOff } from "@/components/terminal/chart/dialogs";
+import { ShortcutsPanel } from "@/components/terminal/ShortcutsPanel";
+import { loadShortcuts, saveShortcuts, pushShortcutsToRtdb, DEFAULT_SHORTCUTS, type ShortcutAction } from "@/lib/shortcuts";
 
 const SECTIONS = [
   { id: "general", label: "General" },
@@ -141,6 +143,9 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
   const ts = useTerminalSettings();
   const { theme, setTheme } = useTheme();
   const [section, setSection] = useState<SectionId>("general");
+  // P55 §11 — customizable terminal-action shortcuts (LS + RTDB synced)
+  const [shortcuts, setShortcuts] = useState(() => loadShortcuts());
+  const uid = auth.currentUser?.uid ?? null;
   const [q, setQ] = useState("");
   const [chartCfg, setChartCfg] = useState<ChartSettings>(loadChartCfg);
   const [scaleMode, setScaleMode] = useState(() => localStorage.getItem("it_chart_scale") || "normal");
@@ -303,6 +308,15 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                   <Toggle label="Animated theme backdrops" checked={ts.appearance.themeBackdrop}
                     onChange={(v) => updateTerminalSettings({ appearance: { themeBackdrop: v } })} />
                 </Show>
+                {/* P55 §9 — terminal layout visibility */}
+                <Show label="Bottom blotter" hint="Positions / orders / history panel under the chart">
+                  <Toggle label="Bottom blotter" checked={ts.interface?.bottomBlotter ?? true}
+                    onChange={(v) => updateTerminalSettings({ interface: { bottomBlotter: v } })} />
+                </Show>
+                <Show label="Right panel rail" hint="Watchlist / ticket / alerts icon rail">
+                  <Toggle label="Right panel rail" checked={ts.interface?.rightRail ?? true}
+                    onChange={(v) => updateTerminalSettings({ interface: { rightRail: v } })} />
+                </Show>
               </div>
             )}
 
@@ -411,7 +425,27 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
             )}
 
             {section === "data" && <DataSection symbol={instrSymbol} matches={matches} />}
-            {section === "shortcuts" && <ShortcutsSection matches={matches} />}
+            {section === "shortcuts" && (
+              <>
+                <SectionHeader title="Terminal actions" />
+                <ShortcutsPanel
+                  bindings={shortcuts}
+                  onChange={(next) => {
+                    setShortcuts(next);
+                    saveShortcuts(next);
+                    if (uid) pushShortcutsToRtdb(uid, next);
+                    window.dispatchEvent(new CustomEvent("it-shortcuts-changed", { detail: next }));
+                  }}
+                  onResetAll={() => {
+                    setShortcuts({ ...DEFAULT_SHORTCUTS });
+                    saveShortcuts({ ...DEFAULT_SHORTCUTS });
+                    if (uid) pushShortcutsToRtdb(uid, { ...DEFAULT_SHORTCUTS });
+                    window.dispatchEvent(new CustomEvent("it-shortcuts-changed", { detail: { ...DEFAULT_SHORTCUTS } }));
+                  }}
+                />
+                <ShortcutsSection matches={matches} />
+              </>
+            )}
           </div>
         </div>
 

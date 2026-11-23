@@ -112,6 +112,8 @@ export interface PositionLike {
   entry: number;
   sl: number | null;
   tp: number | null;
+  /** P54 §4 — trailing-stop distance (% of price); 0 = off */
+  tsPct?: number;
   openedAt: number;
 }
 
@@ -124,6 +126,10 @@ export interface OrderLike {
   price: number;
   sl: number | null;
   tp: number | null;
+  /** P54 §2 — optional expiry (UNIX ms); expired pendings never fill */
+  expiryAt?: number | null;
+  /** P54 §4 — trailing stop carried from the order into the filled position */
+  tsPct?: number;
 }
 
 export interface AccountMetrics {
@@ -268,6 +274,10 @@ export interface EvaluateResult {
   /** margin level breached — force-close every open position */
   stopOut: boolean;
   stopOutIds: string[];
+  /** P54 §4 — trailing-stop ratchet updates to persist (still-open positions) */
+  slUpdates: { positionId: string; sl: number }[];
+  /** P54 §2 — pending orders past their expiryAt (delete, no fill, no history) */
+  expired: string[];
 }
 
 /**
@@ -290,7 +300,7 @@ export function evaluateAccount(args: {
   const { balance, positions, orders, quotes } = args;
   const prices = args.prices ?? {};
   const leverage = args.leverage ?? DEFAULT_LEVERAGE;
-  const out: EvaluateResult = { fills: [], exits: [], stopOut: false, stopOutIds: [] };
+  const out: EvaluateResult = { fills: [], exits: [], stopOut: false, stopOutIds: [], slUpdates: [], expired: [] };
 
   // ---- stop-out check (needs full metrics) --------------------------------
   const metrics = computeMetrics(balance, positions, quotes, prices, leverage);
@@ -300,17 +310,36 @@ export function evaluateAccount(args: {
     return out;
   }
 
+  // P54 §2 — an expired pending order never triggers, whatever the quote
+  out.expired = orders.filter((o) => o.expiryAt != null && o.expiryAt <= Date.now()).map((o) => o.id);
   for (const o of orders) {
+    if (o.expiryAt != null && o.expiryAt <= Date.now()) continue;
     const q = quotes[o.symbol];
     if (q && checkPendingTrigger(o, q)) out.fills.push({ orderId: o.id, entry: o.side === "buy" ? q.ask : q.bid, quoteTime: q.time });
   }
+  out.slUpdates = [];
   for (const p of positions) {
     const q = quotes[p.symbol];
     if (!q) continue;
+    // P54 §4 — trailing stop: a ratcheting SL that only ever moves in the
+    // position's FAVOR, driven by tsPct (% of the current price, 0 = off)
+    const ts = Number(p.tsPct) || 0;
+    if (ts > 0 && ts <= 10) {
+      const candidate = Math.round((p.side === "buy" ? q.bid * (1 - ts / 100) : q.ask * (1 + ts / 100)) * 100) / 100;
+      if (trailingSlCandidate(p, candidate)) out.slUpdates.push({ positionId: p.id, sl: candidate });
+    }
     const reason = checkExitTrigger(p, q);
     if (reason) out.exits.push({ positionId: p.id, exit: exitPriceFor(p.side, q), reason, quoteTime: q.time });
   }
   return out;
+}
+
+/** trailing-SL acceptance: an update must TIGHTEN the stop (buy: raise it,
+ *  sell: lower it) or set one where none existed — never loosen it */
+function trailingSlCandidate(pos: PositionLike, candidate: number): boolean {
+  if (!Number.isFinite(candidate) || candidate <= 0) return false;
+  if (pos.sl == null) return true;
+  return pos.side === "buy" ? candidate > pos.sl : candidate < pos.sl;
 }
 
 /** UTC day key (YYYY-MM-DD) used for daily balance snapshots / daily DD. */

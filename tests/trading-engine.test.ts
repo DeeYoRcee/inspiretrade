@@ -149,3 +149,39 @@ test("dayKey is UTC YYYY-MM-DD", () => {
   assert.equal(dayKey(0), "1970-01-01");
   assert.match(dayKey(Date.now()), /^\d{4}-\d{2}-\d{2}$/);
 });
+
+// ---- P54 §4 — trailing stop ratchet -----------------------------------------
+test("P54: trailing stop ratchets the SL in the position's favor only", () => {
+  const buy = { id: "p1", symbol: "XAUUSD", side: "buy" as Side, lots: 0.1, entry: 2000, sl: 1990, tp: null, openedAt: Date.now(), tsPct: 1 };
+  // price 2050 → candidate SL = bid*0.99 ≈ 2029 (far above the old 1990) → update
+  const qUp = quoteFromMid(2050, XAU, "t", true);
+  const expectedSl = Math.round(qUp.bid * 0.99 * 100) / 100;
+  const up = evaluateAccount({ balance: 5000, positions: [buy], orders: [], quotes: { XAUUSD: qUp }, prices: P });
+  assert.equal(up.slUpdates.length, 1);
+  assert.equal(up.slUpdates[0].sl, expectedSl);
+  // price falls back to 1995 → candidate 1975.1 is BELOW the existing 1998.9 → no update
+  const ratchet = { ...buy, sl: 1998.9 };
+  const down = evaluateAccount({ balance: 5000, positions: [ratchet], orders: [], quotes: { XAUUSD: quoteFromMid(1995, XAU, "t", true) }, prices: P });
+  assert.equal(down.slUpdates.length, 0);
+  // sell position: price 2010 → candidate = 2010*1.01 = 2030.1 → only accepted if LOWER than existing
+  const sell = { id: "p2", symbol: "XAUUSD", side: "sell" as Side, lots: 0.1, entry: 2020, sl: 2040, tp: null, openedAt: Date.now(), tsPct: 1 };
+  const qSell = quoteFromMid(2010, XAU, "t", true);
+  const sellRes = evaluateAccount({ balance: 5000, positions: [sell], orders: [], quotes: { XAUUSD: qSell }, prices: P });
+  assert.equal(sellRes.slUpdates.length, 1);
+  assert.equal(sellRes.slUpdates[0].sl, Math.round(qSell.ask * 1.01 * 100) / 100);
+});
+
+// ---- P54 §2 — pending order expiry -------------------------------------------
+test("P54: expired pending orders are collected and never fill", () => {
+  const order = { id: "o1", symbol: "XAUUSD", side: "buy" as Side, kind: "limit" as const, lots: 0.1, price: 1995, sl: null, tp: null, expiryAt: Date.now() - 1000 };
+  // even a price that WOULD trigger cannot fill an expired order
+  const res = evaluateAccount({ balance: 5000, positions: [], orders: [order], quotes: { XAUUSD: quoteFromMid(1999, XAU, "t", true) }, prices: P });
+  assert.deepEqual(res.expired, ["o1"]);
+  assert.equal(res.fills.length, 0);
+  // a live (non-expired) order still fills normally
+  const alive = { ...order, expiryAt: Date.now() + 86400_000 };
+  // mid 1990 → ask ≈ 1990.x ≤ 1995 → the live buy-limit triggers normally
+  const res2 = evaluateAccount({ balance: 5000, positions: [], orders: [alive], quotes: { XAUUSD: quoteFromMid(1990, XAU, "t", true) }, prices: P });
+  assert.equal(res2.expired.length, 0);
+  assert.equal(res2.fills.length, 1);
+});

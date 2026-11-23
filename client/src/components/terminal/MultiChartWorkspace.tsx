@@ -67,7 +67,7 @@ function LayoutGlyph({ id }: { id: LayoutId }) {
 
 export function MultiChartWorkspace({
   symbol, timeframe, onSymbolChange, onTimeframeChange,
-  orders, positions, accountId, onModifyPosition, accountBalance,
+  orders, positions, accountId, onModifyPosition, onModifyOrder, onCancelOrder, onClosePosition, accountBalance,
   onOpenAlerts, onOpenReplay,
 }: {
   symbol: string;
@@ -77,7 +77,11 @@ export function MultiChartWorkspace({
   orders: ServerOrder[];
   positions: ServerPosition[];
   accountId: string | null;
-  onModifyPosition: (positionId: string, patch: { sl?: number | null; tp?: number | null }) => Promise<unknown>;
+  onModifyPosition: (positionId: string, patch: { sl?: number | null; tp?: number | null; tsPct?: number }) => Promise<unknown>;
+  /** P54 §3 — chart-based pending-order management (drag + details panel) */
+  onModifyOrder?: (orderId: string, patch: { price?: number; sl?: number | null; tp?: number | null }) => Promise<unknown>;
+  onCancelOrder?: (orderId: string) => Promise<unknown>;
+  onClosePosition?: (positionId: string) => Promise<unknown>;
   accountBalance: number | null;
   /** toolbar alert bell → open the terminal right rail (per user action) */
   onOpenAlerts: () => void;
@@ -275,7 +279,11 @@ export function MultiChartWorkspace({
           marks={marksFor(p.symbol)}
           accountId={accountId}
           positions={positions.filter((pos) => pos.symbol === p.symbol) as ServerPosition[]}
+          orders={orders.filter((o) => o.symbol === p.symbol)}
           onModifyPosition={onModifyPosition}
+          onModifyOrder={onModifyOrder}
+          onCancelOrder={onCancelOrder}
+          onClosePosition={onClosePosition}
           onSymbolChange={(s) => setPanelSymbol(i, s)}
           onTimeframeChange={(tf) => setPanelTimeframe(i, tf)}
           onOpenAlerts={onOpenAlerts}

@@ -20,8 +20,9 @@ import {
   type Drawing, type DrawingPoint, type DrawingType, type XY, isPositionTool, positionAnchors, type DrawingRenderEnv } from "@/lib/drawings";
 
 export interface TradeLine {
+  /** entity id — a position id, or a pending-order id for order-* kinds */
   positionId: string;
-  kind: "entry" | "sl" | "tp";
+  kind: "entry" | "sl" | "tp" | "order-entry" | "order-sl" | "order-tp";
   price: number;
   color: string;
   label: string;
@@ -78,6 +79,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   onContextMenu: (x: number, y: number, hitId: string | null) => void;
   tradeLines: TradeLine[];
   onTradeLineMove: (positionId: string, kind: TradeLine["kind"], price: number) => void;
+  /** P54 §3 — click (press+release without dragging) on a trade line opens
+   *  the order/position details panel */
+  onTradeLineClick?: (t: TradeLine) => void;
   toolDefaults?: Partial<Drawing["style"]>;
   /** timeframe seconds — measure tool computes the bar count label */
   tfSeconds?: number;
@@ -101,7 +105,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   renderEnv?: DrawingRenderEnv;
 }>(({
   converterRef, attachRef, drawings, onChange, activeTool, onToolCommitted, selectedId,
-  onSelect, onDelete, onDeleteMany, onEdit, onContextMenu, tradeLines, onTradeLineMove,
+  onSelect, onDelete, onDeleteMany, onEdit, onContextMenu, tradeLines, onTradeLineMove, onTradeLineClick,
   tfSeconds = 0, digits = 2, locked = false, hiddenAll = false, getBars, cursorFallback = "default",
   selectedIds, onSelectIds, toolDefaults, magnet = false, magnetMode, renderEnv,
 }, ref) => {
@@ -154,8 +158,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   // ONCE at mount and would otherwise freeze the FIRST render's closures —
   // the classic stale-callback bug (a uid resolving after mount kept every
   // pointer-driven commit uid-less, silently skipping persistence).
-  const cbRef = useRef({ onChange, onSelect, onSelectIds, onToolCommitted, onDelete, onDeleteMany, onEdit, onContextMenu, onTradeLineMove });
-  cbRef.current = { onChange, onSelect, onSelectIds, onToolCommitted, onDelete, onDeleteMany, onEdit, onContextMenu, onTradeLineMove };
+  const cbRef = useRef({ onChange, onSelect, onSelectIds, onToolCommitted, onDelete, onDeleteMany, onEdit, onContextMenu, onTradeLineMove, onTradeLineClick });
+  cbRef.current = { onChange, onSelect, onSelectIds, onToolCommitted, onDelete, onDeleteMany, onEdit, onContextMenu, onTradeLineMove, onTradeLineClick };
   const multiIdsRef = useRef<string[]>(selectedIds ?? []);
   multiIdsRef.current = selectedIds?.length ? selectedIds : (selectedId ? [selectedId] : []);
   /** group-move snapshots (id → original points) captured at drag start */
@@ -510,9 +514,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const p = localXY(e);
     if (p.x < 0 || p.y < 0 || p.x > conv.paneW || p.y > conv.paneH) return; // price scale etc.
 
-    // 1) trade-line drag (SL/TP) — wins over drawings
+    // 1) trade-line drag (SL/TP + pending-order entry) — wins over drawings
     for (const t of tradeRef.current) {
-      if (t.kind === "entry") continue;
+      if (t.kind === "entry") continue; // a filled position's entry is fixed
       const y = conv.y(t.price);
       if (y != null && Math.abs(p.y - y) <= 6) {
         dragRef.current = { mode: "trade", trade: { ...t } };
@@ -699,6 +703,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (drag.mode === "trade" && drag.trade) {
       const price = conv.price(p.y);
       if (price != null && price > 0) {
+        if (price !== drag.trade.price) drag.moved = true;
         drag.trade.price = price;
         redraw();
       }
@@ -824,7 +829,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       }
       groupOrigRef.current = null;
     } else if (drag.mode === "trade" && drag.trade) {
-      cbRef.current.onTradeLineMove(drag.trade.positionId, drag.trade.kind, drag.trade.price);
+      if (drag.moved) cbRef.current.onTradeLineMove(drag.trade.positionId, drag.trade.kind, drag.trade.price);
+      else cbRef.current.onTradeLineClick?.({ ...drag.trade });
     }
     dragRef.current = null;
     redraw();
@@ -1134,7 +1140,7 @@ function drawTradeLine(
   ctx.fillStyle = t.color;
   ctx.lineWidth = 1.5;
   ctx.globalAlpha = dragging ? 1 : 0.9;
-  ctx.setLineDash(t.kind === "entry" ? [] : [7, 5]);
+  ctx.setLineDash(t.kind === "entry" || t.kind === "order-entry" ? [] : [7, 5]);
   ctx.beginPath();
   ctx.moveTo(0, y);
   ctx.lineTo(W, y);
