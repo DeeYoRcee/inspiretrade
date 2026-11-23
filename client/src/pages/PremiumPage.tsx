@@ -51,6 +51,7 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
   const status = sub.data?.status ?? null;
   const manageUrl = sub.data?.manageUrl ?? null;
   const periodEnd = sub.data?.currentPeriodEnd ?? null;
+  const premiumSince = sub.data?.premiumSince ?? null;
 
   const statusKey = status === "past_due" ? "whopStatusPastDue"
     : status === "canceling" ? "whopStatusCanceling"
@@ -148,6 +149,12 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
                   {t(statusKey as Parameters<typeof t>[0])}
                 </p>
               </div>
+              {premiumSince && (
+                <div>
+                  <p className="text-xs text-muted-foreground">{t("whopMemberSince")}</p>
+                  <p className="text-sm font-semibold font-number">{whopFormatDate(new Date(premiumSince).toISOString(), language)}</p>
+                </div>
+              )}
               {periodEnd && (
                 <div>
                   <p className="text-xs text-muted-foreground">{t("whopRenews")}</p>
@@ -172,6 +179,12 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
         </Card>
       )}
 
+      {isPremiumNow && (
+        <p className="flex items-center justify-center gap-2 w-full max-w-3xl mb-4 text-xs text-muted-foreground text-center">
+          <Crown className="w-3.5 h-3.5 text-primary shrink-0" />
+          {t("whopExtendHint")}
+        </p>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-3xl mb-10">
         {CARDS.map((planCard, i) => (
           <motion.div
@@ -208,7 +221,6 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
                 <Button
                   className={cn("w-full gap-2", planCard.highlight && "bg-primary hover:bg-primary/90")}
                   variant={planCard.highlight ? "default" : "outline"}
-                  disabled={isPremiumNow}
                   asChild
                 >
                   <a

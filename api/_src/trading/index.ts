@@ -37,6 +37,7 @@ import { CHALLENGES_ENABLED } from "../../../shared/roles";
 import { HttpError } from "../lib/firebase";
 import { assertRole } from "../admin/platform-guard";
 import * as store from "./store";
+import { orderBodyToPlaceOrderRequest, modifyOrderBodyToPatch } from "./route-bodies";
 import { getQuotes } from "./prices";
 import * as propAdmin from "./admin";
 import * as leaderboard from "./leaderboard";
@@ -112,17 +113,9 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
   },
   async order(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
-    const result = await store.placeOrder(user.uid, {
-      accountId: String(body.accountId),
-      symbol: String(body.symbol || ""),
-      side: body.side,
-      lots: Number(body.lots),
-      kind: body.kind,
-      price: body.price != null ? Number(body.price) : null,
-      sl: body.sl != null && body.sl !== "" ? Number(body.sl) : null,
-      tp: body.tp != null && body.tp !== "" ? Number(body.tp) : null,
-      comment: body.comment,
-    });
+    // PHASE 61 §10 — body normalization lives in route-bodies.ts (pure,
+    // regression-tested): expiryAt / tsPct / requestId must reach the store.
+    const result = await store.placeOrder(user.uid, orderBodyToPlaceOrderRequest(body));
     json(res, 200, result);
   },
   async close(_req, res, user, body) {
@@ -154,12 +147,7 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
     const numOrNull = (v: unknown) => (v == null || v === "" ? null : Number(v));
     const numOrUndef = (v: unknown) => (v == null || v === "" ? undefined : Number(v));
-    json(res, 200, await store.modifyOrder(user.uid, String(body.accountId), String(body.orderId), {
-      price: numOrUndef(body.price),
-      lots: numOrUndef(body.lots),
-      sl: body.sl !== undefined ? numOrNull(body.sl) : undefined,
-      tp: body.tp !== undefined ? numOrNull(body.tp) : undefined,
-    }));
+    json(res, 200, await store.modifyOrder(user.uid, String(body.accountId), String(body.orderId), modifyOrderBodyToPatch(body)));
   },
   async cancel(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));

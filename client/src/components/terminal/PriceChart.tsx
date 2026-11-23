@@ -79,6 +79,8 @@ import { loadSyncSettings, onSyncCrosshair, onSyncRange, publishCrosshair, publi
 import { publishChartSnapshot } from "@/components/terminal/TradingAlertsEngine";
 import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTrading } from "@/hooks/use-trading";
+import { ChartTradeOverlay } from "@/components/terminal/chart/ChartTradeOverlay";
 
 export interface PriceMark {
   id: string;
@@ -326,7 +328,7 @@ export function PriceChart({
   orders?: ServerOrder[];
   onModifyPosition: (positionId: string, patch: { sl?: number | null; tp?: number | null; tsPct?: number }) => Promise<unknown>;
   onModifyOrder?: (orderId: string, patch: { price?: number; sl?: number | null; tp?: number | null }) => Promise<unknown>;
-  onClosePosition?: (positionId: string) => Promise<unknown>;
+  onClosePosition?: (positionId: string, lots?: number) => Promise<unknown>;
   onCancelOrder?: (orderId: string) => Promise<unknown>;
   onSymbolChange: (symbol: string) => void;
   onTimeframeChange: (tf: Timeframe) => void;
@@ -533,7 +535,14 @@ export function PriceChart({
         }
       }
     }
-    if (!s.bidAsk || mid == null || !Number.isFinite(mid) || mid <= 0 || !inst) {
+    // PHASE 61 §2 — real executable Bid/Ask when the server quote is fresh;
+    // the local mid ± spread estimate remains the fallback (never misleading)
+    const sq = serverQuoteRef.current;
+    const sqFresh = !!sq && sq.live === true
+      && Number.isFinite(sq.bid) && Number.isFinite(sq.ask) && sq.bid > 0 && sq.ask > sq.bid
+      && Date.now() - (sq.time ?? 0) < 90_000;
+    const haveMid = mid != null && Number.isFinite(mid) && mid > 0;
+    if (!s.bidAsk || (!haveMid && !sqFresh) || !inst) {
       try { if (bidLineRef.current) candle.removePriceLine(bidLineRef.current); } catch { /* gone */ }
       try { if (askLineRef.current) candle.removePriceLine(askLineRef.current); } catch { /* gone */ }
       bidLineRef.current = null;
@@ -541,9 +550,10 @@ export function PriceChart({
       return;
     }
     lastMidRef.current = mid;
+    const midN = haveMid ? (mid as number) : sq!.mid;
     const spread = (SPREAD_PIPS[symbolRef.current] ?? 2) * inst.pipSize;
-    const bid = mid - spread / 2;
-    const ask = mid + spread / 2;
+    const bid = sqFresh ? sq!.bid : midN - spread / 2;
+    const ask = sqFresh ? sq!.ask : midN + spread / 2;
     const hang = (title: string, price: number, color: string, prev: IPriceLine | null): IPriceLine => {
       if (prev) { prev.applyOptions({ price, title }); return prev; }
       return candle.createPriceLine({ price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title });
@@ -562,6 +572,19 @@ export function PriceChart({
   symbolRef.current = symbol;
   const tfRef = useRef(timeframe);
   tfRef.current = timeframe;
+  // PHASE 61 §2 — genuine server Bid/Ask (shared trading store, module
+  // singleton — no provider needed) for the bid/ask lines + quick overlay.
+  // Stale >90s or non-live feeds fall back to the local spread estimate.
+  const tradingAccount = useTrading().account;
+  const serverQuote = tradingAccount?.quotes?.[symbol] ?? null;
+  const serverQuoteRef = useRef(serverQuote);
+  serverQuoteRef.current = serverQuote;
+  // PHASE 61 §2 — the store's quotes refresh on a heartbeat; re-hang the
+  // bid/ask lines whenever a fresh quote arrives (the tick pipeline keeps
+  // updating them between heartbeats via the estimate fallback).
+  useEffect(() => {
+    if (serverQuote?.live === true && Number.isFinite(serverQuote.bid) && Number.isFinite(serverQuote.ask)) updateBidAsk(null);
+  }, [serverQuote, updateBidAsk]);
   const inst = useMemo(() => getInstrument(symbol), [symbol]);
   const digits = inst?.digits ?? 2;
   // Phase 34: per-instrument decimal override (instrument settings panel)
@@ -1891,9 +1914,14 @@ export function PriceChart({
 
   // ---- P54 §3 — order/position details panel (click on a trade line) -------
   const [tradeDetails, setTradeDetails] = useState<{ kind: "position" | "order"; id: string } | null>(null);
+  // PHASE 61 §6 — partial close straight from the chart details panel; the
+  // input defaults to half the position volume and is clamped client-side.
+  const [partialLots, setPartialLots] = useState("");
   const handleTradeLineClick = useCallback((t: TradeLine) => {
     setTradeDetails({ kind: t.kind.startsWith("order") ? "order" : "position", id: t.positionId });
-  }, []);
+    const pos = safePositions.find((p) => p.id === t.positionId);
+    setPartialLots(pos ? String(Math.max(0.01, Math.round((pos.lots / 2) * 100) / 100)) : "");
+  }, [safePositions]);
 
   // ---- drawings persistence -------------------------------------------------------
   useEffect(() => {
@@ -2572,6 +2600,9 @@ export function PriceChart({
           const last = barsRef.current?.at(-1)?.close ?? null;
           const dg = digits;
           const busyTrade = tradeBusyRef.current;
+          const plNum = Number(partialLots);
+          const canPartial = pos != null && Number.isFinite(plNum)
+            && plNum >= 0.01 && plNum < pos.lots && pos.lots - plNum >= 0.01 - 1e-9;
           return (
             <div data-chart-ui className="absolute right-12 top-9 z-40 w-56 rounded-xl border border-slate-700 bg-[#0d1526]/95 p-3 text-xs shadow-2xl backdrop-blur">
               <div className="mb-2 flex items-center justify-between">
@@ -2588,6 +2619,7 @@ export function PriceChart({
                   {ord.sl != null && <div className="flex justify-between"><span className="text-slate-500">Stop loss</span><span className="font-number">{ord.sl.toFixed(dg)}</span></div>}
                   {ord.tp != null && <div className="flex justify-between"><span className="text-slate-500">Take profit</span><span className="font-number">{ord.tp.toFixed(dg)}</span></div>}
                   {last != null && <div className="flex justify-between"><span className="text-slate-500">Distance</span><span className="font-number">{(((ord.price - last) / last) * 100).toFixed(2)}%</span></div>}
+                  <div className="flex justify-between"><span className="text-slate-500">Expiry</span><span className="font-number">{ord.expiryAt ? new Date(ord.expiryAt).toLocaleString([], { hour12: false }) : "GTC"}</span></div>
                   <button
                     disabled={busyTrade || !onCancelOrder}
                     onClick={() => { setTradeDetails(null); void withTradeLock(() => Promise.resolve(onCancelOrder?.(ord.id))); }}
@@ -2618,6 +2650,22 @@ export function PriceChart({
                       >TS {v}%</button>
                     ))}
                   </div>
+                  <div className="mt-1 flex items-center gap-1">
+                    <input
+                      type="number" step="0.01" min="0.01" inputMode="decimal"
+                      value={partialLots}
+                      onChange={(e) => setPartialLots(e.target.value)}
+                      placeholder="Lots"
+                      className="num-input w-[68px] px-1.5 py-1 text-[11px]"
+                      aria-label="Lots to close"
+                    />
+                    <button
+                      disabled={busyTrade || !onClosePosition || !canPartial}
+                      onClick={() => { const v = Number(partialLots); setTradeDetails(null); void withTradeLock(() => Promise.resolve(onClosePosition?.(pos!.id, v))); }}
+                      className="flex-1 rounded bg-amber-500/15 py-1 font-semibold text-amber-400 hover:bg-amber-500/25 disabled:opacity-40"
+                      title="Close part of the position at market"
+                    >Close partial</button>
+                  </div>
                   <button
                     disabled={busyTrade || !onClosePosition}
                     onClick={() => { setTradeDetails(null); void withTradeLock(() => Promise.resolve(onClosePosition?.(pos!.id))); }}
@@ -2628,6 +2676,10 @@ export function PriceChart({
             </div>
           );
         })()}
+
+        {/* PHASE 61 §2/§3 — TradingView-style quick execution overlay:
+            live server Bid/Ask + BUY/SELL with idempotent submit */}
+        {accountId && <ChartTradeOverlay symbol={symbol} accountId={accountId} />}
 
         {/* Phase 35 §6 — drawings restore feedback is now INVISIBLE per user
             request: the restore flow itself (subscribe → LWW merge) keeps

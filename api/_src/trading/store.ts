@@ -604,6 +604,12 @@ export interface PlaceOrderRequest {
   sl?: number | null;
   tp?: number | null;
   comment?: string;
+  /** PHASE 61 §10 — forwarded from the order route; "Day" expiry (UNIX ms) */
+  expiryAt?: number | null;
+  /** PHASE 61 §10 — trailing-stop percent for the future position (0-10) */
+  tsPct?: number | null;
+  /** PHASE 61 §3/§10 — idempotency key; a repeated submit is rejected 409 */
+  requestId?: string | null;
 }
 
 export async function placeOrder(uid: string, req: PlaceOrderRequest) {
@@ -653,6 +659,14 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
     const state = await txGetState(tx, uid, req.accountId);
     // bring the account fully up to date first (SL/TP/pending/stop-out/rules)
     applyEvaluationTx(tx, uid, req.accountId, state, quotes, prices);
+
+    // PHASE 61 §3/§10 — duplicate-submission protection: a retried submit with
+    // the same requestId never opens a second position/order.
+    if (req.requestId) {
+      const dup = state.orders.find((o) => o.requestId === req.requestId)
+        ?? state.positions.find((p) => p.requestId === req.requestId);
+      if (dup) throw new HttpError(409, "DUPLICATE_REQUEST", "This exact order was already submitted moments ago — check your open positions and orders");
+    }
 
     const leverage = state.account.leverage || DEFAULT_LEVERAGE;
     const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
@@ -708,6 +722,7 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
         entry: v.entry!, sl: req.sl ?? null, tp: req.tp ?? null,
         openedAt: Date.now(), comment: String(req.comment || "").slice(0, 120) || null,
         swapAccrued: 0, swapNights: 0,
+        requestId: req.requestId ?? null,
       };
       tx.set(posRef, pos);
       const m2 = computeMetrics(state.account.balance, [...state.positions, { id: posRef.id, ...pos }], quotes, prices, leverage);
@@ -729,13 +744,14 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
     const order = {
       symbol: spec.symbol, side: req.side, kind, lots,
       price: Number(req.price), sl: req.sl ?? null, tp: req.tp ?? null,
-      tsPct: Math.min(10, Math.max(0, Number((req as any).tsPct) || 0)),
+      tsPct: Math.min(10, Math.max(0, Number(req.tsPct) || 0)),
       // P54 §2 — optional expiry: "Day" dies at the end of the current UTC
       // day; GTC omits it. Server-enforced at evaluation time.
-      expiryAt: Number.isFinite(Number((req as any).expiryAt)) && Number((req as any).expiryAt) > Date.now()
-        ? Math.min(Number((req as any).expiryAt), Date.now() + 31 * 86400_000)
+      expiryAt: Number.isFinite(Number(req.expiryAt)) && Number(req.expiryAt) > Date.now()
+        ? Math.min(Number(req.expiryAt), Date.now() + 31 * 86400_000)
         : null,
       createdAt: Date.now(),
+      requestId: req.requestId ?? null,
     };
     tx.set(ordRef, order);
     tx.update(accRef, { dayStart: state.account.dayStart });
@@ -819,7 +835,7 @@ export async function modifyPosition(uid: string, accountId: string, positionId:
 
 export async function modifyOrder(
   uid: string, accountId: string, orderId: string,
-  patch: { price?: number | null; sl?: number | null; tp?: number | null; lots?: number | null; tsPct?: number | null },
+  patch: { price?: number | null; sl?: number | null; tp?: number | null; lots?: number | null; tsPct?: number | null; expiryAt?: number | null },
 ) {
   const preState = await readState(uid, accountId);
   const { quotes, prices } = await quotesForState(preState);
@@ -847,7 +863,18 @@ export async function modifyOrder(
     const v = validateOrderModify({ order, quote, price: newPrice, sl: newSl, tp: newTp });
     if (!v.ok) throw new HttpError(400, "BAD_ORDER", v.error || "Invalid order modification");
     const newTs = patch.tsPct != null ? Math.min(10, Math.max(0, Number(patch.tsPct) || 0)) : order.tsPct ?? 0;
-    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, tsPct: newTs, modifiedAt: Date.now() };
+    // PHASE 61 §7 — pending-order expiry is editable: null clears it (GTC),
+    // a future timestamp re-arms it (clamped to +31 days like placement).
+    let newExpiry = order.expiryAt ?? null;
+    if (patch.expiryAt !== undefined) {
+      if (patch.expiryAt == null) newExpiry = null;
+      else {
+        const n = Number(patch.expiryAt);
+        if (!Number.isFinite(n) || n <= Date.now()) throw new HttpError(400, "BAD_EXPIRY", "Order expiry must be a future time (or empty for GTC)");
+        newExpiry = Math.min(n, Date.now() + 31 * 86400_000);
+      }
+    }
+    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, tsPct: newTs, expiryAt: newExpiry, modifiedAt: Date.now() };
     tx.update(ordCol(uid, accountId).doc(orderId), updated);
     const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
     return { ok: true, order: { ...order, ...updated, modifiedAt: undefined }, metrics };

@@ -7873,6 +7873,7 @@ async function handler2(req, res) {
       status: null,
       currentPeriodEnd: null,
       manageUrl: null,
+      premiumSince: typeof profile.premiumSince === "number" ? profile.premiumSince : null,
       source: profile.premiumSource === "whop" ? "whop" : "admin",
       configured: false
     });
@@ -7912,6 +7913,7 @@ async function handler2(req, res) {
         isPremium: true,
         plan: decision.planKey,
         status: decision.status,
+        premiumSince: since,
         currentPeriodEnd: best.renewal_period_end ?? null,
         manageUrl: best.manage_url ?? null,
         source: "whop",

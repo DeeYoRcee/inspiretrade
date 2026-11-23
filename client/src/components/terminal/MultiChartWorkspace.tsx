@@ -83,7 +83,7 @@ export function MultiChartWorkspace({
   /** P54 §3 — chart-based pending-order management (drag + details panel) */
   onModifyOrder?: (orderId: string, patch: { price?: number; sl?: number | null; tp?: number | null }) => Promise<unknown>;
   onCancelOrder?: (orderId: string) => Promise<unknown>;
-  onClosePosition?: (positionId: string) => Promise<unknown>;
+  onClosePosition?: (positionId: string, lots?: number) => Promise<unknown>;
   accountBalance: number | null;
   /** toolbar alert bell → open the terminal right rail (per user action) */
   onOpenAlerts: () => void;

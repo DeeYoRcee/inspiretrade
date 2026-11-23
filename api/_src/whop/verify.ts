@@ -68,6 +68,7 @@ export default async function handler(req: any, res: any) {
       isPremium: profile.isPremium === true,
       plan: typeof profile.premiumPlan === "string" ? profile.premiumPlan : null,
       status: null, currentPeriodEnd: null, manageUrl: null,
+      premiumSince: typeof profile.premiumSince === "number" ? profile.premiumSince : null,
       source: profile.premiumSource === "whop" ? "whop" : "admin",
       configured: false,
     });
@@ -110,6 +111,7 @@ export default async function handler(req: any, res: any) {
         isPremium: true,
         plan: decision.planKey,
         status: decision.status,
+        premiumSince: since,
         currentPeriodEnd: best.renewal_period_end ?? null,
         manageUrl: best.manage_url ?? null,
         source: "whop",

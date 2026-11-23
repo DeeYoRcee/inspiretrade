@@ -13,7 +13,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTrades, useGlobalStats, useSyncUserStats, StatsPeriod } from "@/hooks/use-trades";
 import { computeSourceStats, sourceFilterPredicate, tradeSource, type JournalSourceStats } from "@/lib/trade-source";
 import { SourceDots } from "@/components/trades/SourceBadge";
-import { CsvImportDialog } from "@/components/trades/CsvImportDialog";
 import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   isWithinInterval, isSameDay, format, addDays, isToday
@@ -21,7 +20,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Camera, ChevronLeft, ChevronRight, Globe, Plus, TrendingUp, Users, FileUp } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, Globe, Plus, TrendingUp, Users } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
 
 type CalendarView = "monthly" | "weekly";
@@ -93,7 +92,6 @@ export default function Dashboard() {
   const [category, setCategory] = useState<string>("ALL");
   // Phase 57 — unified journal source filter (all / prop / external / manual / broker:NAME)
   const [sourceFilter, setSourceFilter] = useState<string>("all");
-  const [csvOpen, setCsvOpen] = useState(false);
   const [calendarView, setCalendarView] = useState<CalendarView>("monthly");
   const [screenshotDate, setScreenshotDate] = useState<Date | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -398,8 +396,8 @@ export default function Dashboard() {
                         onClick={() => handleDayClick(date)}
                         className={cn(
                           "relative h-20 sm:h-24 rounded-lg flex flex-col items-center justify-start p-1.5 sm:p-2 transition-all text-left",
-                          isSelected && "ring-2 ring-foreground/50 ring-offset-1 ring-offset-background",
-                          todayDate && !isSelected && "bg-secondary/60",
+                          isSelected && "ring-2 ring-primary ring-offset-1 ring-offset-background",
+                          todayDate && !isSelected && "bg-accent/60",
                           hasTrades && dayPnL > 0
                             ? "border-[1.5px] border-success/80 shadow-[0_0_8px_rgba(34,197,94,0.25)]"
                             : hasTrades && dayPnL < 0
@@ -410,12 +408,12 @@ export default function Dashboard() {
                         <div className="flex flex-col items-center gap-0.5 w-full">
                           <span className={cn(
                             "text-[10px] font-medium",
-                            todayDate ? "text-foreground" : "text-muted-foreground"
+                            todayDate ? "text-primary" : "text-muted-foreground"
                           )}>
                             {format(date, "d")}
                           </span>
                           {todayDate && (
-                            <span className="w-1 h-1 rounded-full bg-foreground/60" />
+                            <span className="w-1 h-1 rounded-full bg-primary" />
                           )}
                         </div>
                         {hasTrades && (
@@ -488,8 +486,8 @@ export default function Dashboard() {
                     row: "flex w-full mt-2 gap-1",
                     cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 w-full h-14 sm:h-20",
                     day: "h-full w-full p-0 font-normal aria-selected:opacity-100 hover:bg-accent rounded-md transition-colors flex flex-col items-center justify-start py-1",
-                    day_selected: "bg-accent text-accent-foreground ring-2 ring-ring/60 hover:bg-accent focus:bg-accent",
-                    day_today: "bg-secondary/70 text-secondary-foreground",
+                    day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
+                    day_today: "bg-accent text-accent-foreground",
                     day_outside: "text-muted-foreground opacity-50",
                     day_disabled: "text-muted-foreground opacity-50",
                     day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
@@ -598,9 +596,7 @@ export default function Dashboard() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-2xl font-display font-bold text-foreground">{t("tradeHistory")}</h2>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => setCsvOpen(true)}>
-              <FileUp className="h-4 w-4" /> Import CSV
-            </Button>
+            
             <AddTradeDialog />
           </div>
         </div>
@@ -656,7 +652,6 @@ export default function Dashboard() {
           })}
         </div>
         <TradeTable category={category} sourceFilter={sourceFilter} />
-        <CsvImportDialog open={csvOpen} onOpenChange={setCsvOpen} existingTrades={trades || []} />
       </motion.div>
 
       {/* Screenshot Dialog */}

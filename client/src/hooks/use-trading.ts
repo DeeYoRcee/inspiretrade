@@ -136,10 +136,13 @@ export const tradingActions = {
     patch({ activeId: id });
     if (currentUid) localStorage.setItem(storageKey(currentUid), id);
   },
-  placeOrder(args: { symbol: string; side: Side; lots: number; kind: OrderKind; price?: number | null; sl?: number | null; tp?: number | null; expiryAt?: number | null }) {
+  placeOrder(args: { symbol: string; side: Side; lots: number; kind: OrderKind; price?: number | null; sl?: number | null; tp?: number | null; expiryAt?: number | null; tsPct?: number | null; requestId?: string | null }) {
     const acc = activeAccount();
     if (!acc) return Promise.resolve(null);
-    return run(() => tradingApi.placeOrder({ accountId: acc.id, ...args }));
+    // PHASE 61 §3 — every submit carries an idempotency key unless the caller
+    // supplied one; the server rejects an exact duplicate with 409.
+    const requestId = args.requestId ?? (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    return run(() => tradingApi.placeOrder({ accountId: acc.id, requestId, ...args }));
   },
   closePosition(positionId: string, lots?: number) {
     const acc = activeAccount();
@@ -151,12 +154,12 @@ export const tradingActions = {
     if (!acc) return Promise.resolve(null);
     return run(() => tradingApi.closeAll(acc.id));
   },
-  modifyPosition(positionId: string, patchValues: { sl?: number | null; tp?: number | null }) {
+  modifyPosition(positionId: string, patchValues: { sl?: number | null; tp?: number | null; tsPct?: number }) {
     const acc = activeAccount();
     if (!acc) return Promise.resolve(null);
     return run(() => tradingApi.modifyPosition(acc.id, positionId, patchValues));
   },
-  modifyOrder(orderId: string, patchValues: { price?: number; lots?: number; sl?: number | null; tp?: number | null }) {
+  modifyOrder(orderId: string, patchValues: { price?: number; lots?: number; sl?: number | null; tp?: number | null; tsPct?: number; expiryAt?: number | null }) {
     const acc = activeAccount();
     if (!acc) return Promise.resolve(null);
     return run(() => tradingApi.modifyOrder(acc.id, orderId, patchValues));

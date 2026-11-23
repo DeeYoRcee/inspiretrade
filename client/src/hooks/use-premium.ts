@@ -54,14 +54,14 @@ export function useWhopSubscription() {
   return useQuery({
     queryKey: ["premiumStatus", user?.uid],
     queryFn: async (): Promise<WhopSubscription> => {
-      if (!user) return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
+      if (!user) return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, premiumSince: null, manageUrl: null, source: null };
       const res = await fetch("/api/whop?action=verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ firebaseUid: user.uid }),
       });
       if (res.status === 401) {
-        return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
+        return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, premiumSince: null, manageUrl: null, source: null };
       }
       if (!res.ok) throw new Error("Premium status request failed");
       return parseWhopSubscription(await res.json());
@@ -79,14 +79,14 @@ export function usePremiumStatus() {
   return useQuery({
     queryKey: ["premiumStatus", user?.uid],
     queryFn: async (): Promise<WhopSubscription> => {
-      if (!user) return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
+      if (!user) return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, premiumSince: null, manageUrl: null, source: null };
       const res = await fetch("/api/whop?action=verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ firebaseUid: user.uid }),
       });
       if (res.status === 401) {
-        return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, manageUrl: null, source: null };
+        return { isPremium: false, plan: null, status: null, currentPeriodEnd: null, premiumSince: null, manageUrl: null, source: null };
       }
       if (!res.ok) throw new Error("Premium status request failed");
       return parseWhopSubscription(await res.json());

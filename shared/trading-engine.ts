@@ -33,6 +33,13 @@ export interface Quote {
   live: boolean;
 }
 
+/** End of the current UTC day (UNIX ms) — the ticket's "Day" pending-order
+ *  expiry. Pure helper shared by the client ticket/blotter and the tests. */
+export function endOfUtcDay(): number {
+  const d = new Date();
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - 1;
+}
+
 /** Spread per instrument in pip units (pipSize from the catalog). */
 export const SPREAD_PIPS: Record<string, number> = {
   XAUUSD: 2.5, XAGUSD: 3,
@@ -115,6 +122,8 @@ export interface PositionLike {
   /** P54 §4 — trailing-stop distance (% of price); 0 = off */
   tsPct?: number;
   openedAt: number;
+  /** PHASE 61 §10 — idempotency key carried from the opening order */
+  requestId?: string | null;
 }
 
 export interface OrderLike {
@@ -130,6 +139,8 @@ export interface OrderLike {
   expiryAt?: number | null;
   /** P54 §4 — trailing stop carried from the order into the filled position */
   tsPct?: number;
+  /** PHASE 61 §10 — client-submitted idempotency key (duplicate submit guard) */
+  requestId?: string | null;
 }
 
 export interface AccountMetrics {

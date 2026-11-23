@@ -107,6 +107,10 @@ export interface PlaceOrderArgs {
   tp?: number | null;
   /** P54 §2 — optional pending-order expiry (UNIX ms); GTC omits it */
   expiryAt?: number | null;
+  /** PHASE 61 §10 — trailing-stop percent for pending orders (0-10) */
+  tsPct?: number | null;
+  /** PHASE 61 §3/§10 — idempotency key (server rejects exact duplicate submits) */
+  requestId?: string | null;
   comment?: string;
 }
 
@@ -117,6 +121,12 @@ export interface CreateAccountArgs {
   leverage?: number;
   /** prop-firm rules → CHALLENGE account; omit for a plain DEMO */
   rules?: PropRules | null;
+}
+
+/** End of the current UTC day (UNIX ms) — the ticket's "Day" expiry. */
+export function endOfUtcDay(): number {
+  const d = new Date();
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - 1;
 }
 
 export const tradingApi = {
@@ -144,7 +154,7 @@ export const tradingApi = {
   modifyPosition: (accountId: string, positionId: string, patch: { sl?: number | null; tp?: number | null; tsPct?: number }) =>
     authedFetch<{ ok: boolean }>("/api/trading?action=modify", { accountId, positionId, ...patch }),
 
-  modifyOrder: (accountId: string, orderId: string, patch: { price?: number; lots?: number; sl?: number | null; tp?: number | null; tsPct?: number }) =>
+  modifyOrder: (accountId: string, orderId: string, patch: { price?: number; lots?: number; sl?: number | null; tp?: number | null; tsPct?: number; expiryAt?: number | null }) =>
     authedFetch<{ ok: boolean }>("/api/trading?action=modify-order", { accountId, orderId, ...patch }),
 
   cancelOrder: (accountId: string, orderId: string) =>

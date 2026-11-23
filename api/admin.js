@@ -402,12 +402,73 @@ function safeParse6(raw) {
   }
 }
 
+// api/_src/admin/support.ts
+var support_default = handle(async (req, res) => {
+  assertPost(req);
+  await requireAdmin(req);
+  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
+  const op = String(body.op || "threads");
+  if (op === "threads") {
+    const snap = await rtdb().ref("supportInbox").get();
+    const val = snap.val() || {};
+    const threads = [];
+    for (const [uid, msgs] of Object.entries(val)) {
+      const list = Object.values(msgs || {}).filter((m) => m && typeof m.text === "string");
+      if (!list.length) continue;
+      list.sort((a, b) => (a.at || 0) - (b.at || 0));
+      const last = list[list.length - 1];
+      threads.push({
+        uid,
+        name: last.from === "user" ? last.name || null : null,
+        lastText: String(last.text || "").slice(0, 160),
+        lastAt: last.at || 0,
+        fromLast: last.from || null,
+        total: list.length,
+        awaitingReply: last.from === "user"
+      });
+    }
+    threads.sort((a, b) => b.lastAt - a.lastAt);
+    return res.status(200).json({ ok: true, threads });
+  }
+  if (op === "thread") {
+    const uid = String(body.uid || "").trim();
+    if (!uid) throw new HttpError(400, "BAD_INPUT", "uid is required");
+    const snap = await rtdb().ref(`supportInbox/${uid}`).get();
+    const val = snap.val() || {};
+    const msgs = Object.entries(val).map(([id, m]) => ({ id, ...m })).filter((m) => m.text).sort((a, b) => (a.at || 0) - (b.at || 0)).slice(-200);
+    return res.status(200).json({ ok: true, uid, messages: msgs });
+  }
+  if (op === "reply") {
+    const uid = String(body.uid || "").trim();
+    const text = String(body.text || "").trim().slice(0, 1e3);
+    if (!uid || !text) throw new HttpError(400, "BAD_INPUT", "uid and text are required");
+    const exists = await rtdb().ref(`supportInbox/${uid}`).limitToFirst(1).get();
+    if (!exists.exists()) throw new HttpError(404, "NO_THREAD", "No support thread for this uid");
+    await rtdb().ref(`supportInbox/${uid}`).push({
+      uid,
+      name: "InspireTrade Support",
+      text,
+      at: Date.now(),
+      from: "support"
+    });
+    return res.status(200).json({ ok: true });
+  }
+  throw new HttpError(400, "BAD_OP", "op must be threads|thread|reply");
+});
+function safeParse7(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
 // api/_src/admin/set-username.ts
 var USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 var set_username_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse7(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body || {};
   const username = String(body.username || "").trim();
   if (!USERNAME_RE.test(username)) {
     throw new HttpError(400, "INVALID_USERNAME", "3-20 chars: letters, digits, underscore");
@@ -446,7 +507,7 @@ var set_username_default = handle(async (req, res) => {
   await logLedger({ type: "owner_set_username", target: admin2.uid, username, by: admin2.email || admin2.uid });
   res.status(200).json({ ok: true, username, key });
 });
-function safeParse7(raw) {
+function safeParse8(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -459,7 +520,7 @@ import { createHash } from "crypto";
 var MAX_BYTES = 6 * 1024 * 1024;
 var MIME_ALLOWED = /* @__PURE__ */ new Set(["video/mp4", "image/png", "image/jpeg", "image/webp", "image/gif"]);
 var DATAURL_RE = /^data:([a-z0-9/+.-]+);base64,([A-Za-z0-9+/=\s]+)$/i;
-function safeParse8(raw) {
+function safeParse9(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -483,7 +544,7 @@ async function mediaUpload(req, res) {
     if (!isVip) throw new HttpError(403, "VIP_ONLY", "Profile media upload is a VIP feature");
     uploader = user.uid;
   }
-  const body = typeof req.body === "string" ? safeParse8(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse9(req.body) : req.body || {};
   const data = String(body?.data || "");
   const m = DATAURL_RE.exec(data);
   if (!m) return res.status(400).json({ ok: false, error: "BAD_DATA_URL" });
@@ -518,7 +579,7 @@ async function mediaGet(req, res) {
 
 // api/_src/admin/publish-profile.ts
 var USERNAME_RE2 = /^[a-zA-Z0-9_]{3,20}$/;
-function safeParse9(raw) {
+function safeParse10(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -528,7 +589,7 @@ function safeParse9(raw) {
 var publish_profile_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse9(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse10(req.body) : req.body || {};
   const key = String(body?.key || "").toLowerCase();
   const snapshot = body?.snapshot || {};
   const settings = body?.settings || {};
@@ -566,7 +627,7 @@ var KEY_RE = /^[a-z0-9_]{3,20}$/;
 var profile_repair_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
-  const body = typeof req.body === "string" ? safeParse10(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse11(req.body) : req.body || {};
   const uid = user.uid;
   const db3 = rtdb();
   const requested = String(body?.key || "").toLowerCase();
@@ -622,7 +683,7 @@ var profile_repair_default = handle(async (req, res) => {
   await logLedger({ type: "profile_stub_repair", target: uid, purged, by: user.email || uid });
   res.status(200).json({ ok: true, uid, purged });
 });
-function safeParse10(raw) {
+function safeParse11(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -682,7 +743,7 @@ var USERNAME_RE3 = /^[a-zA-Z0-9_]{3,20}$/;
 var username_market_default = handle(async (req, res) => {
   assertPost(req);
   const admin2 = await requireAdmin(req);
-  const body = typeof req.body === "string" ? safeParse11(req.body) : req.body || {};
+  const body = typeof req.body === "string" ? safeParse12(req.body) : req.body || {};
   const action = new URL(req.url || "/", "http://localhost").searchParams.get("action") || "";
   const db3 = rtdb();
   if (action === "usernameUnlist") {
@@ -738,7 +799,7 @@ var username_market_default = handle(async (req, res) => {
   await logLedger({ type: "username_list", listingId: listingRef.key, usernameKey: key, price, by: admin2.email || admin2.uid });
   res.status(200).json({ ok: true, listing });
 });
-function safeParse11(raw) {
+function safeParse12(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -748,7 +809,7 @@ function safeParse11(raw) {
 
 // api/_src/admin/cases.ts
 var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
-function safeParse12(raw) {
+function safeParse13(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -756,7 +817,7 @@ function safeParse12(raw) {
   }
 }
 function getBody(req) {
-  const body = typeof req.body === "string" ? safeParse12(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse13(req.body) : req.body;
   return body || {};
 }
 function getAction(req) {
@@ -1990,7 +2051,7 @@ async function setRole(admin2, role, body) {
 }
 
 // api/_src/admin/index.ts
-function safeParse13(raw) {
+function safeParse14(raw) {
   try {
     return JSON.parse(raw);
   } catch {
@@ -2004,7 +2065,7 @@ function getAction2(req) {
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse13(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse14(req.body) : req.body;
   return String(body?.action || "");
 }
 var PLATFORM_ACTIONS = {
@@ -2036,7 +2097,7 @@ async function handler(req, res) {
         const url = new URL(req.url || "/", "http://localhost");
         body = Object.fromEntries(url.searchParams.entries());
       } else {
-        body = typeof req.body === "string" ? safeParse13(req.body) : req.body || {};
+        body = typeof req.body === "string" ? safeParse14(req.body) : req.body || {};
       }
       return await platformEntry.run(req, res, admin2, role, body);
     } catch (e) {
@@ -2057,6 +2118,8 @@ async function handler(req, res) {
       return chat_delete_default(req, res);
     case "chat-send":
       return chat_send_default(req, res);
+    case "support":
+      return support_default(req, res);
     case "set-username":
       return set_username_default(req, res);
     case "media-upload":

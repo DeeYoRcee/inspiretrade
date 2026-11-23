@@ -1573,6 +1573,10 @@ async function placeOrder(uid, req) {
   return dbRef.runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, req.accountId);
     applyEvaluationTx(tx, uid, req.accountId, state, quotes, prices);
+    if (req.requestId) {
+      const dup = state.orders.find((o) => o.requestId === req.requestId) ?? state.positions.find((p) => p.requestId === req.requestId);
+      if (dup) throw new HttpError(409, "DUPLICATE_REQUEST", "This exact order was already submitted moments ago \u2014 check your open positions and orders");
+    }
     const leverage = state.account.leverage || DEFAULT_LEVERAGE;
     const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
     if (state.account.rules && state.account.status !== "active") {
@@ -1636,7 +1640,8 @@ async function placeOrder(uid, req) {
         openedAt: Date.now(),
         comment: String(req.comment || "").slice(0, 120) || null,
         swapAccrued: 0,
-        swapNights: 0
+        swapNights: 0,
+        requestId: req.requestId ?? null
       };
       tx.set(posRef, pos);
       const m2 = computeMetrics(state.account.balance, [...state.positions, { id: posRef.id, ...pos }], quotes, prices, leverage);
@@ -1666,7 +1671,8 @@ async function placeOrder(uid, req) {
       // P54 §2 — optional expiry: "Day" dies at the end of the current UTC
       // day; GTC omits it. Server-enforced at evaluation time.
       expiryAt: Number.isFinite(Number(req.expiryAt)) && Number(req.expiryAt) > Date.now() ? Math.min(Number(req.expiryAt), Date.now() + 31 * 864e5) : null,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      requestId: req.requestId ?? null
     };
     tx.set(ordRef, order);
     tx.update(accRef, { dayStart: state.account.dayStart });
@@ -1772,7 +1778,16 @@ async function modifyOrder(uid, accountId, orderId, patch) {
     const v = validateOrderModify({ order, quote, price: newPrice, sl: newSl, tp: newTp });
     if (!v.ok) throw new HttpError(400, "BAD_ORDER", v.error || "Invalid order modification");
     const newTs = patch.tsPct != null ? Math.min(10, Math.max(0, Number(patch.tsPct) || 0)) : order.tsPct ?? 0;
-    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, tsPct: newTs, modifiedAt: Date.now() };
+    let newExpiry = order.expiryAt ?? null;
+    if (patch.expiryAt !== void 0) {
+      if (patch.expiryAt == null) newExpiry = null;
+      else {
+        const n = Number(patch.expiryAt);
+        if (!Number.isFinite(n) || n <= Date.now()) throw new HttpError(400, "BAD_EXPIRY", "Order expiry must be a future time (or empty for GTC)");
+        newExpiry = Math.min(n, Date.now() + 31 * 864e5);
+      }
+    }
+    const updated = { price: newPrice, lots: newLots, sl: newSl, tp: newTp, tsPct: newTs, expiryAt: newExpiry, modifiedAt: Date.now() };
     tx.update(ordCol(uid, accountId).doc(orderId), updated);
     const metrics = persistAccountTx(tx, uid, accountId, state, quotes, prices);
     return { ok: true, order: { ...order, ...updated, modifiedAt: void 0 }, metrics };
@@ -1821,6 +1836,49 @@ async function cancelOrder(uid, accountId, orderId) {
   if (!snap.exists) throw new HttpError(404, "NO_ORDER", "Order not found");
   await ref.delete();
   return { ok: true };
+}
+
+// api/_src/trading/route-bodies.ts
+var trimmed = (v) => typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+var numOrNull = (v) => {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+var numOrUndef = (v) => {
+  if (v == null || v === "") return void 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : void 0;
+};
+function orderBodyToPlaceOrderRequest(body) {
+  const requestId = trimmed(body.requestId);
+  return {
+    accountId: String(body.accountId),
+    symbol: String(body.symbol || ""),
+    side: body.side,
+    lots: Number(body.lots),
+    kind: body.kind,
+    price: numOrNull(body.price),
+    sl: numOrNull(body.sl),
+    tp: numOrNull(body.tp),
+    comment: typeof body.comment === "string" ? body.comment : void 0,
+    // PHASE 61 §10 — the payload-forwarding fix: the ticket sends "Day"
+    // expiry and trailing percent, the route used to drop both.
+    expiryAt: numOrNull(body.expiryAt),
+    tsPct: numOrNull(body.tsPct),
+    requestId: requestId ? requestId.slice(0, 64) : null
+  };
+}
+function modifyOrderBodyToPatch(body) {
+  return {
+    price: numOrUndef(body.price),
+    lots: numOrUndef(body.lots),
+    sl: body.sl !== void 0 ? numOrNull(body.sl) : void 0,
+    tp: body.tp !== void 0 ? numOrNull(body.tp) : void 0,
+    // PHASE 61 §7 — trailing percent and expiry are now modifiable
+    tsPct: body.tsPct !== void 0 ? numOrUndef(body.tsPct) : void 0,
+    expiryAt: body.expiryAt !== void 0 ? numOrNull(body.expiryAt) : void 0
+  };
 }
 
 // api/_src/trading/admin.ts
@@ -2251,17 +2309,7 @@ var routes = {
   },
   async order(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
-    const result = await placeOrder(user.uid, {
-      accountId: String(body.accountId),
-      symbol: String(body.symbol || ""),
-      side: body.side,
-      lots: Number(body.lots),
-      kind: body.kind,
-      price: body.price != null ? Number(body.price) : null,
-      sl: body.sl != null && body.sl !== "" ? Number(body.sl) : null,
-      tp: body.tp != null && body.tp !== "" ? Number(body.tp) : null,
-      comment: body.comment
-    });
+    const result = await placeOrder(user.uid, orderBodyToPlaceOrderRequest(body));
     json(res, 200, result);
   },
   async close(_req, res, user, body) {
@@ -2295,14 +2343,9 @@ var routes = {
   async "modify-order"(req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
-    const numOrNull = (v) => v == null || v === "" ? null : Number(v);
-    const numOrUndef = (v) => v == null || v === "" ? void 0 : Number(v);
-    json(res, 200, await modifyOrder(user.uid, String(body.accountId), String(body.orderId), {
-      price: numOrUndef(body.price),
-      lots: numOrUndef(body.lots),
-      sl: body.sl !== void 0 ? numOrNull(body.sl) : void 0,
-      tp: body.tp !== void 0 ? numOrNull(body.tp) : void 0
-    }));
+    const numOrNull2 = (v) => v == null || v === "" ? null : Number(v);
+    const numOrUndef2 = (v) => v == null || v === "" ? void 0 : Number(v);
+    json(res, 200, await modifyOrder(user.uid, String(body.accountId), String(body.orderId), modifyOrderBodyToPatch(body)));
   },
   async cancel(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));

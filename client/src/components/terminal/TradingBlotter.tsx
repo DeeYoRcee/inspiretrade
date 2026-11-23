@@ -14,7 +14,7 @@ import { useLanguage } from "@/lib/language-context";
 import { getInstrument } from "@shared/terminal";
 import { exitPriceFor, positionPnlUsd, quoteFromMid } from "@shared/trading-engine";
 import { useTrading } from "@/hooks/use-trading";
-import { tradingApi, type ServerOrder, type ServerPosition, type ServerTrade } from "@/lib/trading-api";
+import { tradingApi, type ServerOrder, type ServerPosition, type ServerTrade, endOfUtcDay } from "@/lib/trading-api";
 import { usePriceMap } from "@/lib/price-store";
 import { useAuth } from "@/hooks/use-auth";
 import { db, auth } from "@/lib/firebase";
@@ -488,13 +488,15 @@ function ModifyOrderDialog({
   order: ServerOrder;
   busy: boolean;
   onClose: () => void;
-  onSave: (patch: { price?: number; lots?: number; sl?: number | null; tp?: number | null }) => void;
+  onSave: (patch: { price?: number; lots?: number; sl?: number | null; tp?: number | null; expiryAt?: number | null }) => void;
 }) {
   const dg = getInstrument(order.symbol)?.digits ?? 2;
   const [price, setPrice] = useState(String(order.price));
   const [lots, setLots] = useState(String(order.lots));
   const [sl, setSl] = useState(order.sl != null ? String(order.sl) : "");
   const [tp, setTp] = useState(order.tp != null ? String(order.tp) : "");
+  // PHASE 61 §7 — expiry is editable on pending orders (GTC / End of day)
+  const [expiry, setExpiry] = useState<"gtc" | "day">(order.expiryAt ? "day" : "gtc");
   const num = (v: string, fallback: number | null) => (v === "" ? fallback : Number(v));
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
@@ -513,6 +515,12 @@ function ModifyOrderDialog({
             <input type="number" step="any" value={sl} onChange={(e) => setSl(e.target.value)} className="num-input" placeholder={order.sl?.toFixed(dg) ?? "—"} /></label>
           <label><span className="mb-0.5 block text-[10px] text-muted-foreground">Take Profit (empty = none)</span>
             <input type="number" step="any" value={tp} onChange={(e) => setTp(e.target.value)} className="num-input" placeholder={order.tp?.toFixed(dg) ?? "—"} /></label>
+          <label className="col-span-2"><span className="mb-0.5 block text-[10px] text-muted-foreground">Expiry</span>
+            <select value={expiry} onChange={(e) => setExpiry(e.target.value as "gtc" | "day")} className="num-input w-full">
+              <option value="gtc">Good till cancelled</option>
+              <option value="day">End of day (UTC)</option>
+            </select>
+          </label>
         </div>
         <DialogFooter>
           <button onClick={onClose} className="rounded-lg border border-border/60 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground">Cancel</button>
@@ -521,6 +529,7 @@ function ModifyOrderDialog({
             onClick={() => onSave({
               price: Number(price), lots: Number(lots),
               sl: num(sl, null), tp: num(tp, null),
+              expiryAt: expiry === "day" ? endOfUtcDay() : null,
             })}
             className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-black disabled:opacity-40"
           >Save</button>

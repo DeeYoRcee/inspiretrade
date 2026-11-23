@@ -189,6 +189,10 @@ function bucketStart(nowSec, sec) {
     const MONDAY_ANCHOR = 345600;
     return Math.floor((nowSec - MONDAY_ANCHOR) / sec) * sec + MONDAY_ANCHOR;
   }
+  if (sec === 2592e3) {
+    const d = new Date(nowSec * 1e3);
+    return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1e3);
+  }
   if (sec >= 86400) return Math.floor(nowSec / 86400) * 86400;
   return Math.floor(nowSec / sec) * sec;
 }
@@ -401,12 +405,24 @@ function mergeFxStoreDaily(deep, recent) {
   for (const b of recent) byTime.set(b.time, b);
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
-function aggregateBars(bars, factorMinutes) {
+function foldBucket(time, bucket, anchorSec) {
+  if (bucket === 604800) {
+    const MONDAY_ANCHOR = 345600;
+    return Math.floor((time - MONDAY_ANCHOR) / bucket) * bucket + MONDAY_ANCHOR;
+  }
+  if (bucket === 2592e3) {
+    const d = new Date(time * 1e3);
+    return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1e3);
+  }
+  if (anchorSec != null) return Math.floor((time - anchorSec) / bucket) * bucket + anchorSec;
+  return Math.floor(time / bucket) * bucket;
+}
+function aggregateBars(bars, factorMinutes, anchorSec) {
   const bucket = factorMinutes * 60;
   const out = [];
   let cur = null;
   for (const b of bars) {
-    const t = Math.floor(b.time / bucket) * bucket;
+    const t = foldBucket(b.time, bucket, anchorSec);
     if (!cur || cur.time !== t) {
       if (cur) out.push(cur);
       cur = { time: t, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume ?? 0 };

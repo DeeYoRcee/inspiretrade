@@ -27,6 +27,8 @@ export interface WhopSubscription {
   plan: WhopPlanKey | null;
   status: string | null;
   currentPeriodEnd: string | null;
+  /** epoch ms — when premium was first obtained (null = unknown) */
+  premiumSince: number | null;
   manageUrl: string | null;
   source: "whop" | "admin" | null;
   /** true when the Whop API could not be reached (persisted profile used) */
@@ -44,6 +46,7 @@ export function parseWhopSubscription(data: unknown): WhopSubscription {
     plan,
     status: typeof d.status === "string" ? d.status : null,
     currentPeriodEnd: typeof d.currentPeriodEnd === "string" ? d.currentPeriodEnd : null,
+    premiumSince: typeof d.premiumSince === "number" ? d.premiumSince : null,
     manageUrl: typeof d.manageUrl === "string" && d.manageUrl.startsWith("https://") ? d.manageUrl : null,
     source: d.source === "whop" || d.source === "admin" ? d.source : null,
     degraded: d.degraded === true,

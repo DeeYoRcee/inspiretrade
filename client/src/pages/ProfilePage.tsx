@@ -11,7 +11,7 @@ import {
   X, History, StickyNote, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/use-auth";
@@ -717,12 +717,6 @@ export default function ProfilePage() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="glass-panel max-w-sm border-border/60">
           <DialogHeader className="relative items-center text-center">
-            <DialogClose
-              className="absolute end-0 top-0 flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/70 text-muted-foreground shadow-sm transition-colors hover:bg-background hover:text-foreground"
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </DialogClose>
             <DialogTitle className="font-display">{t("profileEdit")}</DialogTitle>
             <DialogDescription>{t("publicProfileEnabledDescription")}</DialogDescription>
           </DialogHeader>
