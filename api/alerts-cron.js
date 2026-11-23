@@ -8913,6 +8913,21 @@ async function pushRegistration(req, res) {
   throw new HttpError(400, "BAD_ACTION", "use ?action=subscribe|unsubscribe|sync-settings");
 }
 var alerts_cron_default = handle(async (req, res) => {
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    if ((req.method || "").toUpperCase() === "GET" && url.searchParams.get("action") === "support-history") {
+      const user = await requireUser(req);
+      const snap2 = await rtdb().ref(`supportInbox/${user.uid}`).get();
+      const data = snap2.val() || {};
+      const keys = Object.keys(data).sort().slice(-100);
+      const messages = {};
+      for (const k of keys) messages[k] = data[k];
+      res.status(200).json({ ok: true, messages });
+      return;
+    }
+  } catch (e) {
+    if (e && typeof e.status === "number") throw e;
+  }
   if ((req.method || "").toUpperCase() === "POST") return pushRegistration(req, res);
   const secret = process.env.CRON_SECRET;
   if (secret) {

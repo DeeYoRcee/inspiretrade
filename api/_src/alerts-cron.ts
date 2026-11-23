@@ -204,6 +204,26 @@ async function pushRegistration(req: any, res: any): Promise<void> {
 }
 
 export default handle(async (req, res) => {
+  // PHASE 62 — support-history over GET (the rewrite /api/support → this
+  // function passes the query through; the client polls it with a Bearer
+  // token). Must be handled BEFORE the cron flow, which owns bare GETs.
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    if ((req.method || "").toUpperCase() === "GET" && url.searchParams.get("action") === "support-history") {
+      const user = await requireUser(req);
+      const snap = await rtdb().ref(`supportInbox/${user.uid}`).get();
+      const data = (snap.val() || {}) as Record<string, unknown>;
+      const keys = Object.keys(data).sort().slice(-100);
+      const messages: Record<string, unknown> = {};
+      for (const k of keys) messages[k] = data[k];
+      res.status(200).json({ ok: true, messages });
+      return;
+    }
+  } catch (e) {
+    // rethrow HttpError shapes through handle (auth errors etc.)
+    if (e && typeof (e as any).status === "number") throw e;
+  }
+
   // the browser registers/updates its push subscription here (POST /api/push)
   if ((req.method || "").toUpperCase() === "POST") return pushRegistration(req, res);
 
