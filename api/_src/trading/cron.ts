@@ -49,8 +49,21 @@ export async function runTradingCron(budgetMs = 8_000): Promise<TradingCronResul
   addTargets(await dbx.collectionGroup("positions").limit(300).get(), 0);
   addTargets(await dbx.collectionGroup("orders").limit(300).get(), 0);
   // priority 1: active accounts with an empty book — challenge expiry,
-  // daily-loss anchor seeding, rule transitions
-  addTargets(await dbx.collectionGroup("accounts").where("status", "==", "active").limit(300).get(), 1);
+  // daily-loss anchor seeding, rule transitions. NOTE: a where("status","==",…)
+  // filter on a collectionGroup needs a Firestore composite index the project
+  // does not have — plain enumeration (automatic index) + in-memory filtering
+  // keeps this index-free. The limit window is deliberately generous; targets
+  // beyond it are picked up by the next scheduled run.
+  const accSnap = await dbx.collectionGroup("accounts").limit(400).get();
+  for (const d of accSnap.docs) {
+    if ((d.get("status") || "active") !== "active") continue;
+    const accRef = d.ref.parent.parent;
+    if (!accRef) continue;
+    const uid = accRef.parent.parent?.id ?? "";
+    if (!uid) continue;
+    const key = `${uid}:${accRef.id}`;
+    if (!targets.has(key)) targets.set(key, { uid, aid: accRef.id, prio: 1 });
+  }
 
   const ordered = [...targets.values()].sort((a, b) => a.prio - b.prio);
   let processed = 0;

@@ -8515,7 +8515,16 @@ async function runTradingCron(budgetMs = 8e3) {
   };
   addTargets(await dbx.collectionGroup("positions").limit(300).get(), 0);
   addTargets(await dbx.collectionGroup("orders").limit(300).get(), 0);
-  addTargets(await dbx.collectionGroup("accounts").where("status", "==", "active").limit(300).get(), 1);
+  const accSnap = await dbx.collectionGroup("accounts").limit(400).get();
+  for (const d of accSnap.docs) {
+    if ((d.get("status") || "active") !== "active") continue;
+    const accRef = d.ref.parent.parent;
+    if (!accRef) continue;
+    const uid = accRef.parent.parent?.id ?? "";
+    if (!uid) continue;
+    const key = `${uid}:${accRef.id}`;
+    if (!targets.has(key)) targets.set(key, { uid, aid: accRef.id, prio: 1 });
+  }
   const ordered = [...targets.values()].sort((a, b) => a.prio - b.prio);
   let processed = 0;
   let failed = 0;
