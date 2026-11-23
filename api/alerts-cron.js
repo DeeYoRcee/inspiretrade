@@ -8874,7 +8874,7 @@ async function pushRegistration(req, res) {
     if (body?.username) msg.username = String(body.username).slice(0, 20);
     const ref = rtdb().ref(`supportInbox/${user.uid}`);
     const pushed = await ref.push(msg);
-    const back = await rtdb().ref(`${ref}/${pushed.key}`).get();
+    const back = await ref.child(String(pushed.key)).get();
     res.status(200).json({ ok: true, key: pushed.key, verified: back.exists(), at: msg.at });
     return;
   }
