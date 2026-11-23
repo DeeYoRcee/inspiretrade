@@ -149,8 +149,13 @@ async function pushRegistration(req: any, res: any): Promise<void> {
       at: Date.now(),
     };
     if (body?.username) msg.username = String(body.username).slice(0, 20);
-    await rtdb().ref(`supportInbox/${user.uid}`).push(msg);
-    res.status(200).json({ ok: true });
+    const ref = rtdb().ref(`supportInbox/${user.uid}`);
+    const pushed = await ref.push(msg);
+    // self-check (PHASE 62): read back the SAME key — proves the write is
+    // visible in the database this instance talks to (surfaces any env/URL
+    // mismatch immediately instead of a silent loss)
+    const back = await rtdb().ref(`${ref}/${pushed.key}`).get();
+    res.status(200).json({ ok: true, key: pushed.key, verified: back.exists(), at: msg.at });
     return;
   }
   if (action === "support-history") {
