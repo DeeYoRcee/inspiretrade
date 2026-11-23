@@ -47,9 +47,7 @@ export function MobileTabBar() {
     { href: "/profile", icon: UserRound, label: t("profile") },
     { href: "/inventory", icon: Package, label: t("inventory") },
     { href: "/titles", icon: Award, label: t("titles") },
-    { href: "/public-profile", icon: Globe2, label: t("publicProfile") },
     { href: "/premium", icon: Crown, label: t("getPremium"), hide: isPremium },
-    { href: "/settings", icon: Settings, label: t("settings") },
     ...(isAdmin ? [{ href: "/admin", icon: ShieldCheck, label: t("adminPanel") }] : []),
   ];
 

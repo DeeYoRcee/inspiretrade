@@ -20,7 +20,6 @@ import AuthPage from "@/pages/AuthPage";
 import PremiumPage from "@/pages/PremiumPage";
 import NewsPage from "@/pages/NewsPage";
 import PublicProfilePage from "@/pages/PublicProfilePage";
-import PublicProfileSettingsPage from "@/pages/PublicProfileSettings";
 import PropFirmPage from "@/pages/PropFirmPage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import RewardsPage from "@/pages/RewardsPage";
@@ -31,7 +30,6 @@ import InventoryPage from "@/pages/InventoryPage";
 // engine + indicator suite); code-splitting it keeps every OTHER page's first
 // paint free of that download
 const TerminalPage = React.lazy(() => import("@/pages/TerminalPage"));
-import SettingsPage from "@/pages/SettingsPage";
 import WalletPage from "@/pages/WalletPage";
 import AdminPage from "@/pages/AdminPage";
 import CertificatePage from "@/pages/CertificatePage";
@@ -255,13 +253,6 @@ function CalendarKeepAlive() {
   );
 }
 
-function PublicProfileSettingsRoute() {
-  const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <AuthPage />;
-  return <AppLayout><PublicProfileSettingsPage /></AppLayout>;
-}
-
 function PropFirmRoute({ params }: { params: { challengeId?: string } }) {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
@@ -317,13 +308,6 @@ function TerminalRoute() {
   );
 }
 
-function SettingsRoute() {
-  const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <AuthPage />;
-  return <AppLayout><SettingsPage /></AppLayout>;
-}
-
 function WalletRoute() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingScreen />;
@@ -374,7 +358,6 @@ function Router() {
         <Route path="/" component={DashboardPage} />
         <Route path="/premium" component={PremiumRoute} />
         <Route path="/news" component={NullRoute} />
-        <Route path="/public-profile" component={PublicProfileSettingsRoute} />
         <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
         <Route path="/prop-firm" component={PropFirmRoute} />
         <Route path="/leaderboard" component={LeaderboardRoute} />
@@ -383,7 +366,6 @@ function Router() {
         <Route path="/market" component={MarketRoute} />
         <Route path="/inventory" component={InventoryRoute} />
         <Route path="/terminal" component={TerminalRoute} />
-        <Route path="/settings" component={SettingsRoute} />
         <Route path="/wallet" component={WalletRoute} />
         <Route path="/admin" component={AdminRoute} />
         <Route path="/certificate" component={CertificateRoute} />

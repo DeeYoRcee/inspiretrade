@@ -103,9 +103,9 @@ export function DrawingPropsBar({
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         {/* P44 §1 — TradingView-style compact color picker */}
         <ColorPicker
-          value={style.color}
+          value={style.color || DEFAULT_STYLE.color}
           title="Line color"
-          onChange={(c) => setStyle({ color: c, fill: style.fill ? { ...style.fill, color: c } : undefined })}
+          onChange={(c) => setStyle({ color: c })}
         />
         <span className="h-4 w-px bg-slate-700" />
         {/* width */}
@@ -174,7 +174,7 @@ export function DrawingPropsBar({
           <>
             <span className="h-4 w-px bg-slate-700" />
             <ColorPicker
-              value={style.fill?.color ?? style.color}
+              value={style.fill?.color ?? style.color ?? DEFAULT_STYLE.color}
               title="Fill color"
               onChange={(c) => setStyle({ fill: { color: c, opacity: style.fill?.opacity ?? 0.15 } })}
             />

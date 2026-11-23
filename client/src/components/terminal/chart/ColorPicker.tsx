@@ -39,6 +39,11 @@ export function ColorPicker({
   placement?: "top" | "bottom";
   align?: "left" | "right";
 }) {
+  // older saved drawings can carry a missing/non-hex color (rgba() strings,
+  // undefined after a bad patch) — every internal consumer must stay crash-
+  // proof and the native OS input demands a strict #rrggbb value
+  const safe = typeof value === "string" && value ? value : "#2962ff";
+  const native = /^#[0-9a-f]{6}$/i.test(safe) ? safe : "#2962ff";
   const [open, setOpen] = useState(false);
   const [hex, setHex] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -53,7 +58,7 @@ export function ColorPicker({
     document.addEventListener("pointerdown", onDoc, true);
     return () => document.removeEventListener("pointerdown", onDoc, true);
   }, [open]);
-  useEffect(() => { if (open) setHex(value); }, [open, value]);
+  useEffect(() => { if (open) setHex(safe); }, [open, safe]);
 
   return (
     <div ref={rootRef} data-colorpicker className="relative inline-flex">
@@ -66,7 +71,7 @@ export function ColorPicker({
           "h-5 w-5 shrink-0 rounded border shadow-inner transition-shadow",
           open ? "border-sky-400 ring-1 ring-sky-400" : "border-slate-500/80 hover:border-slate-300",
         )}
-        style={{ background: value }}
+        style={{ background: safe }}
       />
       {open && (
         <div
@@ -86,7 +91,7 @@ export function ColorPicker({
                 onClick={() => { onChange(c); setOpen(false); }}
                 className={cn(
                   "h-5 w-5 rounded-full border transition-transform hover:scale-110",
-                  value.toLowerCase() === c
+                  safe.toLowerCase() === c
                     ? "border-white ring-2 ring-white/80 ring-offset-1 ring-offset-[#0d1526]"
                     : "border-white/15",
                 )}
@@ -100,7 +105,7 @@ export function ColorPicker({
             >
               <input
                 type="color"
-                value={value}
+                value={native}
                 onChange={(e) => onChange(e.target.value.toLowerCase())}
                 className="sr-only"
                 aria-label="Custom color"
@@ -123,7 +128,7 @@ export function ColorPicker({
             />
             <span
               className="ml-auto h-4 w-8 shrink-0 rounded border border-slate-600"
-              style={{ background: value }}
+              style={{ background: safe }}
               title="Current color"
             />
           </div>

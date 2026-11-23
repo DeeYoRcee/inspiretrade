@@ -71,14 +71,17 @@ export interface PublicProfileSnapshot {
 }
 
 export function createDefaultPublicProfileSettings(): PublicProfileSettings {
+  // user request (public-profile removal): the regular profile IS the public
+  // profile — everything on it is visible to everyone by default. The
+  // per-section chips on ProfilePage remain the privacy control.
   return {
-    enabled: false,
+    enabled: true,
     visibility: {
-      statistics: false,
-      strategy: false,
-      winRate: false,
-      history: false,
-      notes: false,
+      statistics: true,
+      strategy: true,
+      winRate: true,
+      history: true,
+      notes: true,
     },
     strategy: "",
     notes: "",
@@ -95,14 +98,19 @@ export function normalizePublicProfileSettings(value: unknown): PublicProfileSet
     ? raw.visibility as Record<string, unknown>
     : {};
 
+  const hasStoredVisibility = raw.visibility && typeof raw.visibility === "object";
   return {
-    enabled: raw.enabled === true,
+    // profiles publish by default — an old explicit disable no longer hides
+    // the profile (the settings section is gone; the chips control sections)
+    enabled: raw.enabled !== false,
     visibility: {
-      statistics: visibility.statistics === true,
-      strategy: visibility.strategy === true,
-      winRate: visibility.winRate === true,
-      history: visibility.history === true,
-      notes: visibility.notes === true,
+      // a stored visibility object is the user's explicit privacy choice and
+      // is respected; fresh/never-published profiles are fully visible
+      statistics: hasStoredVisibility ? visibility.statistics === true : true,
+      strategy: hasStoredVisibility ? visibility.strategy === true : true,
+      winRate: hasStoredVisibility ? visibility.winRate === true : true,
+      history: hasStoredVisibility ? visibility.history === true : true,
+      notes: hasStoredVisibility ? visibility.notes === true : true,
     },
     strategy: typeof raw.strategy === "string" ? raw.strategy : "",
     notes: typeof raw.notes === "string" ? raw.notes : "",

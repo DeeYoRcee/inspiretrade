@@ -119,6 +119,22 @@ export function newDrawingId(): string {
   return `d${Date.now().toString(36)}${drawingIdCounter.toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** P56 — RTDB rejects ANY undefined value in a payload ("contains
+ *  undefined"): a props-bar patch can leave explicit `fill: undefined`-style
+ *  keys in live drawing objects, which silently killed every color change's
+ *  remote save. Strip undefined keys (null placeholders stay) before writing. */
+export function stripUndefinedRtdb<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((v) => stripUndefinedRtdb(v)) as unknown as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v !== undefined) out[k] = stripUndefinedRtdb(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 export function makeDrawing(type: DrawingType, points: DrawingPoint[], text?: string): Drawing {
   return { id: newDrawingId(), type, points, style: { ...DEFAULT_STYLE }, text };
 }

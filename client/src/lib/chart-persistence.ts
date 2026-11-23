@@ -133,8 +133,11 @@ export function subscribeDrawings(
 const pendingDrawingWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingDrawingJobs = new Map<string, () => Promise<void>>();
 
+export { stripUndefinedRtdb } from "@/lib/drawings";
+import { stripUndefinedRtdb } from "@/lib/drawings";
+
 export function saveDrawings(uid: string, symbol: string, drawings: Drawing[]): void {
-  const map = Object.fromEntries(drawings.map((d) => [d.id, d]));
+  const map = stripUndefinedRtdb(Object.fromEntries(drawings.map((d) => [d.id, d])));
   localSet(uid, "drawings", symbol, map);
   const key = drawingsKey(uid, symbol);
   const job = () => writeDrawingsMap(uid, symbol, map);
@@ -161,7 +164,7 @@ async function writeDrawingsMap(uid: string, symbol: string, map: Record<string,
     const updates: Record<string, Drawing | null> = {};
     for (const [id, d] of Object.entries(map)) {
       const old = last.get(id);
-      if (!old || JSON.stringify(old) !== JSON.stringify(d)) updates[`${path}/${id}`] = d;
+      if (!old || JSON.stringify(old) !== JSON.stringify(d)) updates[`${path}/${id}`] = stripUndefinedRtdb(d);
     }
     for (const id of last.keys()) if (!(id in map)) updates[`${path}/${id}`] = null;
     if (Object.keys(updates).length) await update(rtdb("/"), updates);

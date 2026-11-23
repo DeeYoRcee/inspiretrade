@@ -164,6 +164,7 @@ export default function ProfilePage() {
   const [editOpen, setEditOpen] = useState(false);
   const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
+  const [notesDraft, setNotesDraft] = useState("");
   // Phase 20: the display name (nick) is editable in the same dialog —
   // saved to Firebase Auth (updateProfile) AND the RTDB profile
   const [nameDraft, setNameDraft] = useState("");
@@ -284,6 +285,7 @@ export default function ProfilePage() {
 
   const openEdit = () => {
     setBioDraft(bio);
+    setNotesDraft((settings?.notes || "").trim());
     // prefill the social handles + the display name (nick)
     setIgDraft(profile?.social?.instagram || "");
     setTgDraft(profile?.social?.telegram || "");
@@ -456,6 +458,7 @@ export default function ProfilePage() {
       const strategy = bioDraft.trim();
       const nextSettings: PublicProfileSettings = {
         ...base,
+        notes: notesDraft.trim(),
         strategy,
         visibility: { ...base.visibility, strategy: strategy ? true : base.visibility.strategy },
       };
@@ -882,6 +885,19 @@ export default function ProfilePage() {
                 maxLength={1200}
                 rows={4}
                 placeholder={t("profileBioEmpty")}
+                className="w-full resize-none rounded-xl border border-input bg-background/60 px-3 py-2.5 text-sm outline-none transition placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+
+            {/* Notes — public profile section (ex-PublicProfileSettings) */}
+            <div className="w-full space-y-1.5">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("publicProfileNotes")}</p>
+              <textarea
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                maxLength={1200}
+                rows={3}
+                placeholder={t("publicProfileNotesDescription")}
                 className="w-full resize-none rounded-xl border border-input bg-background/60 px-3 py-2.5 text-sm outline-none transition placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
