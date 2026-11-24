@@ -1,4 +1,25 @@
 User-agent: *
 Allow: /
+# P69 SEO — authenticated/private app routes: nothing for Googlebot to crawl
+# there (anonymous visitors only get the landing/auth view), so keep crawl
+# budget on public content. Public profiles (/@handle) and all assets stay
+# crawlable — the "Allow: /" above is the effective rule for everything not
+# listed below.
+Disallow: /admin
+Disallow: /wallet
+Disallow: /settings
+Disallow: /terminal
+Disallow: /profile
+Disallow: /public-profile
+Disallow: /premium
+Disallow: /rewards
+Disallow: /inventory
+Disallow: /leaderboard
+Disallow: /market
+Disallow: /prop-firm
+Disallow: /certificate
+Disallow: /titles
+Disallow: /news
+Disallow: /api/
 
 Sitemap: https://inspiretrade.site/sitemap.xml

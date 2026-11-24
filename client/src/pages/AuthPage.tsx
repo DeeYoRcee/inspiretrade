@@ -4,6 +4,7 @@ import {
   signInWithPopup, signInWithRedirect, sendPasswordResetEmail, sendEmailVerification,
 } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
+import { applySeo } from "@/lib/seo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -117,6 +118,14 @@ export default function AuthPage() {
   const [resetSent, setResetSent] = useState(false);
   const { toast } = useToast();
   const reduced = useReducedMotion() ?? false;
+
+  // P69 SEO: every gated app URL (dashboard, wallet, terminal, …) renders this
+  // landing/auth view for anonymous visitors — keep the landing metadata and
+  // the canonical "/" here so those URLs consolidate to the homepage instead
+  // of becoming duplicate documents.
+  useEffect(() => {
+    applySeo({ path: "/" });
+  }, []);
 
   // light parallax on the hero visual (pointer-only devices, motion allowed)
   const [tilt, setTilt] = useState({ x: 0, y: 0 });

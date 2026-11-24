@@ -1,14 +1,30 @@
+import { useEffect } from "react";
 import { Activity, ArrowLeft, Crown, Download, Globe2 } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
 import { usePublicProfile } from "@/hooks/use-public-profile";
 import { useLanguage } from "@/lib/language-context";
+import { applySeo } from "@/lib/seo";
 import { cn } from "@/lib/utils";
 
 export default function PublicProfilePage({ username, embedded = false }: { username: string; embedded?: boolean }) {
   const { t } = useLanguage();
   const profileQuery = usePublicProfile(username);
+
+  // P69 SEO: public profiles are real documents of their own — unique title
+  // and a self-canonical (the static head's canonical "/" would otherwise
+  // fold every profile into the homepage).
+  const displayName = profileQuery.data?.displayName;
+  useEffect(() => {
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return;
+    const name = displayName || `@${username}`;
+    applySeo({
+      title: `${name} (@${username}) — InspireTrade`,
+      description: `${name} (@${username}) — public trading profile on InspireTrade: trading stats, badges and journey.`,
+      path: `/@${username}`,
+    });
+  }, [username, displayName]);
 
   const saveAsPdf = () => window.print();
   const validUsername = /^[a-zA-Z0-9_]{3,20}$/.test(username);
