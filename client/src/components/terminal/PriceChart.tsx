@@ -130,6 +130,18 @@ const tzOpt = () => (tzCurrent || undefined) as (Intl.DateTimeFormatOptions["tim
 const fmtHM = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tzOpt() });
 const fmtDM = (d: Date) => d.toLocaleDateString([], { day: "2-digit", month: "short", timeZone: tzOpt() });
 const fmtMY = (d: Date) => d.toLocaleDateString([], { month: "short", year: "numeric", timeZone: tzOpt() });
+// PHASE 65 §5 — complete date AND time for the crosshair, e.g. "24 Nov 2026 — 16:15".
+// Always built from the CANDLE's own timestamp and always in the SAME timezone
+// the chart is configured for ("" = viewer locale) — never the system "now".
+const fmtStampParts = (d: Date) => {
+  const parts = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tzOpt() }).formatToParts(d);
+  const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+  return { day: get("day"), mon: get("month"), year: get("year"), hm: `${get("hour")}:${get("minute")}` };
+};
+const fmtFullDT = (d: Date) => {
+  const p = fmtStampParts(d);
+  return `${p.day} ${p.mon} ${p.year} — ${p.hm}`;
+};
 
 const COLORS = {
   bg: "#0b1220",
@@ -960,7 +972,7 @@ export function PriceChart({
         },
       },
       localization: {
-        timeFormatter: (t: number) => fmtHM(new Date(t * 1000)),
+        timeFormatter: (t: number) => fmtFullDT(new Date(t * 1000)),
       },
       // TradingView-style crosshair: labels on BOTH axes snap to the hovered
       // candle, axis labels match the dark theme
@@ -1572,6 +1584,14 @@ export function PriceChart({
             const idx = timeIdxRef.current;
             for (let i = prev.length; i < bars.length; i++) idx.set(bars[i].time, i);
             applyBarsToSeries("update"); // indicators + tail refresh
+            // PHASE 65 §1 — a freshly appended bar can now cover a trade's
+            // execution time (strict anchoring skipped it before): re-apply
+            // markers immediately instead of waiting for the 30s poll
+            applyMarkers();
+            // PHASE 65 §1 — a freshly appended bar can now cover a trade's
+            // execution time (strict anchoring skipped it before): re-apply
+            // markers immediately instead of waiting for the 30s poll
+            applyMarkers();
           } else if (bars.length !== prev.length) {
             // structural change (prepend / big resync) — full rebuild
             barsRef.current = bars;
@@ -1784,6 +1804,11 @@ export function PriceChart({
     const sym = symbolRef.current;
     const data = barsRef.current;
     if (!data.length) { candle.setMarkers([]); return; }
+    // PHASE 65 §1 — markers anchor STRICTLY to each event's own execution
+    // timestamp: a trade outside the loaded range is skipped (never clamped
+    // to bar 0 / last bar), and duplicate markers (same time+position+shape+
+    // text) collapse to one. The tf period bounds the live-candle tolerance.
+    const tfSec = TF_SECONDS[timeframeRef.current] ?? 60;
     const markers: SeriesMarker<Time>[] = [];
     // PHASE 63 §2 + user request: the B/S icon must appear the moment the
     // position opens and STAY on its execution candle while the position is
@@ -1791,7 +1816,7 @@ export function PriceChart({
     // positions had no marker at all for up to 30s).
     for (const pos of positionsRef.current) {
       if (pos.symbol !== sym) continue;
-      const idx = findBarIndex(data, pos.openedAt);
+      const idx = findBarIndexOpt(data, pos.openedAt, true, tfSec);
       if (idx == null) continue;
       markers.push({
         time: data[idx].time as UTCTimestamp,
@@ -1803,7 +1828,7 @@ export function PriceChart({
     }
     for (const tr of tradesRef.current) {
       if (tr.symbol !== sym) continue;
-      const idx = findBarIndex(data, tr.openedAt);
+      const idx = findBarIndexOpt(data, tr.openedAt, true, tfSec);
       if (idx == null) continue;
       markers.push({
         time: data[idx].time as UTCTimestamp,
@@ -1812,7 +1837,7 @@ export function PriceChart({
         shape: tr.side === "buy" ? "arrowUp" : "arrowDown",
         text: `${tr.side === "buy" ? "B" : "S"} ${tr.lots}`,
       });
-      const exitIdx = findBarIndex(data, tr.closedAt);
+      const exitIdx = findBarIndexOpt(data, tr.closedAt, true, tfSec);
       if (exitIdx != null && exitIdx !== idx) {
         markers.push({
           time: data[exitIdx].time as UTCTimestamp,
@@ -1823,8 +1848,15 @@ export function PriceChart({
         });
       }
     }
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-    candle.setMarkers(markers);
+    const seen = new Set<string>();
+    const unique = markers.filter((m) => {
+      const key = `${m.time}|${m.position}|${m.shape}|${m.text}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    unique.sort((a, b) => (a.time as number) - (b.time as number));
+    candle.setMarkers(unique);
   }, []);
 
   useEffect(() => {
@@ -1923,7 +1955,7 @@ export function PriceChart({
           if (kind === 2) return fmtDM(d);
           return fmtHM(d);
         } },
-        localization: { timeFormatter: (t: number) => fmtHM(new Date(t * 1000)) },
+        localization: { timeFormatter: (t: number) => fmtFullDT(new Date(t * 1000)) }, // PHASE 65 §5
       });
     } catch { /* invalid tz — viewer locale keeps rendering */ }
   }, [mergedSettings.timezone, seriesEpoch]);
@@ -2351,11 +2383,10 @@ export function PriceChart({
     // D1/W1/MN candles start at a day boundary — a HH:MM stamp is noise there
     // (TradingView shows the date only for daily+ bars)
     const tfSec2 = TF_SECONDS[timeframeRef.current] ?? 60;
-    // honor the per-instrument timezone override — the axis/crosshair already
-    // do (fmtDM/fmtHM); legend and axis must agree on the same candle
-    const stamp = tfSec2 >= 86400
-      ? fmtDM(ts2) + (tfSec2 >= 2592000 ? ` ${fmtMY(ts2).split(" ")[1]}` : "")
-      : `${fmtDM(ts2)} ${fmtHM(ts2)}`;
+    // PHASE 65 §5 — full day/month/year (+ time intraday) in the configured
+    // chart timezone; the legend, the axis label and the crosshair agree
+    const sp = fmtStampParts(ts2);
+    const stamp = tfSec2 >= 86400 ? `${sp.day} ${sp.mon} ${sp.year}` : `${sp.day} ${sp.mon} ${sp.year} ${sp.hm}`;
     const instL2 = getInstrument(symbolRef.current);
     let html = `<span class="font-bold text-slate-200">${symbolRef.current}</span> <span class="text-slate-400">— ${instL2?.name ?? ""}</span> · ${timeframeRef.current.toUpperCase()} <span class="text-slate-500">O</span> <span class="font-number ${cls}">${fmt(b.open)}</span> <span class="text-slate-500">H</span> <span class="font-number ${cls}">${fmt(b.high)}</span> <span class="text-slate-500">L</span> <span class="font-number ${cls}">${fmt(b.low)}</span> <span class="text-slate-500">C</span> <span class="font-number ${cls}">${fmt(b.close)}</span> <span class="font-number ${cls}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span> <span class="text-slate-500 font-number">${stamp}</span>`;
     if (b.volume) html += ` <span class="text-slate-500">Vol</span> <span class="font-number text-slate-400">${compactNum(b.volume)}</span>`;
@@ -3205,6 +3236,10 @@ export function PriceChart({
           deleteDrawing: (id) => deleteManyTree([id]), // locked-aware canonical delete
           duplicateDrawing: duplicateDrawingById,
           toggleHide: toggleDrawingHidden,
+          // PHASE 65 §4 — annotation actions (the properties dialog holds the
+          // multiline text field for EVERY drawing type)
+          editDrawingText: (id) => setEditingDrawing(drawingsRef.current.find((d) => d.id === id) ?? null),
+          removeDrawingText: (id) => commitDrawings(drawingsRef.current.map((d) => d.id === id ? { ...d, text: undefined } : d)),
           clearDrawings: () => { commitDrawings([]); if (uid) clearDrawingsRemote(uid, symbolRef.current); },
           clearIndicators: clearAllIndicators,
           resetChart: resetView,
@@ -3256,12 +3291,30 @@ function seriesToLineData(data: Bar[], values: Point[], asHistogram = false) {
 }
 
 function findBarIndex(data: Bar[], ts: number): number | null {
+  return findBarIndexOpt(data, ts, false, 0);
+}
+
+/**
+ * Binary search: last bar whose time <= ts. `strict` mode (PHASE 65 §1) is
+ * for HISTORICAL MARKERS: a trade outside the loaded range (older than the
+ * first bar, or newer than one bar past the newest) returns null instead of
+ * being clamped to the edge — a clamped marker renders at a FALSE historical
+ * position (bar 0 / last bar) and appears to "drift" as new bars arrive or
+ * history loads. Strict markers are skipped until the range covers them
+ * (applyMarkers re-runs on history growth and on every appended live bar),
+ * never mispositioned.
+ */
+function findBarIndexOpt(data: Bar[], ts: number, strict: boolean, tfSec: number): number | null {
   if (!data.length) return null;
-  // binary search: last bar whose time <= ts
   let lo = 0;
   let hi = data.length - 1;
-  if (ts < data[0].time) return 0;
-  if (ts >= data[hi].time) return hi;
+  if (ts < data[0].time) return strict ? null : 0;
+  if (ts >= data[hi].time) {
+    // one bar of tolerance covers a still-open live candle forming "now";
+    // anything beyond that would be a false anchor
+    if (strict && tfSec > 0 && ts > data[hi].time + 1.5 * tfSec) return null;
+    return hi;
+  }
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     if (data[mid].time === ts) return mid;

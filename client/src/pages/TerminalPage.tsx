@@ -34,7 +34,6 @@ import { MoreVertical } from "lucide-react";
 import {
   ReplayOverlay, ReplayBadge, ReplayControls, ReplayTicket, ReplayBook, useReplayJournalAutoSave,
 } from "@/components/terminal/ReplayWorkspace";
-import BacktestWorkspace from "@/components/terminal/BacktestWorkspace";
 import CalendarWorkspace from "@/components/terminal/CalendarWorkspace";
 import NewsWorkspace from "@/components/terminal/NewsWorkspace";
 import EventStrip from "@/components/terminal/EventStrip";
@@ -64,11 +63,10 @@ const TF_KEY = "it_terminal_tf";
 const MODE_KEY = "it_terminal_mode";
 const PANEL_KEY = "it_terminal_panel";
 
-type TerminalMode = "live" | "replay" | "backtest" | "calendar" | "news";
+type TerminalMode = "live" | "replay" | "calendar" | "news";
 const MODES: { id: TerminalMode; label: string }[] = [
   { id: "live", label: "Live" },
   { id: "replay", label: "Replay" },
-  { id: "backtest", label: "Backtest" },
   { id: "calendar", label: "Calendar" },
   { id: "news", label: "News" },
 ];
@@ -235,7 +233,7 @@ export default function TerminalPage() {
     : positions.filter((p) => p.symbol === symbol);
 
   // ---- backtest / analytics / calendar / news: full-area workspaces ---------
-  if (mode === "backtest" || mode === "calendar" || mode === "news") {
+  if (mode === "calendar" || mode === "news") {
     return (
       <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-0 flex-col gap-2 p-2 sm:min-h-[640px]">
         <Toolbar
@@ -249,7 +247,6 @@ export default function TerminalPage() {
           onNewAccount={() => setNewAccountOpen(true)}
         />
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/30">
-          {mode === "backtest" && <BacktestWorkspace />}
           {mode === "calendar" && <CalendarWorkspace symbol={symbol} />}
           {mode === "news" && <NewsWorkspace />}
         </div>

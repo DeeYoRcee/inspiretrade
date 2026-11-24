@@ -45,6 +45,9 @@ export interface DrawingStyle {
   extend?: "none" | "right" | "left" | "both";
   /** endpoint price labels on line tools */
   showLabels?: boolean;
+  /** PHASE 65 §3 — verbose position-tool stats (%/pips/lots/$); OFF by
+   *  default so the chart shows only Entry/Stop/Target + RR */
+  showStats?: boolean;
   /** endpoint time labels on line tools */
   showTimeLabels?: boolean;
   /** Phase 37 §2 — print the level PRICE next to the % label (fib tools) */
@@ -1037,7 +1040,20 @@ function drawAttachedText(ctx: CanvasRenderingContext2D, d: Drawing, pts: XY[]):
     ctx.globalAlpha = 1;
   }
   ctx.fillStyle = d.style.textColor || d.style.color;
-  ctx.fillText(d.text, at.x + 4, at.y + dy);
+  // PHASE 65 §4 — multiline annotations: every \n becomes its own line under
+  // the same anchor, so "Strong Resistance\nSupply Zone" renders stacked
+  const lines = String(d.text).split("\n").slice(0, 8);
+  const lineH = d.style.fontSize * 1.3;
+  if (d.style.textBg && lines.length > 1) {
+    const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    const bx = ctx.textAlign === "center" ? at.x + 4 - widest / 2 : ctx.textAlign === "right" ? at.x + 4 - widest + 3 : at.x + 1;
+    ctx.fillStyle = d.style.textBg;
+    ctx.globalAlpha = 0.8 * (d.style.opacity ?? 1);
+    ctx.fillRect(bx, at.y + dy - d.style.fontSize, widest + 6, lineH * lines.length + 3);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = d.style.textColor || d.style.color;
+  }
+  lines.forEach((line, i) => ctx.fillText(line, at.x + 4, at.y + dy + i * lineH));
   ctx.restore();
 }
 
@@ -1881,32 +1897,44 @@ export function renderDrawing(
       ctx.setLineDash([]);
       ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
       if (d.style.showLabels !== false) {
-        ctx.fillStyle = lossCol;
-        ctx.fillText(`Stop ${fmtPositionPrice(stopP, digits)}`, xL + 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
-        ctx.fillStyle = profitCol;
-        ctx.fillText(`Target ${fmtPositionPrice(targetP, digits)}`, xL + 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
-        ctx.fillStyle = d.style.color;
-        ctx.fillText(`Entry ${fmtPositionPrice(entryP, digits)}`, xL + 4, entry.y + d.style.fontSize + 4);
-        // right-aligned % distances (chart-measured, always exact)
-        ctx.textAlign = "right";
-        ctx.fillStyle = lossCol;
-        ctx.fillText(`−${calc.riskPctOfPrice.toFixed(2)}%${riskPips ? ` · ${riskPips.toFixed(1)}p` : ""}`, xR - 4, stop.y + (stop.y > entry.y ? -4 : d.style.fontSize + 2));
-        ctx.fillStyle = profitCol;
-        ctx.fillText(`+${calc.rewardPctOfPrice.toFixed(2)}%${rewardPips ? ` · ${rewardPips.toFixed(1)}p` : ""}`, xR - 4, target.y + (target.y > entry.y ? -4 : d.style.fontSize + 2));
-        ctx.textAlign = "left";
-      }
-      // header: direction · RR · size + money (money ONLY when the live
-      // balance was provided — never fabricated). P46 §1.2: the whole text
-      // block honours showLabels — off means a clean, label-free box.
-      const dir = isLong ? "Long" : "Short";
-      if (d.style.showLabels !== false) {
-        let header = `${dir} · RR ${calc.rr.toFixed(2)}`;
-        if (calc.lots != null) header += ` · ${calc.lots.toFixed(2)} lots`;
-        if (calc.riskAmount != null && calc.rewardAmount != null) {
-          header += ` · Risk $${calc.riskAmount.toFixed(0)} / Reward $${calc.rewardAmount.toFixed(0)}`;
+        // PHASE 65 §3 — TradingView-clean default view: Entry/Stop/Target
+        // prices OUTSIDE the right band edge (collision-aware vertical layout)
+        // + ONE compact direction·RR label centered in the reward zone. The
+        // verbose stats (% distance, pips, position size, $ risk/reward) live
+        // behind the "Stats" toggle in the properties bar — not on the chart.
+        ctx.font = `${d.style.fontWeight === "bold" ? "bold " : ""}${d.style.fontSize}px ui-sans-serif, system-ui`;
+        type Lbl = { y: number; text: string; color: string };
+        const labels: Lbl[] = [
+          { y: entry.y, text: fmtPositionPrice(entryP, digits), color: d.style.color },
+          { y: stop.y, text: fmtPositionPrice(stopP, digits), color: lossCol },
+          { y: target.y, text: fmtPositionPrice(targetP, digits), color: profitCol },
+        ].sort((a, b) => a.y - b.y);
+        const lh = d.style.fontSize + 3;
+        for (let i = 1; i < labels.length; i++) {
+          if (labels[i].y - labels[i - 1].y < lh) labels[i].y = labels[i - 1].y + lh;
         }
-        ctx.fillStyle = d.style.color;
-        ctx.fillText(header, xL + 4, yTop - 6);
+        ctx.textAlign = "left";
+        for (const l of labels) {
+          ctx.fillStyle = l.color;
+          // the label may shift to fit; the level LINE keeps the true price
+          ctx.fillText(l.text, xR + 6, l.y + d.style.fontSize / 2 - 1);
+        }
+        // compact identifier centered in the reward zone
+        const dir = isLong ? "Long" : "Short";
+        ctx.textAlign = "center";
+        ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
+        ctx.fillStyle = "rgba(226,232,240,0.92)";
+        ctx.fillText(`${dir} · RR ${calc.rr.toFixed(2)}`, (xL + xR) / 2, Math.min(entry.y, target.y) + (Math.abs(target.y - entry.y) / 2) + d.style.fontSize / 2 - 2);
+        // verbose stats ONLY when the user enables them (properties bar)
+        if (d.style.showStats === true) {
+          ctx.textAlign = "right";
+          ctx.font = `${d.style.fontWeight === "bold" ? "bold " : ""}${d.style.fontSize}px ui-sans-serif, system-ui`;
+          ctx.fillStyle = lossCol;
+          ctx.fillText(`−${calc.riskPctOfPrice.toFixed(2)}%${riskPips ? ` · ${riskPips.toFixed(1)}p` : ""}${calc.riskAmount != null ? ` · $${calc.riskAmount.toFixed(0)}` : ""}`, xR - 4, Math.min(entry.y, stop.y) + d.style.fontSize + 2);
+          ctx.fillStyle = profitCol;
+          ctx.fillText(`+${calc.rewardPctOfPrice.toFixed(2)}%${rewardPips ? ` · ${rewardPips.toFixed(1)}p` : ""}${calc.rewardAmount != null ? ` · $${calc.rewardAmount.toFixed(0)}` : ""}${calc.lots != null ? ` · ${calc.lots.toFixed(2)} lots` : ""}`, xR - 4, Math.max(entry.y, target.y) - 4);
+        }
+        ctx.textAlign = "left";
       }
       ctx.restore();
       break;

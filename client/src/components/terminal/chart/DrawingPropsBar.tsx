@@ -265,6 +265,9 @@ export function DrawingPropsBar({
                     />
                   </label>
                   <ToggleBtn label="Labels" on={style.showLabels !== false} onClick={() => setStyle({ showLabels: style.showLabels === false ? undefined : false })} />
+                  {/* PHASE 65 §3 — verbose stats (%/pips/lots/$) are off the
+                      chart by default; this toggle brings them back */}
+                  <ToggleBtn label="Stats" on={style.showStats === true} onClick={() => setStyle({ showStats: style.showStats === true ? undefined : true })} />
                 </div>
                 <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
                   Size derives from the instrument's contract size and the live balance so a stop-out loses
@@ -370,6 +373,9 @@ export function DrawingPropsBar({
                 {/* Phase 37 §2 — display options */}
                 <div className="mb-1.5 flex flex-wrap gap-1">
                   <ToggleBtn label="Labels" on={style.showLabels !== false} onClick={() => setStyle({ showLabels: style.showLabels === false ? undefined : false })} />
+                  {/* PHASE 65 §3 — verbose stats (%/pips/lots/$) are off the
+                      chart by default; this toggle brings them back */}
+                  <ToggleBtn label="Stats" on={style.showStats === true} onClick={() => setStyle({ showStats: style.showStats === true ? undefined : true })} />
                   <ToggleBtn label="Prices" on={style.showPrices === true} onClick={() => setStyle({ showPrices: style.showPrices === true ? undefined : true })} />
                   <ToggleBtn label="Extend" on={style.extend === "right" || style.extend === "both"} onClick={() => setStyle({ extend: style.extend === "right" || style.extend === "both" ? undefined : "right" })} />
                   <ToggleBtn label="Reverse" on={style.reverse === true} onClick={() => setStyle({ reverse: style.reverse === true ? undefined : true })} />

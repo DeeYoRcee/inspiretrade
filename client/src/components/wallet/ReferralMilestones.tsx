@@ -105,15 +105,19 @@ export function ReferralMilestones() {
                     </span>
                   )}
                 </div>
-                {isClaimed ? (
-                  <Badge variant="outline" className="gap-1 border-success/50 text-success">
-                    <CheckCircle2 className="h-3 w-3" /> Claimed
-                  </Badge>
-                ) : (
-                  <Button size="sm" className="h-7 px-3 text-xs" disabled={!reached || claim.isPending} onClick={() => claim.mutate(i)}>
-                    {claim.isPending && claim.variables === i ? "…" : "Claim"}
-                  </Button>
-                )}
+                {/* pinned to the tile bottom so all five controls sit on one
+                    baseline regardless of how many reward chips the tier has */}
+                <div className="mt-auto flex items-center justify-center pt-1.5">
+                  {isClaimed ? (
+                    <Badge variant="outline" className="gap-1 border-success/50 text-success">
+                      <CheckCircle2 className="h-3 w-3" /> Claimed
+                    </Badge>
+                  ) : (
+                    <Button size="sm" className="h-7 px-3 text-xs" disabled={!reached || claim.isPending} onClick={() => claim.mutate(i)}>
+                      {claim.isPending && claim.variables === i ? "…" : "Claim"}
+                    </Button>
+                  )}
+                </div>
               </div>
             );
           })}

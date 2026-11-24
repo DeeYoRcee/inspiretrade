@@ -58,12 +58,15 @@ export interface ChartSettings {
 // Phase 20: `volume` is no longer a setting — Volume became a real indicator
 // (Indicators menu, persisted per user+symbol), off by default.
 export const DEFAULT_SETTINGS: ChartSettings = {
-  // user request: the chart grid ships OFF for everyone — the background
-  // lines stay quiet unless a user turns "Show grid" on in the settings
+  // the chart grid ships OFF for everyone — the background lines stay quiet
+  // unless a user turns "Show grid" on in the settings.
+  // PHASE 65 (user request) — TradingView-style FIRST-VISIT defaults: clean
+  // white chart, classic green/red candles. Users who already saved settings
+  // (localStorage it_chart_settings) keep their own values.
   grid: false, countdown: true, legend: true, magnet: true, magnetMode: 1, bidAsk: true,
-  upColor: "#e9edf4", downColor: "#9598a1",
-  bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)",
-  drawColor: "#38bdf8", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
+  upColor: "#22c55e", downColor: "#ef4444",
+  bgColor: "#ffffff", gridColor: "#e5e7eb", crosshairColor: "rgba(120,123,134,0.5)",
+  drawColor: "#2962ff", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
 };
 
 const GRID_OFF_MIGRATION_KEY = "it_grid_default_off";
@@ -510,12 +513,14 @@ export function DrawingPropsDialog({
             <option value="dashed">Dashed</option>
             <option value="dotted">Dotted</option>
           </select></label>
-        {/* PHASE 62 fix #14: every text-like tool gets the text field (the
-            dialog used to gate it on type==="text" only). */}
-        {TEXT_LIKE.has(drawing.type) && (
-          <label className="col-span-2"><span className="mb-0.5 block text-[10px] text-slate-400">Text</span>
-            <input value={text} onChange={(e) => setText(e.target.value)} className="num-input" /></label>
-        )}
+        {/* PHASE 65 §4 — annotation support for EVERY drawing type: a
+            multiline text field ("Strong Resistance\nSupply Zone"). For the
+            dedicated text tools it is the object's own content; for all other
+            tools it is the attached annotation that moves with the object. */}
+        <label className="col-span-2"><span className="mb-0.5 block text-[10px] text-slate-400">Text annotation</span>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={200}
+            placeholder="Add a description (multiline supported)…"
+            className="num-input w-full resize-y" /></label>
         <label className="col-span-2 flex cursor-pointer items-center justify-between pt-1">
           <span className="text-slate-300">Visible on chart</span>
           <input type="checkbox" checked={visible} onChange={(e) => setVisible(e.target.checked)} className="h-4 w-4 accent-sky-500" />
@@ -536,7 +541,8 @@ export function DrawingPropsDialog({
             const patch: Parameters<typeof onSave>[1] = {};
             if (Object.keys(style).length) patch.style = style as Drawing["style"];
             if (!visible !== (drawing.hidden ?? false)) patch.hidden = !visible;
-            if (TEXT_LIKE.has(drawing.type) && text !== (drawing.text ?? "")) patch.text = text.slice(0, 200);
+            // PHASE 65 §4 — every drawing type saves (or clears) its annotation
+            if (text !== (drawing.text ?? "")) patch.text = text.length ? text.slice(0, 200) : undefined;
             onSave(drawing.id, patch);
             onClose();
           }}
@@ -558,6 +564,8 @@ export interface ContextMenuState {
   hitDrawingId: string | null;
   /** the hit drawing's visibility — labels the hide/show action */
   hitHidden?: boolean;
+  /** PHASE 65 §4 — the hit drawing carries an annotation */
+  hitHasText?: boolean;
   /** market coordinates at the click — for add-hline/add-text */
   time: number | null;
   price: number | null;
@@ -574,6 +582,10 @@ export function ChartContextMenu({
     deleteDrawing: (id: string) => void;
     duplicateDrawing: (id: string) => void;
     toggleHide: (id: string) => void;
+    /** PHASE 65 §4 — open the properties dialog on the annotation field */
+    editDrawingText: (id: string) => void;
+    /** clear the attached annotation */
+    removeDrawingText: (id: string) => void;
     clearDrawings: () => void;
     /** Phase 36 §6 — Remove All Indicators (with confirmation inside) */
     clearIndicators: () => void;
@@ -606,6 +618,10 @@ export function ChartContextMenu({
   if (state.hitDrawingId) {
     items.push({ label: state.hitHidden ? "Show drawing" : "Hide drawing", onClick: () => actions.toggleHide(state.hitDrawingId!) });
     items.push({ label: "Duplicate drawing", onClick: () => actions.duplicateDrawing(state.hitDrawingId!) });
+    // PHASE 65 §4 — annotation actions on ANY drawing: add/edit opens the
+    // properties dialog on the (multiline) text field; remove clears it
+    items.push({ label: "Add/Edit annotation…", onClick: () => actions.editDrawingText(state.hitDrawingId!) });
+    if (state.hitHasText) items.push({ label: "Remove annotation", danger: true, onClick: () => actions.removeDrawingText(state.hitDrawingId!) });
     items.push({ label: "Delete drawing", danger: true, onClick: () => actions.deleteDrawing(state.hitDrawingId!) });
   }
   if (state.price != null) {
