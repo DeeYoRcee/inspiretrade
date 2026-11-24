@@ -34,7 +34,6 @@ import WalletPage from "@/pages/WalletPage";
 import AdminPage from "@/pages/AdminPage";
 import CertificatePage from "@/pages/CertificatePage";
 import { InstallPrompt } from "@/components/InstallPrompt";
-import { UsernamePrompt } from "@/components/UsernamePrompt";
 import { GlobalChat } from "@/components/chat/GlobalChat";
 import { AlertsEngine } from "@/components/news/AlertsEngine";
 import { TradingAlertsEngine } from "@/components/terminal/TradingAlertsEngine";
@@ -189,7 +188,6 @@ function AppLayout({ children }: { children: ReactNode }) {
       <main className="flex-1 pb-[calc(3.75rem+env(safe-area-inset-bottom))] md:pb-0">{children}</main>
       <AppFooter />
       <MobileTabBar />
-      <UsernamePrompt />
       <PremiumSuccessHandler />
       <GlobalChat />
     </div>

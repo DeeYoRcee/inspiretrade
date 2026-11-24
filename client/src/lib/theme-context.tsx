@@ -50,7 +50,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.toggle("dark", theme !== "light");
     try { localStorage.setItem("tj-theme", theme); } catch { /* Continue without persisted storage. */ }
 
-    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", ocean: "#07131f", forest: "#0b1711", vader: "#050505", cr7: "#0b0505", knight: "#07080c", neon: "#0d0618", cosmos: "#05060f", money: "#04140d", f1: "#120404" };
+    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", ocean: "#07131f", forest: "#0b1711", vader: "#050505", cr7: "#0b0805", knight: "#07080c", neon: "#0d0618", cosmos: "#05060f", money: "#04140d", f1: "#120404" };
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => meta.setAttribute("content", colors[theme]));
   }, [theme]);
 

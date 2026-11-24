@@ -54,8 +54,10 @@
 
   :root[data-theme="cr7"] {
     color-scheme: dark;
-    /* CR7 — United red, chalk white, carbon black */
-    --background: 0 24% 4%; --foreground: 0 0% 96%; --card: 0 18% 7%; --card-foreground: 0 0% 96%; --popover: 0 18% 8%; --popover-foreground: 0 0% 96%; --primary: 0 84% 52%; --primary-foreground: 0 0% 99%; --secondary: 0 8% 14%; --secondary-foreground: 0 0% 94%; --muted: 0 8% 12%; --muted-foreground: 0 0% 64%; --accent: 0 26% 16%; --accent-foreground: 0 0% 97%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 0 10% 17%; --input: 0 10% 17%; --ring: 0 84% 52%;
+    /* CR7 — carbon black + championship gold (P68 user request: the old
+       red palette was indistinguishable from the red-black Skywalker and
+       F1 themes; gold is CR7's own brand color and clearly distinct) */
+    --background: 40 22% 4%; --foreground: 42 20% 96%; --card: 40 18% 7%; --card-foreground: 42 20% 96%; --popover: 40 18% 8%; --popover-foreground: 42 20% 96%; --primary: 43 78% 55%; --primary-foreground: 40 30% 6%; --secondary: 40 10% 14%; --secondary-foreground: 42 16% 94%; --muted: 40 10% 12%; --muted-foreground: 42 8% 66%; --accent: 42 24% 16%; --accent-foreground: 44 24% 97%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 42 12% 17%; --input: 42 12% 17%; --ring: 43 78% 55%;
   }
   :root[data-theme="knight"] {
     color-scheme: dark;
@@ -94,7 +96,7 @@
   :root[data-theme="ocean"]   { --term-bg: #07131f; --term-pane: #06101b; --term-solid: #0c1a28; --term-panel: rgb(12 26 40 / 0.92); --term-panel-95: rgb(12 26 40 / 0.96); --term-border: rgb(56 89 119 / 0.5); --term-border2: rgb(30 58 83 / 0.6); }
   :root[data-theme="forest"]  { --term-bg: #0b1711; --term-pane: #0a140e; --term-solid: #12241a; --term-panel: rgb(18 36 26 / 0.92); --term-panel-95: rgb(18 36 26 / 0.96); --term-border: rgb(52 90 66 / 0.5); --term-border2: rgb(24 46 33 / 0.6); }
   :root[data-theme="vader"]  { --term-bg: #070404; --term-pane: #050303; --term-solid: #140a0a; --term-panel: rgb(20 10 10 / 0.92); --term-panel-95: rgb(20 10 10 / 0.96); --term-border: rgb(153 27 27 / 0.45); --term-border2: rgb(64 20 20 / 0.6); }
-  :root[data-theme="cr7"]    { --term-bg: #0b0505; --term-pane: #090404; --term-solid: #190a0a; --term-panel: rgb(25 10 10 / 0.92); --term-panel-95: rgb(25 10 10 / 0.96); --term-border: rgb(220 38 38 / 0.45); --term-border2: rgb(74 20 20 / 0.6); }
+  :root[data-theme="cr7"]    { --term-bg: #0b0805; --term-pane: #090604; --term-solid: #191207; --term-panel: rgb(25 18 10 / 0.92); --term-panel-95: rgb(25 18 10 / 0.96); --term-border: rgb(234 179 8 / 0.4); --term-border2: rgb(74 58 20 / 0.6); }
   :root[data-theme="knight"] { --term-bg: #07080c; --term-pane: #060709; --term-solid: #10131c; --term-panel: rgb(16 19 28 / 0.92); --term-panel-95: rgb(16 19 28 / 0.96); --term-border: rgb(148 163 184 / 0.4); --term-border2: rgb(56 66 84 / 0.6); }
   :root[data-theme="neon"]    { --term-bg: #0d0618; --term-pane: #0b0515; --term-solid: #180c2b; --term-panel: rgb(24 12 43 / 0.92); --term-panel-95: rgb(24 12 43 / 0.96); --term-border: rgb(232 121 249 / 0.35); --term-border2: rgb(50 26 84 / 0.6); }
   :root[data-theme="cosmos"]  { --term-bg: #05060f; --term-pane: #04050d; --term-solid: #0b0d1e; --term-panel: rgb(11 13 30 / 0.92); --term-panel-95: rgb(11 13 30 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(30 33 66 / 0.6); }
@@ -403,8 +405,8 @@ img[src="/logo.png"] {
   z-index: -3;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 42% 40% at 72% 72%, rgb(220 38 38 / 0.16), transparent 66%),
-    radial-gradient(ellipse 26% 18% at 72% 88%, rgb(220 38 38 / 0.2), transparent 72%);
+    radial-gradient(ellipse 42% 40% at 72% 72%, rgb(234 179 8 / 0.13), transparent 66%),
+    radial-gradient(ellipse 26% 18% at 72% 88%, rgb(234 179 8 / 0.17), transparent 72%);
   animation: it-cr7-glow 7s ease-in-out infinite alternate;
 }
 :root[data-theme="cr7"] body::after {
