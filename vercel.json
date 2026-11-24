@@ -27,10 +27,6 @@
     {
       "path": "/api/alerts-cron",
       "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron-trading",
-      "schedule": "*/5 * * * *"
     }
   ],
   "functions": {
