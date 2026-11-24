@@ -20,6 +20,7 @@ import AuthPage from "@/pages/AuthPage";
 import PremiumPage from "@/pages/PremiumPage";
 import NewsPage from "@/pages/NewsPage";
 import PublicProfilePage from "@/pages/PublicProfilePage";
+import { FreeTerminalLanding, FreeJournalLanding } from "@/pages/FreeLandingPages";
 import PropFirmPage from "@/pages/PropFirmPage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import RewardsPage from "@/pages/RewardsPage";
@@ -364,6 +365,10 @@ function Router() {
         <Route path="/" component={DashboardPage} />
         <Route path="/premium" component={PremiumRoute} />
         <Route path="/news" component={NullRoute} />
+        {/* P74 — public FREE landing pages (no auth gate, self-canonical);
+            registered BEFORE /:handle so the profile catch-all never eats them */}
+        <Route path="/free-trading-terminal" component={FreeTerminalLanding} />
+        <Route path="/free-trading-journal" component={FreeJournalLanding} />
         <Route path="/prop-firm/:challengeId" component={PropFirmRoute} />
         <Route path="/prop-firm" component={PropFirmRoute} />
         <Route path="/leaderboard" component={LeaderboardRoute} />

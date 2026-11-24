@@ -133,23 +133,8 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
             every public profile — computed from the published snapshot. */}
         <TitleStrip size="sm" titles={titlesForProfile({ ceo: profile.ceo, isPremium: profile.vip, usernames: profile.usernames })} />
 
-        {/* Telegram-collectible style — every handle this profile holds */}
-        {(profile.usernames?.length ?? 0) > 1 && (
-          <div className="relative mt-2 flex flex-wrap items-center justify-center gap-1.5 px-4">
-            {profile.usernames!.slice(0, 10).map((u) => (
-              <span
-                key={u.key}
-                className={
-                  u.key === profile.usernameKey
-                    ? "inline-flex max-w-[130px] items-center truncate rounded-full border border-white/30 bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold text-white"
-                    : "inline-flex max-w-[130px] items-center truncate rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] font-semibold text-white/60"
-                }
-              >
-                @{u.username}
-              </span>
-            ))}
-          </div>
-        )}
+        {/* P74 user request: the held-username chips moved out of the poster —
+            they render in the info card above the bio, like the own-profile */}
 
         {/* social handles — Instagram / Telegram / X */}
         {(profile.social?.instagram || profile.social?.telegram || profile.social?.x) && (
@@ -253,6 +238,25 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
 
         {/* Telegram-style BIO card — identical to the own-profile info card */}
         <section className="divide-y divide-border/50 rounded-3xl border border-border/50 bg-card/60">
+          {(profile.usernames?.length ?? 0) > 0 && (
+            <div className="px-4 py-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t("profileUsernameRow")}</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {profile.usernames!.slice(0, 10).map((u) => (
+                  <span
+                    key={u.key}
+                    className={
+                      u.key === profile.usernameKey
+                        ? "inline-flex max-w-[130px] items-center truncate rounded-full border border-[#3390ec]/40 bg-[#3390ec]/15 px-2.5 py-0.5 text-[11px] font-semibold text-[#3390ec]"
+                        : "inline-flex max-w-[130px] items-center truncate rounded-full border border-border/60 bg-black/25 px-2.5 py-0.5 text-[11px] font-semibold text-white/70"
+                    }
+                  >
+                    @{u.username}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t("profileBio")}</span>
           </div>

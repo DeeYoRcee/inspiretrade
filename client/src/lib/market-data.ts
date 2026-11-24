@@ -1490,7 +1490,65 @@ import { assertPriceIdentity } from "@shared/feed-validation";
 import { extractSpark } from "@/lib/sparkline";
 export { assertPriceIdentity };
 
+// ---- P74 — instant cold-start chart paint (sessionStorage snapshot) --------
+// A fresh page load (or first terminal entry) has an empty in-memory cache,
+// so the chart waited for the FULL provider fetch before its first paint —
+// the "terminal opens slow" complaint. We persist the last tail per
+// symbol:tf and paint it immediately; the real feed refreshes in the
+// background and the chart's subscription heals the tail as usual.
+const SNAP_PREFIX = "it_md_snap:";
+const SNAP_TTL_MS = 180_000; // 3 min — older snapshots are ignored entirely
+const SNAP_BARS = 400;       // the chart opens on ~130 bars; 400 is plenty
+const snapRefreshing = new Set<string>();
+
+function snapRead(key: string): Bar[] | null {
+  try {
+    const raw = sessionStorage.getItem(SNAP_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { at?: number; bars?: Bar[] };
+    if (!Array.isArray(parsed.bars) || !parsed.bars.length) return null;
+    if (Date.now() - (parsed.at ?? 0) > SNAP_TTL_MS) { sessionStorage.removeItem(SNAP_PREFIX + key); return null; }
+    const last = parsed.bars[parsed.bars.length - 1] as Bar;
+    if (!last || typeof last.time !== "number" || typeof last.close !== "number") return null;
+    return parsed.bars;
+  } catch { return null; }
+}
+
+function snapWrite(key: string, bars: Bar[]): void {
+  try {
+    sessionStorage.setItem(SNAP_PREFIX + key, JSON.stringify({ at: Date.now(), bars: bars.slice(-SNAP_BARS) }));
+    const keys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); if (k && k.startsWith(SNAP_PREFIX)) keys.push(k); }
+    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) sessionStorage.removeItem(k); // keep ≤10 keys
+  } catch { /* quota or private mode — the feature is optional */ }
+}
+
 export async function loadFeed(symbol: string, tf: Timeframe): Promise<LoadResult> {
+  const inst = getInstrument(symbol);
+  if (!inst) throw new Error(`Unknown instrument: ${symbol}`);
+  const key = `${symbol}:${tf}`;
+  const snap = snapRead(key);
+  if (snap) {
+    if (!snapRefreshing.has(key)) {
+      snapRefreshing.add(key);
+      void loadFeedCore(symbol, tf)
+        .catch(() => { /* transient — the chart's subscription retries */ })
+        .finally(() => snapRefreshing.delete(key));
+    }
+    // honest badge: the painted tail is real but a few seconds/minutes old
+    return { bars: snap, status: "polling", message: "Cached candles — refreshing live data…" };
+  }
+  return loadFeedCore(symbol, tf);
+}
+
+/** full provider load; also refreshes the persisted snapshot for next time */
+async function loadFeedCore(symbol: string, tf: Timeframe): Promise<LoadResult> {
+  const res = await loadFeedNetwork(symbol, tf);
+  if (res.bars.length) snapWrite(`${symbol}:${tf}`, res.bars);
+  return res;
+}
+
+async function loadFeedNetwork(symbol: string, tf: Timeframe): Promise<LoadResult> {
   const inst = getInstrument(symbol);
   if (!inst) throw new Error(`Unknown instrument: ${symbol}`);
   if (inst.feed === "binance") {
