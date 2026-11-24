@@ -34,6 +34,7 @@ import WalletPage from "@/pages/WalletPage";
 import AdminPage from "@/pages/AdminPage";
 import CertificatePage from "@/pages/CertificatePage";
 import { InstallPrompt } from "@/components/InstallPrompt";
+import { LegacyDomainBanner } from "@/components/LegacyDomainBanner";
 import { GlobalChat } from "@/components/chat/GlobalChat";
 import { AlertsEngine } from "@/components/news/AlertsEngine";
 import { TradingAlertsEngine } from "@/components/terminal/TradingAlertsEngine";
@@ -452,6 +453,7 @@ function App() {
                 <AlertsEngine />
                 <TradingAlertsEngine />
                 <InstallPrompt />
+                <LegacyDomainBanner />
                 {/* daily reward — auto-opens on site entry when today's reward
                     is unclaimed (self-gated: only for signed-in users, once per
                     day per session via "Later") */}
