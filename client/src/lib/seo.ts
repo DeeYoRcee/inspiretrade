@@ -15,9 +15,9 @@
 const SITE = "https://inspiretrade.site";
 
 export const SEO_DEFAULTS = {
-  title: "InspireTrade - Everything about trading is here",
+  title: "InspireTrade — Trading Terminal, Trade Journal & Prop Firm Tools",
   description:
-    "InspireTrade — everything is here: trading terminal, journal, analytics, news and rewards for forex & crypto traders",
+    "Professional trading terminal, free trade journal, prop firm tools, market news and an economic calendar for forex & crypto traders — free to start.",
   image: `${SITE}/logo.png`,
 };
 

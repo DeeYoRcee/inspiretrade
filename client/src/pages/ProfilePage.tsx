@@ -590,24 +590,8 @@ export default function ProfilePage() {
           {/* P67 user request: earned titles (CEO / VIP / Collector) show on
               the profile card for everyone */}
           <TitleStrip size="sm" titles={titlesForProfile({ ceo: profile?.ceo, isPremium: isVip, usernames: profile?.usernames })} />
-          {/* Telegram-collectible style — every handle this account holds */}
-          {heldUsernames.length > 1 && (
-            <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 px-6">
-              {heldUsernames.slice(0, 10).map((u) => (
-                <span
-                  key={u.key}
-                  className={cn(
-                    "inline-flex max-w-[130px] items-center truncate rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
-                    u.key === username?.toLowerCase()
-                      ? "border-[#3390ec]/40 bg-[#3390ec]/15 text-[#3390ec]"
-                      : "border-border/60 bg-black/25 text-white/70",
-                  )}
-                >
-                  @{u.username}
-                </span>
-              ))}
-            </div>
-          )}
+          {/* P72 user request: the held-username chips moved out of the card —
+              they now sit in the Telegram-style info card above the bio */}
           {/* social handles — Instagram / Telegram / X */}
           {(profile?.social?.instagram || profile?.social?.telegram || profile?.social?.x) && (
             <div className="mt-2.5 flex items-center justify-center gap-2">
@@ -689,6 +673,29 @@ export default function ProfilePage() {
         transition={{ duration: 0.3, delay: 0.1 }}
         className="divide-y divide-border/50 rounded-3xl border border-border/50 bg-card/60"
       >
+        {/* Telegram-style username row — every handle this account holds.
+            P72 user request: moved out of the profile card, sits above the
+            bio like the username row in a Telegram profile. */}
+        {heldUsernames.length > 0 && (
+          <div className="px-4 py-3">
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("profileUsernameRow")}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {heldUsernames.slice(0, 10).map((u) => (
+                <span
+                  key={u.key}
+                  className={cn(
+                    "inline-flex max-w-[130px] items-center truncate rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                    u.key === username?.toLowerCase()
+                      ? "border-[#3390ec]/40 bg-[#3390ec]/15 text-[#3390ec]"
+                      : "border-border/60 bg-black/25 text-white/70",
+                  )}
+                >
+                  @{u.username}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <InfoRow
           label={t("profileBio")}
           value={bio || t("profileBioEmpty")}

@@ -29,6 +29,31 @@ const ECOSYSTEM = [
   { icon: Gift, label: "Rewards & Marketplace" },
 ];
 
+/** P73 — landing FAQ. Visible copy AND the FAQPage JSON-LD both render from
+    this single list, so they can never drift apart. Facts only. */
+const LANDING_FAQ = [
+  {
+    q: "What is InspireTrade?",
+    a: "InspireTrade is a web-based trading platform for retail traders. It combines a professional trading terminal, a trade journal, prop firm tools, market news and an economic calendar in one account.",
+  },
+  {
+    q: "Is InspireTrade free?",
+    a: "You can create an account and use the trading journal and terminal for free. An optional Premium subscription adds extra features for traders who want more.",
+  },
+  {
+    q: "Which markets does InspireTrade support?",
+    a: "Forex and crypto markets with live spot data, including popular instruments such as EURUSD, XAUUSD and BTC.",
+  },
+  {
+    q: "Do I need to install anything?",
+    a: "No. InspireTrade runs in the browser on any device, and you can optionally install it as an app on Android, iOS and desktop.",
+  },
+  {
+    q: "Is InspireTrade useful for prop firm traders?",
+    a: "Yes. The trade journal and prop firm tools are built to help you track challenges, measure win rate and P&L, and keep a consistent trading routine.",
+  },
+];
+
 /** Official four-color Google G — inline SVG, no extra dependency. */
 function GoogleG() {
   return (
@@ -278,7 +303,9 @@ export default function AuthPage() {
           {/* mobile compact branding */}
           <div className="flex flex-col items-center mb-6 lg:hidden">
             <img src="/logo.png" alt="InspireTrade" draggable={false} onDragStart={(e) => e.preventDefault()} onContextMenu={(e) => e.preventDefault()} className="select-none h-12 w-auto object-contain mb-3" />
-            <h1 className="font-display text-xl font-semibold text-center leading-snug">Everything About Trading.<br /><span className="text-muted-foreground">All in One Place.</span></h1>
+            {/* P73 SEO: the page has ONE h1 (the desktop hero) — this mobile
+                branding line is a heading of the auth panel, not of the page */}
+            <h2 className="font-display text-xl font-semibold text-center leading-snug">Everything About Trading.<br /><span className="text-muted-foreground">All in One Place.</span></h2>
           </div>
 
           <div className="glass-panel rounded-2xl border border-border/50 shadow-2xl overflow-hidden">
@@ -447,6 +474,58 @@ export default function AuthPage() {
           </p>
         </motion.div>
       </div>
+
+      {/* ================= P73 — genuine indexable landing content ==========
+          Real product copy below the auth fold: what InspireTrade is, for
+          people (and Googlebot) arriving from search. Every claim maps to an
+          existing feature; no invented statistics or ratings. */}
+      <section className="lg:col-span-2 border-t border-border/40 px-6 sm:px-10 xl:px-16 py-12">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "FAQPage",
+              mainEntity: LANDING_FAQ.map((f) => ({
+                "@type": "Question",
+                name: f.q,
+                acceptedAnswer: { "@type": "Answer", text: f.a },
+              })),
+            }),
+          }}
+        />
+        <div className="mx-auto max-w-3xl space-y-10">
+          <div>
+            <h2 className="font-display text-2xl font-semibold tracking-tight">A professional trading terminal in your browser</h2>
+            <p className="mt-3 text-sm lg:text-base leading-relaxed text-muted-foreground">
+              InspireTrade brings a professional trading terminal to the web: multi-chart workspaces, advanced drawing and position-sizing tools, an economic calendar and live market news for forex and crypto. Nothing to download — open it in a browser on any device, or install it as an app.
+            </p>
+          </div>
+          <div>
+            <h2 className="font-display text-2xl font-semibold tracking-tight">A free trade journal for forex and prop firm traders</h2>
+            <p className="mt-3 text-sm lg:text-base leading-relaxed text-muted-foreground">
+              Log every trade and let the journal do the math: win rate, net P&amp;L, streaks and per-instrument stats. Whether you trade a personal account or you are working through a prop firm challenge, the journal keeps your performance and your rules in one place — free to start.
+            </p>
+          </div>
+          <div>
+            <h2 className="font-display text-2xl font-semibold tracking-tight">Prop firm tools, rewards and a trader community</h2>
+            <p className="mt-3 text-sm lg:text-base leading-relaxed text-muted-foreground">
+              Track prop firm challenges, earn rewards, collect titles and share a public trading profile. InspireTrade turns trading analysis into a routine you can actually keep.
+            </p>
+          </div>
+          <div>
+            <h2 className="font-display text-2xl font-semibold tracking-tight">Frequently asked questions</h2>
+            <dl className="mt-4 space-y-4">
+              {LANDING_FAQ.map((f) => (
+                <div key={f.q}>
+                  <dt className="font-medium text-foreground">{f.q}</dt>
+                  <dd className="mt-1 text-sm leading-relaxed text-muted-foreground">{f.a}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
