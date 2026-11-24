@@ -65,6 +65,10 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
   })();
 
   return (
+    // P77 user request — the equipped frame wraps the WHOLE hero card in the
+    // card's rounded shape (same as the own-profile page), the avatar stays
+    // frameless
+    <ProfileFrame frame={profile.frame} variant="card">
     <article
       className={cn(
         "overflow-hidden rounded-3xl border bg-card shadow-[0_24px_90px_rgba(0,0,0,.28)]",
@@ -92,8 +96,8 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full bg-emerald-400/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-40 left-[20%] h-72 w-96 rounded-full bg-cyan-300/[0.06] blur-3xl" />
 
-        {/* P75 — the equipped frame renders as a ring around the public avatar */}
-        <ProfileFrame frame={profile.frame} className="relative mx-auto w-fit">
+        {/* P77 — the avatar keeps no frame of its own */}
+        <div className="relative mx-auto w-fit">
           <div
             className={cn(
               "relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 bg-emerald-100/10 text-2xl font-black text-emerald-50 shadow-[0_8px_40px_-8px_rgba(16,185,129,0.5)]",
@@ -116,7 +120,7 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
               initials
             )}
           </div>
-        </ProfileFrame>
+        </div>
 
         {/* Phase 32b: Telegram-style badge inline to the right of the name */}
         <div className="relative mt-3 flex items-center justify-center gap-1.5">
@@ -272,5 +276,6 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
         </section>
       </div>
     </article>
+    </ProfileFrame>
   );
 }

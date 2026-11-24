@@ -1414,15 +1414,26 @@ export function PriceChart({
             // Phase 59 PERF: build ONLY the point(s) being pushed — the old
             // path rebuilt the full O(n) point array per series key per tick
             // (Ichimoku = 5 keys × 20k bars ≈ 100k allocations/second/panel)
-            const mk = (i: number) => ({ time: data[i].time as UTCTimestamp, value: arr[i] });
+            // P77 hotfix — the candle data can be trimmed or swapped between
+            // the indicator recompute and this apply (symbol switch, history
+            // cap, replay exit). Indexing `data` past its end crashed the
+            // whole page with "Cannot read properties of undefined (reading
+            // 'time')" — clamp to the data bounds and skip out-of-range.
+            const mk = (i: number) => {
+              const j = Math.min(i, data.length - 1);
+              if (j < 0 || !data[j]) return null;
+              return { time: data[j].time as UTCTimestamp, value: arr[i] };
+            };
             // a delivery that APPENDED a bar may also revise the previous
             // last bar's OHLC — its indicator point moved too (the recompute
             // above already knows it; only the apply skipped it)
             const grew = data.length > prevLen;
             if (grew && arr.length >= 2 && arr[arr.length - 2] != null) {
-              try { s.update(mk(arr.length - 2) as any); } catch { /* ordering race — next full pass heals */ }
+              const pt = mk(arr.length - 2);
+              if (pt) { try { s.update(pt as any); } catch { /* ordering race — next full pass heals */ } }
             }
-            s.update(mk(arr.length - 1) as any);
+            const ptLast = mk(arr.length - 1);
+            if (ptLast) s.update(ptLast as any);
           }
         }
       }
@@ -1447,12 +1458,19 @@ export function PriceChart({
           else if (arr.length && arr[arr.length - 1] != null) {
             // Phase 59 PERF: same O(1) per-tick point build as the overlays
             const asHist = key === "hist";
-            const mk = (i: number) => ({ time: data[i].time as UTCTimestamp, value: arr[i], ...(asHist ? { color: (arr[i] as number) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)" } : {}) });
+            // P77 hotfix — same data-bounds clamp as the overlay path above
+            const mk = (i: number) => {
+              const j = Math.min(i, data.length - 1);
+              if (j < 0 || !data[j]) return null;
+              return { time: data[j].time as UTCTimestamp, value: arr[i], ...(asHist ? { color: (arr[i] as number) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)" } : {}) };
+            };
             const grew = data.length > prevLen;
             if (grew && arr.length >= 2 && arr[arr.length - 2] != null) {
-              try { s.update(mk(arr.length - 2) as any); } catch { /* ordering race — next full pass heals */ }
+              const pt = mk(arr.length - 2);
+              if (pt) { try { s.update(pt as any); } catch { /* ordering race — next full pass heals */ } }
             }
-            s.update(mk(arr.length - 1) as any);
+            const ptLast = mk(arr.length - 1);
+            if (ptLast) s.update(ptLast as any);
           }
         }
       }

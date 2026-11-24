@@ -167,7 +167,9 @@ export function ChartToolbar({
       {/* alert + replay — real features, TV positions */}
       <div className="mx-1 h-5 w-px bg-slate-800" />
       <ToolButton title="Add alert" onClick={onOpenAlerts}><Bell className="h-4 w-4" /></ToolButton>
-      <ToolButton title="Bar replay" onClick={onOpenReplay}><Rewind className="h-4 w-4" /></ToolButton>
+      {/* P77 user request — the Bar replay icon glows GOLD so the entry point
+          stands out from the ordinary gray tools */}
+      <ToolButton title="Bar replay" onClick={onOpenReplay}><Rewind className="h-4 w-4 text-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.65)]" /></ToolButton>
 
       {/* undo / redo drawings */}
       <div className="mx-1 h-5 w-px bg-slate-800" />

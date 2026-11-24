@@ -329,8 +329,16 @@ export function useReplay() {
       // the number of pre-window bars now in front of it
       const tfSecR = TF_SECONDS[meta.timeframe] ?? 60;
       const res = await loadHistoryRange(meta.symbol, meta.timeframe, Math.max(0, Math.floor(startMs / 1000) - REPLAY_PAST_BARS * tfSecR), toSec);
+      // P77 hotfix — an empty/short history window (symbol data changed,
+      // weekend gap) used to crash the whole page with "Cannot read
+      // properties of undefined (reading 'time')" via makeForming(bars[0]);
+      // fail the restore gracefully instead
+      if (!res.bars || res.bars.length < 30) {
+        throw new Error("Not enough history to restore this replay session — start a new one");
+      }
       let cur = res.bars.findIndex((b) => b.time * 1000 >= startMs);
       if (cur < 0) cur = Math.max(0, res.bars.length - 1);
+      cur = Math.max(0, Math.min(cur, res.bars.length - 1));
       const windowOffset = cur;
       let savedCur = 0;
       let w: ReplayWallet | null = null;
@@ -352,7 +360,7 @@ export function useReplay() {
         }
       }
       if (!w) w = newReplayWallet(100000);
-      cur = Math.min(windowOffset + savedCur, res.bars.length - 1);
+      cur = Math.max(0, Math.min(windowOffset + savedCur, res.bars.length - 1));
       setSession(meta);
       sessionRef.current = meta;
       setBars(res.bars);
@@ -452,6 +460,7 @@ export function useReplay() {
 
   const advanceTo = useCallback((targetCursor: number, keepManual = false) => {
     const list = barsRef.current;
+    if (!list.length) return; // P77 hotfix — nothing to step over
     const clamped = Math.max(0, Math.min(targetCursor, list.length - 1));
     const cur = cursorRef.current;
     const w0 = walletRef.current;

@@ -526,6 +526,10 @@ export default function ProfilePage() {
 
   return (
     <div className="container mx-auto max-w-md space-y-4 px-4 py-6">
+      {/* P77 user request — the equipped frame wraps the WHOLE hero card in
+          the card's rounded shape (the arrows pointed at the card edges);
+          the avatar itself stays frameless */}
+      <ProfileFrame frame={equippedFrame} variant="card">
       {/* Telegram-style banner — animated background like Steam */}
       <motion.section
         initial={{ opacity: 0, y: 12 }}
@@ -562,9 +566,8 @@ export default function ProfilePage() {
           <span className="text-xs">{t("profileEdit")}</span>
         </Button>
         <div className="relative">
-          {/* P75 — the equipped frame renders as a ring around the avatar on
-              every branch (video / image / initials) */}
-          <ProfileFrame frame={equippedFrame} className="w-fit mx-auto">
+          {/* P77 — the avatar keeps no frame of its own: the equipped frame
+              lives on the hero card now (video / image / initials branches) */}
           {avatarVideoSrc || profileVideoSrc ? (
             <video
               src={avatarVideoSrc || profileVideoSrc!}
@@ -601,7 +604,6 @@ export default function ProfilePage() {
               {initials}
             </div>
           )}
-          </ProfileFrame>
           <h1 className="mt-4 text-xl font-bold tracking-tight">{displayName}</h1>
           {/* Phase 32b: Telegram-style badge to the RIGHT of the handle */}
           <div className="mt-0.5 flex items-center justify-center gap-1.5">
@@ -668,6 +670,7 @@ export default function ProfilePage() {
           </p>
         </div>
       </motion.section>
+      </ProfileFrame>
 
       {/* Stat chips — streak replaced by registration date */}
       <motion.div
