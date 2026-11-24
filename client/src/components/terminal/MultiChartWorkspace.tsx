@@ -274,10 +274,10 @@ export function MultiChartWorkspace({
   const onDividerUp = () => { dragRef.current = null; };
 
   // ---- per-panel live data --------------------------------------------------------
-  const marksFor = useCallback((sym: string): PriceMark[] => orders
-    .filter((o) => o.symbol === sym)
-    .map((o) => ({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true })),
-  [orders]);
+  // PHASE 63 §5/§6 — pending orders are drawn ONCE, by the draggable
+  // order-entry TradeLines (canvas chips); the duplicate amber PriceMark
+  // line is retired (double rendering of the same order).
+  const marksFor = useCallback((_sym: string): PriceMark[] => [], []);
 
   const allPanels: PanelState[] = useMemo(() => [{ symbol, timeframe }, ...panels], [symbol, timeframe, panels]);
   const gridCols = normWeights(colW, def.cols);

@@ -38,7 +38,9 @@ export default function PublicProfilePage({ username, embedded = false }: { user
         </div>
       </header>
 
-      <div className="relative z-10 container mx-auto max-w-5xl px-4 py-8 sm:py-12">
+      {/* user request: the public profile renders at the SAME compact width
+          as the regular profile screen (max-w-md) — not a wide showcase page */}
+      <div className="relative z-10 container mx-auto max-w-md px-4 py-6">
         {profileQuery.isLoading ? (
           <div className="flex min-h-[50vh] items-center justify-center">
             <Activity className="h-7 w-7 animate-pulse text-primary" />

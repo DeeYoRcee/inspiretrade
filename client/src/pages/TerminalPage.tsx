@@ -220,12 +220,11 @@ export default function TerminalPage() {
       }
       return out;
     }
-    const out: PriceMark[] = [];
-    for (const o of orders) {
-      if (o.symbol !== symbol) continue;
-      out.push({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true });
-    }
-    return out;
+    // PHASE 63 §6 — live pending orders render ONCE as draggable order-entry
+    // TradeLines inside the chart; the duplicate PriceMark line is retired.
+    // (Replay keeps its own marks — different wallet system.)
+    void orders; void symbol;
+    return [];
   }, [mode, orders, symbol, r.wallet.orders]);
 
   const replayActive = r.phase === "ready";

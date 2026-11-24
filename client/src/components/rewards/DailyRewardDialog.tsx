@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import { Gift, Gem, BadgeCheck, ChevronRight, X, Check, Crown, Briefcase, Lock } from "lucide-react";
@@ -53,6 +53,12 @@ export function DailyRewardDialog() {
   const [vipGranted, setVipGranted] = useState<{ caseType: CaseType; caseName: string; isTrading: boolean } | null>(null);
   const [caseResult, setCaseResult] = useState<FragmentDef | null>(null);
   const [openCaseType, setOpenCaseType] = useState<CaseType>("inspire");
+  // PHASE 63-UX (user request): the daily and the VIP case are opened
+  // INDEPENDENTLY — opening one no longer dismisses the dialog while the
+  // other is still unopened ("xohlasam ochay yoki yoq" for each).
+  const [openedDaily, setOpenedDaily] = useState(false);
+  const [openedVip, setOpenedVip] = useState(false);
+  const openingSlotRef = useRef<"daily" | "vip">("daily");
 
   useEffect(() => {
     setDismissed(sessionStorage.getItem(dismissedKey) === "1");
@@ -85,6 +91,8 @@ export function DailyRewardDialog() {
     mutationFn: async () => authedFetch("/api/rewards/claim", {}) as Promise<ClaimResponse>,
     onSuccess: (data) => {
       invalidate();
+      setOpenedDaily(false);
+      setOpenedVip(false);
       setGranted({ caseType: data.reward.caseType, caseName: data.reward.caseName });
       setVipGranted(data.vipReward ? {
         caseType: (data.vipReward.caseType === "trading" ? "trading" : "gold") as CaseType,
@@ -105,6 +113,9 @@ export function DailyRewardDialog() {
     onSuccess: (data) => {
       setCaseResult(data.fragment);
       setOpenCaseType(data.caseType || "inspire");
+      // the slot launched is known up front — the dialog stays open for the other one
+      if (openingSlotRef.current === "daily") setOpenedDaily(true);
+      else setOpenedVip(true);
     },
     onError: (error: any) => {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
@@ -114,6 +125,15 @@ export function DailyRewardDialog() {
   const dismiss = () => {
     sessionStorage.setItem(dismissedKey, "1");
     setDismissed(true);
+  };
+
+  /** PHASE 63-UX: open a case by SLOT (daily / vip) — types can collide
+      (both may be gold on day 7), so the slot is tracked explicitly. */
+  const openSlot = (slot: "daily" | "vip") => {
+    const type = slot === "daily" ? granted?.caseType : vipGranted?.caseType;
+    if (!type) return;
+    openingSlotRef.current = slot;
+    openMutation.mutate(type);
   };
 
   const days = useMemo(() => Array.from({ length: REWARD_CYCLE_DAYS }, (_, i) => i + 1), []);
@@ -345,34 +365,42 @@ export function DailyRewardDialog() {
                 <p className="mt-1 text-sm font-semibold text-muted-foreground">
                   +1 {granted?.caseName}
                 </p>
-                {vipGranted && (
-                  <p className="mt-1 text-sm font-semibold text-emerald-400">
-                    <Crown className="mr-1 inline h-4 w-4" /> VIP: +1 {vipGranted.caseName}
-                  </p>
-                )}
+                {/* PHASE 63-UX (user request): the VIP case is a FIRST-CLASS
+                    card in the claimed screen — shown on TOP, openable or
+                    skippable independently of the daily one. Opening one
+                    keeps the dialog up for the other; "Later" skips both. */}
                 <p className="mt-1 text-sm text-muted-foreground">{t("dailyRewardOpenNow")}</p>
               </div>
-              <Button
-                size="lg"
-                className={cn(
-                  "w-full rounded-xl font-semibold",
-                  granted?.caseType === "gold" && "bg-gradient-to-r from-amber-500 to-yellow-400 text-black hover:from-amber-400 hover:to-yellow-300",
-                )}
-                disabled={openMutation.isPending}
-                onClick={() => openMutation.mutate(granted?.caseType || "inspire")}
-              >
-                {openMutation.isPending ? t("openingCase") : <><ChevronRight className="mr-2 h-5 w-5" />{t("openCaseNow")}</>}
-              </Button>
               {vipGranted && (
-                <Button
-                  size="lg"
-                  className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-400 font-semibold text-black hover:from-emerald-400 hover:to-emerald-300"
-                  disabled={openMutation.isPending}
-                  onClick={() => openMutation.mutate(vipGranted.caseType)}
-                >
-                  <Crown className="mr-2 h-5 w-5" /> VIP: {t("openCaseNow")} ({vipGranted.caseName})
-                </Button>
+                <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-left">
+                  <Crown className="h-7 w-7 shrink-0 text-emerald-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">VIP reward</p>
+                    <p className="truncate text-sm font-semibold">+1 {vipGranted.caseName}</p>
+                  </div>
+                  {openedVip ? (
+                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-400"><Check className="h-3.5 w-3.5" />opened</span>
+                  ) : (
+                    <Button size="sm" className="rounded-lg bg-emerald-500 font-semibold text-black hover:bg-emerald-400" disabled={openMutation.isPending} onClick={() => openSlot("vip")}>
+                      {openMutation.isPending && openingSlotRef.current === "vip" ? t("openingCase") : t("openCaseNow")}
+                    </Button>
+                  )}
+                </div>
               )}
+              <div className="flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/10 px-4 py-3 text-left">
+                {granted?.caseType === "gold" ? <Crown className="h-7 w-7 shrink-0 text-amber-400" /> : <Gem className="h-7 w-7 shrink-0 text-primary" />}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Daily reward</p>
+                  <p className="truncate text-sm font-semibold">+1 {granted?.caseName}</p>
+                </div>
+                {openedDaily ? (
+                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-400"><Check className="h-3.5 w-3.5" />opened</span>
+                ) : (
+                  <Button size="sm" variant="outline" className="rounded-lg font-semibold" disabled={openMutation.isPending} onClick={() => openSlot("daily")}>
+                    {openMutation.isPending && openingSlotRef.current === "daily" ? t("openingCase") : t("openCaseNow")}
+                  </Button>
+                )}
+              </div>
               <button onClick={dismiss} className="text-xs text-muted-foreground underline-offset-2 hover:underline">
                 {t("later")}
               </button>
@@ -387,8 +415,14 @@ export function DailyRewardDialog() {
         caseType={openCaseType}
         onClose={() => {
           setCaseResult(null);
-          dismiss(); // P49 — closing the case also closes the reward dialog
           invalidate();
+          // P49 + PHASE 63-UX: closing the case result closes the reward
+          // dialog ONLY when no unopened case remains — otherwise the
+          // claimed screen stays up so the other case (e.g. the VIP one)
+          // can still be opened or skipped with "Later".
+          const dailyLeft = !!granted && !openedDaily;
+          const vipLeft = !!vipGranted && !openedVip;
+          if (!dailyLeft && !vipLeft) dismiss();
         }}
       />
     </>

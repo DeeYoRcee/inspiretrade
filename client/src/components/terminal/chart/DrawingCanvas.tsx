@@ -28,6 +28,19 @@ export interface TradeLine {
   label: string;
   /** instrument digits for the price label */
   digits: number;
+  // ---- PHASE 63: MT5-style position chip data --------------------------------
+  /** instrument symbol shown in the entry chip (e.g. "BTCUSD") */
+  symbol?: string;
+  /** position/pending-order side — colors the side badge */
+  side?: "buy" | "sell";
+  /** volume in lots */
+  lots?: number;
+  /** live floating P/L in USD (entry lines only; null while unknown) */
+  pnl?: number | null;
+  /** the line is the active selection (brighter stroke + chip border) */
+  selected?: boolean;
+  /** the last modify attempt failed — draw the line/chip red until the sync restores */
+  error?: boolean;
 }
 
 export interface ChartConverter {
@@ -49,6 +62,8 @@ interface DragState {
   handle?: number;
   /** trade-line drag snapshot (position SL/TP) */
   trade?: TradeLine;
+  /** PHASE 63: pointerdown landed on the label chip — click-only, never drags */
+  tradeClickOnly?: boolean;
   /** move/handle baseline */
   original?: Drawing;
   startX?: number;
@@ -395,9 +410,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
 
     // ---- trade lines (positions) -------------------------------------------
+    tradeChipRects.length = 0;
     if (!drag || drag.mode !== "trade") {
+      // PHASE 63: chips of overlapping lines stack downward (14px steps) so
+      // several positions near the same price never cover each other.
+      const stack = new Map<number, number>();
+      const dragged = drag?.mode === "trade" ? drag.trade : null;
+      if (dragged) drawTradeLine(ctx, dragged.price, dragged, conv, true);
       for (const t of tradeRef.current) {
-        drawTradeLine(ctx, t.price, t, conv, false);
+        if (dragged && t.positionId === dragged.positionId && t.kind === dragged.kind) continue;
+        const y = conv.y(t.price);
+        if (y == null) continue;
+        const bucket = Math.round(y / (CHIP_H + 1));
+        const n = stack.get(bucket) ?? 0;
+        stack.set(bucket, n + 1);
+        drawTradeLine(ctx, t.price, t, conv, false, n * (CHIP_H - 3));
       }
     }
     ctx.restore();
@@ -525,7 +552,20 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const p = localXY(e);
     if (p.x < 0 || p.y < 0 || p.x > conv.paneW || p.y > conv.paneH) return; // price scale etc.
 
-    // 1) trade-line drag (SL/TP + pending-order entry) — wins over drawings
+    // 1a) PHASE 63 — label chip hit: opening the panel must work even when
+    //     the chip is stacked away from its line or the line is the fixed
+    //     entry of a filled position.
+    for (const r of tradeChipRects) {
+      if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y - 2 && p.y <= r.y + r.h + 2) {
+        dragRef.current = { mode: "trade", trade: { ...r.t }, tradeClickOnly: true };
+        e.stopPropagation();
+        e.preventDefault();
+        captureSafe(target, e.pointerId);
+        redraw();
+        return;
+      }
+    }
+    // 1b) trade-line drag (SL/TP + pending-order entry) — wins over drawings
     for (const t of tradeRef.current) {
       if (t.kind === "entry") continue; // a filled position's entry is fixed
       const y = conv.y(t.price);
@@ -723,6 +763,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       return;
     }
     if (drag.mode === "trade" && drag.trade) {
+      // PHASE 63: a chip click never drags — tiny jitters keep it a click
+      if (drag.tradeClickOnly) return;
       const price = conv.price(p.y);
       if (price != null && price > 0) {
         if (price !== drag.trade.price) drag.moved = true;
@@ -1158,39 +1200,112 @@ DrawingCanvas.displayName = "DrawingCanvas";
 // Trade lines (entry / SL / TP) rendering
 // ---------------------------------------------------------------------------
 
+/** PHASE 63 — chip rects of the CURRENT frame, filled by drawTradeLine and
+ *  consumed by the pointerdown hit-test (clicking a label opens the panel). */
+const tradeChipRects: { t: TradeLine; x: number; y: number; w: number; h: number }[] = [];
+
+const CHIP_H = 18;
+
 function drawTradeLine(
   ctx: CanvasRenderingContext2D,
   price: number,
   t: TradeLine,
   conv: ChartConverter,
   dragging: boolean,
+  /** vertical chip offset from label stacking (overlapping lines) */
+  stackOffset = 0,
 ): void {
   const y = conv.y(price);
   if (y == null) return;
   const W = conv.paneW;
+  const isEntry = t.kind === "entry" || t.kind === "order-entry";
   ctx.save();
-  ctx.strokeStyle = t.color;
-  ctx.fillStyle = t.color;
-  ctx.lineWidth = 1.5;
-  ctx.globalAlpha = dragging ? 1 : 0.9;
-  ctx.setLineDash(t.kind === "entry" || t.kind === "order-entry" ? [] : [7, 5]);
+  // line — error flash wins, then selection
+  const lineColor = t.error ? "#ef4444" : t.color;
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = t.selected ? 2.25 : 1.5;
+  ctx.globalAlpha = dragging ? 1 : t.selected ? 0.95 : 0.8;
+  ctx.setLineDash(isEntry ? [] : [7, 5]);
   ctx.beginPath();
   ctx.moveTo(0, y);
   ctx.lineTo(W, y);
   ctx.stroke();
-  // label chip (right-aligned inside the pane)
+  if (t.selected) {
+    // subtle glow on the selected line — visible, not neon
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = 6;
+    ctx.stroke();
+  }
   ctx.setLineDash([]);
-  const label = `${t.label} ${price.toFixed(t.digits)}`;
+
+  // ---- label chip (right-aligned inside the pane) --------------------------
   ctx.font = "10px ui-sans-serif, system-ui";
-  const w = ctx.measureText(label).width + 10;
-  ctx.globalAlpha = dragging ? 0.95 : 0.75;
-  ctx.fillRect(W - w, y - 8, w, 15);
+  const priceText = price.toFixed(t.digits);
+  type Seg = { text: string; fg: string; bg?: string; bold?: boolean };
+  const segs: Seg[] = [];
+  if (isEntry) {
+    if (t.error) segs.push({ text: "!", fg: "#fecaca", bg: "#7f1d1d", bold: true });
+    const sideBadge = t.kind === "order-entry" ? (t.label.split(" ")[1] ?? t.side?.toUpperCase() ?? "") : (t.side === "sell" ? "SELL" : "BUY");
+    const kindBadge = t.kind === "order-entry" ? (t.label.split(" ")[0] ?? "ORDER") : "";
+    segs.push({
+      text: kindBadge ? `${kindBadge} ${sideBadge}` : sideBadge,
+      fg: "#ffffff",
+      bg: t.error ? "#dc2626" : t.side === "sell" ? "#dc2626" : "#16a34a",
+      bold: true,
+    });
+    if (t.symbol) segs.push({ text: t.symbol, fg: "#cbd5e1", bold: true });
+    if (t.lots != null) segs.push({ text: t.lots.toFixed(2), fg: "#94a3b8" });
+    segs.push({ text: priceText, fg: "#e2e8f0" });
+    if (t.pnl != null) {
+      segs.push({
+        text: `${t.pnl >= 0 ? "+" : "\u2212"}$${Math.abs(t.pnl).toFixed(2)}`,
+        fg: t.pnl >= 0 ? "#4ade80" : "#f87171",
+        bold: true,
+      });
+    }
+  } else {
+    segs.push({ text: t.label, fg: "#ffffff", bg: t.error ? "#dc2626" : t.color, bold: true });
+    segs.push({ text: priceText, fg: "#e2e8f0" });
+  }
+
+  const PAD = 6, GAP = 4;
+  const widths = segs.map((g) => ctx.measureText(g.text).width + (g.bg ? 8 : 0));
+  const w = widths.reduce((a2, b2) => a2 + b2, 0) + PAD * 2 + GAP * (segs.length - 1);
+  const chipY = y - CHIP_H / 2 + stackOffset;
+  const chipX = W - w - 4;
+  // collect for hit-testing (pointerdown → open panel)
+  tradeChipRects.push({ t, x: chipX, y: chipY, w, h: CHIP_H });
+
+  ctx.globalAlpha = dragging ? 0.97 : 0.88;
+  ctx.fillStyle = "rgba(13,21,38,0.92)";
+  ctx.beginPath();
+  ctx.roundRect(chipX, chipY, w, CHIP_H, 4);
+  ctx.fill();
+  ctx.strokeStyle = t.error ? "#ef4444" : t.selected ? "rgba(56,189,248,0.85)" : "rgba(148,163,184,0.28)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
   ctx.globalAlpha = 1;
-  ctx.fillStyle = "#0b1220";
-  ctx.fillText(label, W - w + 5, y + 3);
-  if (t.kind !== "entry") {
+  // segments left→right
+  let cx = chipX + PAD;
+  for (let i = 0; i < segs.length; i++) {
+    const g = segs[i];
+    const gw = widths[i];
+    if (g.bg) {
+      ctx.fillStyle = g.bg;
+      ctx.beginPath();
+      ctx.roundRect(cx, chipY + 3, gw, CHIP_H - 6, 3);
+      ctx.fill();
+      ctx.fillStyle = g.fg;
+    } else {
+      ctx.fillStyle = g.fg;
+    }
+    ctx.fillText(g.text, cx + (g.bg ? 4 : 0), chipY + 12.5);
+    cx += gw + GAP;
+  }
+
+  if (!isEntry) {
     // grip dots to hint draggability
-    ctx.fillStyle = t.color;
+    ctx.fillStyle = lineColor;
     for (const dx of [-8, -1]) {
       ctx.beginPath();
       ctx.arc(10 + dx + 4, y, 2, 0, Math.PI * 2);

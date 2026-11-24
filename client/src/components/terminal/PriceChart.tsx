@@ -30,7 +30,10 @@ import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types"
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
 import { quotesHistOlder, quotesPrependHistory, quotesWhenDeep, quotesSnapshotBars } from "@/lib/market-data";
 import { authedFetch } from "@/lib/api";
-import { priceBusUpdate } from "@/lib/price-store";
+import { priceBusUpdate, usePriceMap } from "@/lib/price-store";
+import { useTrading } from "@/hooks/use-trading";
+import { useToast } from "@/hooks/use-toast";
+import { quoteFromMid, exitPriceFor, positionPnlUsd } from "@shared/trading-engine";
 import { tradingApi, type ServerPosition, ServerOrder, type ServerTrade } from "@/lib/trading-api";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -81,6 +84,36 @@ import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown } from "lucide-rea
 import { cn } from "@/lib/utils";
 import { useServerQuote } from "@/hooks/use-server-quote";
 import { ChartTradeOverlay } from "@/components/terminal/chart/ChartTradeOverlay";
+
+/** PHASE 63 §3 — small numeric field for the position panel: follows the
+ *  server value while unfocused, commits on blur/Enter (null clears). */
+function TradeNumberInput({ value, placeholder, onCommit }: {
+  value: number | string;
+  placeholder?: string;
+  onCommit: (v: number | null) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { if (!focused) setDraft(value === "" ? "" : String(value)); }, [value, focused]);
+  return (
+    <input
+      type="number"
+      step="any"
+      inputMode="decimal"
+      className="num-input w-full bg-transparent px-0.5 py-0 text-right text-[10px]"
+      placeholder={placeholder}
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        const v = draft.trim() === "" ? null : Number(draft);
+        onCommit(v != null && Number.isFinite(v) ? v : null);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); e.stopPropagation(); }}
+    />
+  );
+}
 
 export interface PriceMark {
   id: string;
@@ -660,6 +693,36 @@ export function PriceChart({
   positionsRef.current = safePositions;
   const onModifyOrderRef = useRef(onModifyOrder);
   onModifyOrderRef.current = onModifyOrder;
+
+  // ---- PHASE 63 — live position chips -----------------------------------------
+  const { account: tradingAccount } = useTrading();
+  const priceMap = usePriceMap();
+  const { toast } = useToast();
+  // conversion prices (quote-currency → USD), the same merge the blotter uses
+  const convPrices = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [sym, q] of Object.entries(tradingAccount?.quotes ?? {})) out[sym] = q.mid;
+    for (const [sym, v] of Object.entries(priceMap)) if (v != null) out[sym] = v;
+    return out;
+  }, [tradingAccount?.quotes, priceMap]);
+  // floating P/L recomputed once per second from the chart's own last price
+  const [plTick, setPlTick] = useState(0);
+  useEffect(() => {
+    if (!safePositions.length) return;
+    const t = setInterval(() => setPlTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [safePositions.length]);
+  const livePnlOf = useCallback((pos: ServerPosition): number | null => {
+    const inst = getInstrument(pos.symbol);
+    const mid = barsRef.current?.at(-1)?.close ?? convPrices[pos.symbol] ?? null;
+    if (!inst || mid == null || mid <= 0) return null;
+    const q = quoteFromMid(mid, inst, "live", true);
+    try {
+      return positionPnlUsd(inst, pos.side, pos.lots, pos.entry, exitPriceFor(pos.side, q), convPrices);
+    } catch {
+      return null;
+    }
+  }, [convPrices]);
   // P54 §6 — one in-flight order action at a time: a double-click must never
   // submit the same modification twice; released shortly after the call ends
   const tradeBusyRef = useRef(false);
@@ -1722,6 +1785,22 @@ export function PriceChart({
     const data = barsRef.current;
     if (!data.length) { candle.setMarkers([]); return; }
     const markers: SeriesMarker<Time>[] = [];
+    // PHASE 63 §2 + user request: the B/S icon must appear the moment the
+    // position opens and STAY on its execution candle while the position is
+    // live (the closed-fills ledger used to be the only source, so open
+    // positions had no marker at all for up to 30s).
+    for (const pos of positionsRef.current) {
+      if (pos.symbol !== sym) continue;
+      const idx = findBarIndex(data, pos.openedAt);
+      if (idx == null) continue;
+      markers.push({
+        time: data[idx].time as UTCTimestamp,
+        position: pos.side === "buy" ? "belowBar" : "aboveBar",
+        color: pos.side === "buy" ? "#16a34a" : "#dc2626",
+        shape: pos.side === "buy" ? "arrowUp" : "arrowDown",
+        text: `${pos.side === "buy" ? "B" : "S"} ${pos.lots.toFixed(2)}`,
+      });
+    }
     for (const tr of tradesRef.current) {
       if (tr.symbol !== sym) continue;
       const idx = findBarIndex(data, tr.openedAt);
@@ -1885,42 +1964,100 @@ export function PriceChart({
 
   // ---- trade lines (positions) ---------------------------------------------------
   const safeOrders = Array.isArray(orders) ? orders : [];
+  // PHASE 63 §6 — selected position/pending-order (click on a line or chip)
+  const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  // PHASE 63 §4/§7 — a rejected modification flashes its line red until the
+  // next authoritative sync restores the real levels.
+  const [tradeLineError, setTradeLineError] = useState<{ id: string; kind: string } | null>(null);
+  useEffect(() => {
+    if (!tradeLineError) return;
+    const t = setTimeout(() => setTradeLineError(null), 3000);
+    return () => clearTimeout(t);
+  }, [tradeLineError]);
   const tradeLines = useMemo<TradeLine[]>(() => {
     const out: TradeLine[] = [];
+    // PHASE 63 §2 — MT5-style entry chips: BUY/SELL badge, symbol, lots,
+    // entry price and LIVE floating P/L from the chart's own last price.
+    void plTick; // recompute every second so P/L stays live
     for (const p of safePositions) {
-      const color = p.side === "buy" ? "#3b82f6" : "#f97316";
-      out.push({ positionId: p.id, kind: "entry", price: p.entry, color, label: `${p.side === "buy" ? "BUY" : "SELL"} ${p.lots}`, digits });
-      if (p.sl) out.push({ positionId: p.id, kind: "sl", price: p.sl, color: "#ef4444", label: "SL", digits });
-      if (p.tp) out.push({ positionId: p.id, kind: "tp", price: p.tp, color: "#22c55e", label: "TP", digits });
+      const err = tradeLineError?.id === p.id;
+      const sel = selectedTradeId === p.id;
+      // PHASE 63 §6 — entry LINE stays neutral sky; the side badge is colored
+      out.push({
+        positionId: p.id, kind: "entry", price: p.entry, color: "#38bdf8",
+        label: `${p.side === "buy" ? "BUY" : "SELL"} ${p.lots.toFixed(2)}`, digits,
+        symbol: p.symbol, side: p.side, lots: p.lots, pnl: livePnlOf(p),
+        selected: sel, error: err,
+      });
+      if (p.sl != null) out.push({ positionId: p.id, kind: "sl", price: p.sl, color: "#ef4444", label: "SL", digits, selected: sel, error: err && tradeLineError?.kind === "sl" });
+      if (p.tp != null) out.push({ positionId: p.id, kind: "tp", price: p.tp, color: "#22c55e", label: "TP", digits, selected: sel, error: err && tradeLineError?.kind === "tp" });
     }
     // P54 §3 — pending orders: draggable entry (→ modify-order price), SL/TP
     for (const o of safeOrders) {
-      const color = "#f59e0b";
-      out.push({ positionId: o.id, kind: "order-entry", price: o.price, color, label: `${o.kind === "limit" ? "LIMIT" : "STOP"} ${o.side.toUpperCase()} ${o.lots}`, digits });
-      if (o.sl) out.push({ positionId: o.id, kind: "order-sl", price: o.sl, color: "#ef4444", label: "SL", digits });
-      if (o.tp) out.push({ positionId: o.id, kind: "order-tp", price: o.tp, color: "#22c55e", label: "TP", digits });
+      const err = tradeLineError?.id === o.id;
+      const sel = selectedTradeId === o.id;
+      out.push({
+        positionId: o.id, kind: "order-entry", price: o.price, color: "#f59e0b",
+        label: `${o.kind === "limit" ? "LIMIT" : "STOP"} ${o.side.toUpperCase()} ${o.lots}`, digits,
+        symbol: o.symbol, side: o.side, lots: o.lots, selected: sel, error: err,
+      });
+      if (o.sl != null) out.push({ positionId: o.id, kind: "order-sl", price: o.sl, color: "#ef4444", label: "SL", digits, selected: sel, error: err && tradeLineError?.kind === "order-sl" });
+      if (o.tp != null) out.push({ positionId: o.id, kind: "order-tp", price: o.tp, color: "#22c55e", label: "TP", digits, selected: sel, error: err && tradeLineError?.kind === "order-tp" });
     }
     return out;
-  }, [safePositions, safeOrders, digits]);
+  }, [safePositions, safeOrders, digits, plTick, livePnlOf, selectedTradeId, tradeLineError]);
+  // PHASE 63 — open/close/cancel re-renders the candle markers immediately
+  useEffect(() => { applyMarkers(); }, [safePositions, safeOrders, applyMarkers]);
 
   const handleTradeLineMove = useCallback((positionId: string, kind: TradeLine["kind"], price: number) => {
-    // pending-order lines route to the modify-order endpoint; a rejected
-    // modification simply never confirms — the order refetch restores the
-    // real levels (the parent keeps the authoritative state)
-    if (kind === "order-entry") { void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(positionId, { price }))); return; }
-    if (kind === "order-sl") { void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(positionId, { sl: price }))); return; }
-    if (kind === "order-tp") { void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(positionId, { tp: price }))); return; }
-    if (kind === "entry") return;
-    const patch = kind === "sl" ? { sl: price } : { tp: price };
-    void withTradeLock(() => onModifyRef.current(positionId, patch));
-  }, []);
+    // PHASE 63 §4/§7 — the drag preview IS the proposed price; the release is
+    // the confirmation. Rejections now surface: red flash on the line + a
+    // toast, and the next authoritative sync restores the real levels.
+    const fail = () => {
+      setTradeLineError({ id: positionId, kind });
+      toast({ title: "Modification rejected", description: "The level was not applied — server validation failed. The line restores its real value.", variant: "destructive" });
+    };
+    const run = (): Promise<unknown> => {
+      if (kind === "order-entry") return Promise.resolve(onModifyOrderRef.current?.(positionId, { price }));
+      if (kind === "order-sl") return Promise.resolve(onModifyOrderRef.current?.(positionId, { sl: price }));
+      if (kind === "order-tp") return Promise.resolve(onModifyOrderRef.current?.(positionId, { tp: price }));
+      if (kind === "entry") return Promise.resolve();
+      return onModifyRef.current(positionId, kind === "sl" ? { sl: price } : { tp: price });
+    };
+    void withTradeLock(async () => {
+      try {
+        // useTrading.run() CATCHES errors and resolves null on failure — a
+        // silent null is exactly as failed as a rejection
+        const res = await run();
+        if (res == null || (res as { ok?: boolean })?.ok === false) fail();
+      } catch {
+        fail();
+      }
+    });
+  }, [toast]);
 
   // ---- P54 §3 — order/position details panel (click on a trade line) -------
   const [tradeDetails, setTradeDetails] = useState<{ kind: "position" | "order"; id: string } | null>(null);
+  const tradeDetailsRef = useRef(tradeDetails);
+  tradeDetailsRef.current = tradeDetails;
+  // PHASE 63 §3 — clicking outside the panel closes it (its own clicks are
+  // data-chart-ui, which the chart tool handler already ignores)
+  useEffect(() => {
+    if (!tradeDetails) return;
+    const onDown = (e: PointerEvent) => {
+      const el = e.target as Element | null;
+      if (el?.closest?.("[data-chart-ui]")) return;
+      setTradeDetails(null);
+      setSelectedTradeId(null);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [tradeDetails]);
   // PHASE 61 §6 — partial close straight from the chart details panel; the
   // input defaults to half the position volume and is clamped client-side.
   const [partialLots, setPartialLots] = useState("");
   const handleTradeLineClick = useCallback((t: TradeLine) => {
+    setSelectedTradeId(t.positionId);
     setTradeDetails({ kind: t.kind.startsWith("order") ? "order" : "position", id: t.positionId });
     const pos = safePositions.find((p) => p.id === t.positionId);
     setPartialLots(pos ? String(Math.max(0.01, Math.round((pos.lots / 2) * 100) / 100)) : "");
@@ -2371,7 +2508,12 @@ export function PriceChart({
         }
         if (k === "y") { e.preventDefault(); redoDrawings(); return; }
       }
-      if (e.key === "Escape") { setActiveTool("cursor"); return; }
+      if (e.key === "Escape") {
+        // PHASE 63 §3 — the position panel closes on Escape (then the tool resets)
+        if (tradeDetailsRef.current) { setTradeDetails(null); setSelectedTradeId(null); return; }
+        setActiveTool("cursor");
+        return;
+      }
       // Ctrl+C / Ctrl+V / Ctrl+D — copy · paste · duplicate drawings
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         const ids = selectedIds.length ? selectedIds : (selectedDrawingId ? [selectedDrawingId] : []);
@@ -2643,6 +2785,8 @@ export function PriceChart({
           const ord = tradeDetails.kind === "order" ? safeOrders.find((o) => o.id === tradeDetails.id) : null;
           if (!pos && !ord) return null;
           const last = barsRef.current?.at(-1)?.close ?? null;
+          // PHASE 63 §3 — live floating P/L in the management panel
+          const panelPnl = pos ? livePnlOf(pos) : null;
           const dg = digits;
           const busyTrade = tradeBusyRef.current;
           const plNum = Number(partialLots);
@@ -2656,13 +2800,30 @@ export function PriceChart({
                   {ord ? `${ord.kind.toUpperCase()} ${ord.side.toUpperCase()} ${ord.lots.toFixed(2)} ${ord.symbol}`
                        : `${pos!.side.toUpperCase()} ${pos!.lots.toFixed(2)} ${pos!.symbol}`}
                 </span>
-                <button onClick={() => setTradeDetails(null)} aria-label="Close details" className="rounded p-0.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300"><X className="h-3 w-3" /></button>
+                <button onClick={() => { setTradeDetails(null); setSelectedTradeId(null); }} aria-label="Close details" className="rounded p-0.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300"><X className="h-3 w-3" /></button>
               </div>
               {ord ? (
                 <div className="space-y-1 text-[11px] text-slate-300">
                   <div className="flex justify-between"><span className="text-slate-500">Trigger</span><span className="font-number">{ord.price.toFixed(dg)}</span></div>
-                  {ord.sl != null && <div className="flex justify-between"><span className="text-slate-500">Stop loss</span><span className="font-number">{ord.sl.toFixed(dg)}</span></div>}
-                  {ord.tp != null && <div className="flex justify-between"><span className="text-slate-500">Take profit</span><span className="font-number">{ord.tp.toFixed(dg)}</span></div>}
+                  {/* PHASE 63 §5 — edit pending-order SL/TP from the chart */}
+                  <div className="grid grid-cols-2 gap-1">
+                    <label className="flex items-center gap-1 rounded border border-border/60 px-1 py-0.5">
+                      <span className="text-[9px] font-bold uppercase text-red-400">SL</span>
+                      <TradeNumberInput
+                        value={ord.sl ?? ""}
+                        placeholder="—"
+                        onCommit={(v) => { if (v !== (ord.sl ?? null)) void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(ord.id, { sl: v })).catch(() => setTradeLineError({ id: ord.id, kind: "order-sl" }))); }}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1 rounded border border-border/60 px-1 py-0.5">
+                      <span className="text-[9px] font-bold uppercase text-emerald-400">TP</span>
+                      <TradeNumberInput
+                        value={ord.tp ?? ""}
+                        placeholder="—"
+                        onCommit={(v) => { if (v !== (ord.tp ?? null)) void withTradeLock(() => Promise.resolve(onModifyOrderRef.current?.(ord.id, { tp: v })).catch(() => setTradeLineError({ id: ord.id, kind: "order-tp" }))); }}
+                      />
+                    </label>
+                  </div>
                   {last != null && <div className="flex justify-between"><span className="text-slate-500">Distance</span><span className="font-number">{(((ord.price - last) / last) * 100).toFixed(2)}%</span></div>}
                   <div className="flex justify-between"><span className="text-slate-500">Expiry</span><span className="font-number">{ord.expiryAt ? new Date(ord.expiryAt).toLocaleString([], { hour12: false }) : "GTC"}</span></div>
                   <button
@@ -2674,9 +2835,34 @@ export function PriceChart({
               ) : (
                 <div className="space-y-1 text-[11px] text-slate-300">
                   <div className="flex justify-between"><span className="text-slate-500">Entry</span><span className="font-number">{pos!.entry.toFixed(dg)}</span></div>
-                  {pos!.sl != null && <div className="flex justify-between"><span className="text-slate-500">Stop loss</span><span className="font-number">{pos!.sl.toFixed(dg)}</span></div>}
-                  {pos!.tp != null && <div className="flex justify-between"><span className="text-slate-500">Take profit</span><span className="font-number">{pos!.tp.toFixed(dg)}</span></div>}
-                  {last != null && <div className="flex justify-between"><span className="text-slate-500">Last</span><span className="font-number">{last.toFixed(dg)}</span></div>}
+                  {last != null && <div className="flex justify-between"><span className="text-slate-500">Current</span><span className="font-number">{last.toFixed(dg)}</span></div>}
+                  {panelPnl != null && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Floating P/L</span>
+                      <span className={cn("font-number font-bold", panelPnl >= 0 ? "text-emerald-400" : "text-red-400")}>
+                        {panelPnl >= 0 ? "+" : "\u2212"}${Math.abs(panelPnl).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {/* PHASE 63 §3 — add / modify / clear SL & TP inline */}
+                  <div className="grid grid-cols-2 gap-1 pt-1">
+                    <label className="flex items-center gap-1 rounded border border-border/60 px-1 py-0.5">
+                      <span className="text-[9px] font-bold uppercase text-red-400">SL</span>
+                      <TradeNumberInput
+                        value={pos!.sl ?? ""}
+                        placeholder="—"
+                        onCommit={(v) => { if (v !== (pos!.sl ?? null)) void withTradeLock(() => onModifyRef.current(pos!.id, { sl: v }).then((r) => { if (r == null) { setTradeLineError({ id: pos!.id, kind: "sl" }); toast({ title: "Stop loss rejected", description: "The server did not accept this level — the previous value is kept.", variant: "destructive" }); } }).catch(() => setTradeLineError({ id: pos!.id, kind: "sl" }))); }}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1 rounded border border-border/60 px-1 py-0.5">
+                      <span className="text-[9px] font-bold uppercase text-emerald-400">TP</span>
+                      <TradeNumberInput
+                        value={pos!.tp ?? ""}
+                        placeholder="—"
+                        onCommit={(v) => { if (v !== (pos!.tp ?? null)) void withTradeLock(() => onModifyRef.current(pos!.id, { tp: v }).then((r) => { if (r == null) { setTradeLineError({ id: pos!.id, kind: "tp" }); toast({ title: "Take profit rejected", description: "The server did not accept this level — the previous value is kept.", variant: "destructive" }); } }).catch(() => setTradeLineError({ id: pos!.id, kind: "tp" }))); }}
+                      />
+                    </label>
+                  </div>
                   <div className="mt-2 grid grid-cols-3 gap-1">
                     <button
                       disabled={busyTrade || (pos!.side === "buy" ? pos!.sl != null && pos!.sl >= pos!.entry : pos!.sl != null && pos!.sl <= pos!.entry)}

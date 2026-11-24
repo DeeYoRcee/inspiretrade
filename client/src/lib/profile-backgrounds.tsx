@@ -21,9 +21,9 @@ export const PROFILE_BACKGROUNDS: ProfileBackground[] = [
   { id: "embers", name: "Embers", src: "/videos/embers.mp4", tint: "linear-gradient(140deg, #0c0503, #301006 55%, #7a3008)" },
   // "frost" removed per user request — profiles already carrying the id fall
   // through getProfileBackground() to the plain (no-video) look
-  // Phase 29-UI request: a Formula-1 and a sword pick for the gallery
+  // Phase 29-UI request: a Formula-1 pick for the gallery (the sword pick was
+  // removed per user request — anyone still storing it falls back to none)
   { id: "f1", name: "Formula 1", src: "/videos/f1.mp4", tint: "linear-gradient(140deg, #120404, #7a1414 55%, #b3270f)" },
-  { id: "sword", name: "Sword", src: "/videos/sword.mp4", tint: "linear-gradient(140deg, #07090d, #232c3d 55%, #584317)" },
 ];
 
 export function getProfileBackground(id: string | null | undefined): ProfileBackground | null {
