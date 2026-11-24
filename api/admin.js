@@ -871,9 +871,13 @@ var cases_default = handle(async (req, res) => {
       if (!Number.isFinite(weight) || weight <= 0 || weight > 1e3) {
         throw new HttpError(400, "BAD_WEIGHT", "Weights must be > 0 and <= 1000");
       }
+      const qty = Math.floor(Number(row?.qty) || 1);
+      if (!Number.isFinite(qty) || qty < 1 || qty > 100) {
+        throw new HttpError(400, "BAD_QTY", "Copies must be between 1 and 100");
+      }
       seen.add(id);
-      fragments.push({ id, weight });
-      total += weight;
+      fragments.push({ id, weight, qty });
+      total += weight * qty;
     }
     if (fragments.length < 1 || total <= 0 || total > 1e3) {
       throw new HttpError(400, "BAD_POOL", "The pool needs at least one fragment (total weight <= 1000)");
@@ -920,9 +924,6 @@ var cases_default = handle(async (req, res) => {
   }
   throw new HttpError(400, "BAD_ACTION", "Unknown case action (use caseCreate|caseDelete|caseGrant)");
 });
-
-// api/_src/admin/platform.ts
-import * as adminNamespace2 from "firebase-admin";
 
 // shared/roles.ts
 var ROLE_RANK = {
@@ -1107,6 +1108,145 @@ async function getPlatformSettings(force = false) {
 function invalidateSettingsCache() {
   cache = null;
 }
+
+// shared/frames.ts
+var FRAMES_LIST = [
+  {
+    id: "classic",
+    name: "Classic",
+    desc: "Clean graphite ring \u2014 quiet and professional.",
+    ring: "linear-gradient(135deg, #6b7482 0%, #313945 55%, #4c5563 100%)",
+    edge: "#1b2029",
+    glow: ""
+  },
+  {
+    id: "premium",
+    name: "Premium",
+    desc: "Violet-to-magenta gradient for Premium members' profiles.",
+    ring: "linear-gradient(135deg, #a78bfa 0%, #7c3aed 45%, #e879f9 100%)",
+    edge: "#2a1e4a",
+    glow: "rgba(167, 139, 250, 0.30)"
+  },
+  {
+    id: "elite",
+    name: "Elite",
+    desc: "Dark luxury \u2014 charcoal with a platinum highlight sweep.",
+    ring: "conic-gradient(from 210deg, #474f5e 0%, #14181f 22%, #97a1b2 46%, #14181f 72%, #474f5e 100%)",
+    edge: "#101318",
+    glow: "rgba(151, 161, 178, 0.18)"
+  },
+  {
+    id: "royal",
+    name: "Royal",
+    desc: "Distinctive gold \u2014 a warm metallic double sweep.",
+    ring: "conic-gradient(from 45deg, #f2d47a 0%, #8a6d1f 28%, #fde68a 52%, #8a6d1f 78%, #f2d47a 100%)",
+    edge: "#241c08",
+    glow: "rgba(242, 212, 122, 0.25)"
+  },
+  {
+    id: "diamond",
+    name: "Diamond",
+    desc: "Icy cyan crystalline gradient with a silver inner line.",
+    ring: "linear-gradient(135deg, #a5f3fc 0%, #38bdf8 40%, #e0f2fe 62%, #0ea5e9 100%)",
+    edge: "#0b2739",
+    glow: "rgba(165, 243, 252, 0.28)"
+  },
+  {
+    id: "cyber",
+    name: "Cyber",
+    desc: "Modern tech \u2014 cyan circuit sweep on deep teal.",
+    ring: "conic-gradient(from 0deg, #22d3ee 0%, #0e7490 25%, #164e63 48%, #22d3ee 62%, #0e7490 85%, #164e63 100%)",
+    edge: "#052029",
+    glow: "rgba(34, 211, 238, 0.22)"
+  },
+  {
+    id: "legendary",
+    name: "Legendary",
+    desc: "Prestigious ember \u2014 molten orange over dark bronze.",
+    ring: "conic-gradient(from 120deg, #fb923c 0%, #7c2d12 30%, #fbbf24 50%, #7c2d12 72%, #fb923c 100%)",
+    edge: "#2a1005",
+    glow: "rgba(251, 146, 60, 0.26)"
+  },
+  {
+    id: "ceo",
+    name: "CEO",
+    desc: "Official InspireTrade CEO frame \u2014 black and gold metallic bezel. Exclusive to the platform's CEO account.",
+    ring: "conic-gradient(from 90deg, #facc15 0%, #111114 18%, #fde68a 38%, #111114 58%, #facc15 78%, #111114 100%)",
+    edge: "#0a0a0c",
+    glow: "rgba(250, 204, 21, 0.30)",
+    exclusive: true
+  }
+];
+var FRAMES = FRAMES_LIST;
+var FRAME_IDS = FRAMES_LIST.map((f) => f.id);
+
+// api/_src/admin/frame.ts
+function safeParse14(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function getBody2(req) {
+  const body = typeof req.body === "string" ? safeParse14(req.body) : req.body;
+  return body || {};
+}
+function getAction2(req) {
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    const q = url.searchParams.get("action");
+    if (q) return String(q);
+  } catch {
+  }
+  return String(getBody2(req)?.action || "");
+}
+var frame_default = handle(async (req, res) => {
+  const user = await requireUser(req);
+  const action = getAction2(req);
+  const body = getBody2(req);
+  if (action === "frame-role") {
+    const role = await getAdminRole(user);
+    res.status(200).json({ ok: true, superAdmin: role === "super_admin" });
+    return;
+  }
+  assertPost(req);
+  if (action === "frame-clear") {
+    await rtdb().ref(`frames/${user.uid}`).remove();
+    await logLedger({ type: "frame_clear", uid: user.uid });
+    res.status(200).json({ ok: true, frame: null });
+    return;
+  }
+  if (action === "frame-equip") {
+    const id = String(body?.frame || "");
+    const def = FRAMES.find((f) => f.id === id);
+    if (!def) throw new HttpError(400, "BAD_FRAME", "Unknown frame");
+    if (def.exclusive) {
+      const role = await getAdminRole(user);
+      if (role !== "super_admin") {
+        await writeAdminAlert(
+          {
+            type: "suspicious_activity",
+            severity: "warning",
+            uid: user.uid,
+            text: `Non-super-admin attempted to equip the exclusive "${def.id}" frame`
+          },
+          `frame-${def.id}-${user.uid}`
+        );
+        throw new HttpError(403, "FRAME_FORBIDDEN", "This frame is exclusive to the InspireTrade CEO account");
+      }
+    }
+    await rtdb().ref(`frames/${user.uid}`).set({ frame: def.id, updatedAt: Date.now() });
+    await logLedger({ type: "frame_equip", uid: user.uid, frame: def.id });
+    res.status(200).json({ ok: true, frame: def.id });
+    return;
+  }
+  throw new HttpError(400, "BAD_ACTION", "Unknown frame action (use frame-equip|frame-clear|frame-role)");
+});
+var frame_default2 = frame_default;
+
+// api/_src/admin/platform.ts
+import * as adminNamespace2 from "firebase-admin";
 
 // api/_src/admin/platform-guard.ts
 function assertRole(role, action) {
@@ -2051,21 +2191,21 @@ async function setRole(admin2, role, body) {
 }
 
 // api/_src/admin/index.ts
-function safeParse14(raw) {
+function safeParse15(raw) {
   try {
     return JSON.parse(raw);
   } catch {
     return {};
   }
 }
-function getAction2(req) {
+function getAction3(req) {
   try {
     const url = new URL(req.url || "/", "http://localhost");
     const q = url.searchParams.get("action");
     if (q) return String(q);
   } catch {
   }
-  const body = typeof req.body === "string" ? safeParse14(req.body) : req.body;
+  const body = typeof req.body === "string" ? safeParse15(req.body) : req.body;
   return String(body?.action || "");
 }
 var PLATFORM_ACTIONS = {
@@ -2085,7 +2225,7 @@ var PLATFORM_ACTIONS = {
   "admin-roles-set": { GET: false, run: (_q, res, a, r, b) => setRole(a, r, b).then((x) => res.json(x)) }
 };
 async function handler(req, res) {
-  const action = getAction2(req);
+  const action = getAction3(req);
   if (action === "media-get" && req.method === "GET") return mediaGet(req, res);
   const platformEntry = PLATFORM_ACTIONS[action];
   if (platformEntry) {
@@ -2097,7 +2237,7 @@ async function handler(req, res) {
         const url = new URL(req.url || "/", "http://localhost");
         body = Object.fromEntries(url.searchParams.entries());
       } else {
-        body = typeof req.body === "string" ? safeParse14(req.body) : req.body || {};
+        body = typeof req.body === "string" ? safeParse15(req.body) : req.body || {};
       }
       return await platformEntry.run(req, res, admin2, role, body);
     } catch (e) {
@@ -2135,6 +2275,10 @@ async function handler(req, res) {
     case "caseDelete":
     case "caseGrant":
       return cases_default(req, res);
+    case "frame-equip":
+    case "frame-clear":
+    case "frame-role":
+      return frame_default2(req, res);
     default:
       return res.status(400).json({ error: "BAD_ACTION", message: "Unknown admin action (use ?action=gift|withdrawals|deposits|chat-delete|chat-send|set-username|caseCreate|caseDelete|caseGrant)" });
   }

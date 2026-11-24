@@ -158,6 +158,18 @@ var CASES = {
   trading: { id: "trading", name: "Trading Case", accountSize: 25e3, fragments: TRADING_FRAGMENTS }
 };
 var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
+function expandCasePool(rows, all = ALL_FRAGMENTS) {
+  const pool = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const base = all.find((f) => f.id === row?.id);
+    if (!base) continue;
+    const weight = Number(row?.weight);
+    if (!Number.isFinite(weight) || weight <= 0) continue;
+    const qty = Math.max(1, Math.min(100, Math.floor(Number(row?.qty) || 1)));
+    for (let i = 0; i < qty; i++) pool.push({ ...base, dropPercent: weight });
+  }
+  return pool;
+}
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 var TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 var TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
@@ -200,13 +212,7 @@ var open_default = handle(async (req, res) => {
     if (!def || !Array.isArray(def.fragments) || def.fragments.length === 0) {
       throw new HttpError(404, "CASE_NOT_FOUND", "This case no longer exists");
     }
-    fragments = def.fragments.map((row) => {
-      const base = ALL_FRAGMENTS.find((f) => f.id === row?.id);
-      if (!base) return null;
-      const weight = Number(row?.weight);
-      if (!Number.isFinite(weight) || weight <= 0) return null;
-      return { ...base, dropPercent: weight };
-    }).filter(Boolean);
+    fragments = expandCasePool(def.fragments);
     if (fragments.length === 0) {
       throw new HttpError(409, "CASE_EMPTY", "This case has no valid fragments left");
     }

@@ -107,6 +107,38 @@ export const CASES: Record<CaseType, CaseDef> = {
 
 export const ALL_FRAGMENTS: FragmentDef[] = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
 
+/** One pool row of a custom case: fragment id + raw weight + copy count. */
+export interface CasePoolRow {
+  id: string;
+  weight: number;
+  /** copies of this fragment in the pool (1-100, default 1) — P75 */
+  qty?: number;
+}
+
+/**
+ * P75 — expand a custom-case definition into the concrete roll pool.
+ * Each row contributes `qty` copies of its fragment at the ROW's weight (the
+ * roll normalizes by the total, so qty×weight is the exact share). Copies let
+ * the owner express "put 25k$ 9 in nine times" explicitly and keep the saved
+ * definition readable. Invalid rows (unknown id, bad weight) are dropped,
+ * matching the server's historical behavior.
+ */
+export function expandCasePool(
+  rows: CasePoolRow[],
+  all: FragmentDef[] = ALL_FRAGMENTS,
+): FragmentDef[] {
+  const pool: FragmentDef[] = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const base = all.find((f) => f.id === row?.id);
+    if (!base) continue;
+    const weight = Number(row?.weight);
+    if (!Number.isFinite(weight) || weight <= 0) continue;
+    const qty = Math.max(1, Math.min(100, Math.floor(Number(row?.qty) || 1)));
+    for (let i = 0; i < qty; i++) pool.push({ ...base, dropPercent: weight });
+  }
+  return pool;
+}
+
 export const FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);
 export const TOTAL_DROP_WEIGHT = FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);
 export const TOTAL_DROP_WEIGHT_GOLD = GOLD_FRAGMENTS.reduce((s, f) => s + f.dropPercent, 0);

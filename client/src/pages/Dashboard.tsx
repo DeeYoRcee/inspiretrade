@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Camera, ChevronLeft, ChevronRight, Globe, Plus, TrendingUp, Users } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
+import { scheduleChartWarmup } from "@/lib/chart-warmup";
 
 type CalendarView = "monthly" | "weekly";
 
@@ -88,6 +89,10 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export default function Dashboard() {
   const { t } = useLanguage();
+  // P75 — warm the chart data pipeline while the user is on the dashboard:
+  // after a short idle, loadFeed the last symbol/timeframe so terminal entry
+  // paints instantly, even in a completely fresh browser session
+  useEffect(() => { scheduleChartWarmup(); }, []);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [category, setCategory] = useState<string>("ALL");
   // Phase 57 — unified journal source filter (all / prop / external / manual / broker:NAME)

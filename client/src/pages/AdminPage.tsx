@@ -74,6 +74,9 @@ export default function AdminPage() {
   const invalidateEconomy = useEconomyInvalidator();
   const [newCaseName, setNewCaseName] = useState("");
   const [caseWeights, setCaseWeights] = useState<Record<string, string>>({});
+  // P75 — optional copy count per fragment: "25k$ 9" ×9 puts nine copies of
+  // the piece into the pool (the roll normalizes weights, qty = exact share)
+  const [caseQty, setCaseQty] = useState<Record<string, string>>({});
   const [grantCaseId, setGrantCaseId] = useState("");
   const [grantTarget, setGrantTarget] = useState("");
   const [grantCount, setGrantCount] = useState("1");
@@ -123,7 +126,7 @@ export default function AdminPage() {
   const createCaseMutation = useMutation({
     mutationFn: async () => {
       const fragments = Object.entries(caseWeights)
-        .map(([id, weight]) => ({ id, weight: Number(weight) || 0 }))
+        .map(([id, weight]) => ({ id, weight: Number(weight) || 0, qty: Math.max(1, Math.floor(Number(caseQty[id]) || 1)) }))
         .filter((row) => row.weight > 0);
       return authedFetch("/api/admin?action=caseCreate", { name: newCaseName.trim(), fragments });
     },
@@ -131,6 +134,7 @@ export default function AdminPage() {
       toast({ title: t("adminCaseCreated") });
       setNewCaseName("");
       setCaseWeights({});
+      setCaseQty({});
       invalidateEconomy();
     },
     onError: (error: any) => {
@@ -503,12 +507,26 @@ export default function AdminPage() {
                             className="h-8 w-20 rounded-lg text-xs"
                             aria-label={`${f.name} weight`}
                           />
+                          <Input
+                            type="number"
+                            min={1}
+                            max={100}
+                            step={1}
+                            value={caseQty[f.id] ?? "1"}
+                            onChange={(e) => setCaseQty((p) => ({ ...p, [f.id]: e.target.value }))}
+                            placeholder="1"
+                            disabled={!active}
+                            className="h-8 w-14 rounded-lg text-xs"
+                            aria-label={`${f.name} copies`}
+                            title={t("adminCaseCopies")}
+                          />
                         </div>
                       );
                     })}
                   </div>
                   <p className="text-[11px] text-muted-foreground">
                     {t("adminCasePicked").replace("{n}", String(pickedFragments.length))} · {t("adminCaseTotalWeight")}: {totalCaseWeight || "—"}
+                    {pickedFragments.length > 0 && <> · {t("adminCaseCopies")}: {pickedFragments.reduce((s, [id]) => s + Math.max(1, Math.floor(Number(caseQty[id]) || 1)), 0)}</>}
                   </p>
                 </div>
                 <Button
@@ -537,7 +555,8 @@ export default function AdminPage() {
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold">{def.name}</p>
                           <p className="text-[11px] text-muted-foreground">
-                            {def.fragments.length} × fragment · {def.fragments.reduce((s, r) => s + (Number(r.weight) || 0), 0)} {t("adminCaseTotalWeight")}
+                            {def.fragments.length} × fragment · {def.fragments.reduce((s, r) => s + (Number(r.weight) || 0) * Math.max(1, Math.floor(Number((r as any).qty) || 1)), 0)} {t("adminCaseTotalWeight")}
+                            {" · "}{t("adminCaseCopies")}: {def.fragments.reduce((s, r) => s + Math.max(1, Math.floor(Number((r as any).qty) || 1)), 0)}
                           </p>
                         </div>
                         <Button

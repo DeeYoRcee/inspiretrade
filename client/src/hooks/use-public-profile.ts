@@ -153,7 +153,7 @@ export function useSavePublicProfile() {
         // (users/{uid}/profile/avatar) with the auth photoURL as fallback,
         // plus held usernames / profile video / social handles
         let avatar: string | null = null;
-        let profileFields: { ceo?: boolean; vip?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } = {};
+        let profileFields: { ceo?: boolean; vip?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null; frame?: string | null } = {};
         try {
           const { get: rtdbGet } = await import("firebase/database");
           const profileSnap = await rtdbGet(ref(db, `users/${user.uid}/profile`));
@@ -168,6 +168,15 @@ export function useSavePublicProfile() {
           if (typeof p.profileVideo === "string") profileFields.profileVideo = p.profileVideo;
           if (typeof p.avatarVideo === "string" && p.avatarVideo) profileFields.avatarVideo = p.avatarVideo;
         } catch { /* profile read is best-effort */ }
+        // P75 — equipped profile frame: the server-owned value in frames/<uid>
+        // (read-own rule). If the rule is not deployed yet the read fails and
+        // the snapshot simply publishes without a frame — never a forged one.
+        try {
+          const { get: rtdbGet } = await import("firebase/database");
+          const frameSnap = await rtdbGet(ref(db, `frames/${user.uid}`));
+          const f = (frameSnap.val() || {}) as Record<string, any>;
+          if (typeof f?.frame === "string" && f.frame) profileFields.frame = f.frame;
+        } catch { /* frames rule not live yet — publish without the frame */ }
         if (!avatar) avatar = user.photoURL || null;
 
         updates[`publicProfiles/${saveKey}`] = createPublicProfileSnapshot({

@@ -8,7 +8,7 @@
  */
 import crypto from "crypto";
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
-import { CASES, ALL_FRAGMENTS, TOTAL_DROP_WEIGHT, TOTAL_DROP_WEIGHT_GOLD, type FragmentDef } from "../lib/fragments";
+import { CASES, TOTAL_DROP_WEIGHT, TOTAL_DROP_WEIGHT_GOLD, expandCasePool, type FragmentDef } from "../lib/fragments";
 
 export function rollFragment(list: FragmentDef[], totalWeight: number) {
   let roll = crypto.randomInt(totalWeight * 100) / 100; // 0 .. total-0.01
@@ -61,15 +61,9 @@ export default handle(async (req, res) => {
     // Build the roll pool from the custom weights — fragment metadata (name,
     // icon, rarity) comes from the canonical definitions. Weights are raw and
     // normalized by the roll total, so they don't need to sum to 100.
-    fragments = def.fragments
-      .map((row: any) => {
-        const base = ALL_FRAGMENTS.find((f) => f.id === row?.id);
-        if (!base) return null;
-        const weight = Number(row?.weight);
-        if (!Number.isFinite(weight) || weight <= 0) return null;
-        return { ...base, dropPercent: weight };
-      })
-      .filter(Boolean) as FragmentDef[];
+    // P75: each row also carries a copy count (qty, default 1) — the pool is
+    // the EXPANDED list, so "25k$ 9" with qty 9 occupies its exact share.
+    fragments = expandCasePool(def.fragments) as FragmentDef[];
     if (fragments.length === 0) {
       throw new HttpError(409, "CASE_EMPTY", "This case has no valid fragments left");
     }

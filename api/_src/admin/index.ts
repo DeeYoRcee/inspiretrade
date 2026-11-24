@@ -29,6 +29,7 @@ import publishProfile from "./publish-profile";
 import profileRepair from "./profile-repair";
 import usernameMarket from "./username-market";
 import caseAdmin from "./cases";
+import frameAdmin from "./frame";
 import * as platform from "./platform";
 import { getAdminRole } from "../lib/platform";
 import { requireUser } from "../lib/firebase";
@@ -137,6 +138,12 @@ export default async function handler(req: any, res: any) {
       // owner's case factory — create/delete custom case definitions, grant
       // cases of ANY type (all three dispatched from one module)
       return caseAdmin(req, res);
+    case "frame-equip":
+    case "frame-clear":
+    case "frame-role":
+      // P75 profile frames — equip/clear/role-check (CEO exclusivity and all
+      // writes enforced server-side inside the module; see frame.ts)
+      return frameAdmin(req, res);
     default:
       return res
         .status(400)

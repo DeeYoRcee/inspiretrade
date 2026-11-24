@@ -57,6 +57,8 @@ export interface PublicProfileSnapshot {
   avatarVideo?: string | null;
   /** social handles — rendered as Instagram / Telegram / X links */
   social?: { instagram?: string; telegram?: string; x?: string };
+  /** P75: equipped profile frame id — rules validate it against frames/<uid> */
+  frame?: string;
   /** a moved profile leaves this at the old handle — the page follows it */
   redirect?: string;
   statistics?: PublicProfileStats;
@@ -171,7 +173,7 @@ export function createPublicProfileSnapshot({
   /** registration date (ms) — shown as "Member since" on the public page */
   memberSince?: number | null;
   /** full private profile — carries usernames/social/profileVideo */
-  profile?: { ceo?: boolean; vip?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null } | null;
+  profile?: { ceo?: boolean; vip?: boolean; usernames?: Record<string, { username: string }>; social?: { instagram?: string; telegram?: string; x?: string }; profileVideo?: string | null; avatarVideo?: string | null; frame?: string | null } | null;
 }): PublicProfileSnapshot {
   const usernameKey = username.trim().toLowerCase();
   const snapshot: PublicProfileSnapshot = {
@@ -203,6 +205,10 @@ export function createPublicProfileSnapshot({
   if (profile?.vip) snapshot.vip = true;
   if (profile?.profileVideo) snapshot.profileVideo = profile.profileVideo;
   if (profile?.avatarVideo) snapshot.avatarVideo = profile.avatarVideo;
+  // P75: equipped frame rides the snapshot — the RTDB rule only accepts a
+  // value equal to the server-owned frames/<uid>/frame, so a forged id
+  // (e.g. "ceo") can never reach the public page
+  if (profile?.frame) snapshot.frame = profile.frame;
   if (profile?.social?.instagram || profile?.social?.telegram || profile?.social?.x) {
     snapshot.social = {
       instagram: profile.social.instagram || undefined,

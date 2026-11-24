@@ -80,7 +80,7 @@ export default handle(async (req, res) => {
       throw new HttpError(400, "BAD_POOL", "Pick between 1 and 12 fragments for the pool");
     }
     const seen = new Set<string>();
-    const fragments: { id: string; weight: number }[] = [];
+    const fragments: { id: string; weight: number; qty: number }[] = [];
     let total = 0;
     for (const row of rows) {
       const id = String(row?.id || "");
@@ -89,9 +89,16 @@ export default handle(async (req, res) => {
       if (!Number.isFinite(weight) || weight <= 0 || weight > 1000) {
         throw new HttpError(400, "BAD_WEIGHT", "Weights must be > 0 and <= 1000");
       }
+      // P75 — optional copy count: the owner can put the SAME fragment into
+      // the pool up to 100 times ("25k$ 9" ×9). The roll normalizes weights,
+      // so qty widens the exact share and keeps the definition explicit.
+      const qty = Math.floor(Number(row?.qty) || 1);
+      if (!Number.isFinite(qty) || qty < 1 || qty > 100) {
+        throw new HttpError(400, "BAD_QTY", "Copies must be between 1 and 100");
+      }
       seen.add(id);
-      fragments.push({ id, weight });
-      total += weight;
+      fragments.push({ id, weight, qty });
+      total += weight * qty;
     }
     if (fragments.length < 1 || total <= 0 || total > 1000) {
       throw new HttpError(400, "BAD_POOL", "The pool needs at least one fragment (total weight <= 1000)");

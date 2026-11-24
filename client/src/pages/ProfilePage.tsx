@@ -25,6 +25,9 @@ import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createPublicProfileSnapshot, createDefaultPublicProfileSettings } from "@/lib/public-profile";
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
+import { ProfileFrame, FrameSwatch } from "@/components/profile/ProfileFrame";
+import { useEquippedFrame, useFrameRole } from "@/hooks/use-frame";
+import { FRAMES, getFrame } from "@shared/frames";
 
 const USERNAME_TEST = /^[a-zA-Z0-9_]{3,20}$/;
 import { getProfileBackground, PROFILE_BACKGROUNDS, BackgroundVideo } from "@/lib/profile-backgrounds";
@@ -155,6 +158,11 @@ export default function ProfilePage() {
   const { data: trades } = useTrades();
   const { data: settings } = usePublicProfileSettings();
   const savePublicProfile = useSavePublicProfile();
+  // P75 — equipped profile frame (server-owned) + gallery state
+  const { frame: equippedFrame } = useEquippedFrame(user?.uid);
+  const isSuperAdmin = useFrameRole();
+  const [previewFrame, setPreviewFrame] = useState<string | null>(null);
+  const [frameBusy, setFrameBusy] = useState(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [usernameDialogOpen, setUsernameDialogOpen] = useState(false);
@@ -195,9 +203,10 @@ export default function ProfilePage() {
         social: profile?.social,
         profileVideo: profile?.profileVideo,
         avatarVideo: profile?.avatarVideo,
+        frame: equippedFrame,
       },
     });
-  }, [settings, username, user, displayName, trades, profile]);
+  }, [settings, username, user, displayName, trades, profile, equippedFrame]);
 
   // visibility chips — flip one flag and REPUBLISH (the public snapshot and
   // this mirror must move together; the save flow handles redirect stubs)
@@ -213,6 +222,25 @@ export default function ProfilePage() {
   };
   const gradient = useMemo(() => gradientFor(user?.uid || displayName), [user?.uid, displayName]);
   const initials = useMemo(() => initialsOf(displayName), [displayName]);
+  // P75 — equip/clear through the API (server enforces the CEO exclusivity);
+  // then republish so the public profile picks the frame up immediately
+  const applyFrame = async (id: string | null) => {
+    if (frameBusy) return;
+    setFrameBusy(true);
+    try {
+      if (id) await authedFetch("/api/admin?action=frame-equip", { frame: id });
+      else await authedFetch("/api/admin?action=frame-clear", {});
+      toast({ title: id ? t("frameEquipped") : t("frameRemoved") });
+      setPreviewFrame(null);
+      if (settings?.enabled && username) {
+        await savePublicProfile.mutateAsync({ username, displayName, trades: trades ?? [], settings });
+      }
+    } catch (e: any) {
+      toast({ title: t("serverError"), description: String(e?.message || ""), variant: "destructive" });
+    } finally {
+      setFrameBusy(false);
+    }
+  };
   const avatarSrc = profile?.avatar || user?.photoURL || null;
   // uploaded looping avatar video (Telegram-style) — wins over everything.
   // Phase 33: `media:{hash}` ids (VIP uploads) resolve to the public media endpoint.
@@ -534,6 +562,9 @@ export default function ProfilePage() {
           <span className="text-xs">{t("profileEdit")}</span>
         </Button>
         <div className="relative">
+          {/* P75 — the equipped frame renders as a ring around the avatar on
+              every branch (video / image / initials) */}
+          <ProfileFrame frame={equippedFrame} className="w-fit mx-auto">
           {avatarVideoSrc || profileVideoSrc ? (
             <video
               src={avatarVideoSrc || profileVideoSrc!}
@@ -570,6 +601,7 @@ export default function ProfilePage() {
               {initials}
             </div>
           )}
+          </ProfileFrame>
           <h1 className="mt-4 text-xl font-bold tracking-tight">{displayName}</h1>
           {/* Phase 32b: Telegram-style badge to the RIGHT of the handle */}
           <div className="mt-0.5 flex items-center justify-center gap-1.5">
@@ -714,6 +746,71 @@ export default function ProfilePage() {
           ) : undefined}
         />
       </motion.div>
+
+      {/* P75 — profile frames: gallery + preview + equip/remove. The CEO card
+          only renders for accounts the SERVER reports as super_admin; the
+          actual equip check happens server-side regardless. */}
+      <section className="mt-4 rounded-3xl border border-border/50 bg-card/60 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold tracking-tight">{t("frameTitle")}</h2>
+          {equippedFrame && (
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              {t("frameEquipped")}: {getFrame(equippedFrame)?.name ?? equippedFrame}
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{t("frameHint")}</p>
+        <div className="mt-4 flex flex-col items-center gap-2">
+          <ProfileFrame frame={previewFrame ?? equippedFrame}>
+            {avatarVideoSrc || profileVideoSrc ? (
+              <video src={avatarVideoSrc || profileVideoSrc!} autoPlay loop muted playsInline preload="metadata" className="h-20 w-20 rounded-full object-cover" />
+            ) : avatarSrc ? (
+              <img src={avatarSrc} alt={displayName} className="h-20 w-20 rounded-full object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <span className="flex h-20 w-20 items-center justify-center rounded-full text-2xl font-bold text-white" style={{ background: `linear-gradient(160deg, ${gradient[0]}, ${gradient[1]})` }}>
+                {initials}
+              </span>
+            )}
+          </ProfileFrame>
+          {(() => {
+            const d = getFrame(previewFrame ?? equippedFrame);
+            return d ? (
+              <p className="max-w-xs text-center text-xs leading-relaxed text-muted-foreground">
+                <span className="font-semibold text-foreground">{d.name}</span> — {d.desc}
+              </p>
+            ) : (
+              <p className="text-center text-xs text-muted-foreground">{t("frameNone")}</p>
+            );
+          })()}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          {FRAMES.filter((f) => !f.exclusive || isSuperAdmin).map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setPreviewFrame(f.id)}
+              aria-label={f.name}
+              className={cn(
+                "rounded-full p-0.5 transition-transform hover:scale-105",
+                (previewFrame ?? equippedFrame) === f.id && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+              )}
+            >
+              <FrameSwatch frame={f.id} />
+            </button>
+          ))}
+        </div>
+        {previewFrame && previewFrame !== equippedFrame && (
+          <Button size="sm" className="mt-3 w-full rounded-xl" disabled={frameBusy} onClick={() => applyFrame(previewFrame)}>
+            {t("frameEquip")}
+          </Button>
+        )}
+        {equippedFrame && !previewFrame && (
+          <Button size="sm" variant="outline" className="mt-3 w-full rounded-xl" disabled={frameBusy} onClick={() => applyFrame(null)}>
+            {t("frameRemove")}
+          </Button>
+        )}
+        <p className="mt-3 text-center text-[11px] text-muted-foreground/70">{t("frameExclusiveNote")}</p>
+      </section>
 
       {/* Actions */}
 

@@ -1490,7 +1490,7 @@ import { assertPriceIdentity } from "@shared/feed-validation";
 import { extractSpark } from "@/lib/sparkline";
 export { assertPriceIdentity };
 
-// ---- P74 — instant cold-start chart paint (sessionStorage snapshot) --------
+// ---- P74/P75 — instant cold-start chart paint (persisted tail snapshot) ----
 // A fresh page load (or first terminal entry) has an empty in-memory cache,
 // so the chart waited for the FULL provider fetch before its first paint —
 // the "terminal opens slow" complaint. We persist the last tail per
@@ -1503,11 +1503,11 @@ const snapRefreshing = new Set<string>();
 
 function snapRead(key: string): Bar[] | null {
   try {
-    const raw = sessionStorage.getItem(SNAP_PREFIX + key);
+    const raw = localStorage.getItem(SNAP_PREFIX + key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { at?: number; bars?: Bar[] };
     if (!Array.isArray(parsed.bars) || !parsed.bars.length) return null;
-    if (Date.now() - (parsed.at ?? 0) > SNAP_TTL_MS) { sessionStorage.removeItem(SNAP_PREFIX + key); return null; }
+    if (Date.now() - (parsed.at ?? 0) > SNAP_TTL_MS) { localStorage.removeItem(SNAP_PREFIX + key); return null; }
     const last = parsed.bars[parsed.bars.length - 1] as Bar;
     if (!last || typeof last.time !== "number" || typeof last.close !== "number") return null;
     return parsed.bars;
@@ -1516,10 +1516,10 @@ function snapRead(key: string): Bar[] | null {
 
 function snapWrite(key: string, bars: Bar[]): void {
   try {
-    sessionStorage.setItem(SNAP_PREFIX + key, JSON.stringify({ at: Date.now(), bars: bars.slice(-SNAP_BARS) }));
+    localStorage.setItem(SNAP_PREFIX + key, JSON.stringify({ at: Date.now(), bars: bars.slice(-SNAP_BARS) }));
     const keys: string[] = [];
-    for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); if (k && k.startsWith(SNAP_PREFIX)) keys.push(k); }
-    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) sessionStorage.removeItem(k); // keep ≤10 keys
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(SNAP_PREFIX)) keys.push(k); }
+    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) localStorage.removeItem(k); // keep ≤10 keys
   } catch { /* quota or private mode — the feature is optional */ }
 }
 

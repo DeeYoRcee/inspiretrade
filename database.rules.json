@@ -163,6 +163,9 @@
     "avatar": {
      ".validate": "newData.isString() && newData.val().length <= 200000"
     },
+    "frame": {
+     ".validate": "newData.isString() && newData.val().length <= 40 && newData.val() === root.child('frames').child(auth.uid).child('frame').val()"
+    },
     "usernames": {
      "$i": {
       ".validate": "newData.hasChildren(['username', 'key'])",
@@ -348,6 +351,12 @@
    }
   },
   "admins": {
+   "$uid": {
+    ".read": "$uid === auth.uid",
+    ".write": false
+   }
+  },
+  "frames": {
    "$uid": {
     ".read": "$uid === auth.uid",
     ".write": false
