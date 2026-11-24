@@ -6,6 +6,7 @@ import { updateProfile } from "firebase/auth";
 import { ref, getDatabase } from "firebase/database";
 import { MediaLightbox } from "@/components/media-lightbox";
 import type { PublicProfileSettings } from "@/lib/public-profile";
+import { titlesForProfile, TitleStrip } from "@/pages/TitlesPage";
 import {
   Camera, Clapperboard, Copy, Crown, Instagram, Loader2, Pencil, Send, Trash2, Twitter, Video, Activity, Target, TrendingUp, TrendingDown, CalendarDays,
   X, History, StickyNote, BarChart3,
@@ -586,6 +587,9 @@ export default function ProfilePage() {
               </span>
             )}
           </div>
+          {/* P67 user request: earned titles (CEO / VIP / Collector) show on
+              the profile card for everyone */}
+          <TitleStrip size="sm" titles={titlesForProfile({ ceo: profile?.ceo, isPremium: isVip, usernames: profile?.usernames })} />
           {/* Telegram-collectible style — every handle this account holds */}
           {heldUsernames.length > 1 && (
             <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 px-6">

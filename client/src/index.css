@@ -411,7 +411,9 @@ img[src="/logo.png"] {
   content: "";
   position: fixed;
   bottom: 0;
-  right: 2vw;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
   z-index: -2;
   height: min(88vh, 880px);
   max-width: min(52vw, 560px);
@@ -445,7 +447,8 @@ img[src="/logo.png"] {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* P67 user request: the knight poster sits a touch lower */
+  bottom: -7vh;
   z-index: -2;
   margin: 0 auto;
   height: min(92vh, 900px);
@@ -474,11 +477,28 @@ img[src="/logo.png"] {
 /* ---- P66 — animated overlays for IMAGE profile backgrounds ---------------
    skywalker = storm: rain streaks sweeping down + a lightning flicker.
    knight    = petals: drifting flower dots + a warm sun-glow pulse. */
+.bg-fx-storm::before {
+  /* P67 user request: a visible lightning bolt flashes across the storm
+     overlay twice per cycle (steps() so the flash is snappy, not eased) */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(115deg, transparent 46%, rgb(226 240 255 / 0.3) 49.6%, rgb(255 255 255 / 0.5) 50%, transparent 53.5%),
+    linear-gradient(112deg, transparent 58%, rgb(226 240 255 / 0.18) 60%, transparent 62%);
+  opacity: 0;
+  animation: bgfx-bolt 7s steps(1) infinite;
+}
+@keyframes bgfx-bolt {
+  0%, 79.9%, 82.1%, 86.9%, 88.1%, 100% { opacity: 0; }
+  80%, 82% { opacity: 1; }
+  87%, 88% { opacity: 0.75; }
+}
 .bg-fx-storm {
   background-image:
     repeating-linear-gradient(76deg,
       transparent 0 34px,
-      rgb(190 205 225 / 0.07) 34px 36px,
+      rgb(190 205 225 / 0.09) 34px 36px,
       transparent 36px 88px),
     radial-gradient(ellipse 60% 34% at 50% 0%, rgb(200 214 236 / 0.12), transparent 70%);
   animation: bgfx-rain 0.9s linear infinite, bgfx-flash 6.5s ease-in-out infinite;
@@ -490,7 +510,7 @@ img[src="/logo.png"] {
   background:
     repeating-linear-gradient(80deg,
       transparent 0 52px,
-      rgb(190 205 225 / 0.05) 52px 54px,
+      rgb(190 205 225 / 0.07) 52px 54px,
       transparent 54px 120px),
     radial-gradient(ellipse 50% 30% at 30% 10%, rgb(190 205 225 / 0.08), transparent 70%);
   animation: bgfx-rain 1.35s linear infinite reverse;
@@ -523,7 +543,7 @@ img[src="/logo.png"] {
   to { filter: brightness(1.1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .bg-fx-storm, .bg-fx-storm::after, .bg-fx-petals { animation: none; }
+  .bg-fx-storm, .bg-fx-storm::after, .bg-fx-storm::before, .bg-fx-petals { animation: none; }
 }
 
 /* theme picker dots — real swatches per theme (settings page + navbar) */

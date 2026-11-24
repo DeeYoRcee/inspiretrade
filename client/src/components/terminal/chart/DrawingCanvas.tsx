@@ -14,6 +14,7 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
 import {
   hitTest, makeDrawing, renderDrawing, setupCanvas, regressionLine,
+  rectHandlePoints, rectHandleApply,
   TEXT_TOOLS, CLICK_COLLECT_TOOLS, TOOL_POINT_COUNT, TOOL_LABELS, drawHandle,
   magnetSnapPrice, magnetSnapNear, magnetSnapTime, MAGNET_PX, snapToTick, clampPositionPrice,
   createPositionFromGesture, fmtPositionPrice,
@@ -151,6 +152,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   magnetModeRef.current = (magnetMode ?? (magnet ? 1 : 0)) as 0 | 1 | 2;
   /** P46 §2.5 — last snap location for the visual feedback ring (post-clip) */
   const snapFlashRef = useRef<XY | null>(null);
+  /** P66 §10 — THIS chart's clickable trade-line chips (per-instance) */
+  const chipRectsRef = useRef<TradeChipRect[]>([]);
   const getBarsRef = useRef(getBars);
   getBarsRef.current = getBars;
   /** Phase 27 §7: inline text editor draft (replaces window.prompt) */
@@ -354,10 +357,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         pts.length = 0;
         pts.push(e0, { x: m.x, y: m.y }, { x: m.x, y: Math.max(0, Math.min(H, 2 * e0.y - m.y)) });
       } else if (m && pts.length < wantPts) {
+        // P66 §3 — the in-flight preview leg snaps to OHLC live (magnet + flash
+        // ring), so what the user sees while dragging is EXACTLY what commits
+        let mp: XY = m;
+        const tNow = conv.time(m.x), prNow = conv.price(m.y);
+        if (tNow != null && prNow != null) {
+          const sNow = snapPoint(tNow, prNow);
+          if (sNow.time !== tNow || sNow.price !== prNow) {
+            const sx = conv.x(sNow.time), sy = conv.y(sNow.price);
+            if (sx != null && sy != null) mp = { x: sx, y: sy };
+          }
+        }
         // P38 §5 — Shift-locked preview leg
         const last = drag.drawing.points[drag.drawing.points.length - 1];
         const anchor = last ? (() => { const ax = conv.x(last.time); const ay = conv.y(last.price); return ax != null && ay != null ? { x: ax, y: ay } : null; })() : null;
-        pts.push(anchor ? snapLegScreen(anchor, m, shiftRef.current, drag.drawing.type) : m);
+        pts.push(anchor ? snapLegScreen(anchor, mp, shiftRef.current, drag.drawing.type) : mp);
       }
       // P39b — pad the preview to the tool's arity (repeat the last point):
       // 3/4-point tools used to render with a SHORT pts array mid-creation
@@ -382,10 +396,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
           drag.drawing.text = measureLabel(drag.drawing.points[0], drag.drawing.points[1]);
         }
         renderDrawing(ctx, drag.drawing, pts, W, H, true, renderEnvRef.current);
-        if (drag.mode === "handle" && drag.handle != null) drawHandle(ctx, pts[drag.handle], true);
+        if (drag.mode === "handle" && drag.handle != null) {
+          // P66 — the active dot sits on the SEMANTIC handle (position tools
+          // use the 5 derived anchors, rectangles the 8 derived handles); the
+          // raw pts array has neither — pts[3] used to be undefined and the
+          // drag preview crashed the redraw (width-resize looked impossible)
+          const hp = isPositionTool(drag.drawing.type) && pts.length >= 3
+            ? positionAnchors(pts)[drag.handle]
+            : drag.drawing.type === "rect" && pts.length === 2
+              ? rectHandlePoints(pts)[drag.handle]
+              : pts[drag.handle];
+          if (hp) drawHandle(ctx, hp, true);
+        }
       }
     } else if (drag?.mode === "trade" && drag.trade) {
-      drawTradeLine(ctx, drag.trade.price, drag.trade, conv, true);
+      drawTradeLine(ctx, drag.trade.price, drag.trade, conv, true, 0, chipRectsRef.current);
     }
 
     // ---- hover highlight ----------------------------------------------------
@@ -401,7 +426,18 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
           ctx.beginPath();
           if (d.type === "hline") { ctx.moveTo(0, pts[0].y); ctx.lineTo(W, pts[0].y); }
           else if (d.type === "vline") { ctx.moveTo(pts[0].x, 0); ctx.lineTo(pts[0].x, H); }
-          else { ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y); }
+          else {
+            // P66 §6 — highlight the object's BOUNDING BOX (the old diagonal
+            // pts[0]→last told shapes/fibs nothing about their hit area)
+            const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+            const x0 = Math.min(...xs) - 5, y0 = Math.min(...ys) - 5;
+            const x1 = Math.max(...xs) + 5, y1 = Math.max(...ys) + 5;
+            ctx.moveTo(x0, y0);
+            ctx.lineTo(x1, y0);
+            ctx.lineTo(x1, y1);
+            ctx.lineTo(x0, y1);
+            ctx.closePath();
+          }
           ctx.stroke();
           ctx.restore();
           for (const p of (isPositionTool(d.type) && pts.length >= 3 ? positionAnchors(pts) : pts)) drawHandle(ctx, p, false);
@@ -410,13 +446,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
 
     // ---- trade lines (positions) -------------------------------------------
-    tradeChipRects.length = 0;
+    const chipRects = chipRectsRef.current;
+    chipRects.length = 0;
     if (!drag || drag.mode !== "trade") {
       // PHASE 63: chips of overlapping lines stack downward (14px steps) so
       // several positions near the same price never cover each other.
       const stack = new Map<number, number>();
       const dragged = drag?.mode === "trade" ? drag.trade : null;
-      if (dragged) drawTradeLine(ctx, dragged.price, dragged, conv, true);
+      if (dragged) drawTradeLine(ctx, dragged.price, dragged, conv, true, 0, chipRects);
       for (const t of tradeRef.current) {
         if (dragged && t.positionId === dragged.positionId && t.kind === dragged.kind) continue;
         const y = conv.y(t.price);
@@ -424,7 +461,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         const bucket = Math.round(y / (CHIP_H + 1));
         const n = stack.get(bucket) ?? 0;
         stack.set(bucket, n + 1);
-        drawTradeLine(ctx, t.price, t, conv, false, n * (CHIP_H - 3));
+        drawTradeLine(ctx, t.price, t, conv, false, n * (CHIP_H - 3), chipRects);
       }
     }
     ctx.restore();
@@ -493,17 +530,45 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  /** P66 §8 — ONE canvas-point mapper for hit-testing/cursors: off-scale
+   * anchors clamp like the renderer does (never ±9999 sentinels poisoning
+   * the geometry), so drawings anchored beyond the visible range still
+   * select and drag predictably. */
+  const canvasPts = (d: Drawing): XY[] => {
+    const conv = converterRef.current;
+    if (!conv) return [];
+    const topPrice = conv.price(0);
+    return d.points.map((q) => {
+      const yRaw = conv.y(q.price);
+      const y = yRaw ?? (topPrice != null && q.price > topPrice ? 1 : conv.paneH - 1);
+      return { x: conv.x(q.time) ?? -conv.paneW * 0.25, y };
+    });
+  };
+
   const cursorFor = (p: XY): string => {
     const conv = converterRef.current;
     if (!conv) return "default";
     if (toolRef.current) return lockedRef.current ? "not-allowed" : "crosshair";
     if (hiddenAllRef.current || lockedRef.current) return "default";
-    const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
+    const hit = hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
     // Phase 59: feed the hover renderer — this ref was declared but never
     // written, so the hover glow/handle dots never appeared
     const hitId = hit != null ? drawingsRef.current[hit.index]?.id : undefined;
     hoverRef.current = hit != null && hitId ? { id: hitId, handle: hit.handle } : null;
-    if (hit?.handle != null) return "grab";
+    if (hit?.handle != null) {
+      // P66 §6 — directional resize cursors on the semantic handles
+      const hd = drawingsRef.current[hit.index];
+      if (hd?.type === "rect") {
+        if (hit.handle <= 3) return "nwse-resize";
+        if (hit.handle <= 5) return "ns-resize";
+        return "ew-resize";
+      }
+      if (hd && isPositionTool(hd.type)) {
+        if (hit.handle <= 2) return "ns-resize";
+        return "ew-resize";
+      }
+      return "grab";
+    }
     if (hit) return "move";
     for (const t of tradeRef.current) {
       if (t.kind === "entry") continue;
@@ -555,7 +620,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     // 1a) PHASE 63 — label chip hit: opening the panel must work even when
     //     the chip is stacked away from its line or the line is the fixed
     //     entry of a filled position.
-    for (const r of tradeChipRects) {
+    for (const r of chipRectsRef.current) {
       if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y - 2 && p.y <= r.y + r.h + 2) {
         dragRef.current = { mode: "trade", trade: { ...r.t }, tradeClickOnly: true };
         e.stopPropagation();
@@ -668,7 +733,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
     // 3) hit-test drawings → select + begin move/handle
     if (lockedRef.current || hiddenAllRef.current) return; // LOCK/HIDE: objects are frozen
-    const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
+    const hit = hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
     if (hit) {
       const d = drawingsRef.current[hit.index];
       // Ctrl/Shift-click edits the multi-selection — no drag, no chart pan
@@ -726,6 +791,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     const drag = dragRef.current;
     const target = attachEl();
     if (!drag) {
+      // P66 §8 — dragging the PRICE SCALE (vertical zoom) fires no visible-
+      // range event; a pressed pointer coalesces a redraw so drawings never
+      // lag behind the scale. rAF-throttled by scheduleHover.
+      if (e.buttons) scheduleHover();
       const c0 = cursorFor(p); // one hit-test per move (was two full passes)
       const c = c0 === "default" ? cursorFallbackRef.current : c0;
       // PHASE 62 fix #9: the cursor only changes on object ENTER/LEAVE —
@@ -850,6 +919,18 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
           points[1] = { ...points[1], time: t2 };
           points[2] = { ...points[2], time: t2 };
         }
+      } else if (drag.original.type === "rect" && drag.original.points.length === 2) {
+        // P66 §4 — eight-handle rectangle: corners 0-3, edges 4/5 (price
+        // only) and 6/7 (time only). The pure market-space helper keeps the
+        // semantics unit-tested; magnet applies to the dragged handle.
+        let t2 = time, pr2 = price;
+        if (snapPx) {
+          const s = snapPoint(time, price);
+          if (s.time !== time || s.price !== price) { t2 = s.time; pr2 = s.price; flashAt(s.time, s.price); }
+        }
+        const rp = rectHandleApply(points, drag.handle, t2, pr2);
+        points[0] = rp[0];
+        points[1] = rp[1];
       } else {
         let pt: DrawingPoint = { time, price };
         if (snapPx) {
@@ -972,7 +1053,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
             const time = conv.time(p.x);
             const price = conv.price(p.y);
             if (time != null && price != null) {
-              const finalPt = snapLegMarket(d.points[d.points.length - 1], { time, price }, e.shiftKey, tool);
+              // P66 §3 — the release point snaps to OHLC exactly like a
+              // click-committed anchor (the old path skipped magnet entirely,
+              // so press-drag-release — the primary gesture — never snapped)
+              const sFinal = snapPoint(time, price);
+              const finalPt = snapLegMarket(d.points[d.points.length - 1], sFinal, e.shiftKey, tool);
               const drawing = { ...d, points: [...d.points, finalPt] };
               if (tool === "measure") {
                 drawing.text = measureLabel(drawing.points[0], drawing.points[1]);
@@ -1039,7 +1124,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (!conv) return;
     if (lockedRef.current || hiddenAllRef.current) return;
     const p = localXY(e);
-    const hit = hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
+    const hit = hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
     if (hit) {
       e.stopPropagation();
       cbRef.current.onSelect(drawingsRef.current[hit.index].id);
@@ -1055,7 +1140,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     e.stopPropagation();
     if (p.x > conv.paneW || p.y > conv.paneH) return;
     const hit = (lockedRef.current || hiddenAllRef.current) ? null
-      : hitTest(p, drawingsRef.current, (d) => d.points.map((q) => ({ x: conv.x(q.time) ?? -9999, y: conv.y(q.price) ?? -9999 })), conv.paneW, conv.paneH);
+      : hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
     cbRef.current.onContextMenu(e.clientX, e.clientY, hit ? drawingsRef.current[hit.index].id : null);
   };
 
@@ -1200,9 +1285,11 @@ DrawingCanvas.displayName = "DrawingCanvas";
 // Trade lines (entry / SL / TP) rendering
 // ---------------------------------------------------------------------------
 
-/** PHASE 63 — chip rects of the CURRENT frame, filled by drawTradeLine and
- *  consumed by the pointerdown hit-test (clicking a label opens the panel). */
-const tradeChipRects: { t: TradeLine; x: number; y: number; w: number; h: number }[] = [];
+/** PHASE 63 — trade-line chip rects. P66 §10: the array itself moved to a
+ *  per-instance ref (chipRectsRef) — a module-level array was shared by every
+ *  PriceChart on the page, so in multi-chart layouts a chip click could open
+ *  the panel of a DIFFERENT chart. drawTradeLine receives the array to fill. */
+type TradeChipRect = { t: TradeLine; x: number; y: number; w: number; h: number };
 
 const CHIP_H = 18;
 
@@ -1214,6 +1301,8 @@ function drawTradeLine(
   dragging: boolean,
   /** vertical chip offset from label stacking (overlapping lines) */
   stackOffset = 0,
+  /** P66 §10 — the calling chart's rect collector */
+  chipRects: TradeChipRect[] = [],
 ): void {
   const y = conv.y(price);
   if (y == null) return;
@@ -1256,13 +1345,8 @@ function drawTradeLine(
     if (t.symbol) segs.push({ text: t.symbol, fg: "#cbd5e1", bold: true });
     if (t.lots != null) segs.push({ text: t.lots.toFixed(2), fg: "#94a3b8" });
     segs.push({ text: priceText, fg: "#e2e8f0" });
-    if (t.pnl != null) {
-      segs.push({
-        text: `${t.pnl >= 0 ? "+" : "\u2212"}$${Math.abs(t.pnl).toFixed(2)}`,
-        fg: t.pnl >= 0 ? "#4ade80" : "#f87171",
-        bold: true,
-      });
-    }
+    // P67 user request: the floating +/−$ profit label no longer renders on
+    // the entry chip — the chart carries no per-trade profit text anymore.
   } else {
     segs.push({ text: t.label, fg: "#ffffff", bg: t.error ? "#dc2626" : t.color, bold: true });
     segs.push({ text: priceText, fg: "#e2e8f0" });
@@ -1274,7 +1358,7 @@ function drawTradeLine(
   const chipY = y - CHIP_H / 2 + stackOffset;
   const chipX = W - w - 4;
   // collect for hit-testing (pointerdown → open panel)
-  tradeChipRects.push({ t, x: chipX, y: chipY, w, h: CHIP_H });
+  chipRects.push({ t, x: chipX, y: chipY, w, h: CHIP_H });
 
   ctx.globalAlpha = dragging ? 0.97 : 0.88;
   ctx.fillStyle = "rgba(13,21,38,0.92)";

@@ -1808,84 +1808,16 @@ export function PriceChart({
   const paneHostRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // ---- markers from the fills ledger ------------------------------------------
+  // P67 user request: the trade-history markers on the candles (the B/S
+  // arrows and the +$x / −$x profit circles) are no longer wanted — the chart
+  // stays clean; positions and orders are still visible as the MT5-style
+  // entry/SL/TP lines. applyMarkers is kept as a no-op so every call site
+  // (symbol switch, account switch, position changes) still clears markers.
   const applyMarkers = useCallback(() => {
     const candle = candleRef.current;
     if (!candle) return;
-    const sym = symbolRef.current;
-    const data = barsRef.current;
-    if (!data.length) { candle.setMarkers([]); return; }
-    // PHASE 65 §1 — markers anchor STRICTLY to each event's own execution
-    // timestamp: a trade outside the loaded range is skipped (never clamped
-    // to bar 0 / last bar), and duplicate markers (same time+position+shape+
-    // text) collapse to one. The tf period bounds the live-candle tolerance.
-    // UNIT FIX: the fills ledger stores openedAt/closedAt in MILLISECONDS
-    // (Date.now()) while bar times are UNIX SECONDS — the old un-converted
-    // comparison always overflowed to "after the last bar", so EVERY marker
-    // clamped onto the newest candle and appeared to drift with the chart.
-    const toSec = (t: number) => (t > 1e12 ? Math.floor(t / 1000) : Math.floor(t));
-    const tfSec = TF_SECONDS[timeframeRef.current] ?? 60;
-    const markers: SeriesMarker<Time>[] = [];
-    // PHASE 63 §2 + user request: the B/S icon must appear the moment the
-    // position opens and STAY on its execution candle while the position is
-    // live (the closed-fills ledger used to be the only source, so open
-    // positions had no marker at all for up to 30s).
-    for (const pos of positionsRef.current) {
-      if (pos.symbol !== sym) continue;
-      const idx = findBarIndexOpt(data, toSec(pos.openedAt), true, tfSec);
-      if (idx == null) continue;
-      markers.push({
-        time: data[idx].time as UTCTimestamp,
-        position: pos.side === "buy" ? "belowBar" : "aboveBar",
-        color: pos.side === "buy" ? "#16a34a" : "#dc2626",
-        shape: pos.side === "buy" ? "arrowUp" : "arrowDown",
-        text: `${pos.side === "buy" ? "B" : "S"} ${pos.lots.toFixed(2)}`,
-      });
-    }
-    for (const tr of tradesRef.current) {
-      if (tr.symbol !== sym) continue;
-      const idx = findBarIndexOpt(data, toSec(tr.openedAt), true, tfSec);
-      if (idx == null) continue;
-      markers.push({
-        time: data[idx].time as UTCTimestamp,
-        position: tr.side === "buy" ? "belowBar" : "aboveBar",
-        color: tr.side === "buy" ? "#22c55e" : "#ef4444",
-        shape: tr.side === "buy" ? "arrowUp" : "arrowDown",
-        text: `${tr.side === "buy" ? "B" : "S"} ${tr.lots}`,
-      });
-      const exitIdx = findBarIndexOpt(data, toSec(tr.closedAt), true, tfSec);
-      if (exitIdx != null && exitIdx !== idx) {
-        markers.push({
-          time: data[exitIdx].time as UTCTimestamp,
-          position: tr.side === "buy" ? "aboveBar" : "belowBar",
-          color: tr.pnl >= 0 ? "rgba(34,197,94,0.85)" : "rgba(239,68,68,0.85)",
-          shape: "circle",
-          text: `${tr.pnl >= 0 ? "+" : "−"}$${Math.abs(tr.pnl).toFixed(0)}`,
-        });
-      }
-    }
-    const seen = new Set<string>();
-    const unique = markers.filter((m) => {
-      const key = `${m.time}|${m.position}|${m.shape}|${m.text}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    unique.sort((a, b) => (a.time as number) - (b.time as number));
-    candle.setMarkers(unique);
+    candle.setMarkers([]);
   }, []);
-
-  useEffect(() => {
-    if (!accountId) { tradesRef.current = []; applyMarkers(); return; }
-    let disposed = false;
-    const fetchTrades = () => {
-      void tradingApi.getHistory(accountId, 200)
-        .then((trades) => { if (!disposed) { tradesRef.current = trades; applyMarkers(); } })
-        .catch(() => { /* transient — the interval retries */ });
-    };
-    fetchTrades();
-    const timer = setInterval(fetchTrades, 30_000);
-    return () => { disposed = true; clearInterval(timer); };
-  }, [accountId, applyMarkers]);
   useEffect(() => { applyMarkers(); }, [symbol, applyMarkers]);
 
   // ---- price scale mode: auto / log / percent (persisted) ----------------------
@@ -3250,6 +3182,10 @@ export function PriceChart({
           addText: addTextAt,
           deleteDrawing: (id) => deleteManyTree([id]), // locked-aware canonical delete
           duplicateDrawing: duplicateDrawingById,
+          // P66 §7 — z-order from the right-click menu (same canonical path
+          // as the object tree buttons)
+          bringToFront: (id) => commitDrawings(reorderDrawing(drawingsRef.current, id, "front")),
+          sendToBack: (id) => commitDrawings(reorderDrawing(drawingsRef.current, id, "back")),
           toggleHide: toggleDrawingHidden,
           // PHASE 65 §4 — annotation actions (the properties dialog holds the
           // multiline text field for EVERY drawing type)

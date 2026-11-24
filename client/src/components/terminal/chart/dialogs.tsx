@@ -581,6 +581,10 @@ export function ChartContextMenu({
     addText: (time: number, price: number) => void;
     deleteDrawing: (id: string) => void;
     duplicateDrawing: (id: string) => void;
+    /** P66 §7 — z-order also lives in the context menu (parity with the
+     *  object tree; no separate settings UI per tool) */
+    bringToFront: (id: string) => void;
+    sendToBack: (id: string) => void;
     toggleHide: (id: string) => void;
     /** PHASE 65 §4 — open the properties dialog on the annotation field */
     editDrawingText: (id: string) => void;
@@ -618,6 +622,8 @@ export function ChartContextMenu({
   if (state.hitDrawingId) {
     items.push({ label: state.hitHidden ? "Show drawing" : "Hide drawing", onClick: () => actions.toggleHide(state.hitDrawingId!) });
     items.push({ label: "Duplicate drawing", onClick: () => actions.duplicateDrawing(state.hitDrawingId!) });
+    items.push({ label: "Bring to front", onClick: () => actions.bringToFront(state.hitDrawingId!) });
+    items.push({ label: "Send to back", onClick: () => actions.sendToBack(state.hitDrawingId!) });
     // PHASE 65 §4 — annotation actions on ANY drawing: add/edit opens the
     // properties dialog on the (multiline) text field; remove clears it
     items.push({ label: "Add/Edit annotation…", onClick: () => actions.editDrawingText(state.hitDrawingId!) });

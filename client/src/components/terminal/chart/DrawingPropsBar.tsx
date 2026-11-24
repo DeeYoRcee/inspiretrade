@@ -306,7 +306,10 @@ export function DrawingPropsBar({
           title="Annotation — moves with the drawing"
           className="h-5 w-24 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200 placeholder:text-slate-500"
         />
-        {TEXT_LIKE.has(drawing.type) && (
+        {/* P66 §2 — the text-styling controls now cover the trend family as
+            well (label position left/center/right · above/below), so a
+            trendline's label can be placed like TradingView's */}
+        {(TEXT_LIKE.has(drawing.type) || isTrend) && (
         <>
         <input
           type="color"
@@ -326,11 +329,12 @@ export function DrawingPropsBar({
         <select
           title="Text position"
           value={style.textPos || "start"}
-          onChange={(e) => setStyle({ textPos: e.target.value as "start" | "end" | "above" | "below" })}
+          onChange={(e) => setStyle({ textPos: e.target.value as "start" | "center" | "end" | "above" | "below" })}
           className="h-5 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200"
         >
-          <option value="start">At start</option>
-          <option value="end">At end</option>
+          <option value="start">Left end</option>
+          <option value="center">Center</option>
+          <option value="end">Right end</option>
           <option value="above">Above middle</option>
           <option value="below">Below middle</option>
         </select>

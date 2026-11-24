@@ -10,7 +10,8 @@ import {
   rayToEdge, regressionLine, riskReward, isVisibleOnTf, effectiveName,
   FIB_DEFAULT_LEVELS, TOOL_POINT_COUNT, TOOL_LABELS, TEXT_TOOLS, CLICK_COLLECT_TOOLS,
   reorderDrawing, magnetSnapPrice, magnetSnapTime, __sanitizeDrawingList,
-  type Drawing, type DrawingType, type XY,
+  rectHandlePoints, rectHandleApply,
+  type Drawing, type DrawingType, type DrawingPoint, type XY,
 } from "../client/src/lib/drawings.ts";
 
 const p = (x: number, y: number): XY => ({ x, y });
@@ -293,4 +294,87 @@ test("P35 sanitize: freehand capped at 800 points, flags/names preserved", () =>
   assert.equal(out[0].hidden, true);
   assert.equal(out[0].name!.length, 60, "name truncated to 60");
   assert.equal(out[0].text!.length, 200, "text truncated to 200");
+});
+
+// ---------------------------------------------------------------------------
+// P66 — rectangle 8-handle system + position level-line drag
+// ---------------------------------------------------------------------------
+test("P66 rect: eight handle points — corners + edge mids", () => {
+  const pts = [p(100, 200), p(300, 400)];
+  const h = rectHandlePoints(pts);
+  assert.equal(h.length, 8);
+  assert.deepEqual(h[0], pts[0]);
+  assert.deepEqual(h[1], pts[1]);
+  assert.deepEqual(h[2], p(100, 400));
+  assert.deepEqual(h[3], p(300, 200));
+  assert.deepEqual(h[4], p(200, 200));
+  assert.deepEqual(h[5], p(200, 400));
+  assert.deepEqual(h[6], p(100, 300));
+  assert.deepEqual(h[7], p(300, 300));
+});
+
+test("P66 rect: hitTest resolves corners, edge handles and the move body", () => {
+  const toCanvas = (d: Drawing) => d.points.map((q) => ({ x: q.time, y: q.price }));
+  const d = makeDrawing("rect", [{ time: 100, price: 200 }, { time: 300, price: 400 }]);
+  const c0 = hitTest(p(102, 202), [d], toCanvas, 800, 600);
+  assert.equal(c0?.handle, 0, "anchor corner a");
+  const e4 = hitTest(p(200, 202), [d], toCanvas, 800, 600);
+  assert.equal(e4?.handle, 4, "top edge midpoint");
+  const e7 = hitTest(p(298, 300), [d], toCanvas, 800, 600);
+  assert.equal(e7?.handle, 7, "right edge midpoint");
+  const body = hitTest(p(200, 300), [d], toCanvas, 800, 600);
+  assert.equal(body?.index, 0);
+  assert.equal(body?.handle, undefined, "interior = move, not a handle");
+});
+
+test("P66 rect: handle drag moves exactly one boundary per edge handle", () => {
+  const pts: DrawingPoint[] = [{ time: 100, price: 200 }, { time: 300, price: 400 }];
+  // market coordinates: the visual TOP edge is the MAX price, the BOTTOM the min
+  const top = rectHandleApply(pts, 4, 123, 150);
+  assert.deepEqual(top, [{ time: 100, price: 200 }, { time: 300, price: 150 }], "top edge (handle 4) moves the max-price side only");
+  const bot = rectHandleApply(pts, 5, 123, 450);
+  assert.deepEqual(bot, [{ time: 100, price: 450 }, { time: 300, price: 400 }], "bottom edge (handle 5) moves the min-price side only");
+  const left = rectHandleApply(pts, 6, 50, 999);
+  assert.deepEqual(left, [{ time: 50, price: 200 }, { time: 300, price: 400 }], "left edge moves the min-time side only");
+  const right = rectHandleApply(pts, 7, 500, 999);
+  assert.deepEqual(right, [{ time: 100, price: 200 }, { time: 500, price: 400 }], "right edge moves the max-time side only");
+  const c2 = rectHandleApply(pts, 2, 80, 380);
+  assert.deepEqual(c2, [{ time: 80, price: 200 }, { time: 300, price: 380 }], "derived corner = a.time + b.price");
+  const c1 = rectHandleApply(pts, 1, 320, 420);
+  assert.deepEqual(c1, [{ time: 100, price: 200 }, { time: 320, price: 420 }], "anchor corner 1");
+});
+
+test("P66 position: level lines are drag targets; band edges still win", () => {
+  const toCanvas = (d: Drawing) => d.points.map((q) => ({ x: q.time, y: q.price }));
+  const d = makeDrawing("long-position", [
+    { time: 100, price: 100 }, { time: 300, price: 200 }, { time: 300, price: 50 },
+  ]);
+  const entry = hitTest(p(200, 100), [d], toCanvas, 800, 600);
+  assert.equal(entry?.handle, 0, "entry line middle");
+  const stop = hitTest(p(150, 200), [d], toCanvas, 800, 600);
+  assert.equal(stop?.handle, 1, "stop line");
+  const target = hitTest(p(250, 50), [d], toCanvas, 800, 600);
+  assert.equal(target?.handle, 2, "target line");
+  const yMid = 125;
+  const leftEdge = hitTest(p(100, yMid), [d], toCanvas, 800, 600);
+  assert.equal(leftEdge?.handle, 3, "band left edge");
+  const rightEdge = hitTest(p(300, yMid), [d], toCanvas, 800, 600);
+  assert.equal(rightEdge?.handle, 4, "band right edge");
+  const body = hitTest(p(200, 160), [d], toCanvas, 800, 600);
+  assert.equal(body?.index, 0);
+  assert.equal(body?.handle, undefined, "zone interior = move");
+});
+
+test("P66 position: band-edge handles win when yMid coincides with a level", () => {
+  const toCanvas = (d: Drawing) => d.points.map((q) => ({ x: q.time, y: q.price }));
+  // entry exactly at the band's vertical middle: the entry dot (300,100) sits
+  // on the right-edge handle (300,100) — the EDGE must win, width stays resizable
+  const d = makeDrawing("long-position", [
+    { time: 100, price: 100 }, { time: 300, price: 150 }, { time: 300, price: 50 },
+  ]);
+  const right = hitTest(p(300, 100), [d], toCanvas, 800, 600);
+  assert.equal(right?.handle, 4, "right-edge handle beats the level dot at yMid");
+  // far from yMid the level dots keep working
+  const stop = hitTest(p(300, 150), [d], toCanvas, 800, 600);
+  assert.equal(stop?.handle, 1, "stop dot at its own level");
 });

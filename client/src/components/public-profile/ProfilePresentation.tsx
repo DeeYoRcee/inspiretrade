@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
 import { getProfileBackground, BackgroundVideo } from "@/lib/profile-backgrounds";
+import { titlesForProfile, TitleStrip } from "@/pages/TitlesPage";
 
 /**
  * PHASE 62 (user request): the PUBLIC profile must mirror the REAL profile
@@ -128,6 +129,9 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
           )}
         </div>
         <p className="relative text-sm text-emerald-50/60">@{profile.username}</p>
+        {/* P67 user request: earned titles (CEO / VIP / Collector) render on
+            every public profile — computed from the published snapshot. */}
+        <TitleStrip size="sm" titles={titlesForProfile({ ceo: profile.ceo, isPremium: profile.vip, usernames: profile.usernames })} />
 
         {/* Telegram-collectible style — every handle this profile holds */}
         {(profile.usernames?.length ?? 0) > 1 && (

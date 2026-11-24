@@ -39,8 +39,9 @@ export interface DrawingStyle {
   fill?: { color: string; opacity: number };
   /** attached-text color (defaults to the line color) */
   textColor?: string;
-  /** where the attached text sits relative to the anchors */
-  textPos?: "start" | "end" | "above" | "below";
+  /** where the attached text sits relative to the anchors — P66 §2 adds
+   * "center" (midpoint) between the two ends */
+  textPos?: "start" | "center" | "end" | "above" | "below";
   /** trend-line extension: none = segment · left = backward ray · right = ray · both = infinite */
   extend?: "none" | "right" | "left" | "both";
   /** endpoint price labels on line tools */
@@ -414,6 +415,64 @@ export function positionAnchors(pts: XY[]): XY[] {
   ];
 }
 
+/**
+ * P66 §4 — the EIGHT interactive handles of a rectangle, canvas px:
+ * 0/1 = the two anchor corners · 2/3 = the two derived corners ·
+ * 4/5 = top/bottom edge midpoints (vertical-only resize) · 6/7 = left/right
+ * edge midpoints (horizontal-only resize). hitTest and the drag logic in
+ * DrawingCanvas share this exact encoding.
+ */
+export function rectHandlePoints(pts: XY[]): XY[] {
+  if (pts.length < 2) return pts;
+  const [a, b] = pts;
+  const xL = Math.min(a.x, b.x), xR = Math.max(a.x, b.x);
+  const yT = Math.min(a.y, b.y), yB = Math.max(a.y, b.y);
+  const xM = (xL + xR) / 2, yM = (yT + yB) / 2;
+  return [
+    a, b,
+    { x: a.x, y: b.y }, { x: b.x, y: a.y },
+    { x: xM, y: yT }, { x: xM, y: yB },
+    { x: xL, y: yM }, { x: xR, y: yM },
+  ];
+}
+
+/**
+ * P66 §4 — apply a rectangle handle drag in MARKET coordinates (pure):
+ * corners 0-3 reposition their corner; edges 4/5 move ONLY the top/bottom
+ * boundary (prices of the other side untouched); edges 6/7 move ONLY the
+ * left/right boundary. Flips normalize at render time, so dragging a corner
+ * past the opposite one just mirrors the rect like TradingView.
+ */
+export function rectHandleApply(
+  points: DrawingPoint[],
+  handle: number,
+  time: number,
+  price: number,
+): DrawingPoint[] {
+  if (points.length < 2) return points;
+  const a = { ...points[0] };
+  const b = { ...points[1] };
+  switch (handle) {
+    case 0: a.time = time; a.price = price; break;
+    case 1: b.time = time; b.price = price; break;
+    case 2: a.time = time; b.price = price; break;
+    case 3: b.time = time; a.price = price; break;
+    case 4:
+    case 5: {
+      const extreme = handle === 4 ? Math.max(a.price, b.price) : Math.min(a.price, b.price);
+      if (a.price === extreme) a.price = price; else b.price = price;
+      break;
+    }
+    case 6:
+    case 7: {
+      const extreme = handle === 6 ? Math.min(a.time, b.time) : Math.max(a.time, b.time);
+      if (a.time === extreme) a.time = time; else b.time = time;
+      break;
+    }
+  }
+  return [a, b];
+}
+
 // ---------------------------------------------------------------------------
 // P46 §1 — TradingView-grade position interactions (pure, unit-tested)
 // ---------------------------------------------------------------------------
@@ -653,7 +712,7 @@ export interface HitResult {
   handle?: number;
 }
 
-const HANDLE_HIT = 10;  // px radius around endpoints (P44: touch-friendlier)
+const HANDLE_HIT = 12;  // px radius around endpoints (P44/P66: touch-friendlier)
 const LINE_HIT = 5;     // px distance to a line body
 const TEXT_HIT = 6;     // pad around text box edges
 
@@ -685,18 +744,48 @@ export function hitTest(
     // dots are never hit targets (they sit at arbitrary creation clicks)
     if (isPositionTool(d.type) && pts.length >= 3) {
       const anchors = positionAnchors(pts);
-      for (let h = 0; h < anchors.length; h++) {
+      // P66 §5 — the two BAND-EDGE handles (3/4) are checked BEFORE the level
+      // dots (0-2): yMid sits between the levels, so when a level happens to
+      // land near the band's vertical middle the edge handle must still win —
+      // otherwise horizontal width-resize becomes impossible (observed E2E)
+      for (let h = 3; h < anchors.length; h++) {
         if ((p.x - anchors[h].x) ** 2 + (p.y - anchors[h].y) ** 2 <= HANDLE_HIT * HANDLE_HIT) {
           return { index: i, handle: h };
         }
       }
+      for (let h = 0; h < 3; h++) {
+        if ((p.x - anchors[h].x) ** 2 + (p.y - anchors[h].y) ** 2 <= HANDLE_HIT * HANDLE_HIT) {
+          return { index: i, handle: h };
+        }
+      }
+      // P66 §5 — grab ANYWHERE along Entry/Stop/Target to move that level
+      // vertically (TradingView behavior); the right-edge dots still win
+      // because the anchor check above runs first
       const xL = Math.min(pts[0].x, pts[1].x);
       const xR = Math.max(pts[0].x, pts[1].x);
+      if (p.x >= xL - LINE_HIT && p.x <= xR + LINE_HIT) {
+        for (let h = 0; h < 3; h++) {
+          if (Math.abs(p.y - pts[h].y) <= LINE_HIT) return { index: i, handle: h };
+        }
+      }
       const y0 = Math.min(pts[0].y, pts[1].y, pts[2].y);
       const y1 = Math.max(pts[0].y, pts[1].y, pts[2].y);
       if (p.x >= xL - LINE_HIT && p.x <= xR + LINE_HIT && p.y >= y0 - LINE_HIT && p.y <= y1 + LINE_HIT) {
         return { index: i };
       }
+      continue;
+    }
+
+    // P66 §4 — rectangle: EIGHT handles (4 corners + 4 edge midpoints) win
+    // over the body; the whole interior stays a move target
+    if (d.type === "rect" && pts.length === 2) {
+      const handles = rectHandlePoints(pts);
+      for (let h = 0; h < handles.length; h++) {
+        if ((p.x - handles[h].x) ** 2 + (p.y - handles[h].y) ** 2 <= HANDLE_HIT * HANDLE_HIT) {
+          return { index: i, handle: h };
+        }
+      }
+      if (pointInRect(p, pts[0], pts[1], LINE_HIT)) return { index: i };
       continue;
     }
 
@@ -1020,7 +1109,9 @@ function drawAttachedText(ctx: CanvasRenderingContext2D, d: Drawing, pts: XY[]):
   const pos = d.style.textPos || "start";
   let at: XY;
   if (pos === "end") at = pts[pts.length - 1];
-  else if (pos === "above" || pos === "below") {
+  else if (pos === "center" || pos === "above" || pos === "below") {
+    // P66 §2 — center shares the midpoint with above/below; the vertical
+    // offset below decides which side of the line the text sits on
     const a = pts[0], b = pts[pts.length - 1];
     at = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   } else at = pts[0];
@@ -1857,8 +1948,6 @@ export function renderDrawing(
       const xL = Math.min(entry.x, stop.x);
       const xR = Math.max(entry.x, stop.x);
       const w = Math.max(1, xR - xL);
-      const yTop = Math.min(entry.y, stop.y, target.y);
-      const yBot = Math.max(entry.y, stop.y, target.y);
       ctx.save();
       // P44 §6 — per-zone opacity is user-configurable (style.fill.opacity)
       ctx.globalAlpha = (d.style.fill?.opacity ?? 0.16) * alpha;
@@ -1877,10 +1966,9 @@ export function renderDrawing(
       drawSegment(ctx, { x: xL, y: stop.y }, { x: xR, y: stop.y });
       ctx.strokeStyle = profitCol;
       drawSegment(ctx, { x: xL, y: target.y }, { x: xR, y: target.y });
-      ctx.strokeStyle = d.style.color;
-      ctx.globalAlpha = 0.75 * alpha;
-      drawSegment(ctx, { x: xL, y: yTop }, { x: xL, y: yBot });
-      drawSegment(ctx, { x: xR, y: yTop }, { x: xR, y: yBot });
+      // P66 §5 — the blue outer band frame is GONE (user request): the clean
+      // TradingView look keeps only the three level lines + the zone fills;
+      // band edges remain fully editable through their dedicated handles
       ctx.restore();
       // P41 §3 — market-space math with REAL instrument precision
       const entryP = d.points[0]?.price ?? 0;
@@ -1972,8 +2060,12 @@ export function renderDrawing(
   drawAttachedText(ctx, d, pts);
 
   if (selected) {
-    // P41 — position tools show their five semantic handles, not raw anchors
-    const handlePts = isPositionTool(d.type) ? positionAnchors(pts) : pts;
+    // P41 — position tools show their five semantic handles, not raw anchors;
+    // P66 §4 — rectangles show all EIGHT (4 corners + 4 edge midpoints)
+    const handlePts = isPositionTool(d.type) && pts.length >= 3
+      ? positionAnchors(pts)
+      : d.type === "rect" && pts.length === 2 ? rectHandlePoints(pts)
+        : pts;
     for (const p of handlePts) drawHandle(ctx, p, false);
   }
 }
