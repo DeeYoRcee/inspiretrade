@@ -54,10 +54,10 @@
 
   :root[data-theme="cr7"] {
     color-scheme: dark;
-    /* CR7 — carbon black + championship BROWN (P76 user request: the yellow
-       gold read too bright; the accent is now a rich leather/bronze brown —
-       same warm identity, calmer and more premium on every surface) */
-    --background: 30 8% 4%; --foreground: 40 12% 94%; --card: 30 8% 6%; --card-foreground: 40 12% 94%; --popover: 30 8% 7%; --popover-foreground: 40 12% 94%; --primary: 25 58% 33%; --primary-foreground: 36 40% 92%; --secondary: 30 6% 12%; --secondary-foreground: 40 10% 92%; --muted: 30 6% 10%; --muted-foreground: 40 6% 62%; --accent: 28 16% 13%; --accent-foreground: 32 34% 90%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 30 8% 14%; --input: 30 8% 14%; --ring: 25 58% 33%;
+    /* CR7 — P77 user request: the theme goes BLACK. Carbon black surfaces,
+       white/silver accents, zero warm tint. The Ronaldo poster below is
+       grayscaled to match. */
+    --background: 0 0% 3%; --foreground: 0 0% 94%; --card: 0 0% 6%; --card-foreground: 0 0% 94%; --popover: 0 0% 7%; --popover-foreground: 0 0% 94%; --primary: 0 0% 90%; --primary-foreground: 0 0% 7%; --secondary: 0 0% 12%; --secondary-foreground: 0 0% 92%; --muted: 0 0% 10%; --muted-foreground: 0 0% 62%; --accent: 0 0% 13%; --accent-foreground: 0 0% 95%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 0 0% 16%; --input: 0 0% 16%; --ring: 0 0% 90%;
   }
   :root[data-theme="knight"] {
     color-scheme: dark;
@@ -72,12 +72,13 @@
     color-scheme: dark;
     --background: 0 45% 5%; --foreground: 0 15% 95%; --card: 0 35% 9%; --card-foreground: 0 15% 95%; --popover: 0 35% 10%; --popover-foreground: 0 15% 95%; --primary: 0 78% 55%; --primary-foreground: 0 40% 6%; --secondary: 0 20% 15%; --secondary-foreground: 0 15% 95%; --muted: 0 18% 13%; --muted-foreground: 0 10% 66%; --accent: 0 24% 18%; --accent-foreground: 0 15% 95%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 0 22% 20%; --input: 0 22% 20%; --ring: 0 78% 55%;
   }
-  :root[data-theme="christmas"] {
+  :root[data-theme="snow"] {
     color-scheme: dark;
-    /* Christmas — deep pine green surfaces, festive red accents, snow-white
-       text. Calm and dark like the rest of the site; the red stays on
-       primary/ring so buttons and highlights feel seasonal without glare. */
-    --background: 152 32% 4%; --foreground: 150 16% 94%; --card: 152 26% 6%; --card-foreground: 150 16% 94%; --popover: 152 24% 7%; --popover-foreground: 150 16% 94%; --primary: 0 70% 46%; --primary-foreground: 0 0% 100%; --secondary: 152 18% 12%; --secondary-foreground: 150 14% 92%; --muted: 152 16% 10%; --muted-foreground: 150 10% 62%; --accent: 152 22% 15%; --accent-foreground: 0 30% 96%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 142 71% 42%; --success-foreground: 0 0% 100%; --border: 152 18% 14%; --input: 152 18% 14%; --ring: 0 70% 46%;
+    /* Snow — P77 user request: the Christmas theme becomes Snow. Deep frozen
+       night-blue surfaces, icy silver-cyan accents, snow-white text. Calm and
+       dark like the rest of the site; the falling-snow canvas scene lives in
+       ThemeBackdrop. */
+    --background: 214 30% 4%; --foreground: 210 20% 94%; --card: 214 26% 6%; --card-foreground: 210 20% 94%; --popover: 214 24% 7%; --popover-foreground: 210 20% 94%; --primary: 197 60% 58%; --primary-foreground: 214 40% 6%; --secondary: 214 18% 12%; --secondary-foreground: 210 14% 92%; --muted: 214 16% 10%; --muted-foreground: 212 10% 62%; --accent: 214 22% 15%; --accent-foreground: 197 40% 92%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 142 71% 42%; --success-foreground: 0 0% 100%; --border: 214 18% 14%; --input: 214 18% 14%; --ring: 197 60% 58%;
   }
 
   /* ---- Phase 23 BUG-2: the site theme now reaches the terminal ----------
@@ -103,8 +104,8 @@
   :root[data-theme="ocean"]   { --term-bg: #07131f; --term-pane: #06101b; --term-solid: #0c1a28; --term-panel: rgb(12 26 40 / 0.92); --term-panel-95: rgb(12 26 40 / 0.96); --term-border: rgb(56 89 119 / 0.5); --term-border2: rgb(30 58 83 / 0.6); }
   :root[data-theme="forest"]  { --term-bg: #0b1711; --term-pane: #0a140e; --term-solid: #12241a; --term-panel: rgb(18 36 26 / 0.92); --term-panel-95: rgb(18 36 26 / 0.96); --term-border: rgb(52 90 66 / 0.5); --term-border2: rgb(24 46 33 / 0.6); }
   :root[data-theme="vader"]  { --term-bg: #070404; --term-pane: #050303; --term-solid: #140a0a; --term-panel: rgb(20 10 10 / 0.92); --term-panel-95: rgb(20 10 10 / 0.96); --term-border: rgb(153 27 27 / 0.45); --term-border2: rgb(64 20 20 / 0.6); }
-  :root[data-theme="cr7"]    { --term-bg: #0a0908; --term-pane: #080706; --term-solid: #17120d; --term-panel: rgb(23 18 13 / 0.92); --term-panel-95: rgb(23 18 13 / 0.96); --term-border: rgb(146 94 51 / 0.4); --term-border2: rgb(74 52 30 / 0.55); }
-  :root[data-theme="christmas"] { --term-bg: #050f0a; --term-pane: #040c08; --term-solid: #0a1a12; --term-panel: rgb(10 26 18 / 0.92); --term-panel-95: rgb(10 26 18 / 0.96); --term-border: rgb(220 38 38 / 0.4); --term-border2: rgb(22 50 34 / 0.6); }
+  :root[data-theme="cr7"]    { --term-bg: #080808; --term-pane: #060606; --term-solid: #141414; --term-panel: rgb(20 20 20 / 0.92); --term-panel-95: rgb(20 20 20 / 0.96); --term-border: rgb(90 90 90 / 0.4); --term-border2: rgb(48 48 48 / 0.55); }
+  :root[data-theme="snow"] { --term-bg: #060b14; --term-pane: #050910; --term-solid: #0b1220; --term-panel: rgb(11 18 32 / 0.92); --term-panel-95: rgb(11 18 32 / 0.96); --term-border: rgb(125 170 210 / 0.4); --term-border2: rgb(56 90 130 / 0.6); }
   :root[data-theme="knight"] { --term-bg: #07080c; --term-pane: #060709; --term-solid: #10131c; --term-panel: rgb(16 19 28 / 0.92); --term-panel-95: rgb(16 19 28 / 0.96); --term-border: rgb(148 163 184 / 0.4); --term-border2: rgb(56 66 84 / 0.6); }
   :root[data-theme="neon"]    { --term-bg: #0d0618; --term-pane: #0b0515; --term-solid: #180c2b; --term-panel: rgb(24 12 43 / 0.92); --term-panel-95: rgb(24 12 43 / 0.96); --term-border: rgb(232 121 249 / 0.35); --term-border2: rgb(50 26 84 / 0.6); }
   :root[data-theme="cosmos"]  { --term-bg: #05060f; --term-pane: #04050d; --term-solid: #0b0d1e; --term-panel: rgb(11 13 30 / 0.92); --term-panel-95: rgb(11 13 30 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(30 33 66 / 0.6); }
@@ -413,8 +414,8 @@ img[src="/logo.png"] {
   z-index: -3;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 42% 40% at 72% 72%, rgb(234 179 8 / 0.13), transparent 66%),
-    radial-gradient(ellipse 26% 18% at 72% 88%, rgb(234 179 8 / 0.17), transparent 72%);
+    radial-gradient(ellipse 42% 40% at 72% 72%, rgb(226 232 240 / 0.10), transparent 66%),
+    radial-gradient(ellipse 26% 18% at 72% 88%, rgb(226 232 240 / 0.14), transparent 72%);
   animation: it-cr7-glow 7s ease-in-out infinite alternate;
 }
 :root[data-theme="cr7"] body::after {
@@ -430,6 +431,9 @@ img[src="/logo.png"] {
   aspect-ratio: 750 / 900;
   pointer-events: none;
   opacity: 0.9;
+  /* P77 user request: the poster renders DESATURATED — grayscale + a slight
+     contrast lift keeps the silhouette readable against the black theme */
+  filter: grayscale(1) contrast(1.06);
   background: url("/cr7.webp") center bottom / contain no-repeat;
   animation: it-cr7-breathe 9s ease-in-out infinite alternate;
 }
@@ -601,6 +605,7 @@ img[src="/logo.png"] {
 }
 
 .theme-dot-money { background: linear-gradient(135deg, #04140d 35%, #2fbf71 60%, #f5c542); }
+.theme-dot-snow { background: linear-gradient(135deg, #060b14 35%, #7dd3fc 65%, #f8fafc); }
 .theme-dot-f1 { background: linear-gradient(135deg, #2a0707 40%, #dc2626 65%, #f5f5f5); }
 
 .theme-dot-dark { background: #0a0a0f; }
@@ -608,7 +613,7 @@ img[src="/logo.png"] {
 .theme-dot-ocean { background: linear-gradient(135deg, #06283d, #22b8cf); }
 .theme-dot-forest { background: linear-gradient(135deg, #0e2417, #34d17c); }
 .theme-dot-vader { background: linear-gradient(135deg, #050505 35%, #dc2626 75%); }
-.theme-dot-cr7 { background: linear-gradient(135deg, #0b0505 35%, #dc2626 62%, #f5f5f5 88%); }
+.theme-dot-cr7 { background: linear-gradient(135deg, #050505 40%, #3f3f3f 68%, #f5f5f5 92%); }
 .theme-dot-knight { background: linear-gradient(135deg, #07080c 40%, #64748b 72%, #cbd5e1); }
 .theme-dot-neon { background: linear-gradient(135deg, #1b0a2e, #e879f9); }
 .theme-dot-cosmos { background: linear-gradient(135deg, #05060f, #eab308); }

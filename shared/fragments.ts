@@ -4,7 +4,7 @@
  * (via relative import). Keep this file dependency-free (no imports).
  */
 
-export type Rarity = "common" | "rare" | "epic" | "covert" | "mythic";
+export type Rarity = "common" | "rare" | "epic" | "covert" | "mythic" | "black";
 
 export interface FragmentDef {
   id: string;
@@ -26,6 +26,11 @@ export const RARITY_META: Record<
   epic: { label: "Epic", color: "#8847ff", order: 2 },
   covert: { label: "Covert", color: "#eb4b4b", order: 3 },
   mythic: { label: "Mythic", color: "#ffd700", order: 4 },
+  // P77 user request — the BLACK tier: rarer than everything else, rendered
+  // near-black with a silver rim. It is never stored as an inventory
+  // fragment: a black roll deposits a pending PROP ACCOUNT claim instead,
+  // and the tier only ever appears inside the case-opening show.
+  black: { label: "Black", color: "#1c1f26", order: 5 },
 };
 
 /**
@@ -77,7 +82,23 @@ export interface CaseDef {
   /** prop account value this case builds, in USD */
   accountSize: number;
   fragments: FragmentDef[];
+  /** P77 — the BLACK special drop: an instant pending prop-account claim at
+   *  astronomically low odds. Never an inventory fragment, never shown with
+   *  its percentage anywhere. */
+  blackDrop: BlackDrop;
 }
+
+export interface BlackDrop {
+  /** displayed during the opening show only, e.g. "5k$ Prop Account" */
+  label: string;
+  /** the prop account size deposited on the black roll, in USD */
+  accountSize: number;
+  /** roll probability in percent — the server rolls independently of fragments */
+  dropPercent: number;
+}
+
+/** P77 — the single black-roll probability shared by all three cases. */
+export const BLACK_DROP_PERCENT = 0.00000001;
 
 /**
  * Trading Case — Phase 32. The $25,000 prop account as a 9-piece puzzle
@@ -100,9 +121,12 @@ export const TRADING_FRAGMENTS: FragmentDef[] = [
 
 /** The case types of the economy. */
 export const CASES: Record<CaseType, CaseDef> = {
-  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5000, fragments: FRAGMENTS },
-  gold:    { id: "gold",    name: "Gold Case",    accountSize: 10000, fragments: GOLD_FRAGMENTS },
-  trading: { id: "trading", name: "Trading Case", accountSize: 25000, fragments: TRADING_FRAGMENTS },
+  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5000, fragments: FRAGMENTS,
+    blackDrop: { label: "5k$ Prop Account", accountSize: 5000, dropPercent: BLACK_DROP_PERCENT } },
+  gold:    { id: "gold",    name: "Gold Case",    accountSize: 10000, fragments: GOLD_FRAGMENTS,
+    blackDrop: { label: "10k$ Prop Account", accountSize: 10000, dropPercent: BLACK_DROP_PERCENT } },
+  trading: { id: "trading", name: "Trading Case", accountSize: 25000, fragments: TRADING_FRAGMENTS,
+    blackDrop: { label: "25k$ Prop Account", accountSize: 25000, dropPercent: BLACK_DROP_PERCENT } },
 };
 
 export const ALL_FRAGMENTS: FragmentDef[] = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];

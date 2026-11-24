@@ -8,7 +8,7 @@
  */
 import crypto from "crypto";
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger, decrementCounter } from "../lib/firebase";
-import { CASES, TOTAL_DROP_WEIGHT, TOTAL_DROP_WEIGHT_GOLD, expandCasePool, type FragmentDef } from "../lib/fragments";
+import { CASES, TOTAL_DROP_WEIGHT, TOTAL_DROP_WEIGHT_GOLD, BLACK_DROP_PERCENT, expandCasePool, type FragmentDef } from "../lib/fragments";
 
 export function rollFragment(list: FragmentDef[], totalWeight: number) {
   let roll = crypto.randomInt(totalWeight * 100) / 100; // 0 .. total-0.01
@@ -20,6 +20,12 @@ export function rollFragment(list: FragmentDef[], totalWeight: number) {
 }
 
 const CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
+
+/** P77 — black-drop claim reference, mirrors combine's INSP/GLD/TRD + suffix. */
+function makeBlackReference(set: string): string {
+  const prefix = set === "gold" ? "GLD-B" : set === "trading" ? "TRD-B" : "INSP-B";
+  return `${prefix}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+}
 
 export default handle(async (req, res) => {
   assertPost(req);
@@ -75,6 +81,31 @@ export default handle(async (req, res) => {
   // Atomically consume one case of the requested type (see decrementCounter
   // for why the transaction update fn must never return undefined).
   await decrementCounter(counterRef, noCasesError);
+
+  // P77 — the BLACK special drop: 0.00000001% odds on every built-in case.
+  // A hit never touches the fragment pool: the case is consumed and a
+  // pending PROP ACCOUNT claim (the same claims/{uid} path the combine flow
+  // uses) is deposited instantly. The client renders it as the black card.
+  const blackDef = caseType === "inspire" || caseType === "gold" || caseType === "trading"
+    ? CASES[caseType].blackDrop
+    : null;
+  if (blackDef && Math.random() < BLACK_DROP_PERCENT / 100) {
+    const reference = makeBlackReference(caseType);
+    const claimRef = db.ref(`claims/${user.uid}`).push();
+    const claim = {
+      id: claimRef.key,
+      createdAt: now,
+      reference,
+      status: "pending",
+      set: caseType,
+      accountSize: blackDef.accountSize,
+      source: "black-drop",
+      fragments: {},
+    };
+    await claimRef.set(claim);
+    await logLedger({ type: "case_open_black", uid: user.uid, caseType, caseName, claimId: claimRef.key, accountSize: blackDef.accountSize });
+    return res.status(200).json({ ok: true, caseType, caseName, black: { label: blackDef.label, accountSize: blackDef.accountSize, set: caseType, claimId: claimRef.key, reference } });
+  }
 
   const totalWeight = fragments.reduce((s, f) => s + f.dropPercent, 0);
   const fragment = rollFragment(fragments, totalWeight);

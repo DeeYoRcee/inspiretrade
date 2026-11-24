@@ -18,7 +18,7 @@ import {
   useEconomy, useInventory, useClaims, useEconomyInvalidator, todayTashkent,
 } from "@/hooks/use-economy";
 import { usePremiumStatus, useUserProfile } from "@/hooks/use-premium";
-import { CaseOpeningDialog } from "@/components/rewards/CaseOpeningDialog";
+import { CaseOpeningDialog, type BlackResult } from "@/components/rewards/CaseOpeningDialog";
 import { FragmentCard } from "@/components/rewards/FragmentCard";
 import {
   FRAGMENTS, GOLD_FRAGMENTS, TRADING_FRAGMENTS, CASES, REWARD_CYCLE_DAYS, GOLD_CASE_DAY,
@@ -47,6 +47,10 @@ export default function RewardsPage() {
   const invalidate = useEconomyInvalidator();
 
   const [caseResult, setCaseResult] = useState<FragmentDef | null>(null);
+  const [blackResult, setBlackResult] = useState<BlackResult | null>(null);
+  // P77 — "Open" first shows the CS2-style preview (3D container + contains
+  // grid, odds hidden); the roll fires only when the user presses Open there
+  const [previewCase, setPreviewCase] = useState<CaseType | null>(null);
   const [openCaseType, setOpenCaseType] = useState<CaseType>("inspire");
   const [combineConfirm, setCombineConfirm] = useState<CaseType | null>(null);
   const [combineSuccess, setCombineSuccess] = useState<{ reference: string } | null>(null);
@@ -104,19 +108,27 @@ export default function RewardsPage() {
     },
   });
 
-  const openMutation = useMutation({
-    mutationFn: async (type: CaseType) => {
-      const res = await authedFetch("/api/cases/open", { type });
-      return res as { fragment: FragmentDef; caseType: CaseType };
-    },
-    onSuccess: (data) => {
-      setCaseResult(data.fragment);
-      setOpenCaseType(data.caseType || "inspire");
-    },
-    onError: (error: any) => {
+  // P77 — the roll happens when the user confirms inside the preview dialog;
+  // a BLACK hit returns no fragment at all — it deposits a pending prop
+  // account claim and renders as the ★ black ★ card
+  const confirmOpenCase = async (type: CaseType): Promise<{ fragment?: FragmentDef | null; black?: BlackResult | null }> => {
+    try {
+      const res = await authedFetch<any>("/api/cases/open", { type });
+      if (res?.black) {
+        setBlackResult(res.black as BlackResult);
+        setCaseResult(null);
+        setOpenCaseType((res.black.set as CaseType) || type);
+        return { black: res.black as BlackResult };
+      }
+      setCaseResult(res.fragment as FragmentDef);
+      setBlackResult(null);
+      setOpenCaseType(res.caseType || type);
+      return { fragment: res.fragment as FragmentDef };
+    } catch (error: any) {
       toast({ title: t("serverError"), description: String(error?.message || ""), variant: "destructive" });
-    },
-  });
+      throw error;
+    }
+  };
 
   const combineMutation = useMutation({
     mutationFn: async (set: CaseType) => {
@@ -238,8 +250,8 @@ export default function RewardsPage() {
                 <Button
                   size="sm"
                   className="shrink-0 rounded-xl font-semibold"
-                  disabled={cases < 1 || openMutation.isPending}
-                  onClick={() => openMutation.mutate("inspire")}
+                  disabled={cases < 1}
+                  onClick={() => setPreviewCase("inspire")}
                 >
                   <ChevronRight className="mr-1 h-4 w-4" />{t("openCase")}
                 </Button>
@@ -257,8 +269,8 @@ export default function RewardsPage() {
                 <Button
                   size="sm"
                   className="shrink-0 rounded-xl bg-amber-500 font-semibold text-black hover:bg-amber-400"
-                  disabled={goldCases < 1 || openMutation.isPending}
-                  onClick={() => openMutation.mutate("gold")}
+                  disabled={goldCases < 1}
+                  onClick={() => setPreviewCase("gold")}
                 >
                   <ChevronRight className="mr-1 h-4 w-4" />{t("openCase")}
                 </Button>
@@ -275,8 +287,8 @@ export default function RewardsPage() {
                 <Button
                   size="sm"
                   className="shrink-0 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 font-semibold text-black hover:from-emerald-400 hover:to-teal-300"
-                  disabled={tradingCases < 1 || openMutation.isPending}
-                  onClick={() => openMutation.mutate("trading")}
+                  disabled={tradingCases < 1}
+                  onClick={() => setPreviewCase("trading")}
                 >
                   <ChevronRight className="mr-1 h-4 w-4" />{t("openCase")}
                 </Button>
@@ -554,13 +566,20 @@ export default function RewardsPage() {
         </Card>
       )}
 
-      {/* Case opening reel */}
+      {/* Case opening — preview (3D + contains, odds hidden) → roll → reel */}
       <CaseOpeningDialog
-        open={!!caseResult}
+        open={!!previewCase || !!caseResult || !!blackResult}
         result={caseResult}
+        black={blackResult}
         caseType={openCaseType}
+        onConfirm={async () => {
+          const res = await confirmOpenCase(previewCase ?? openCaseType);
+          return res;
+        }}
         onClose={() => {
           setCaseResult(null);
+          setBlackResult(null);
+          setPreviewCase(null);
           invalidate();
         }}
       />

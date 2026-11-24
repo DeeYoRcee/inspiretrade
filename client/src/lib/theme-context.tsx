@@ -2,8 +2,15 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
-export const THEMES = ["dark", "light", "ocean", "forest", "vader", "cr7", "knight", "neon", "cosmos", "money", "f1", "christmas"] as const;
+export const THEMES = ["dark", "light", "ocean", "forest", "vader", "cr7", "knight", "neon", "cosmos", "money", "f1", "snow"] as const;
 export type Theme = (typeof THEMES)[number];
+
+/** P77 — the Christmas theme was replaced by Snow: old saved keys (localStorage
+ *  and the RTDB prefs sync) migrate silently to "snow". */
+export function normalizeTheme(value: string | null): Theme | null {
+  if (value === "christmas") return "snow";
+  return isTheme(value) ? value : null;
+}
 
 export const THEME_LABELS: Record<Theme, string> = {
   dark: "Dark",
@@ -17,7 +24,7 @@ export const THEME_LABELS: Record<Theme, string> = {
   cosmos: "Cosmos",
   money: "Money Rain",
   f1: "Formula 1",
-  christmas: "Christmas",
+  snow: "Snow",
 };
 
 function isTheme(value: string | null): value is Theme {
@@ -26,10 +33,8 @@ function isTheme(value: string | null): value is Theme {
 
 function getSavedTheme(): Theme {
   try {
-    const stored = localStorage.getItem("tj-theme");
-    // user request: Skywalker is the site's DEFAULT theme — the one a new
-    // visitor lands on; a saved personal choice still wins
-    return isTheme(stored) ? stored : "vader";
+    // P77 — legacy "christmas" saved keys migrate to "snow"
+    return normalizeTheme(localStorage.getItem("tj-theme")) ?? "vader";
   } catch {
     return "vader";
   }
@@ -51,7 +56,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.toggle("dark", theme !== "light");
     try { localStorage.setItem("tj-theme", theme); } catch { /* Continue without persisted storage. */ }
 
-    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", ocean: "#07131f", forest: "#0b1711", vader: "#050505", cr7: "#0a0908", knight: "#07080c", neon: "#0d0618", cosmos: "#05060f", money: "#04140d", f1: "#120404", christmas: "#050f0a" };
+    const colors: Record<Theme, string> = { dark: "#0a0a0f", light: "#f6f8fa", ocean: "#07131f", forest: "#0b1711", vader: "#050505", cr7: "#0a0908", knight: "#07080c", neon: "#0d0618", cosmos: "#05060f", money: "#04140d", f1: "#120404", snow: "#070d16" };
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => meta.setAttribute("content", colors[theme]));
   }, [theme]);
 
@@ -81,12 +86,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         void get(ref(getDatabase(), `users/${u.uid}/prefs/theme`)).then((snap) => {
           if (!snap.exists()) return;
           const remote = snap.val() as { theme?: string; updatedAt?: number };
-          if (!remote?.theme || !isTheme(remote.theme)) return;
+          const migrated = normalizeTheme(remote?.theme ?? null);
+          if (!migrated) return;
           let localStamp = 0;
           try { localStamp = Number(localStorage.getItem("tj-theme-at") ?? 0); } catch { /* private mode */ }
           if ((remote.updatedAt ?? 0) <= localStamp) return;
           try { localStorage.setItem("tj-theme-at", String(remote.updatedAt ?? Date.now())); } catch { /* private mode */ }
-          setTheme(remote.theme);
+          setTheme(migrated);
         }).catch(() => { /* offline → local choice stays */ });
       }).catch(() => { /* firebase unavailable */ });
     });

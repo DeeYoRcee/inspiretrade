@@ -156,11 +156,121 @@ function MoneyRainCanvas() {
   );
 }
 
+/**
+ * Snow theme scene (P77 user request): a CANVAS snowfall behind the whole
+ * app — three depth layers of drifting snowflakes (far = small/slow/dim,
+ * near = large/fast/bright with a soft glow), each flake swaying on a sine
+ * wind so the fall reads natural instead of a straight ticker. Same
+ * battery discipline as Money Rain: rAF pauses when the document is hidden.
+ */
+const SNOW_VEIL = "linear-gradient(180deg, rgba(6,11,20,0.40), rgba(20,40,70,0.14) 45%, rgba(6,11,20,0.44))";
+
+interface Flake {
+  x: number;
+  y: number;
+  vy: number; // fall speed px/s
+  r: number; // radius px
+  sway: number; // horizontal sway amplitude
+  phase: number; // sway phase
+  bright: number; // per-flake alpha 0.5..1
+  glow: boolean; // near flakes glow
+}
+
+function SnowCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return; // static theme only
+    let raf = 0;
+    let last = performance.now();
+    let flakes: Flake[] = [];
+    const spawn = (w: number, h: number, initial: boolean, layer: 0 | 1 | 2): Flake => {
+      // layer 0 = far, 1 = mid, 2 = near
+      const speed = [26 + Math.random() * 22, 48 + Math.random() * 34, 82 + Math.random() * 58][layer];
+      const radius = [1 + Math.random() * 1.2, 1.8 + Math.random() * 1.8, 3 + Math.random() * 3][layer];
+      return {
+        x: Math.random() * w,
+        y: initial ? Math.random() * h : -8,
+        vy: speed,
+        r: radius,
+        sway: 8 + Math.random() * (layer === 2 ? 34 : 18),
+        phase: Math.random() * Math.PI * 2,
+        bright: (layer === 2 ? 0.85 : 0.5) + Math.random() * 0.15,
+        glow: layer === 2 && Math.random() < 0.5,
+      };
+    };
+    const resize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(canvas.clientWidth * dpr);
+      canvas.height = Math.floor(canvas.clientHeight * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      const perLayer = Math.max(14, Math.min(40, Math.floor(w / 40)));
+      flakes = [0, 1, 2].flatMap((l) => Array.from({ length: perLayer }, () => spawn(w, h, true, l as 0 | 1 | 2)));
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    const tick = (now: number) => {
+      const dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      ctx.clearRect(0, 0, w, h);
+      for (const f of flakes) {
+        f.y += f.vy * dt;
+        f.phase += dt * (0.6 + f.r * 0.12);
+        const x = f.x + Math.sin(f.phase) * f.sway;
+        if (f.y - f.r > h) Object.assign(f, spawn(w, h, false, f.r > 3 ? 2 : f.r > 1.7 ? 1 : 0));
+        ctx.globalAlpha = f.bright;
+        if (f.glow) {
+          ctx.shadowColor = "rgba(190, 225, 255, 0.9)";
+          ctx.shadowBlur = 10;
+        }
+        ctx.fillStyle = "#eaf4ff";
+        ctx.beginPath();
+        ctx.arc(x, f.y, f.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      ctx.globalAlpha = 1;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    const onVisibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(raf);
+      } else {
+        last = performance.now();
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[-2] overflow-hidden" aria-hidden>
+      <canvas ref={canvasRef} className="h-full w-full" />
+      <div className="absolute inset-0" style={{ background: SNOW_VEIL }} />
+    </div>
+  );
+}
+
 export function ThemeBackdrop() {
   const { theme } = useTheme();
   const { themeBackdrop } = useTerminalSettings().appearance;
   if (theme === "money") {
     return themeBackdrop ? <MoneyRainCanvas /> : null;
+  }
+  if (theme === "snow") {
+    return themeBackdrop ? <SnowCanvas /> : null;
   }
   const conf = THEME_VIDEOS[theme];
   if (!conf || !themeBackdrop) return null;

@@ -37,6 +37,12 @@ export type ReplaySpeed = ReplaySpeedOption;
 export const REPLAY_SPEEDS: readonly ReplaySpeed[] = REPLAY_SPEED_OPTIONS;
 const TICK_MS = REPLAY_TICK_MS;
 
+/** P77 user request — a chart-clicked replay must NOT collapse the chart to
+ *  one candle: the session window starts ~300 bars BEFORE the clicked candle
+ *  so the genuine past stays on the left, and only the FUTURE candles are
+ *  hidden until playback reveals them. */
+export const REPLAY_PAST_BARS = 300;
+
 export interface ReplaySessionMeta {
   id: string;
   symbol: string;
@@ -133,7 +139,12 @@ export function useReplay() {
 
   // ---- session loading -------------------------------------------------------
 
-  const loadSession = useCallback(async (symbol: string, tf: Timeframe, startISO: string, startBalance: number): Promise<boolean> => {
+  const loadSession = useCallback(async (
+    symbol: string, tf: Timeframe, startISO: string, startBalance: number,
+    // P77 — the chart-click flow starts the WINDOW earlier (past history
+    // stays visible) and parks the replay cursor ON the clicked candle
+    opts?: { pastBarsSec?: number; cursorSec?: number },
+  ): Promise<boolean> => {
     setPhase("loading");
     setError(null);
     setProgressText("Loading real history…");
@@ -143,12 +154,20 @@ export function useReplay() {
       if (!Number.isFinite(startMs)) throw new Error("Invalid start date");
       const now = Date.now();
       if (startMs >= now - TF_SECONDS[tf] * 1000) throw new Error("Start date must be in the past");
-      const fromSec = Math.floor(startMs / 1000);
+      const fromSec = Math.max(0, Math.floor(startMs / 1000) - Math.max(0, opts?.pastBarsSec ?? 0));
       const toSec = Math.floor(now / 1000);
       const res = await loadHistoryRange(symbol, tf, fromSec, toSec, (done, total) => {
         setProgressText(`Loading history… ${done}/${total}`);
       });
       if (res.bars.length < 30) throw new Error("Not enough history in this window — try an earlier start or a higher timeframe");
+      // initial cursor: the clicked candle (first bar at/after cursorSec),
+      // clamped so a few future candles always remain to play forward into
+      let cur = 0;
+      if (opts?.cursorSec) {
+        const found = res.bars.findIndex((b) => b.time >= opts.cursorSec!);
+        cur = found < 0 ? res.bars.length - 1 : found;
+        if (cur > res.bars.length - 6) cur = Math.max(0, res.bars.length - 6);
+      }
       const id = `rs-${Date.now().toString(36)}`;
       const meta: ReplaySessionMeta = { id, symbol, timeframe: tf, startISO, createdAt: Date.now() };
       const w = newReplayWallet(startBalance);
@@ -156,17 +175,17 @@ export function useReplay() {
       sessionRef.current = meta;
       setBars(res.bars);
       barsRef.current = res.bars;
-      setCursor(0);
-      cursorRef.current = 0;
+      setCursor(cur);
+      cursorRef.current = cur;
       progressRef.current = 0;
       setWallet(w);
       walletRef.current = w;
       setCapped(res.capped);
       const specLocal = getInstrument(symbol)!;
-      setForming(makeForming(res.bars[0], 0, TF_SECONDS[tf]));
+      setForming(makeForming(res.bars[cur], 0, TF_SECONDS[tf]));
       setPhase("ready");
       setProgressText(null);
-      void persistSession(meta, res.bars.length, 0, w, tf);
+      void persistSession(meta, res.bars.length, cur, w, tf);
       void specLocal;
       return true;
     } catch (e: any) {
@@ -186,7 +205,14 @@ export function useReplay() {
     symbol: string, tf: Timeframe, timeSec: number, startBalance: number,
   ): Promise<{ ok: boolean; error?: string }> => {
     const iso = new Date(timeSec * 1000).toISOString().slice(0, 16);
-    const ok = await loadSession(symbol, tf, iso, startBalance);
+    // P77 — window starts REPLAY_PAST_BARS before the click and the cursor
+    // sits ON the clicked candle: the chart keeps its history, only the
+    // candles AFTER the click are hidden (TradingView bar-replay behavior)
+    const tfSec = TF_SECONDS[tf] ?? 60;
+    const ok = await loadSession(symbol, tf, iso, startBalance, {
+      pastBarsSec: REPLAY_PAST_BARS * tfSec,
+      cursorSec: timeSec,
+    });
     return ok ? { ok: true } : { ok: false, error: errorRef.current ?? undefined };
   }, [loadSession]);
 
@@ -298,14 +324,21 @@ export function useReplay() {
     try {
       const startMs = new Date(meta.startISO).getTime();
       const toSec = Math.floor(Date.now() / 1000);
-      const res = await loadHistoryRange(meta.symbol, meta.timeframe, Math.floor(startMs / 1000), toSec);
-      let cur = 0;
+      // P77 — resume reloads the same pre-window (past stays visible); the
+      // persisted cursor was an index into the session start, so it shifts by
+      // the number of pre-window bars now in front of it
+      const tfSecR = TF_SECONDS[meta.timeframe] ?? 60;
+      const res = await loadHistoryRange(meta.symbol, meta.timeframe, Math.max(0, Math.floor(startMs / 1000) - REPLAY_PAST_BARS * tfSecR), toSec);
+      let cur = res.bars.findIndex((b) => b.time * 1000 >= startMs);
+      if (cur < 0) cur = Math.max(0, res.bars.length - 1);
+      const windowOffset = cur;
+      let savedCur = 0;
       let w: ReplayWallet | null = null;
       try {
         const snap = await get(dbRef(db, `replaySessions/${uid}/${meta.id}`));
         if (snap.exists()) {
           const saved: any = snap.val();
-          cur = Math.min(saved?.cursor ?? 0, res.bars.length - 1);
+          savedCur = saved?.cursor ?? 0;
           if (saved?.wallet) {
             w = { balance: saved.wallet.balance, seq: saved.wallet.seq ?? 1, positions: saved.wallet.positions ?? [], orders: saved.wallet.orders ?? [], closed: saved.wallet.closed ?? [] };
           }
@@ -314,11 +347,12 @@ export function useReplay() {
       if (!w) {
         const local = lsRead()[meta.id];
         if (local?.wallet) {
-          cur = Math.min(local.cursor ?? 0, res.bars.length - 1);
+          savedCur = local.cursor ?? 0;
           w = { balance: local.wallet.balance, seq: local.wallet.seq ?? 1, positions: local.wallet.positions ?? [], orders: local.wallet.orders ?? [], closed: local.wallet.closed ?? [] };
         }
       }
       if (!w) w = newReplayWallet(100000);
+      cur = Math.min(windowOffset + savedCur, res.bars.length - 1);
       setSession(meta);
       sessionRef.current = meta;
       setBars(res.bars);

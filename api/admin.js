@@ -714,6 +714,7 @@ var GOLD_FRAGMENTS = [
   { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
   { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
+var BLACK_DROP_PERCENT = 1e-8;
 var TRADING_FRAGMENTS = [
   { id: "trade-1", name: "25k$ 1", icon: "Briefcase", rarity: "common", dropPercent: 35 },
   { id: "trade-2", name: "25k$ 2", icon: "Gauge", rarity: "common", dropPercent: 35 },
@@ -726,9 +727,27 @@ var TRADING_FRAGMENTS = [
   { id: "trade-9", name: "25k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
 var CASES = {
-  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
-  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS },
-  trading: { id: "trading", name: "Trading Case", accountSize: 25e3, fragments: TRADING_FRAGMENTS }
+  inspire: {
+    id: "inspire",
+    name: "Inspire Case",
+    accountSize: 5e3,
+    fragments: FRAGMENTS,
+    blackDrop: { label: "5k$ Prop Account", accountSize: 5e3, dropPercent: BLACK_DROP_PERCENT }
+  },
+  gold: {
+    id: "gold",
+    name: "Gold Case",
+    accountSize: 1e4,
+    fragments: GOLD_FRAGMENTS,
+    blackDrop: { label: "10k$ Prop Account", accountSize: 1e4, dropPercent: BLACK_DROP_PERCENT }
+  },
+  trading: {
+    id: "trading",
+    name: "Trading Case",
+    accountSize: 25e3,
+    fragments: TRADING_FRAGMENTS,
+    blackDrop: { label: "25k$ Prop Account", accountSize: 25e3, dropPercent: BLACK_DROP_PERCENT }
+  }
 };
 var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
 var FRAGMENT_IDS = FRAGMENTS.map((f) => f.id);

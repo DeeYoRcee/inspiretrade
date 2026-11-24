@@ -108,7 +108,7 @@ export const FIB_RETRACEMENT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 export const FIB_EXTENSION_LEVELS = [0, 0.618, 1, 1.618, 2.618];
 
 export const DEFAULT_STYLE: DrawingStyle = {
-  color: "#38bdf8",
+  color: "#ffffff", // P77 user request: drawing lines default to white
   width: 2,
   dash: "solid",
   fontSize: 12,
@@ -172,8 +172,8 @@ export const TOOL_LABELS: Partial<Record<DrawingType, string[]>> = {
   xabcd: ["X", "A", "B", "C", "D"],
   abcd: ["A", "B", "C", "D"],
   "three-drives": ["1", "A", "2", "B", "3", "C"],
-  "long-position": ["Entry", "Stop", "Target"],
-  "short-position": ["Entry", "Stop", "Target"],
+  // P77 user request: the "Entry / Stop / Target" words are GONE from the
+  // position tools — the price chips and the level lines carry the meaning
   pitchfork: ["P0", "P1", "P2"],
 };
 
@@ -1960,11 +1960,12 @@ export function renderDrawing(
       ctx.save();
       ctx.setLineDash([]);
       ctx.lineWidth = Math.max(1, d.style.width);
+      // P77 user request: ALL level lines render WHITE (the tool color,
+      // white by default) — only the translucent zone fills keep the
+      // green/red long/short semantics
       ctx.strokeStyle = d.style.color;
       drawSegment(ctx, { x: xL, y: entry.y }, { x: xR, y: entry.y });
-      ctx.strokeStyle = lossCol;
       drawSegment(ctx, { x: xL, y: stop.y }, { x: xR, y: stop.y });
-      ctx.strokeStyle = profitCol;
       drawSegment(ctx, { x: xL, y: target.y }, { x: xR, y: target.y });
       // P66 §5 — the blue outer band frame is GONE (user request): the clean
       // TradingView look keeps only the three level lines + the zone fills;

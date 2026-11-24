@@ -228,7 +228,6 @@ export default function InventoryPage() {
         })()
     : null;
   const previewCount = previewCase ? (previewCase === "inspire" ? cases : previewCase === "gold" ? goldCases : previewCase === "trading" ? tradingCases : customCaseCount(previewCase)) : 0;
-  const previewTotalWeight = previewDef ? previewDef.fragments.reduce((s, f) => s + (previewDef.weights ? previewDef.weights[f.id] || 0 : f.dropPercent), 0) : 0;
 
   return (
     <div className="container mx-auto max-w-5xl space-y-6 p-4 sm:px-6">
@@ -382,8 +381,8 @@ export default function InventoryPage() {
           </DialogHeader>
           <div className="grid max-h-[46vh] grid-cols-2 gap-2.5 overflow-y-auto px-0.5 sm:grid-cols-3">
             {previewDef?.fragments.map((fragment) => {
-              const weight = previewDef.weights ? previewDef.weights[fragment.id] || 0 : fragment.dropPercent;
-              const chance = previewTotalWeight > 0 ? (weight / previewTotalWeight) * 100 : 0;
+              // P77 user request: drop percentages are shown to NOBODY — the
+              // contents preview carries the rarity label instead of the odds
               const meta = RARITY_META[fragment.rarity];
               return (
                 <FragmentCard
@@ -392,10 +391,10 @@ export default function InventoryPage() {
                   count={inventory?.[fragment.id] || 0}
                   footer={
                     <span
-                      className="font-number mt-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold"
+                      className="mt-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold"
                       style={{ color: meta.color, backgroundColor: `${meta.color}1f` }}
                     >
-                      {chance.toFixed(1)}%
+                      {meta.label}
                     </span>
                   }
                 />

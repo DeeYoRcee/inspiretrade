@@ -659,9 +659,6 @@ function dukaPoints(code) {
 }
 var DUKA_METALS = { XAUUSD: "XAUUSD", XAGUSD: "XAGUSD" };
 var DUKA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
-// P77 — 25s in-memory cache for the spot-duka-tail endpoint: many open charts
-// share one upstream fetch per code, the day files stay warm in CDN/edge cache
-var dukaTailCache = /* @__PURE__ */ new Map();
 async function fetchDukaDay(dukaSym, day, budgetMs = 3e4) {
   const startedAt = Date.now();
   const y = day.getUTCFullYear();
@@ -1826,41 +1823,6 @@ var quotes_default = handle(async (req, res) => {
     }
     const candles = checked.bars.map((b) => ({ t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, s: Number(b.volume || 0) }));
     return res.json({ ok: true, code, tf: tfSec, candles });
-  }
-  // P77 — Dukascopy genuine 1m BID candle tail (finalized + in-progress
-  // minutes straight from Duka's tick store). Keyless and free; the current
-  // day's file is refreshed by Dukascopy as ticks arrive. READ-ONLY: the
-  // client union-merges these provider-origin bars into the recorded set —
-  // every recorder observation stays part of its candle, only the H/L/C
-  // envelope gains the real tick-derived extremes. No price is invented.
-  if (action === "spot-duka-tail") {
-    const code = (url.searchParams.get("code") || "XAU").toUpperCase() === "XAG" ? "XAG" : "XAU";
-    const dukaSym = DUKA_METALS[code] ?? DUKA_MAP[code];
-    if (!dukaSym) return res.json({ ok: false, error: "unknown-symbol" });
-    const nowMs = Date.now();
-    const cached = dukaTailCache.get(code);
-    if (cached && nowMs - cached.at < 25e3) return res.json(cached.payload);
-    const nowSec = Math.floor(nowMs / 1e3);
-    const bands = { XAUUSD: [100, 12e3], XAGUSD: [5, 200] };
-    const [bandLo, bandHi] = bands[dukaSym] ?? [0.2, 600];
-    const days = [new Date(nowMs - 864e5), new Date(nowMs)];
-    const bufs = await Promise.all(days.map((d) => fetchDukaDay(dukaSym, d, 12e3)));
-    let bars = [];
-    for (let i = 0; i < days.length; i++) {
-      if (!bufs[i]) continue;
-      const dec = await decodeDukaDay(bufs[i], dukaSym, days[i]);
-      bars = bars.concat(dec);
-    }
-    bars = bars.filter((b) => b.t <= nowSec && b.t >= nowSec - 2 * 86400 && b.o >= bandLo && b.o <= bandHi);
-    bars.sort((a, b) => a.t - b.t);
-    const payload = {
-      ok: bars.length > 0,
-      code,
-      count: bars.length,
-      bars: bars.slice(-1100).map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: 0 })),
-    };
-    if (payload.ok) dukaTailCache.set(code, { at: nowMs, payload });
-    return res.json(payload.ok ? payload : { ok: false, error: "duka-unavailable" });
   }
   if (action === "spot-record" && req.method === "POST") {
     const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};

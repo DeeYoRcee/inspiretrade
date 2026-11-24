@@ -141,6 +141,7 @@ var GOLD_FRAGMENTS = [
   { id: "gold-8", name: "10k$ 8", icon: "Diamond", rarity: "covert", dropPercent: 2.9995 },
   { id: "gold-9", name: "10k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
+var BLACK_DROP_PERCENT = 1e-8;
 var TRADING_FRAGMENTS = [
   { id: "trade-1", name: "25k$ 1", icon: "Briefcase", rarity: "common", dropPercent: 35 },
   { id: "trade-2", name: "25k$ 2", icon: "Gauge", rarity: "common", dropPercent: 35 },
@@ -153,9 +154,27 @@ var TRADING_FRAGMENTS = [
   { id: "trade-9", name: "25k$ 9", icon: "Crown", rarity: "mythic", dropPercent: 1e-3 }
 ];
 var CASES = {
-  inspire: { id: "inspire", name: "Inspire Case", accountSize: 5e3, fragments: FRAGMENTS },
-  gold: { id: "gold", name: "Gold Case", accountSize: 1e4, fragments: GOLD_FRAGMENTS },
-  trading: { id: "trading", name: "Trading Case", accountSize: 25e3, fragments: TRADING_FRAGMENTS }
+  inspire: {
+    id: "inspire",
+    name: "Inspire Case",
+    accountSize: 5e3,
+    fragments: FRAGMENTS,
+    blackDrop: { label: "5k$ Prop Account", accountSize: 5e3, dropPercent: BLACK_DROP_PERCENT }
+  },
+  gold: {
+    id: "gold",
+    name: "Gold Case",
+    accountSize: 1e4,
+    fragments: GOLD_FRAGMENTS,
+    blackDrop: { label: "10k$ Prop Account", accountSize: 1e4, dropPercent: BLACK_DROP_PERCENT }
+  },
+  trading: {
+    id: "trading",
+    name: "Trading Case",
+    accountSize: 25e3,
+    fragments: TRADING_FRAGMENTS,
+    blackDrop: { label: "25k$ Prop Account", accountSize: 25e3, dropPercent: BLACK_DROP_PERCENT }
+  }
 };
 var ALL_FRAGMENTS = [...FRAGMENTS, ...GOLD_FRAGMENTS, ...TRADING_FRAGMENTS];
 function expandCasePool(rows, all = ALL_FRAGMENTS) {
@@ -185,6 +204,10 @@ function rollFragment(list, totalWeight) {
   return list[0];
 }
 var CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
+function makeBlackReference(set) {
+  const prefix = set === "gold" ? "GLD-B" : set === "trading" ? "TRD-B" : "INSP-B";
+  return `${prefix}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+}
 var open_default = handle(async (req, res) => {
   assertPost(req);
   const user = await requireUser(req);
@@ -221,6 +244,24 @@ var open_default = handle(async (req, res) => {
     noCasesError = new HttpError(400, "NO_CASES", "You have no cases of this type to open");
   }
   await decrementCounter(counterRef, noCasesError);
+  const blackDef = caseType === "inspire" || caseType === "gold" || caseType === "trading" ? CASES[caseType].blackDrop : null;
+  if (blackDef && Math.random() < BLACK_DROP_PERCENT / 100) {
+    const reference = makeBlackReference(caseType);
+    const claimRef = db.ref(`claims/${user.uid}`).push();
+    const claim = {
+      id: claimRef.key,
+      createdAt: now,
+      reference,
+      status: "pending",
+      set: caseType,
+      accountSize: blackDef.accountSize,
+      source: "black-drop",
+      fragments: {}
+    };
+    await claimRef.set(claim);
+    await logLedger({ type: "case_open_black", uid: user.uid, caseType, caseName, claimId: claimRef.key, accountSize: blackDef.accountSize });
+    return res.status(200).json({ ok: true, caseType, caseName, black: { label: blackDef.label, accountSize: blackDef.accountSize, set: caseType, claimId: claimRef.key, reference } });
+  }
   const totalWeight = fragments.reduce((s, f) => s + f.dropPercent, 0);
   const fragment = rollFragment(fragments, totalWeight);
   await db.ref(`inventory/${user.uid}/${fragment.id}/count`).transaction((current) => (current || 0) + 1);

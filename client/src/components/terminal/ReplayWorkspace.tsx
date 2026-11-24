@@ -91,7 +91,9 @@ export function ReplayControls({ r, onExit }: { r: ReplayApi; onExit?: () => voi
         <span className="mr-1 flex items-center gap-1.5 rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">
           <HistoryIcon className="h-3.5 w-3.5" /> Replay
         </span>
-        <Button size="icon" variant="outline" className="h-7 w-7" title="Return to starting point" onClick={() => r.jumpTo(new Date(r.bars[0].time * 1000).toISOString())}>
+        {/* P77 — "start" is the CLICKED candle (session.startISO), not the
+            pre-history window start: the pre-loaded past stays scrollable */}
+        <Button size="icon" variant="outline" className="h-7 w-7" title="Return to starting point" onClick={() => r.jumpTo(new Date(r.session?.startISO ? new Date(r.session.startISO).getTime() : r.bars[0].time * 1000).toISOString())}>
           <ChevronsLeft className="h-3.5 w-3.5" />
         </Button>
         <Button size="icon" variant="outline" className="h-7 w-7" title="Previous candle (←)" onClick={r.stepBackward}>

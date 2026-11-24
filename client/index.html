@@ -34,7 +34,11 @@
       "inLanguage": "en"
     }
     </script>
-    <link rel="icon" type="image/png" href="/favicon.png" />
+    <!-- P77 favicon chain — Google Search favicon: .ico fallback first, then
+         the 64x64 brand PNG (square 1:1, >=48px). Both root-relative, stable
+         URLs; robots.txt keeps every asset crawlable for Googlebot-Image. -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/png" href="/favicon.png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
