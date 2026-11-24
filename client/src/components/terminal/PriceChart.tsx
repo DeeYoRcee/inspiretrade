@@ -1630,10 +1630,7 @@ export function PriceChart({
             // PHASE 65 §1 — a freshly appended bar can now cover a trade's
             // execution time (strict anchoring skipped it before): re-apply
             // markers immediately instead of waiting for the 30s poll
-            applyMarkers();
-            // PHASE 65 §1 — a freshly appended bar can now cover a trade's
-            // execution time (strict anchoring skipped it before): re-apply
-            // markers immediately instead of waiting for the 30s poll
+            // (P77 audit: this call was duplicated — one is enough)
             applyMarkers();
           } else if (bars.length !== prev.length) {
             // structural change (prepend / big resync) — full rebuild

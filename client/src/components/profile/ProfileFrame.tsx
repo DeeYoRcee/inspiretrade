@@ -1,11 +1,13 @@
 /**
  * P75 — profile frame renderer.
  *
- * A frame is a subtle double-bezel ring around the circular avatar, built
- * from the shared catalog's CSS values (gradients only — no images, no heavy
- * animation). The inner bg-background layer keeps the avatar's own size and
- * proportions untouched. Used by the own-profile page, the public profile
- * poster and the gallery previews so every surface renders the same ring.
+ * P76 user request: the frame must NOT hug the avatar photo. It renders as a
+ * STANDING OUTER RING — a bigger circle outside the avatar with a visible gap
+ * between the avatar and the ring (story-ring style). Built from the shared
+ * catalog's CSS values (gradients only — no images, no heavy animation). The
+ * gap stays transparent so the profile background shows through. Used by the
+ * own-profile page, the public profile poster and the gallery previews so
+ * every surface renders the same outer ring.
  */
 import { getFrame } from "@shared/frames";
 import { cn } from "@/lib/utils";
@@ -21,15 +23,20 @@ export function ProfileFrame({
   children: React.ReactNode;
 }) {
   const def = getFrame(frame);
-  if (!def) return <>{children}</>;
+  if (!def) return <div className={cn("w-fit", className)}>{children}</div>;
   return (
+    // 3px gradient ring band at the OUTER edge + 11px transparent gap — the
+    // avatar inside keeps its own size and proportions untouched
     <div
-      className={cn("rounded-full p-[3px]", className)}
-      style={{ background: def.ring, boxShadow: def.glow ? `0 0 12px ${def.glow}` : undefined }}
+      className={cn("w-fit rounded-full p-[3px]", className)}
+      style={{
+        background: def.ring,
+        boxShadow: def.glow
+          ? `inset 0 0 0 1px ${def.edge}, 0 0 14px ${def.glow}`
+          : `inset 0 0 0 1px ${def.edge}`,
+      }}
     >
-      <div className="rounded-full bg-background p-[2px]" style={{ boxShadow: `inset 0 0 0 1px ${def.edge}` }}>
-        {children}
-      </div>
+      <div className="rounded-full p-[11px]">{children}</div>
     </div>
   );
 }

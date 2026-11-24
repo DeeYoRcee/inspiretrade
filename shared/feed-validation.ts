@@ -189,6 +189,36 @@ export function dedupeBars(bars: RawBar[]): { bars: RawBar[]; dropped: number } 
 }
 
 /**
+ * P77 — validate bars coming from the Dukascopy tail endpoint before they are
+ * union-merged into the recorded spot set. Everything must stay genuine:
+ * minute-aligned UTC timestamps, a sane OHLC envelope, inside the instrument's
+ * price band, never in the future, never older than the requested depth.
+ * Returns the clean bars (volume forced to 0 — provider-origin, matching the
+ * Twelve Data backfill convention) plus how many were rejected.
+ */
+export function validateDukaTailBars(
+  raw: { time: number; open: number; high: number; low: number; close: number }[],
+  nowSec: number,
+  band: [number, number] | null,
+  maxAgeSec = 2 * 86400,
+): { bars: { time: number; open: number; high: number; low: number; close: number; volume: 0 }[]; rejected: number } {
+  const nowMin = Math.floor(nowSec / 60) * 60;
+  const bars: { time: number; open: number; high: number; low: number; close: number; volume: 0 }[] = [];
+  let rejected = 0;
+  for (const b of raw) {
+    const t = Math.floor(Number(b?.time));
+    const o = Number(b?.open), h = Number(b?.high), l = Number(b?.low), c = Number(b?.close);
+    if (![t, o, h, l, c].every((x) => Number.isFinite(x))) { rejected++; continue; }
+    if (t % 60 !== 0 || t > nowMin || t < nowSec - maxAgeSec) { rejected++; continue; }
+    if (h < Math.max(o, c) || l > Math.min(o, c) || h < l || l <= 0) { rejected++; continue; }
+    if (band && (o < band[0] || o > band[1] || c < band[0] || c > band[1])) { rejected++; continue; }
+    bars.push({ time: t, open: o, high: h, low: l, close: c, volume: 0 });
+  }
+  bars.sort((a, b) => a.time - b.time);
+  return { bars, rejected };
+}
+
+/**
  * UTC-aligned bucket start (epoch seconds) for a candle period.
  * D1 → UTC midnight. W1 (604800) → Monday 00:00 UTC (epoch 0 is a Thursday,
  * so the plain floor would anchor weeks to Thursday — real weekly candles

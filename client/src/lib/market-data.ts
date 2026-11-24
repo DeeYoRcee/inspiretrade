@@ -64,7 +64,7 @@ function upsert(bars: Bar[], bar: Bar, maxBars = 6000): Bar[] {
 // Binance (crypto — real live)
 // ---------------------------------------------------------------------------
 
-import { validateBars, dedupeBars, checkBar, minuteIslandFilter, staleRunFilter, flatShare, repairOutlierExtremes, bucketStart, type RawBar } from "@shared/feed-validation";
+import { validateBars, dedupeBars, checkBar, minuteIslandFilter, staleRunFilter, flatShare, repairOutlierExtremes, bucketStart, validateDukaTailBars, type RawBar } from "@shared/feed-validation";
 import { upsertBar, wsBackoffDelay, nextEndpointIndex } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
@@ -810,8 +810,36 @@ class QuotesProvider {
       } catch { /* server unavailable → local records only */ }
       return [];
     };
+    /**
+     * P77 — pull the Dukascopy genuine 1m BID tail through the server (25s
+     * server cache + 25s client TTL). These are REAL tick-derived candles
+     * (every Duka tick of the minute folded into OHLC by the provider), so
+     * union-merging them into the recorded set turns the recorder's 2-sample
+     * minutes into properly wicked candles WITHOUT inventing anything: the
+     * union keeps the recorder's open and samples, and only the high/low/
+     * close envelope gains the provider's real extremes. Provider-origin
+     * bars carry s=0 (the Twelve Data backfill convention).
+     */
+    const loadDukaTail = async (): Promise<SpotCandle[]> => {
+      try {
+        const cachedBars = spotDukaCache.get(code);
+        if (cachedBars && Date.now() - (spotDukaAt.get(code) ?? 0) < 25000) return cachedBars;
+        spotDukaAt.set(code, Date.now());
+        const res = await fetch(`/api/quotes?action=spot-duka-tail&code=${code}`).then((r) => r.json()).catch(() => null);
+        if (!res?.ok || !Array.isArray(res.bars)) return cachedBars ?? [];
+        const band = (inst.priceBand ?? null) as [number, number] | null;
+        const { bars: clean } = validateDukaTailBars(res.bars, now, band);
+        const out: SpotCandle[] = clean.map((b) => ({ t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, s: 0 }));
+        spotDukaCache.set(code, out);
+        return out;
+      } catch { return spotDukaCache.get(code) ?? []; }
+    };
+
     const assemble = async (serverCandles: SpotCandle[]) => {
-      let cs = mergeSpotSeries(serverCandles, loadLocalSpot(code));
+      const dukaTail = await loadDukaTail();
+      // order: server ∪ duka ∪ local — the union keeps the earliest open and
+      // the latest close of all genuine observations of each minute
+      let cs = mergeSpotSeries(mergeSpotSeries(serverCandles, dukaTail), loadLocalSpot(code));
       // include the in-progress minute + unflushed completions
       const st = spotRec.get(code);
       if (st) cs = mergeSpotSeries(cs, [...st.unflushed, ...(st.minute ? [st.minute] : [])].filter((c) => validSpotCandle(c, now)));
@@ -1151,7 +1179,10 @@ async function spotPoll(code: string): Promise<void> {
     clearTimeout(abortTimer);
     if (!res.ok) throw new Error(`gold-api ${res.status}`);
     const data: any = await res.json();
-    const price = Number(data?.price);
+    // P77 — the provider serves float32 artifacts (3565.199951); every use
+    // below gets the price rounded to the instrument tick (XAU 0.01, XAG 0.001)
+    const tick = code === "XAG" ? 0.001 : 0.01;
+    const price = Math.round(Number(data?.price) / tick) * tick;
     // the provider stamps its own price — that stamp is the honest latency
     // number the badge reports (not our poll round-trip)
     const providerAt = Date.parse(data?.updatedAt || "") || 0;
@@ -1213,6 +1244,11 @@ const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCand
  *  lets a still-sparse store re-trigger on later resyncs while the server's
  *  2-minute gate protects TD's 8 req/min budget */
 const spotBackfillAt = new Map<string, number>();
+// P77 — Dukascopy genuine 1m tail (server-cached 25s): the client merges the
+// provider-origin bars into the recorded set on every recorded-spot load so
+// finalized minutes carry the real tick-derived H/L/C envelope
+const spotDukaCache = new Map<string, SpotCandle[]>();
+const spotDukaAt = new Map<string, number>();
 const SPOT_BACKFILL_TTL_MS = 45 * 60000;
 const fxBackfillTried = new Set<string>();
 const fxSelfHealAt = new Map<string, number>(); // per-pair self-heal cooldown
