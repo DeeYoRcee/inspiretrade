@@ -66,6 +66,12 @@ export function MultiChartWorkspace({
   symbol, timeframe, onSymbolChange, onTimeframeChange,
   orders, positions, accountId, onModifyPosition, onModifyOrder, onCancelOrder, onClosePosition, accountBalance,
   onOpenAlerts, onOpenReplay,
+  /** P76 — bar-replay state flows ONLY into the primary panel (index 0):
+   *  selection mode / session bars replace that panel's live feed while the
+   *  other panels keep their own live subscriptions. */
+  replaySelect = false, onReplaySelect = null, onReplaySelectCancel = null,
+  replayBars = null, replayCursor = null, replayForming = null, replayStatus = null,
+  replayPositions = null, replayMarks = null,
   /** P56 UX: the layout picker moved into the events strip — the parent owns
    *  the layout state; the internal fallback keeps the harness working */
   layout: layoutProp, onLayoutChange,
@@ -85,10 +91,20 @@ export function MultiChartWorkspace({
   accountBalance: number | null;
   /** toolbar alert bell → open the terminal right rail (per user action) */
   onOpenAlerts: () => void;
-  /** toolbar replay button → switch the terminal to replay mode */
+  /** toolbar replay button → arm candle selection on the primary chart */
   onOpenReplay: () => void;
   layout?: LayoutId;
   onLayoutChange?: (id: LayoutId) => void;
+  /* ---- P76 replay props (see above) ---- */
+  replaySelect?: boolean;
+  onReplaySelect?: ((timeSec: number) => void) | null;
+  onReplaySelectCancel?: (() => void) | null;
+  replayBars?: import("@shared/terminal").Bar[] | null;
+  replayCursor?: number | null;
+  replayForming?: import("@shared/terminal").Bar | null;
+  replayStatus?: string | null;
+  replayPositions?: ServerPosition[] | null;
+  replayMarks?: PriceMark[] | null;
 }) {
   const narrow = useIsNarrow();
   const [layoutInner, setLayoutInner] = useState<LayoutId>(() => {
@@ -306,9 +322,9 @@ export function MultiChartWorkspace({
         <PriceChart
           symbol={p.symbol}
           timeframe={p.timeframe}
-          marks={marksFor(p.symbol)}
-          accountId={accountId}
-          positions={positions.filter((pos) => pos.symbol === p.symbol) as ServerPosition[]}
+          marks={i === 0 && replayMarks ? replayMarks : marksFor(p.symbol)}
+          accountId={i === 0 && replayBars ? null : accountId}
+          positions={(i === 0 && replayPositions ? replayPositions : positions).filter((pos) => pos.symbol === p.symbol) as ServerPosition[]}
           orders={orders.filter((o) => o.symbol === p.symbol)}
           onModifyPosition={onModifyPosition}
           onModifyOrder={onModifyOrder}
@@ -322,6 +338,15 @@ export function MultiChartWorkspace({
           panelKey={`mc-${i}`}
           chartType={i === 0 ? null : p.chartType ?? null}
           onChartTypeChange={i === 0 ? null : (t) => setPanelType(i, t)}
+          {...(i === 0 ? {
+            replaySelect,
+            onReplaySelect: onReplaySelect ?? undefined,
+            onReplaySelectCancel: onReplaySelectCancel ?? undefined,
+            replayBars,
+            replayCursor,
+            replayForming,
+            replayStatus,
+          } : {})}
         />
       </div>
     );

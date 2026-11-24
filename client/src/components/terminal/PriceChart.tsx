@@ -80,7 +80,7 @@ import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDi
 import { TradingAlertDialog } from "@/components/terminal/TradingAlertDialog";
 import { loadSyncSettings, onSyncCrosshair, onSyncRange, publishCrosshair, publishRange, isApplyingSync, markApplyingSync } from "@/lib/chart-sync";
 import { publishChartSnapshot } from "@/components/terminal/TradingAlertsEngine";
-import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown } from "lucide-react";
+import { Eye, EyeOff, X, Lock, Unlock, ChevronUp, ChevronDown, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useServerQuote } from "@/hooks/use-server-quote";
 import { ChartTradeOverlay } from "@/components/terminal/chart/ChartTradeOverlay";
@@ -358,6 +358,10 @@ export function PriceChart({
   replayCursor = null,
   replayForming = null,
   replayStatus = null,
+  /** P76 — bar-replay selection mode: the next candle click starts the replay */
+  replaySelect = false,
+  onReplaySelect = null,
+  onReplaySelectCancel = null,
   accountBalance = null,
   panelKey = null,
   chartType: chartTypeProp = null,
@@ -392,6 +396,12 @@ export function PriceChart({
   replayForming?: Bar | null;
   /** replay status line, e.g. "REPLAY · 5m · paused" */
   replayStatus?: string | null;
+  /** P76 — selection mode: the next candle click starts the replay session */
+  replaySelect?: boolean;
+  /** exact clicked candle time (UTC seconds) — the session starts from it */
+  onReplaySelect?: ((timeSec: number) => void) | null;
+  /** cancel the selection mode */
+  onReplaySelectCancel?: (() => void) | null;
   /** P41 — live account balance (live mode) for the position size calc */
   accountBalance?: number | null;
   /** P48 — unique panel id: enables cross-chart crosshair/time sync */
@@ -764,6 +774,29 @@ export function PriceChart({
   const replayMode = replayBars != null;
   const replayModeRef = useRef(false);
   replayModeRef.current = replayMode;
+  // P76 — replay selection mode refs (click subscription reads them)
+  const replaySelectRef = useRef(replaySelect);
+  replaySelectRef.current = replaySelect;
+  const onReplaySelectRef = useRef(onReplaySelect);
+  onReplaySelectRef.current = onReplaySelect;
+
+  // P76 — selection mode: the next chart click on a REAL loaded candle starts
+  // the replay session from that exact candle. chart.subscribeClick reports
+  // the bar time under the cursor; empty space / gaps produce undefined.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !replaySelect) return;
+    const onClick = (param: any) => {
+      if (!replaySelectRef.current) return;
+      const t = param?.time;
+      // the clicked candle must exist in the loaded series — a click on empty
+      // space or beyond the last bar never selects
+      if (typeof t !== "number" || !Number.isFinite(t) || !timeIdxRef.current.has(t)) return;
+      onReplaySelectRef.current?.(t);
+    };
+    chart.subscribeClick(onClick as Parameters<typeof chart.subscribeClick>[0]);
+    return () => { try { chart.unsubscribeClick(onClick as any); } catch { /* torn down */ } };
+  }, [replaySelect]);
 
   /** the visible replay series: bars[0..cursor] (+ forming bar) — the future stays hidden */
   const replayVisible = useCallback((cursor: number): Bar[] => {
@@ -1816,7 +1849,22 @@ export function PriceChart({
   const applyMarkers = useCallback(() => {
     const candle = candleRef.current;
     if (!candle) return;
-    candle.setMarkers([]);
+    const list: SeriesMarker<Time>[] = [];
+    // P76 — the replay starting candle gets one visible amber marker so the
+    // user always sees where the session began
+    if (replayModeRef.current && replayBarsRef.current?.length && barsRef.current.length) {
+      const first = replayBarsRef.current[0];
+      if (barsRef.current[0]?.time === first.time) {
+        list.push({
+          time: first.time as UTCTimestamp,
+          position: "belowBar",
+          color: "#f59e0b",
+          shape: "circle",
+          text: "Replay start",
+        });
+      }
+    }
+    candle.setMarkers(list);
   }, []);
   useEffect(() => { applyMarkers(); }, [symbol, applyMarkers]);
 
@@ -2680,6 +2728,19 @@ export function PriceChart({
           onCursorMode={setCursorMode}
         />
         <div ref={chartAreaRef} className="relative min-h-0 min-w-0 flex-1">
+        {/* P76 — replay selection mode hint (candle click → session start) */}
+        {replaySelect && (
+          <div className="pointer-events-auto absolute left-2 top-2 z-30 flex items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-950/80 px-3 py-1.5 backdrop-blur-sm">
+            <History className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span className="text-xs font-medium text-amber-200">Replay — click a candle to start from there</span>
+            <button
+              onClick={() => onReplaySelectCancel?.()}
+              className="ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300/90 transition-colors hover:bg-amber-500/20 hover:text-amber-100"
+            >
+              Esc
+            </button>
+          </div>
+        )}
         {/* main pane */}
         <div ref={mainHostRef} className="absolute inset-x-0 top-0" style={{ bottom: subList.length * SUB_PANE_HEIGHT }} />
         {/* sub-panes */}

@@ -16,6 +16,7 @@ function ReplayHarness() {
   const r = useReplay();
   const [symbol, setSymbol] = useState("BTCUSD");
   const [tf, setTf] = useState<Timeframe>("5m");
+  const [select, setSelect] = useState(false);
   const [log, setLog] = useState<string[]>(["boot"]);
 
   const push = (m: string) => setLog((p) => [...p.slice(-8), m]);
@@ -32,6 +33,7 @@ function ReplayHarness() {
     <div className="h-[100dvh] w-full flex flex-col gap-2 p-2">
       <div className="flex items-center gap-2 text-xs">
         <button id="btn-start" onClick={() => void start()} className="rounded bg-sky-600 px-3 py-1 text-white">Start</button>
+        <button id="btn-select" onClick={() => { setSelect((v) => !v); push(`select=${!select}`); }} className="rounded bg-amber-600 px-3 py-1 text-white">Select</button>
         <button id="btn-play" onClick={() => { r.play(); push(`play phase=${r.phase}`); }} className="rounded bg-emerald-600 px-3 py-1 text-white">Play</button>
         <button id="btn-pause" onClick={() => { r.pause(); push("pause"); }} className="rounded bg-slate-700 px-3 py-1 text-white">Pause</button>
         <button id="btn-step" onClick={() => { r.stepForward(); push(`step cursor=${r.cursor}`); }} className="rounded bg-slate-700 px-3 py-1 text-white">Step</button>
@@ -57,6 +59,14 @@ function ReplayHarness() {
           replayCursor={r.phase === "ready" ? r.cursor : null}
           replayForming={r.phase === "ready" ? r.forming?.bar ?? null : null}
           replayStatus={r.phase === "ready" ? `REPLAY · ${r.playing ? "playing" : "paused"}` : null}
+          replaySelect={select}
+          onReplaySelect={async (t) => {
+            push(`clicked=${t}`);
+            setSelect(false);
+            const res = await r.startFromCandle(symbol, tf, t, 100000);
+            push(`from-candle ok=${res.ok} err=${res.error ?? "none"} phase=${r.phase} bars=${r.bars.length}`);
+          }}
+          onReplaySelectCancel={() => { setSelect(false); push("select-cancel"); }}
         />
         {r.phase === "ready" && <ReplayBadge />}
       </div>

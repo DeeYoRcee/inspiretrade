@@ -32,8 +32,11 @@ import { NewAccountDialog } from "@/components/terminal/NewAccountDialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { MoreVertical } from "lucide-react";
 import {
-  ReplayOverlay, ReplayBadge, ReplayControls, ReplayTicket, ReplayBook, useReplayJournalAutoSave,
+  ReplayBadge, ReplayControls, ReplayTicket, ReplayBook, useReplayJournalAutoSave,
 } from "@/components/terminal/ReplayWorkspace";
+import { useToast } from "@/hooks/use-toast";
+import { validateReplayStart } from "@shared/replay-engine";
+import { historyAvailability } from "@/lib/history-loader";
 import CalendarWorkspace from "@/components/terminal/CalendarWorkspace";
 import NewsWorkspace from "@/components/terminal/NewsWorkspace";
 import EventStrip from "@/components/terminal/EventStrip";
@@ -56,20 +59,22 @@ import { InstrumentExplorer } from "@/components/terminal/InstrumentExplorer";
 import { getTerminalSettings } from "@/lib/terminal-settings";
 import { getInstrumentSettings } from "@/lib/instrument-settings";
 import { touchRecent } from "@/lib/watchlists";
-import { getInstrument, availableTimeframes } from "@shared/terminal";
+import { getInstrument, availableTimeframes, TF_SECONDS } from "@shared/terminal";
 
 const SYMBOL_KEY = "it_terminal_symbol";
 const TF_KEY = "it_terminal_tf";
 const MODE_KEY = "it_terminal_mode";
 const PANEL_KEY = "it_terminal_panel";
 
-type TerminalMode = "live" | "replay" | "calendar" | "news";
+type TerminalMode = "live" | "calendar" | "news";
 const MODES: { id: TerminalMode; label: string }[] = [
   { id: "live", label: "Live" },
-  { id: "replay", label: "Replay" },
   { id: "calendar", label: "Calendar" },
   { id: "news", label: "News" },
 ];
+// P76 — bar replay is no longer a separate terminal mode: it runs INSIDE the
+// live chart (toolbar replay button → click a candle → playback bar below the
+// chart). A stale "replay" value in localStorage simply falls back to "live".
 
 const ASSET_CLASSES = [
   { id: "crypto", label: "Crypto" },
@@ -85,6 +90,7 @@ export default function TerminalPage() {
     modifyPosition, modifyOrder, cancelOrder, closePosition,
   } = useTrading();
   const [newAccountOpen, setNewAccountOpen] = useState(false);
+  const { toast } = useToast();
   const [mode, setMode] = useState<TerminalMode>((() => { const saved = localStorage.getItem(MODE_KEY) as TerminalMode | null; return saved && MODES.some((mm) => mm.id === saved) ? saved : "live"; })());
   // right rail panel (watchlist / ticket / alerts / info) — persisted
   // P56 UX — the 6-layout grid picker now lives in the events strip; the
@@ -199,6 +205,52 @@ export default function TerminalPage() {
   const r = useReplay();
   const chartBoxRef = useRef<HTMLDivElement | null>(null);
   useReplayJournalAutoSave(r, chartBoxRef);
+  // P76 — chart-integrated bar replay: the toolbar button arms candle
+  // selection on the PRIMARY chart; clicking a historical candle starts the
+  // session; the playback bar renders below the chart; exit restores live.
+  const [replaySelectOpen, setReplaySelectOpen] = useState(false);
+  const replayActive = r.phase === "ready";
+
+  const startReplayFromCandle = async (timeSec: number) => {
+    setReplaySelectOpen(false);
+    const err = validateReplayStart(
+      timeSec, TF_SECONDS[chartTf] ?? 300, historyAvailability(symbol, chartTf).maxDaysBack, Date.now(),
+    );
+    if (err) { toast({ title: "Replay start rejected", description: err, variant: "destructive" }); return; }
+    const res = await r.startFromCandle(symbol, chartTf, timeSec, 100000);
+    if (!res.ok) toast({ title: "Replay failed to start", description: res.error ?? "history load error", variant: "destructive" });
+  };
+  const exitReplay = () => { setReplaySelectOpen(false); r.exitReplay(); };
+
+  // P76 — keyboard shortcuts, only while replay selection or a session is on:
+  // Space play/pause · ←/→ step back/forward · Esc cancel/exit. Guarded
+  // against text inputs, dialogs and drawing-tool text fields.
+  useEffect(() => {
+    if (!replaySelectOpen && !replayActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || el?.isContentEditable) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (r.playing) r.pause(); else r.play();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        r.stepForward();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        r.stepBackward();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        if (replaySelectOpen) setReplaySelectOpen(false);
+        else exitReplay();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replaySelectOpen, replayActive, r.playing]);
 
   // Phase 5: high-impact event data for the strip + the OPT-IN confirmation
   // guard near major releases (only when the user enables it in the strip)
@@ -211,7 +263,7 @@ export default function TerminalPage() {
   // Chart price lines: pending-order levels of the selected symbol only.
   // Open positions render as draggable entry/SL/TP trade lines inside the chart.
   const marks = useMemo<PriceMark[]>(() => {
-    if (mode === "replay") {
+    if (replayActive) {
       const out: PriceMark[] = [];
       for (const o of r.wallet.orders) {
         out.push({ id: `o-${o.id}`, price: o.price, color: "#f59e0b", title: `${o.kind.toUpperCase()} ${o.lots.toFixed(2)}`, dashed: true });
@@ -223,13 +275,14 @@ export default function TerminalPage() {
     // (Replay keeps its own marks — different wallet system.)
     void orders; void symbol;
     return [];
-  }, [mode, orders, symbol, r.wallet.orders]);
+  }, [replayActive, orders, symbol, r.wallet.orders]);
 
-  const replayActive = r.phase === "ready";
-  const chartSymbol = mode === "replay" && r.session ? r.session.symbol : symbol;
-  const chartTf = (mode === "replay" && r.session ? r.session.timeframe : timeframe) as Timeframe;
-  const chartPositions = mode === "replay"
-    ? (replayActive ? r.wallet.positions.filter((p) => p.symbol === r.session?.symbol) as any[] : [])
+  // during a replay session the chart is bound to the session's symbol/tf —
+  // the toolbar pickers are locked (exit replay to switch, like TradingView)
+  const chartSymbol = replayActive && r.session ? r.session.symbol : symbol;
+  const chartTf = (replayActive && r.session ? r.session.timeframe : timeframe) as Timeframe;
+  const chartPositions = replayActive
+    ? r.wallet.positions.filter((p) => p.symbol === r.session?.symbol) as any[]
     : positions.filter((p) => p.symbol === symbol);
 
   // ---- backtest / analytics / calendar / news: full-area workspaces ---------
@@ -282,14 +335,22 @@ export default function TerminalPage() {
       {/* Phase 5 event strip: upcoming high-impact releases + relevant news */}
       <EventStrip symbol={chartSymbol} rightSlot={<LayoutPicker layout={mcLayout} onChange={setMcLayout} />} />
 
-      {mode === "live" ? (
+      {/* P76 — compact playback bar directly below the chart area */}
+      {replayActive && (
+        <ReplayControls r={r} onExit={exitReplay} />
+      )}
+      {mode === "live" && (
         <TerminalShell
           activePanel={rightPanel}
           onPanelSelect={selectPanel}
           hideBlotter={!interface_?.bottomBlotter}
           hideRail={!interface_?.rightRail}
           panel={
-            rightPanel === "watchlist" ? <Watchlist symbol={symbol} onSymbolChange={setSymbol} onBrowse={() => setExplorerOpen(true)} className="h-full w-full" />
+            /* P76 — while a replay session runs, the right rail shows the
+               isolated replay-wallet order ticket (the previous panel
+               returns on exit) */
+            replayActive ? <ReplayTicket r={r} className="h-full w-full overflow-y-auto" />
+              : rightPanel === "watchlist" ? <Watchlist symbol={symbol} onSymbolChange={setSymbol} onBrowse={() => setExplorerOpen(true)} className="h-full w-full" />
               : rightPanel === "ticket" ? (
                 <TradingPanel
                   symbol={symbol}
@@ -310,8 +371,9 @@ export default function TerminalPage() {
             /* P48 — multi-chart workspace: layouts 1/2h/2v/3/4/6, resizable
                panels, optional sync + saved presets. The primary panel stays
                wired to the terminal state (ticket/blotter/watchlist), so the
-               single-chart behavior is bit-for-bit preserved. */
-            <div ref={chartBoxRef} className="h-full min-h-0 min-w-0 w-full overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
+               single-chart behavior is bit-for-bit preserved. P76 — the
+               PRIMARY panel carries the replay selection + session props. */
+            <div ref={chartBoxRef} className="relative h-full min-h-0 min-w-0 w-full overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
               <MultiChartWorkspace
                 symbol={chartSymbol}
                 timeframe={chartTf}
@@ -326,43 +388,30 @@ export default function TerminalPage() {
                 onClosePosition={closePosition}
                 accountBalance={metrics?.balance ?? null}
                 onOpenAlerts={() => selectPanel("alerts")}
-                onOpenReplay={() => setMode("replay")}
+                onOpenReplay={() => { if (!replayActive) setReplaySelectOpen(true); }}
                 layout={mcLayout}
                 onLayoutChange={setMcLayout}
+                /* P76 — replay state flows ONLY into the primary panel */
+                replaySelect={replaySelectOpen && !replayActive}
+                onReplaySelect={startReplayFromCandle}
+                onReplaySelectCancel={() => setReplaySelectOpen(false)}
+                replayBars={replayActive ? r.bars : null}
+                replayCursor={replayActive ? r.cursor : null}
+                replayForming={replayActive ? r.forming?.bar ?? null : null}
+                replayStatus={replayActive ? `REPLAY · ${r.session!.timeframe.toUpperCase()} · ${r.playing ? "playing" : "paused"}` : null}
+                replayPositions={replayActive ? (chartPositions as any[]) : null}
+                replayMarks={replayActive ? marks : null}
               />
+              {replayActive && <div className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2"><ReplayBadge status={`REPLAY · ${r.session!.timeframe.toUpperCase()} · ${r.playing ? "playing" : "paused"}`} /></div>}
             </div>
           }
-          blotter={<TradingBlotter symbol={symbol} className="h-full w-full" />}
+          blotter={
+            /* P76 — the bottom blotter shows the replay wallet book during a
+               session (positions / orders / closed); live blotter on exit */
+            replayActive ? <ReplayBook r={r} className="h-full w-full" />
+              : <TradingBlotter symbol={symbol} className="h-full w-full" />
+          }
         />
-      ) : (
-        <>
-          {/* chart + replay ticket */}
-          <div className="flex min-h-0 flex-[3] gap-2">
-            <div ref={chartBoxRef} className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-[#0b1220]">
-              <PriceChart
-                symbol={chartSymbol}
-                timeframe={chartTf}
-                marks={marks}
-                accountId={null}
-                positions={chartPositions}
-                onModifyPosition={async (positionId, patch) => { r.modifyPosition(positionId, patch); }}
-                onSymbolChange={() => { /* session-bound in replay */ }}
-                onTimeframeChange={() => { /* session-bound in replay */ }}
-                replayBars={mode === "replay" && replayActive ? r.bars : null}
-                replayCursor={mode === "replay" && replayActive ? r.cursor : null}
-                replayForming={mode === "replay" && replayActive ? r.forming?.bar ?? null : null}
-                replayStatus={mode === "replay" && replayActive ? `REPLAY · ${r.session!.timeframe.toUpperCase()} · ${r.playing ? "playing" : "paused"}` : null}
-              />
-              {mode === "replay" && replayActive && <ReplayBadge />}
-              {mode === "replay" && !replayActive && (
-                <ReplayOverlay r={r} symbol={symbol} timeframe={timeframe} />
-              )}
-            </div>
-            <ReplayTicket r={r} />
-          </div>
-          <ReplayControls r={r} />
-          <ReplayBook r={r} />
-        </>
       )}
       <NewAccountDialog open={newAccountOpen} onClose={() => setNewAccountOpen(false)} />
       <InstrumentExplorer
@@ -386,8 +435,11 @@ function Toolbar({
   onOpenExplorer, onOpenInstrumentSettings,
   accounts, activeId, onAccountChange,
   metrics, busy, onRefresh, account, onReset, onNewAccount,
+  replayLocked = false,
 }: {
   mode: TerminalMode; onModeChange: (m: TerminalMode) => void;
+  /** P76 — a running replay session binds the chart to its symbol/tf */
+  replayLocked?: boolean;
   symbol: string; onSymbolChange: (s: string) => void;
   timeframe: Timeframe; onTimeframeChange: (tf: Timeframe) => void;
   onOpenExplorer: () => void;
@@ -403,7 +455,7 @@ function Toolbar({
   const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const pnl = metrics?.floatingPnl ?? 0;
   const liveOnly = mode === "live";
-  const showMarkets = mode === "live" || mode === "replay";
+  const showMarkets = mode === "live";
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2 py-1.5">
@@ -425,7 +477,7 @@ function Toolbar({
 
       {showMarkets && (
         <>
-          <div className={cn(mode === "replay" && "pointer-events-none opacity-60")} title={mode === "replay" ? "The replay session is bound to the instrument chosen at start" : undefined}>
+          <div className={cn(replayLocked && "pointer-events-none opacity-60")} title={replayLocked ? "A replay session is running — exit replay to switch instrument" : undefined}>
             {/* Phase 21 — the toolbar symbol button opens the full instrument
                 explorer (search, categories, favorites, live prices) */}
             <button
@@ -439,7 +491,7 @@ function Toolbar({
             </button>
           </div>
 
-          <div className={cn("flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-slate-700/70 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", mode === "replay" && "pointer-events-none opacity-60")}>
+          <div className={cn("flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-slate-700/70 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", replayLocked && "pointer-events-none opacity-60")}>
             {availableTimeframes(symbol).map((tf) => (
               <button
                 key={tf}
@@ -465,7 +517,7 @@ function Toolbar({
         </>
       )}
 
-      {(liveOnly || mode === "replay") && <div className="mx-1 hidden h-6 w-px bg-slate-700 sm:block" />}
+      {liveOnly && <div className="mx-1 hidden h-6 w-px bg-slate-700 sm:block" />}
 
       {/* Account strip — server metrics, refreshed by the 10s heartbeat (live only) */}
       {liveOnly && account && (
@@ -498,9 +550,9 @@ function Toolbar({
         </div>
       )}
 
-      {mode === "replay" && (
-        <div className="text-[10px] text-slate-500">
-          Replay wallet is configured in the chart overlay — the future is always hidden.
+      {replayLocked && (
+        <div className="text-[10px] text-amber-300/80">
+          Replay running — the future is hidden; exit replay to switch instrument.
         </div>
       )}
 

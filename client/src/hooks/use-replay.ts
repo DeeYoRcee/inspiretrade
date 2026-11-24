@@ -26,16 +26,16 @@ import {
   newReplayWallet, replayOpen, replayPlace, replayCancel, replayClose,
   replayModifyPosition, replayModifyOrder, stepReplayBar, barPathPoints,
   replayQuote, replayEquity, replayUsedMargin, performanceStats,
+  REPLAY_SPEED_OPTIONS, speedBarsPerTick, REPLAY_TICK_MS, MAX_DT_BARS_PER_TICK,
   type PerfStats, type ReplayExecConfig, type ReplayWallet, type ReplayTrade,
+  type ReplaySpeedOption,
 } from "@shared/replay-engine";
 import { exitPriceFor, type Side } from "@shared/trading-engine";
 
-export type ReplaySpeed = 1 | 2 | 5 | 10 | 20 | 50;
-export const REPLAY_SPEEDS: ReplaySpeed[] = [1, 2, 5, 10, 20, 50];
-/** simulated duration of one candle at 1x (2s), multiplied by the speed */
-const BAR_MS_AT_1X = 2000;
-const TICK_MS = 100;
-const MAX_DT_BARS_PER_TICK = 10;
+/** P76 — TradingView-style speeds (0.5x … 10x). */
+export type ReplaySpeed = ReplaySpeedOption;
+export const REPLAY_SPEEDS: readonly ReplaySpeed[] = REPLAY_SPEED_OPTIONS;
+const TICK_MS = REPLAY_TICK_MS;
 
 export interface ReplaySessionMeta {
   id: string;
@@ -106,6 +106,8 @@ export function useReplay() {
 
   const barsRef = useRef<Bar[]>([]);
   barsRef.current = bars;
+  const errorRef = useRef<string | null>(null);
+  errorRef.current = error;
   const cursorRef = useRef(cursor);
   cursorRef.current = cursor;
   const walletRef = useRef(wallet);
@@ -131,7 +133,7 @@ export function useReplay() {
 
   // ---- session loading -------------------------------------------------------
 
-  const loadSession = useCallback(async (symbol: string, tf: Timeframe, startISO: string, startBalance: number) => {
+  const loadSession = useCallback(async (symbol: string, tf: Timeframe, startISO: string, startBalance: number): Promise<boolean> => {
     setPhase("loading");
     setError(null);
     setProgressText("Loading real history…");
@@ -166,12 +168,27 @@ export function useReplay() {
       setProgressText(null);
       void persistSession(meta, res.bars.length, 0, w, tf);
       void specLocal;
+      return true;
     } catch (e: any) {
       setPhase("error");
       setError(String(e?.message || e));
       setProgressText(null);
+      return false;
     }
   }, []);
+
+  /**
+   * P76 — start a session FROM A CHART-CLICKED CANDLE (the TradingView bar
+   * replay flow). `timeSec` is the exact candle timestamp the user clicked on
+   * the live chart; bars[0] of the session IS that candle.
+   */
+  const startFromCandle = useCallback(async (
+    symbol: string, tf: Timeframe, timeSec: number, startBalance: number,
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const iso = new Date(timeSec * 1000).toISOString().slice(0, 16);
+    const ok = await loadSession(symbol, tf, iso, startBalance);
+    return ok ? { ok: true } : { ok: false, error: errorRef.current ?? undefined };
+  }, [loadSession]);
 
   // ---- persistence: RTDB when rules allow, localStorage fallback -------------
 
@@ -216,6 +233,32 @@ export function useReplay() {
     map[meta.id] = payload;
     lsWrite(map);
   }, [lsRead, lsWrite]);
+
+  /**
+   * P76 — leave replay and restore the normal live chart. The session stays
+   * persisted (RTDB/local mirror), so it can be resumed from the controls'
+   * Sessions popover afterwards.
+   */
+  const exitReplay = useCallback(() => {
+    setPlaying(false);
+    playingRef.current = false;
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    const meta = sessionRef.current;
+    if (meta && phase === "ready") {
+      void persistSession(meta, barsRef.current.length, cursorRef.current, walletRef.current, meta.timeframe);
+    }
+    sessionRef.current = null;
+    barsRef.current = [];
+    setSession(null);
+    setBars([]);
+    setCursor(0);
+    cursorRef.current = 0;
+    progressRef.current = 0;
+    setForming(null);
+    setError(null);
+    setProgressText(null);
+    setPhase("idle");
+  }, [phase, persistSession]);
 
   const savedSessions = useCallback(async (): Promise<ReplaySessionMeta[]> => {
     const uid = auth.currentUser?.uid;
@@ -307,7 +350,7 @@ export function useReplay() {
         setPlaying(false);
         return;
       }
-      const dtBars = (speedRef.current * TICK_MS) / BAR_MS_AT_1X; // candles to advance this tick
+      const dtBars = speedBarsPerTick(speedRef.current); // candles to advance this tick
       let remaining = Math.min(dtBars, MAX_DT_BARS_PER_TICK);
       let w = walletRef.current;
       let p = progressRef.current;
@@ -491,7 +534,7 @@ export function useReplay() {
     currentPrice: forming?.price ?? null,
     stats, equity, usedMargin, lots, commissionPerLot, capped, closedEvents,
     setSpeed, setLots, setCommissionPerLot,
-    loadSession, resumeSession, savedSessions, deleteSession,
+    loadSession, startFromCandle, exitReplay, resumeSession, savedSessions, deleteSession,
     play, pause, stepForward, stepBackward, jumpTo,
     openMarket, placePending, cancelOrder, closePosition, modifyPosition, modifyOrder,
     markEventsSeen, exitPriceAt,

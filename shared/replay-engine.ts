@@ -39,6 +39,52 @@ import {
 } from "./trading-engine.ts";
 
 // ---------------------------------------------------------------------------
+// P76 — bar-replay playback primitives (pure, shared by the chart-integrated
+// replay UI and the tests)
+// ---------------------------------------------------------------------------
+
+/** TradingView-style playback speeds: 0.5x … 10x. */
+export const REPLAY_SPEED_OPTIONS = [0.5, 1, 2, 3, 5, 10] as const;
+export type ReplaySpeedOption = (typeof REPLAY_SPEED_OPTIONS)[number];
+
+/** Simulated duration of one candle at 1x (ms) — 0.5x → 4s, 10x → 200ms. */
+export const BAR_MS_AT_1X = 2000;
+export const REPLAY_TICK_MS = 100;
+/** hard cap per tick so a slow tab can never leap whole candles silently */
+export const MAX_DT_BARS_PER_TICK = 10;
+
+/** Candles to advance per 100ms tick at the given speed (fractional — the
+ * loop accumulates the remainder, so 0.5x reveals one candle every 4s). */
+export function speedBarsPerTick(speed: number): number {
+  return (speed * REPLAY_TICK_MS) / BAR_MS_AT_1X;
+}
+
+/**
+ * Validate a chart-clicked candle as a replay starting point.
+ * Returns an error string (caller shows it) or null when the start is fine.
+ * - `timeSec` must be a real past candle of the CURRENT instrument/tf
+ * - `nowSec - timeSec` must fit the provider's known history window
+ * - at least `minBars` candles must exist AFTER the start (otherwise there is
+ *   nothing to replay forward)
+ */
+export function validateReplayStart(
+  timeSec: number, tfSec: number, maxDaysBack: number | null, nowMs: number,
+  minBars = 30,
+): string | null {
+  if (!Number.isFinite(timeSec) || timeSec <= 0) return "Pick a candle on the chart";
+  const nowSec = Math.floor(nowMs / 1000);
+  if (timeSec > nowSec - tfSec) return "That candle is in the future";
+  const maxSec = maxDaysBack != null ? maxDaysBack * 86400 : null;
+  if (maxSec != null && nowSec - timeSec > maxSec) {
+    return "That candle is older than the provider's history for this timeframe — pick a more recent one";
+  }
+  if (maxSec != null ? maxSec / tfSec < minBars : false) {
+    return "Not enough history for replay on this timeframe";
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
