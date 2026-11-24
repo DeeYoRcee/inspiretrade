@@ -295,16 +295,19 @@ export function DrawingPropsBar({
           </>
         )}
         {/* P44 §2 — text styling only for text-bearing tools (relevant
-            controls only; other drawings keep any previously-set label) */}
-        {TEXT_LIKE.has(drawing.type) && (
-        <>
+            controls only; other drawings keep any previously-set label).
+            PHASE 65 §4 — the annotation INPUT itself is universal: every
+            drawing can carry a description from the properties bar. */}
         <span className="h-4 w-px bg-slate-700" />
         <input
           value={drawing.text ?? ""}
           onChange={(e) => onChange({ text: e.target.value.slice(0, 200) || undefined })}
           placeholder="Label…"
+          title="Annotation — moves with the drawing"
           className="h-5 w-24 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200 placeholder:text-slate-500"
         />
+        {TEXT_LIKE.has(drawing.type) && (
+        <>
         <input
           type="color"
           title="Text color"

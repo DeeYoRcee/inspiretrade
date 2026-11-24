@@ -509,6 +509,7 @@ export function PriceChart({
   // settings; the `it_chart_settings` blob keeps the GLOBAL values only, so
   // XAUUSD customization never leaks into EURUSD.
   const perInstrument = useInstrumentSettings(symbol);
+  const mergedSettingsRef = useRef<ChartSettings>({ ...DEFAULT_SETTINGS });
   const mergedSettings: ChartSettings = useMemo(() => ({
     ...settings,
     grid: perInstrument.grid ?? settings.grid,
@@ -522,6 +523,7 @@ export function PriceChart({
     priceScaleSide: (perInstrument as { priceScaleSide?: "right" | "left" }).priceScaleSide,
     timezone: (perInstrument as { timezone?: string }).timezone || "",
   }), [settings, perInstrument]);
+  mergedSettingsRef.current = mergedSettings;
   // an instrument's own default chart type applies when its chart opens
   // (the toolbar type button keeps setting the global default) — controlled
   // multi-chart panels own their type via the workspace instead
@@ -954,10 +956,18 @@ export function PriceChart({
   useEffect(() => {
     const el = mainHostRef.current;
     if (!el) return;
+    // PHASE 65 — the FIRST paint must honor the user's saved/default chart
+    // appearance (white-bg default, grid off, crosshair color): the settings
+    // effect runs BEFORE this creation effect and early-returns while
+    // chartRef is still null, so the old hardcoded dark colors survived the
+    // first visit and only repainted after the next settings change.
+    const s0 = mergedSettingsRef.current;
     const chart = createChart(el, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: COLORS.bg }, textColor: COLORS.text, fontSize: 11, attributionLogo: false },
-      grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
+      layout: { background: { type: ColorType.Solid, color: s0.bgColor ?? COLORS.bg }, textColor: s0.textColor ?? COLORS.text, fontSize: 11, attributionLogo: false },
+      grid: s0.grid === false
+        ? { vertLines: { visible: false }, horzLines: { visible: false } }
+        : { vertLines: { color: s0.gridColor ?? COLORS.grid }, horzLines: { color: s0.gridColor ?? COLORS.grid } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
       // Phase 16: the time axis and crosshair labels render in the VIEWER'S
       // timezone (TradingView behavior) — bar timestamps stay UNIX UTC under
@@ -978,8 +988,8 @@ export function PriceChart({
       // candle, axis labels match the dark theme
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
-        horzLine: { color: "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
+        vertLine: { color: s0.crosshairColor ?? "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
+        horzLine: { color: s0.crosshairColor ?? "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
       },
     });
     chartRef.current = chart;
@@ -1808,6 +1818,11 @@ export function PriceChart({
     // timestamp: a trade outside the loaded range is skipped (never clamped
     // to bar 0 / last bar), and duplicate markers (same time+position+shape+
     // text) collapse to one. The tf period bounds the live-candle tolerance.
+    // UNIT FIX: the fills ledger stores openedAt/closedAt in MILLISECONDS
+    // (Date.now()) while bar times are UNIX SECONDS — the old un-converted
+    // comparison always overflowed to "after the last bar", so EVERY marker
+    // clamped onto the newest candle and appeared to drift with the chart.
+    const toSec = (t: number) => (t > 1e12 ? Math.floor(t / 1000) : Math.floor(t));
     const tfSec = TF_SECONDS[timeframeRef.current] ?? 60;
     const markers: SeriesMarker<Time>[] = [];
     // PHASE 63 §2 + user request: the B/S icon must appear the moment the
@@ -1816,7 +1831,7 @@ export function PriceChart({
     // positions had no marker at all for up to 30s).
     for (const pos of positionsRef.current) {
       if (pos.symbol !== sym) continue;
-      const idx = findBarIndexOpt(data, pos.openedAt, true, tfSec);
+      const idx = findBarIndexOpt(data, toSec(pos.openedAt), true, tfSec);
       if (idx == null) continue;
       markers.push({
         time: data[idx].time as UTCTimestamp,
@@ -1828,7 +1843,7 @@ export function PriceChart({
     }
     for (const tr of tradesRef.current) {
       if (tr.symbol !== sym) continue;
-      const idx = findBarIndexOpt(data, tr.openedAt, true, tfSec);
+      const idx = findBarIndexOpt(data, toSec(tr.openedAt), true, tfSec);
       if (idx == null) continue;
       markers.push({
         time: data[idx].time as UTCTimestamp,
@@ -1837,7 +1852,7 @@ export function PriceChart({
         shape: tr.side === "buy" ? "arrowUp" : "arrowDown",
         text: `${tr.side === "buy" ? "B" : "S"} ${tr.lots}`,
       });
-      const exitIdx = findBarIndexOpt(data, tr.closedAt, true, tfSec);
+      const exitIdx = findBarIndexOpt(data, toSec(tr.closedAt), true, tfSec);
       if (exitIdx != null && exitIdx !== idx) {
         markers.push({
           time: data[exitIdx].time as UTCTimestamp,

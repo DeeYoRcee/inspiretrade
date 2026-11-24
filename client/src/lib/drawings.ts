@@ -1923,7 +1923,9 @@ export function renderDrawing(
         const dir = isLong ? "Long" : "Short";
         ctx.textAlign = "center";
         ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
-        ctx.fillStyle = "rgba(226,232,240,0.92)";
+        // profit-green text stays readable on BOTH the pale (light theme)
+        // and dark reward zone fills
+        ctx.fillStyle = profitCol;
         ctx.fillText(`${dir} · RR ${calc.rr.toFixed(2)}`, (xL + xR) / 2, Math.min(entry.y, target.y) + (Math.abs(target.y - entry.y) / 2) + d.style.fontSize / 2 - 2);
         // verbose stats ONLY when the user enables them (properties bar)
         if (d.style.showStats === true) {
