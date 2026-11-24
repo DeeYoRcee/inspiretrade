@@ -11,11 +11,17 @@ export interface ProfileBackground {
   src: string;
   /** fallback preview gradient while the video loads */
   tint: string;
+  /** P66 — optional animated overlay class (storm / petals) for image picks */
+  fx?: string;
 }
 
 export const PROFILE_BACKGROUNDS: ProfileBackground[] = [
   { id: "gold", name: "Gold", src: "/videos/gold.mp4", tint: "linear-gradient(140deg, #0d0703, #7a4a08 55%, #b3730f)" },
-  { id: "ocean", name: "Ocean", src: "/videos/ocean.mp4", tint: "linear-gradient(140deg, #020a14, #0a3d66 55%, #0b7f9e)" },
+  // "ocean" removed per user request (P66) — profiles still carrying the id
+  // fall through getProfileBackground() to the plain look
+  // P66 user request: image picks with animated overlays
+  { id: "skywalker", name: "Skywalker", src: "/backgrounds/skywalker.jpg", tint: "linear-gradient(140deg, #050507, #17171d 55%, #0a0a0c)", fx: "bg-fx-storm" },
+  { id: "knight", name: "Knight", src: "/backgrounds/knight.jpg", tint: "linear-gradient(140deg, #120a06, #3a2313 55%, #6b3d1a)", fx: "bg-fx-petals" },
   { id: "nebula", name: "Nebula", src: "/videos/nebula.mp4", tint: "linear-gradient(140deg, #0c0316, #5b1785 55%, #9b2fa8)" },
   { id: "storm", name: "Storm", src: "/videos/storm.mp4", tint: "linear-gradient(140deg, #0a0a10, #262838 55%, #1c2a52)" },
   { id: "embers", name: "Embers", src: "/videos/embers.mp4", tint: "linear-gradient(140deg, #0c0503, #301006 55%, #7a3008)" },
@@ -68,21 +74,24 @@ export function BackgroundVideo({
   // custom backgrounds may be a plain IMAGE url — render that without looping
   if (isImageUrl(background.src)) {
     return (
-      <img
-        src={background.src}
-        alt=""
-        aria-hidden
-        className={className}
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          opacity,
-          pointerEvents: "none",
-        }}
-      />
+      <>
+        <img
+          src={background.src}
+          alt=""
+          aria-hidden
+          className={className}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            opacity,
+            pointerEvents: "none",
+          }}
+        />
+        {background.fx && <div aria-hidden className={`pointer-events-none absolute inset-0 overflow-hidden ${background.fx}`} />}
+      </>
     );
   }
   return (

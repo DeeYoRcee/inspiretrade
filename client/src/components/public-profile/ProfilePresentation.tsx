@@ -2,7 +2,7 @@ import { Instagram, Send, Twitter, Crown, Activity, Target, TrendingUp, Trending
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/lib/language-context";
 import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
-import { getProfileBackground } from "@/lib/profile-backgrounds";
+import { getProfileBackground, BackgroundVideo } from "@/lib/profile-backgrounds";
 
 /**
  * PHASE 62 (user request): the PUBLIC profile must mirror the REAL profile
@@ -81,16 +81,9 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
       >
         {background && (
           <>
-            <video
-              src={background.src}
-              autoPlay
-              loop
-              muted
-              playsInline
-              preload="metadata"
-              aria-hidden
-              className="absolute inset-0 -z-10 h-full w-full object-cover opacity-55"
-            />
+            {/* P66 — shared renderer: handles video AND image picks (+ the
+                animated fx overlay that comes with image picks) */}
+            <BackgroundVideo background={background} opacity={0.55} className="absolute inset-0 -z-10 h-full w-full object-cover" />
             <div className="absolute inset-0 -z-10 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-slate-950/45" />
           </>
         )}

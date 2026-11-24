@@ -26,7 +26,7 @@ import { createPublicProfileSnapshot, createDefaultPublicProfileSettings } from 
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
 
 const USERNAME_TEST = /^[a-zA-Z0-9_]{3,20}$/;
-import { getProfileBackground, PROFILE_BACKGROUNDS } from "@/lib/profile-backgrounds";
+import { getProfileBackground, PROFILE_BACKGROUNDS, BackgroundVideo } from "@/lib/profile-backgrounds";
 import { useLanguage } from "@/lib/language-context";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -511,16 +511,8 @@ export default function ProfilePage() {
       >
         {profileBackground && (
           <>
-            <video
-              src={profileBackground.src}
-              autoPlay
-              loop
-              muted
-              playsInline
-              preload="metadata"
-              aria-hidden
-              className="absolute inset-0 -z-10 h-full w-full object-cover opacity-55"
-            />
+            {/* P66 — shared renderer: video AND image picks + fx overlay */}
+            <BackgroundVideo background={profileBackground} opacity={0.55} className="absolute inset-0 -z-10 h-full w-full object-cover" />
             <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background/80 via-background/20 to-background/40" />
           </>
         )}

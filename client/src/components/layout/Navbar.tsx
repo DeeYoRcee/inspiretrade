@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
 import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
+import { AllSettingsDialog } from "@/components/layout/AllSettingsDialog";
 import { Button } from "@/components/ui/button";
 import { LogOut, Send, Instagram, TriangleAlert as AlertTriangle, Palette, Crown, Settings, Newspaper, Globe as Globe2, LayoutDashboard, Activity, UserRound, Gift, Store, Coins, ChartCandlestick, Wallet, ShieldCheck, Award, User as UserIcon, Package, Users } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -28,6 +29,7 @@ export function Navbar() {
   const { t, language, setLanguage } = useLanguage();
   const [showConfirm, setShowConfirm] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
+  const [allSettingsOpen, setAllSettingsOpen] = useState(false);
   const { data: isPremium = false } = usePremiumStatus();
   const { data: economy } = useEconomy();
   const isAdmin = useIsAdmin();
@@ -108,9 +110,19 @@ export function Navbar() {
                 <DropdownMenuSeparator />
                 {/* Terminal defaults menu item removed — the section moved
                     into the terminal's own Chart settings dialog */}
-                
+                {/* P66 user request: "All settings" at the bottom — the full
+                    panel with LANGUAGE + THEME pickers inside */}
+                <DropdownMenuItem
+                  onSelect={(e) => { e.preventDefault(); setAllSettingsOpen(true); }}
+                  className="cursor-pointer gap-2 font-semibold"
+                >
+                  <Settings className="h-4 w-4 text-primary" />All settings
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* P66 — the All settings panel (language + theme) */}
+            <AllSettingsDialog open={allSettingsOpen} onClose={() => setAllSettingsOpen(false)} />
 
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label={t("account")} className="h-9 w-9 rounded-full p-0 md:w-auto md:px-2.5"><UserRound className="h-4 w-4 md:hidden" /><span className="hidden md:inline">{t("account")}</span></Button></DropdownMenuTrigger>

@@ -52,6 +52,16 @@
     --background: 0 20% 3%; --foreground: 0 0% 94%; --card: 0 16% 7%; --card-foreground: 0 0% 94%; --popover: 0 16% 8%; --popover-foreground: 0 0% 94%; --primary: 0 78% 48%; --primary-foreground: 0 0% 98%; --secondary: 0 10% 14%; --secondary-foreground: 0 0% 92%; --muted: 0 10% 12%; --muted-foreground: 0 0% 62%; --accent: 0 30% 18%; --accent-foreground: 0 0% 96%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 0 12% 18%; --input: 0 12% 18%; --ring: 0 78% 48%;
   }
 
+  :root[data-theme="cr7"] {
+    color-scheme: dark;
+    /* CR7 — United red, chalk white, carbon black */
+    --background: 0 24% 4%; --foreground: 0 0% 96%; --card: 0 18% 7%; --card-foreground: 0 0% 96%; --popover: 0 18% 8%; --popover-foreground: 0 0% 96%; --primary: 0 84% 52%; --primary-foreground: 0 0% 99%; --secondary: 0 8% 14%; --secondary-foreground: 0 0% 94%; --muted: 0 8% 12%; --muted-foreground: 0 0% 64%; --accent: 0 26% 16%; --accent-foreground: 0 0% 97%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 0 10% 17%; --input: 0 10% 17%; --ring: 0 84% 52%;
+  }
+  :root[data-theme="knight"] {
+    color-scheme: dark;
+    /* Knight — cold steel over near-black, moonlit silver */
+    --background: 220 24% 4%; --foreground: 214 24% 94%; --card: 220 20% 7%; --card-foreground: 214 24% 94%; --popover: 220 20% 8%; --popover-foreground: 214 24% 94%; --primary: 214 34% 68%; --primary-foreground: 220 30% 6%; --secondary: 220 14% 14%; --secondary-foreground: 214 24% 92%; --muted: 220 14% 12%; --muted-foreground: 214 12% 62%; --accent: 220 18% 17%; --accent-foreground: 214 24% 95%; --destructive: 0 62% 50%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 220 12% 17%; --input: 220 12% 17%; --ring: 214 34% 68%;
+  }
   :root[data-theme="money"] {
     color-scheme: dark;
     --background: 160 46% 5%; --foreground: 160 18% 95%; --card: 160 34% 9%; --card-foreground: 160 18% 95%; --popover: 160 34% 10%; --popover-foreground: 160 18% 95%; --primary: 152 66% 46%; --primary-foreground: 160 40% 6%; --secondary: 160 22% 15%; --secondary-foreground: 160 18% 95%; --muted: 160 20% 13%; --muted-foreground: 160 10% 68%; --accent: 160 26% 18%; --accent-foreground: 160 18% 95%; --destructive: 348 83% 58%; --destructive-foreground: 0 0% 100%; --success: 142 71% 50%; --success-foreground: 0 0% 100%; --border: 160 22% 20%; --input: 160 22% 20%; --ring: 152 66% 46%;
@@ -84,6 +94,8 @@
   :root[data-theme="ocean"]   { --term-bg: #07131f; --term-pane: #06101b; --term-solid: #0c1a28; --term-panel: rgb(12 26 40 / 0.92); --term-panel-95: rgb(12 26 40 / 0.96); --term-border: rgb(56 89 119 / 0.5); --term-border2: rgb(30 58 83 / 0.6); }
   :root[data-theme="forest"]  { --term-bg: #0b1711; --term-pane: #0a140e; --term-solid: #12241a; --term-panel: rgb(18 36 26 / 0.92); --term-panel-95: rgb(18 36 26 / 0.96); --term-border: rgb(52 90 66 / 0.5); --term-border2: rgb(24 46 33 / 0.6); }
   :root[data-theme="vader"]  { --term-bg: #070404; --term-pane: #050303; --term-solid: #140a0a; --term-panel: rgb(20 10 10 / 0.92); --term-panel-95: rgb(20 10 10 / 0.96); --term-border: rgb(153 27 27 / 0.45); --term-border2: rgb(64 20 20 / 0.6); }
+  :root[data-theme="cr7"]    { --term-bg: #0b0505; --term-pane: #090404; --term-solid: #190a0a; --term-panel: rgb(25 10 10 / 0.92); --term-panel-95: rgb(25 10 10 / 0.96); --term-border: rgb(220 38 38 / 0.45); --term-border2: rgb(74 20 20 / 0.6); }
+  :root[data-theme="knight"] { --term-bg: #07080c; --term-pane: #060709; --term-solid: #10131c; --term-panel: rgb(16 19 28 / 0.92); --term-panel-95: rgb(16 19 28 / 0.96); --term-border: rgb(148 163 184 / 0.4); --term-border2: rgb(56 66 84 / 0.6); }
   :root[data-theme="neon"]    { --term-bg: #0d0618; --term-pane: #0b0515; --term-solid: #180c2b; --term-panel: rgb(24 12 43 / 0.92); --term-panel-95: rgb(24 12 43 / 0.96); --term-border: rgb(232 121 249 / 0.35); --term-border2: rgb(50 26 84 / 0.6); }
   :root[data-theme="cosmos"]  { --term-bg: #05060f; --term-pane: #04050d; --term-solid: #0b0d1e; --term-panel: rgb(11 13 30 / 0.92); --term-panel-95: rgb(11 13 30 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(30 33 66 / 0.6); }
   :root[data-theme="money"]   { --term-bg: #04140d; --term-pane: #03110a; --term-solid: #082418; --term-panel: rgb(8 36 24 / 0.92); --term-panel-95: rgb(8 36 24 / 0.96); --term-border: rgb(47 191 113 / 0.4); --term-border2: rgb(20 61 40 / 0.6); }
@@ -381,6 +393,139 @@ img[src="/logo.png"] {
   from { transform: scale(1); opacity: 0.72; }
   to { transform: scale(1.05); opacity: 0.95; }
 }
+/* ---- P66 — CR7 & Knight scenes (the vader/Skywalker pattern) ------------
+   A fixed red/steel glow + the cut-out poster breathing at the bottom. Both
+   are GPU-cheap (opacity/transform) and respect prefers-reduced-motion. */
+:root[data-theme="cr7"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 42% 40% at 72% 72%, rgb(220 38 38 / 0.16), transparent 66%),
+    radial-gradient(ellipse 26% 18% at 72% 88%, rgb(220 38 38 / 0.2), transparent 72%);
+  animation: it-cr7-glow 7s ease-in-out infinite alternate;
+}
+:root[data-theme="cr7"] body::after {
+  content: "";
+  position: fixed;
+  bottom: 0;
+  right: 2vw;
+  z-index: -2;
+  height: min(88vh, 880px);
+  max-width: min(52vw, 560px);
+  aspect-ratio: 750 / 900;
+  pointer-events: none;
+  opacity: 0.9;
+  background: url("/cr7.webp") center bottom / contain no-repeat;
+  animation: it-cr7-breathe 9s ease-in-out infinite alternate;
+}
+@keyframes it-cr7-glow {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
+@keyframes it-cr7-breathe {
+  from { transform: scale(1); opacity: 0.72; }
+  to { transform: scale(1.04); opacity: 0.95; }
+}
+:root[data-theme="knight"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 44% 42% at 50% 70%, rgb(148 163 184 / 0.12), transparent 66%),
+    radial-gradient(ellipse 30% 20% at 50% 84%, rgb(148 163 184 / 0.14), transparent 72%);
+  animation: it-knight-glow 8s ease-in-out infinite alternate;
+}
+:root[data-theme="knight"] body::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: -2;
+  margin: 0 auto;
+  height: min(92vh, 900px);
+  max-width: min(60vw, 460px);
+  aspect-ratio: 327 / 900;
+  pointer-events: none;
+  opacity: 0.92;
+  background: url("/knight.webp") center bottom / contain no-repeat;
+  animation: it-knight-breathe 10s ease-in-out infinite alternate;
+}
+@keyframes it-knight-glow {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+@keyframes it-knight-breathe {
+  from { transform: scale(1); opacity: 0.7; }
+  to { transform: scale(1.05); opacity: 0.94; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="cr7"] body::before,
+  :root[data-theme="cr7"] body::after,
+  :root[data-theme="knight"] body::before,
+  :root[data-theme="knight"] body::after { animation: none; }
+}
+
+/* ---- P66 — animated overlays for IMAGE profile backgrounds ---------------
+   skywalker = storm: rain streaks sweeping down + a lightning flicker.
+   knight    = petals: drifting flower dots + a warm sun-glow pulse. */
+.bg-fx-storm {
+  background-image:
+    repeating-linear-gradient(76deg,
+      transparent 0 34px,
+      rgb(190 205 225 / 0.07) 34px 36px,
+      transparent 36px 88px),
+    radial-gradient(ellipse 60% 34% at 50% 0%, rgb(200 214 236 / 0.12), transparent 70%);
+  animation: bgfx-rain 0.9s linear infinite, bgfx-flash 6.5s ease-in-out infinite;
+}
+.bg-fx-storm::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(80deg,
+      transparent 0 52px,
+      rgb(190 205 225 / 0.05) 52px 54px,
+      transparent 54px 120px),
+    radial-gradient(ellipse 50% 30% at 30% 10%, rgb(190 205 225 / 0.08), transparent 70%);
+  animation: bgfx-rain 1.35s linear infinite reverse;
+}
+@keyframes bgfx-rain {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: -120px 560px, 60px 620px; }
+}
+@keyframes bgfx-flash {
+  0%, 91%, 94%, 100% { opacity: 0.75; }
+  92% { opacity: 1; }
+  93% { opacity: 0.55; }
+}
+.bg-fx-petals {
+  background-image:
+    radial-gradient(circle 5px at 18% 22%, rgb(244 114 182 / 0.5) 98%, transparent),
+    radial-gradient(circle 4px at 64% 12%, rgb(251 207 232 / 0.5) 98%, transparent),
+    radial-gradient(circle 6px at 82% 40%, rgb(251 146 60 / 0.45) 98%, transparent),
+    radial-gradient(circle 4px at 36% 58%, rgb(251 207 232 / 0.45) 98%, transparent),
+    radial-gradient(circle 5px at 55% 80%, rgb(244 114 182 / 0.4) 98%, transparent),
+    radial-gradient(ellipse 56% 44% at 50% 16%, rgb(251 191 36 / 0.22), transparent 72%);
+  animation: bgfx-fall 9s linear infinite, bgfx-sunglow 6s ease-in-out infinite alternate;
+}
+@keyframes bgfx-fall {
+  from { background-position: 0 -40%, 0 -55%, 0 -30%, 0 -70%, 0 -45%, 0 0; }
+  to { background-position: -26px 140%, 40px 155%, -34px 130%, 30px 160%, -20px 150%, 0 0; }
+}
+@keyframes bgfx-sunglow {
+  from { filter: brightness(0.94); }
+  to { filter: brightness(1.1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bg-fx-storm, .bg-fx-storm::after, .bg-fx-petals { animation: none; }
+}
+
 /* theme picker dots — real swatches per theme (settings page + navbar) */
 /* ---- Animated themes (Phase 20) ------------------------------------------
    Money Rain: an emerald wealth glow pulsing over the looping money.mp4
@@ -433,6 +578,8 @@ img[src="/logo.png"] {
 .theme-dot-ocean { background: linear-gradient(135deg, #06283d, #22b8cf); }
 .theme-dot-forest { background: linear-gradient(135deg, #0e2417, #34d17c); }
 .theme-dot-vader { background: linear-gradient(135deg, #050505 35%, #dc2626 75%); }
+.theme-dot-cr7 { background: linear-gradient(135deg, #0b0505 35%, #dc2626 62%, #f5f5f5 88%); }
+.theme-dot-knight { background: linear-gradient(135deg, #07080c 40%, #64748b 72%, #cbd5e1); }
 .theme-dot-neon { background: linear-gradient(135deg, #1b0a2e, #e879f9); }
 .theme-dot-cosmos { background: linear-gradient(135deg, #05060f, #eab308); }
 
