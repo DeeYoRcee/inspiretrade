@@ -54,10 +54,10 @@
 
   :root[data-theme="cr7"] {
     color-scheme: dark;
-    /* CR7 — carbon black + championship gold (P68 user request: the old
-       red palette was indistinguishable from the red-black Skywalker and
-       F1 themes; gold is CR7's own brand color and clearly distinct) */
-    --background: 40 22% 4%; --foreground: 42 20% 96%; --card: 40 18% 7%; --card-foreground: 42 20% 96%; --popover: 40 18% 8%; --popover-foreground: 42 20% 96%; --primary: 43 78% 55%; --primary-foreground: 40 30% 6%; --secondary: 40 10% 14%; --secondary-foreground: 42 16% 94%; --muted: 40 10% 12%; --muted-foreground: 42 8% 66%; --accent: 42 24% 16%; --accent-foreground: 44 24% 97%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 42 12% 17%; --input: 42 12% 17%; --ring: 43 78% 55%;
+    /* CR7 — neutral carbon black + championship gold (P68: gold over the old
+       red; P72 user request: the warm/sepia tint read muddy on phones — the
+       surfaces are now desaturated near-black, gold stays the accent) */
+    --background: 30 8% 4%; --foreground: 40 12% 94%; --card: 30 8% 6%; --card-foreground: 40 12% 94%; --popover: 30 8% 7%; --popover-foreground: 40 12% 94%; --primary: 43 78% 55%; --primary-foreground: 40 20% 5%; --secondary: 30 6% 12%; --secondary-foreground: 40 10% 92%; --muted: 30 6% 10%; --muted-foreground: 40 6% 62%; --accent: 40 14% 13%; --accent-foreground: 44 30% 96%; --destructive: 0 84% 55%; --destructive-foreground: 0 0% 100%; --success: 144 61% 45%; --success-foreground: 0 0% 100%; --border: 30 8% 14%; --input: 30 8% 14%; --ring: 43 78% 55%;
   }
   :root[data-theme="knight"] {
     color-scheme: dark;
@@ -96,7 +96,7 @@
   :root[data-theme="ocean"]   { --term-bg: #07131f; --term-pane: #06101b; --term-solid: #0c1a28; --term-panel: rgb(12 26 40 / 0.92); --term-panel-95: rgb(12 26 40 / 0.96); --term-border: rgb(56 89 119 / 0.5); --term-border2: rgb(30 58 83 / 0.6); }
   :root[data-theme="forest"]  { --term-bg: #0b1711; --term-pane: #0a140e; --term-solid: #12241a; --term-panel: rgb(18 36 26 / 0.92); --term-panel-95: rgb(18 36 26 / 0.96); --term-border: rgb(52 90 66 / 0.5); --term-border2: rgb(24 46 33 / 0.6); }
   :root[data-theme="vader"]  { --term-bg: #070404; --term-pane: #050303; --term-solid: #140a0a; --term-panel: rgb(20 10 10 / 0.92); --term-panel-95: rgb(20 10 10 / 0.96); --term-border: rgb(153 27 27 / 0.45); --term-border2: rgb(64 20 20 / 0.6); }
-  :root[data-theme="cr7"]    { --term-bg: #0b0805; --term-pane: #090604; --term-solid: #191207; --term-panel: rgb(25 18 10 / 0.92); --term-panel-95: rgb(25 18 10 / 0.96); --term-border: rgb(234 179 8 / 0.4); --term-border2: rgb(74 58 20 / 0.6); }
+  :root[data-theme="cr7"]    { --term-bg: #090908; --term-pane: #070706; --term-solid: #15130e; --term-panel: rgb(21 19 14 / 0.92); --term-panel-95: rgb(21 19 14 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(74 62 24 / 0.55); }
   :root[data-theme="knight"] { --term-bg: #07080c; --term-pane: #060709; --term-solid: #10131c; --term-panel: rgb(16 19 28 / 0.92); --term-panel-95: rgb(16 19 28 / 0.96); --term-border: rgb(148 163 184 / 0.4); --term-border2: rgb(56 66 84 / 0.6); }
   :root[data-theme="neon"]    { --term-bg: #0d0618; --term-pane: #0b0515; --term-solid: #180c2b; --term-panel: rgb(24 12 43 / 0.92); --term-panel-95: rgb(24 12 43 / 0.96); --term-border: rgb(232 121 249 / 0.35); --term-border2: rgb(50 26 84 / 0.6); }
   :root[data-theme="cosmos"]  { --term-bg: #05060f; --term-pane: #04050d; --term-solid: #0b0d1e; --term-panel: rgb(11 13 30 / 0.92); --term-panel-95: rgb(11 13 30 / 0.96); --term-border: rgb(234 179 8 / 0.35); --term-border2: rgb(30 33 66 / 0.6); }

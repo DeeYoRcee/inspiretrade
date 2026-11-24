@@ -281,7 +281,6 @@ export function ObjectTree({
   const orderedGroups = Object.values(groups).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
   const ungroupedRows = visibleRows.filter((d) => !d.group);
   const selIds = [...new Set([...selectedIds, ...(selectedDrawingId ? [selectedDrawingId] : [])])];
-  const deletable = selIds.filter((id) => { const d = drawings.find((x) => x.id === id); return d && !d.locked; });
 
   return (
     <div
@@ -389,14 +388,6 @@ export function ObjectTree({
           className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
         >
           <FolderInput className="h-4 w-4" />
-        </button>
-        <button
-          title="Delete selected drawings (locked ones are never deleted)"
-          disabled={!deletable.length}
-          onClick={() => onDelete(deletable)}
-          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-red-500/15 hover:text-red-300 disabled:opacity-30"
-        >
-          <Trash2 className="h-4 w-4" />
         </button>
         {selIds.length > 0 && (
           <button title="Clear selection" onClick={() => { for (const id of selIds) onToggleSelect(id); }} className="ml-auto text-[10px] text-sky-400 hover:text-sky-300">
