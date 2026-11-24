@@ -1446,7 +1446,7 @@ async function getMids(symbols) {
             cache3.set(s, out[s]);
             continue;
           }
-          await fetchYahooFor(s, out);
+          await fetchYahooFor(s, out, true);
         }
         for (const s of rest) await fetchYahooFor(s, out);
       })()
@@ -1454,12 +1454,12 @@ async function getMids(symbols) {
   }
   return out;
 }
-async function fetchYahooFor(sym, out) {
+async function fetchYahooFor(sym, out, stale = false) {
   const inst = getInstrument(sym);
   if (!inst?.yahoo) return;
   try {
     const p = await fetchYahooMid(inst.yahoo);
-    const info = { mid: p, source: "yahoo", live: false, time: Date.now() };
+    const info = { mid: p, source: "yahoo", live: false, stale, time: Date.now() };
     out[sym] = info;
     cache3.set(sym, info);
   } catch {

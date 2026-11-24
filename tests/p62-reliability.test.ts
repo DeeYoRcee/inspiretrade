@@ -71,9 +71,14 @@ test("P62 §4 — stop-out evaluation is not blind when one symbol's quote vanis
 
 test("P62 — cron module exposes the documented result shape (structure guard)", async () => {
   const src = await import("node:fs").then((fs) => fs.promises.readFile("api/_src/trading/cron.ts", "utf8"));
-  assert.ok(src.includes("collectionGroup(\"positions\")"), "cron enumerates open positions");
-  assert.ok(src.includes("collectionGroup(\"orders\")"), "cron enumerates pending orders");
-  assert.ok(src.includes("collectionGroup(\"accounts\")"), "cron enumerates active accounts (expiry/anchors)");
+  // PHASE 64 — the sweep pages collection groups with persisted cursors
+  assert.ok(src.includes("collectionGroup("), "cron enumerates open positions/orders/accounts");
+  for (const col of ["positions", "orders", "accounts"]) {
+    assert.ok(src.includes(`"${col}"`), `cron enumerates ${col}`);
+  }
   assert.ok(src.includes("platformMonitoring"), "cron writes monitoring state");
   assert.ok(src.includes("cron_gap"), "cron raises admin alerts on gaps");
+  assert.ok(src.includes("runningUntil"), "cron takes a lease so concurrent passes never overlap");
+  assert.ok(src.includes("fireChainHop"), "cron re-invokes itself (24/7 chain, no browser needed)");
+  assert.ok(src.includes("startAfter"), "cursor pagination makes an interrupted pass resumable");
 });

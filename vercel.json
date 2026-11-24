@@ -17,16 +17,27 @@
     {
       "source": "/api/support",
       "destination": "/api/alerts-cron"
+    },
+    {
+      "source": "/api/cron-trading",
+      "destination": "/api/trading?action=cron-evaluate"
     }
   ],
   "crons": [
     {
       "path": "/api/alerts-cron",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron-trading",
+      "schedule": "*/5 * * * *"
     }
   ],
   "functions": {
     "api/quotes.js": {
+      "maxDuration": 60
+    },
+    "api/trading.js": {
       "maxDuration": 60
     }
   }

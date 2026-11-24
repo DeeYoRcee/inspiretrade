@@ -24,7 +24,7 @@ function Chip({ active, color, label, onClick }: { active: boolean; color?: stri
       onClick={onClick}
       className={cn(
         "rounded border px-2 py-1 text-[11px] font-semibold transition-colors",
-        active ? "border-sky-500/60 bg-sky-600/20 text-sky-200" : "border-slate-700/70 text-slate-400 hover:text-slate-200",
+        active ? "border-primary/70 bg-primary/20 text-primary" : "border-border/80 text-muted-foreground hover:text-foreground/90",
       )}
       style={active && color ? { borderColor: color, color } : undefined}
     >
@@ -35,13 +35,13 @@ function Chip({ active, color, label, onClick }: { active: boolean; color?: stri
 
 function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: React.ReactNode; hint?: string }) {
   return (
-    <button onClick={() => onChange(!checked)} className="flex w-full items-center gap-3 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-left transition-colors hover:border-slate-700">
-      <span className={cn("flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors", checked ? "bg-sky-600" : "bg-slate-700")}>
+    <button onClick={() => onChange(!checked)} className="flex w-full items-center gap-3 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-left transition-colors hover:border-border">
+      <span className={cn("flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors", checked ? "bg-primary" : "bg-secondary/70")}>
         <span className={cn("h-4 w-4 rounded-full bg-white transition-transform", checked && "translate-x-4")} />
       </span>
       <span className="min-w-0">
-        <span className="block text-xs font-semibold text-slate-200">{label}</span>
-        {hint && <span className="block text-[10px] leading-snug text-slate-500">{hint}</span>}
+        <span className="block text-xs font-semibold text-foreground/90">{label}</span>
+        {hint && <span className="block text-[10px] leading-snug text-muted-foreground">{hint}</span>}
       </span>
     </button>
   );
@@ -95,8 +95,8 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
             label="High-impact economic event alerts"
             hint="Fires before High-impact releases in the currencies you pick."
           />
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-            <div className="text-xs font-semibold text-slate-200">Warn minutes before event</div>
+          <div className="rounded-lg border border-border bg-background/60 p-3">
+            <div className="text-xs font-semibold text-foreground/90">Warn minutes before event</div>
             <div className="mt-2 flex gap-1.5">
               {[5, 15, 30, 60].map((m) => (
                 <button
@@ -104,14 +104,14 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
                   onClick={() => update({ calMinutesBefore: m })}
                   className={cn(
                     "flex-1 rounded border px-2 py-1 text-[11px] font-bold tabular-nums transition-colors",
-                    settings.calMinutesBefore === m ? "border-sky-500/60 bg-sky-600/20 text-sky-200" : "border-slate-700/70 text-slate-400 hover:text-slate-200",
+                    settings.calMinutesBefore === m ? "border-primary/70 bg-primary/20 text-primary" : "border-border/80 text-muted-foreground hover:text-foreground/90",
                   )}
                 >
                   {m}m
                 </button>
               ))}
             </div>
-            <div className="mt-3 text-xs font-semibold text-slate-200">Currencies</div>
+            <div className="mt-3 text-xs font-semibold text-foreground/90">Currencies</div>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {CALENDAR_CURRENCIES.map((c) => (
                 <Chip
@@ -122,9 +122,9 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
               ))}
             </div>
           </div>
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-            <div className="text-xs font-semibold text-slate-200">News alerts by instrument</div>
-            <div className="mt-1 text-[10px] text-slate-500">Fresh headlines (&lt;45 min old) tagged with these instruments — XAUUSD is the gold watch.</div>
+          <div className="rounded-lg border border-border bg-background/60 p-3">
+            <div className="text-xs font-semibold text-foreground/90">News alerts by instrument</div>
+            <div className="mt-1 text-[10px] text-muted-foreground">Fresh headlines (&lt;45 min old) tagged with these instruments — XAUUSD is the gold watch.</div>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {SYMBOLS.map((s) => (
                 <Chip
@@ -140,10 +140,10 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
         <div className="space-y-2.5">
           {/* PHASE 47 — the dedicated Trading Alerts manager (create / pause /
               resume / edit / duplicate / delete / search / trigger history) */}
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+          <div className="rounded-lg border border-border bg-background/60 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-xs font-semibold text-slate-200">Trading alerts</div>
-              <span className="text-[10px] text-slate-500">price · indicator · drawing</span>
+              <div className="text-xs font-semibold text-foreground/90">Trading alerts</div>
+              <span className="text-[10px] text-muted-foreground">price · indicator · drawing</span>
             </div>
             {(() => {
               const snap = readTerminalSnapshot();
@@ -154,23 +154,23 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
           </div>
 
           {/* PHASE 47 — unified notification preferences */}
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-            <div className="text-xs font-semibold text-slate-200">Notification categories</div>
+          <div className="rounded-lg border border-border bg-background/60 p-3">
+            <div className="text-xs font-semibold text-foreground/90">Notification categories</div>
             <div className="mt-2 space-y-1.5">
               <Toggle checked={settings.tradingAlerts ?? true} onChange={(v) => update({ tradingAlerts: v })} label="Trading alerts" hint="Price / indicator / drawing alert fires." />
               <Toggle checked={settings.systemNotifs ?? true} onChange={(v) => update({ systemNotifs: v })} label="Platform notifications" hint="System events (paused alerts, push status, …)." />
               <Toggle checked={settings.sound ?? false} onChange={(v) => update({ sound: v })} label={<span className="inline-flex items-center gap-1">Sound <Volume2 className="h-3 w-3" /></span>} hint="Short beep when an alert fires." />
             </div>
-            <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-400">
-              <MoonStar className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+            <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+              <MoonStar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <span className="shrink-0">Quiet hours</span>
-              <select className="h-7 flex-1 rounded border border-slate-700 bg-slate-950 px-1 text-[11px] text-slate-200"
+              <select className="h-7 flex-1 rounded border border-border bg-background px-1 text-[11px] text-foreground/90"
                 value={settings.quietFrom ?? ""} onChange={(e) => update({ quietFrom: e.target.value === "" ? null : Number(e.target.value) })}>
                 <option value="">off</option>
                 {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
               </select>
               <span>→</span>
-              <select className="h-7 flex-1 rounded border border-slate-700 bg-slate-950 px-1 text-[11px] text-slate-200"
+              <select className="h-7 flex-1 rounded border border-border bg-background px-1 text-[11px] text-foreground/90"
                 value={settings.quietTo ?? ""} onChange={(e) => update({ quietTo: e.target.value === "" ? null : Number(e.target.value) })}>
                 <option value="">—</option>
                 {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
@@ -178,8 +178,8 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-            <div className="text-xs font-semibold text-slate-200">Delivery</div>
+          <div className="rounded-lg border border-border bg-background/60 p-3">
+            <div className="text-xs font-semibold text-foreground/90">Delivery</div>
             <div className="mt-2 space-y-2">
               <Button variant="outline" size="sm" className="w-full justify-start" onClick={enableBrowser}>
                 <Monitor className="mr-2 h-3.5 w-3.5" /> Browser notifications {settings.browser ? "· on" : ""}
@@ -190,18 +190,18 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+          <div className="rounded-lg border border-border bg-background/60 p-3">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-slate-200">Custom event alerts ({customAlerts.length})</div>
-              <span className="text-[10px] text-slate-500">Set from any calendar row</span>
+              <div className="text-xs font-semibold text-foreground/90">Custom event alerts ({customAlerts.length})</div>
+              <span className="text-[10px] text-muted-foreground">Set from any calendar row</span>
             </div>
             <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
-              {customAlerts.length === 0 && <div className="text-[11px] text-slate-500">No custom alerts yet.</div>}
+              {customAlerts.length === 0 && <div className="text-[11px] text-muted-foreground">No custom alerts yet.</div>}
               {customAlerts.map((a) => (
                 <div key={a.id} className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px]">
                   <BellRing className="h-3.5 w-3.5 shrink-0 text-amber-300" />
                   <span className="min-w-0 flex-1 truncate text-amber-200">{a.currency} · {a.title}</span>
-                  <span className="shrink-0 text-[10px] text-slate-400">{a.minutesBefore}m before</span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground">{a.minutesBefore}m before</span>
                   <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0" onClick={() => { removeEventAlert(a.id); setCustomAlerts(loadEventAlerts()); }}>
                     <Trash2 className="h-3 w-3" />
                   </Button>
@@ -210,9 +210,9 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+          <div className="rounded-lg border border-border bg-background/60 p-3">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-slate-200">Recent alert log</div>
+              <div className="text-xs font-semibold text-foreground/90">Recent alert log</div>
               <div className="flex gap-1">
                 <Button size="icon" variant="ghost" className="h-6 w-6" title="Refresh log" onClick={() => { setLog(getAlertLog()); setCustomAlerts(loadEventAlerts()); }}>
                   <RefreshCw className="h-3 w-3" />
@@ -223,15 +223,15 @@ export default function AlertsPanel({ symbol: symbolProp, timeframe: tfProp }: {
               </div>
             </div>
             <div className="mt-2 max-h-44 space-y-1 overflow-y-auto">
-              {log.length === 0 && <div className="text-[11px] text-slate-500">Nothing fired yet.</div>}
+              {log.length === 0 && <div className="text-[11px] text-muted-foreground">Nothing fired yet.</div>}
               {log.slice(0, 12).map((e) => (
-                <div key={`${e.id}-${e.at}`} className="rounded-md border border-slate-800 px-2 py-1 text-[11px]">
+                <div key={`${e.id}-${e.at}`} className="rounded-md border border-border px-2 py-1 text-[11px]">
                   <div className="flex items-center gap-2">
-                    <span className={cn("rounded px-1 text-[9px] font-bold uppercase", e.kind === "news" ? "bg-sky-900/60 text-sky-300" : "bg-amber-900/60 text-amber-300")}>
+                    <span className={cn("rounded px-1 text-[9px] font-bold uppercase", e.kind === "news" ? "bg-primary/15 text-primary" : "bg-amber-900/60 text-amber-300")}>
                       {e.kind === "news" ? e.symbol || "news" : "calendar"}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-slate-300">{e.title}</span>
-                    <span className="shrink-0 text-[9px] text-slate-500">{timeFmt.format(e.at)}</span>
+                    <span className="min-w-0 flex-1 truncate text-foreground/80">{e.title}</span>
+                    <span className="shrink-0 text-[9px] text-muted-foreground">{timeFmt.format(e.at)}</span>
                   </div>
                 </div>
               ))}

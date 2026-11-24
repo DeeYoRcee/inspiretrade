@@ -1021,7 +1021,7 @@ async function getMids(symbols) {
             cache3.set(s, out[s]);
             continue;
           }
-          await fetchYahooFor(s, out);
+          await fetchYahooFor(s, out, true);
         }
         for (const s of rest) await fetchYahooFor(s, out);
       })()
@@ -1029,12 +1029,12 @@ async function getMids(symbols) {
   }
   return out;
 }
-async function fetchYahooFor(sym, out) {
+async function fetchYahooFor(sym, out, stale = false) {
   const inst = getInstrument(sym);
   if (!inst?.yahoo) return;
   try {
     const p = await fetchYahooMid(inst.yahoo);
-    const info = { mid: p, source: "yahoo", live: false, time: Date.now() };
+    const info = { mid: p, source: "yahoo", live: false, stale, time: Date.now() };
     out[sym] = info;
     cache3.set(sym, info);
   } catch {
@@ -1113,6 +1113,17 @@ function requireQuote(quotes, symbol) {
   if (!q) throw new HttpError(503, "NO_QUOTE", `No executable price for ${symbol} right now \u2014 try again`);
   return q;
 }
+var EXEC_STALE_MS = 12e4;
+function filterExecutableQuotes(quotes, now) {
+  const out = {};
+  for (const [sym, q] of Object.entries(quotes)) {
+    if (!q || !(q.mid > 0)) continue;
+    if (q.live === true && now - (q.time || 0) > EXEC_STALE_MS) continue;
+    if (q.stale === true) continue;
+    out[sym] = q;
+  }
+  return out;
+}
 function writeTradeDoc(tx, uid, aid, o) {
   tx.set(tradeCol(uid, aid).doc(), { ...o });
 }
@@ -1170,11 +1181,16 @@ function settleSwap(state, pos, now) {
 function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
   const leverage = state.account.leverage || DEFAULT_LEVERAGE;
   const now = Date.now();
+  const exec = filterExecutableQuotes(quotes, now);
+  const diag = { skipped: 0, delayed: 0 };
+  for (const sym of Object.keys(quotes)) {
+    if (!exec[sym]) diag.skipped++;
+  }
   const result = evaluateAccount({
     balance: state.account.balance,
     positions: state.positions,
     orders: state.orders,
-    quotes,
+    quotes: exec,
     prices,
     leverage
   });
@@ -1182,13 +1198,30 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
   const toClose = [];
   if (result.stopOut) {
     for (const p of state.positions) {
-      const q = requireQuote(quotes, p.symbol);
+      const q = exec[p.symbol];
+      if (!q) {
+        diag.skipped++;
+        writeEventTx(tx, uid, aid, "evaluation_skipped", { positionId: p.id, symbol: p.symbol, reason: "stopout_no_quote" });
+        continue;
+      }
       toClose.push({ pos: p, exit: exitPriceFor(p.side, q), reason: "stopout" });
     }
   } else {
     for (const e of result.exits) {
       const pos = state.positions.find((p) => p.id === e.positionId);
       if (pos) toClose.push({ pos, exit: e.exit, reason: e.reason });
+    }
+  }
+  for (const t of toClose) {
+    if (quotes[t.pos.symbol]?.source === "yahoo") {
+      diag.delayed++;
+      void writeAdminAlert({
+        type: "engine_error",
+        severity: "warning",
+        text: `Executed ${t.reason} on a DELAYED quote for ${t.pos.symbol}`,
+        uid,
+        details: { aid, symbol: t.pos.symbol }
+      }, `delayed_execution:${t.pos.symbol}`, 30 * 6e4);
     }
   }
   for (const { pos, exit, reason } of toClose) {
@@ -1290,7 +1323,10 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
   }
   const today = dayKey();
   const dayStart = { ...state.account.dayStart || {} };
-  if (dayStart[today] == null) dayStart[today] = state.account.balance;
+  if (dayStart[today] == null) {
+    const m0 = computeMetrics(state.account.balance, state.positions, exec, prices, leverage);
+    dayStart[today] = Math.round(m0.equity * 100) / 100;
+  }
   state.account.dayStart = dayStart;
   const rules = state.account.rules ?? null;
   if (rules && state.account.status !== "failed") {
@@ -1335,8 +1371,15 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
         reason: ruleState.failedReason || null,
         status: ruleState.status
       });
-      for (const p of [...state.positions]) {
-        const q = requireQuote(quotes, p.symbol);
+      const remaining = [];
+      for (const p of state.positions) {
+        const q = exec[p.symbol];
+        if (!q) {
+          diag.skipped++;
+          writeEventTx(tx, uid, aid, "evaluation_skipped", { positionId: p.id, symbol: p.symbol, reason: "breach_no_quote" });
+          remaining.push(p);
+          continue;
+        }
         const spec = getInstrument(p.symbol);
         const swap = settleSwap(state, p, now);
         const exit = exitPriceFor(p.side, q);
@@ -1359,13 +1402,13 @@ function applyEvaluationTx(tx, uid, aid, state, quotes, prices) {
         recordClose(state, tx, uid, aid, outcome);
         tx.delete(posCol(uid, aid).doc(p.id));
       }
-      state.positions = [];
+      state.positions = remaining;
       for (const o of state.orders) tx.delete(ordCol(uid, aid).doc(o.id));
       state.orders = [];
     }
-    return { closed, filled: result.fills.length, ruleState };
+    return { closed, filled: result.fills.length, ruleState, diag };
   }
-  return { closed, filled: result.fills.length, ruleState: null };
+  return { closed, filled: result.fills.length, ruleState: null, diag };
 }
 function bumpTradingDay(account, closedAt) {
   const key = dayKey(closedAt);
@@ -1377,6 +1420,9 @@ function persistAccountTx(tx, uid, aid, state, quotes, prices) {
   const leverage = state.account.leverage || DEFAULT_LEVERAGE;
   const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
   tx.update(accountsCol(uid).doc(aid), {
+    // PHASE 64 §12 — per-account freshness: the monitoring surface can list
+    // accounts the scheduler has not reached for too long.
+    lastEvaluatedAt: Date.now(),
     balance: state.account.balance,
     dayStart: state.account.dayStart,
     status: state.account.status || "active",
@@ -1558,14 +1604,13 @@ async function resetAccount(uid, aid) {
 async function evaluate(uid, aid) {
   const dbRef = db();
   const accRef = accountsCol(uid).doc(aid);
-  const preState = await readState(uid, aid);
-  const { quotes, prices } = await quotesForState(preState);
   return dbRef.runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, aid);
+    const { quotes, prices } = await quotesForState(state);
     const before = state.account.balance;
-    const { closed } = applyEvaluationTx(tx, uid, aid, state, quotes, prices);
+    const { closed, diag } = applyEvaluationTx(tx, uid, aid, state, quotes, prices);
     const metrics = persistAccountTx(tx, uid, aid, state, quotes, prices);
-    return { metrics, realized: Math.round((state.account.balance - before) * 100) / 100, closed };
+    return { metrics, realized: Math.round((state.account.balance - before) * 100) / 100, closed, diag };
   });
 }
 async function txGetState(tx, uid, aid) {
@@ -1609,23 +1654,31 @@ async function placeOrder(uid, req) {
   if (settings.maxLotPerOrder != null && Number(req.lots) > settings.maxLotPerOrder) {
     throw new HttpError(403, "LOT_LIMIT", `Max lot per order is ${settings.maxLotPerOrder}`);
   }
-  const preState = await readState(uid, req.accountId);
-  const { quotes, prices } = await quotesForState(preState, [spec.symbol]);
-  if (!quotes[spec.symbol]) {
-    void writeAdminAlert({
-      type: "engine_error",
-      severity: "warning",
-      text: `No executable price for ${spec.symbol}`,
-      uid,
-      details: { aid: req.accountId, symbol: spec.symbol }
-    }, `no_quote:${spec.symbol}`, 30 * 6e4);
-  }
   return dbRef.runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, req.accountId);
+    const { quotes, prices } = await quotesForState(state, [spec.symbol]);
+    if (!quotes[spec.symbol]) {
+      void writeAdminAlert({
+        type: "engine_error",
+        severity: "warning",
+        text: `No executable price for ${spec.symbol}`,
+        uid,
+        details: { aid: req.accountId, symbol: spec.symbol }
+      }, `no_quote:${spec.symbol}`, 30 * 6e4);
+    }
     applyEvaluationTx(tx, uid, req.accountId, state, quotes, prices);
     if (req.requestId) {
       const dup = state.orders.find((o) => o.requestId === req.requestId) ?? state.positions.find((p) => p.requestId === req.requestId);
       if (dup) throw new HttpError(409, "DUPLICATE_REQUEST", "This exact order was already submitted moments ago \u2014 check your open positions and orders");
+      const reqKey = String(req.requestId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
+      if (reqKey && reqKey === String(req.requestId)) {
+        const reqRef = firestore().collection("requestIds").doc(`${uid}_${req.accountId}_${reqKey}`);
+        const reqSnap = await tx.get(reqRef);
+        if (reqSnap.exists && Date.now() - (reqSnap.get("at") || 0) < 7 * 864e5) {
+          throw new HttpError(409, "DUPLICATE_REQUEST", "This exact order was already submitted \u2014 check your open positions and orders");
+        }
+        tx.set(reqRef, { at: Date.now(), symbol: req.symbol, kind, lots: req.lots });
+      }
     }
     const leverage = state.account.leverage || DEFAULT_LEVERAGE;
     const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
@@ -1747,10 +1800,9 @@ async function placeOrder(uid, req) {
 async function closePosition(uid, accountId, positionId, lots) {
   const spec = getInstrument((await posCol(uid, accountId).doc(positionId).get()).data()?.symbol || "");
   if (!spec) throw new HttpError(404, "NO_POSITION", "Position not found");
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, accountId);
+    const { quotes, prices } = await quotesForState(state);
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const pos = state.positions.find((p) => p.id === positionId);
     if (!pos) throw new HttpError(404, "NO_POSITION", "Position not found (maybe SL/TP already closed it)");
@@ -1795,10 +1847,9 @@ async function closePosition(uid, accountId, positionId, lots) {
   });
 }
 async function modifyPosition(uid, accountId, positionId, sl, tp, tsPct) {
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, accountId);
+    const { quotes, prices } = await quotesForState(state);
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const pos = state.positions.find((p) => p.id === positionId);
     if (!pos) throw new HttpError(404, "NO_POSITION", "Position not found (maybe SL/TP already closed it)");
@@ -1818,10 +1869,9 @@ async function modifyPosition(uid, accountId, positionId, sl, tp, tsPct) {
   });
 }
 async function modifyOrder(uid, accountId, orderId, patch) {
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, accountId);
+    const { quotes, prices } = await quotesForState(state);
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const order = state.orders.find((o) => o.id === orderId);
     if (!order) throw new HttpError(404, "NO_ORDER", "Order not found (maybe it already filled)");
@@ -1859,10 +1909,9 @@ async function modifyOrder(uid, accountId, orderId, patch) {
   });
 }
 async function closeAll(uid, accountId) {
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx) => {
     const state = await txGetState(tx, uid, accountId);
+    const { quotes, prices } = await quotesForState(state);
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const closed = [];
     const now = Date.now();
@@ -1896,11 +1945,23 @@ async function closeAll(uid, accountId) {
   });
 }
 async function cancelOrder(uid, accountId, orderId) {
-  const ref = ordCol(uid, accountId).doc(orderId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpError(404, "NO_ORDER", "Order not found");
-  await ref.delete();
-  return { ok: true };
+  return db().runTransaction(async (tx) => {
+    const state = await txGetState(tx, uid, accountId);
+    const { quotes, prices } = await quotesForState(state);
+    applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order) throw new HttpError(404, "NO_ORDER", "Order not found (it may have already filled, expired or been cancelled)");
+    tx.delete(ordCol(uid, accountId).doc(orderId));
+    writeEventTx(tx, uid, accountId, "order_cancelled", {
+      orderId,
+      symbol: order.symbol,
+      kind: order.kind,
+      side: order.side,
+      lots: order.lots
+    });
+    persistAccountTx(tx, uid, accountId, state, quotes, prices);
+    return { ok: true };
+  });
 }
 
 // api/_src/trading/route-bodies.ts
@@ -1967,62 +2028,178 @@ function rateLimit(key, limit, windowMs) {
 
 // api/_src/trading/cron.ts
 init_firebase();
-async function runTradingCron(budgetMs = 8e3) {
+var CHAIN_BUDGET_MS = 45e3;
+var LEASE_MS = 9e4;
+var KICK_STALE_MS = 9e4;
+var PAGE_POSITIONS = 300;
+var PAGE_ORDERS = 300;
+var PAGE_ACCOUNTS = 400;
+async function fireChainHop(baseUrl, secret) {
+  if (!secret) return false;
+  try {
+    const c = fetch(`${baseUrl}/api/trading?action=cron-evaluate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    c.catch(() => {
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    return true;
+  } catch {
+    return false;
+  }
+}
+var lastKickCheck = 0;
+async function kickCronChainIfStale(baseUrl) {
+  const now = Date.now();
+  if (now - lastKickCheck < 3e4) return;
+  lastKickCheck = now;
+  try {
+    const dbx = firestore();
+    const cur = (await dbx.collection("platformMonitoring").doc("tradingCron").get()).data();
+    if (cur?.runningUntil && cur.runningUntil > now) return;
+    if (cur?.lastRunAt && now - cur.lastRunAt < KICK_STALE_MS) return;
+    await fireChainHop(baseUrl, process.env.CRON_SECRET);
+  } catch {
+  }
+}
+async function runTradingCron(budgetMs = CHAIN_BUDGET_MS, chain) {
   const started = Date.now();
   const dbx = firestore();
-  const targets = /* @__PURE__ */ new Map();
-  const addTargets = (snap, prio) => {
-    for (const d of snap.docs) {
-      const accRef = d.ref.parent.parent;
-      if (!accRef) continue;
-      const uid = accRef.parent.parent?.id ?? "";
-      const aid = accRef.id;
-      if (!uid || !aid) continue;
-      const key = `${uid}:${aid}`;
-      const prev2 = targets.get(key);
-      if (!prev2 || prev2.prio > prio) targets.set(key, { uid, aid, prio });
-    }
-  };
-  addTargets(await dbx.collectionGroup("positions").limit(300).get(), 0);
-  addTargets(await dbx.collectionGroup("orders").limit(300).get(), 0);
-  const accSnap = await dbx.collectionGroup("accounts").limit(400).get();
-  for (const d of accSnap.docs) {
-    if ((d.get("status") || "active") !== "active") continue;
-    const accRef = d.ref.parent.parent;
-    if (!accRef) continue;
-    const uid = accRef.parent.parent?.id ?? "";
-    if (!uid) continue;
-    const key = `${uid}:${accRef.id}`;
-    if (!targets.has(key)) targets.set(key, { uid, aid: accRef.id, prio: 1 });
+  const monRef = dbx.collection("platformMonitoring").doc("tradingCron");
+  const leased = await dbx.runTransaction(async (tx) => {
+    const cur = (await tx.get(monRef)).data();
+    if (cur?.runningUntil && cur.runningUntil > started) return false;
+    tx.set(monRef, { runningUntil: started + LEASE_MS, leaseAt: started }, { merge: true });
+    return true;
+  });
+  if (!leased) {
+    return { ok: true, skipped: "busy", targets: 0, processed: 0, failed: 0, remaining: 0, runMs: Date.now() - started, errors: [] };
   }
-  const ordered = [...targets.values()].sort((a, b) => a.prio - b.prio);
   let processed = 0;
   let failed = 0;
   const errors = [];
-  for (const t of ordered) {
-    if (Date.now() - started > budgetMs) break;
+  let staleSkipped = 0;
+  let delayedExec = 0;
+  let fatal = null;
+  const ordered = [];
+  let startCursors = { positions: null, orders: null, accounts: null };
+  let nextCursors = { ...startCursors };
+  try {
+    const prev = (await monRef.get()).data();
+    startCursors = {
+      positions: prev?.cursors?.positions ?? null,
+      orders: prev?.cursors?.orders ?? null,
+      accounts: prev?.cursors?.accounts ?? null
+    };
+    nextCursors = { ...startCursors };
+    const targets = /* @__PURE__ */ new Map();
+    const addTargets = (snap, prio) => {
+      for (const d of snap.docs) {
+        const accRef = d.ref.parent.parent;
+        if (!accRef) continue;
+        const uid = accRef.parent.parent?.id ?? "";
+        const aid = accRef.id;
+        if (!uid || !aid) continue;
+        const key = `${uid}:${aid}`;
+        const p = targets.get(key);
+        if (!p || p.prio > prio) targets.set(key, { uid, aid, prio });
+      }
+    };
+    const { FieldPath } = await import("firebase-admin/firestore");
+    const page = async (col, limit) => {
+      let q = dbx.collectionGroup(col).orderBy(FieldPath.documentId()).limit(limit);
+      if (startCursors[col]) q = q.startAfter(dbx.doc(startCursors[col]));
+      const snap = await q.get();
+      if (snap.empty) {
+        nextCursors[col] = null;
+        return;
+      }
+      addTargets(snap, 0);
+      nextCursors[col] = snap.docs.length === limit ? snap.docs[snap.docs.length - 1].ref.path : null;
+      return snap;
+    };
+    const accountsFilter = (snap) => {
+      for (const d of snap?.docs ?? []) {
+        if ((d.get("status") || "active") !== "active") continue;
+        const accRef = d.ref.parent.parent;
+        if (!accRef) continue;
+        const uid = accRef.parent.parent?.id ?? "";
+        if (!uid) continue;
+        const key = `${uid}:${accRef.id}`;
+        if (!targets.has(key)) targets.set(key, { uid, aid: accRef.id, prio: 1 });
+      }
+    };
+    if (!startCursors.accounts) {
+      const p1 = await page("positions", PAGE_POSITIONS);
+      const o1 = await page("orders", PAGE_ORDERS);
+      const accountsReady = !nextCursors.positions && !nextCursors.orders;
+      if (accountsReady) accountsFilter(await page("accounts", PAGE_ACCOUNTS));
+      void p1;
+      void o1;
+    } else {
+      accountsFilter(await page("accounts", PAGE_ACCOUNTS));
+    }
+    ordered.push(...[...targets.values()].sort((a, b) => a.prio - b.prio));
+    for (const t of ordered) {
+      if (Date.now() - started > budgetMs) break;
+      try {
+        const r = await evaluate(t.uid, t.aid);
+        processed++;
+        staleSkipped += r?.diag?.skipped ?? 0;
+        delayedExec += r?.diag?.delayed ?? 0;
+      } catch (e) {
+        failed++;
+        if (errors.length < 5) errors.push(`${t.aid}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    const complete = processed + failed >= ordered.length;
+    const finalCursors = complete ? nextCursors : startCursors;
+    const prevRun = prev?.lastRunAt || 0;
+    const runMs2 = Date.now() - started;
+    const remaining = Math.max(0, ordered.length - processed - failed);
+    await monRef.set({
+      lastRunAt: started,
+      lastOkRunAt: started,
+      lastError: errors.length ? errors.slice(0, 3).join(" | ") : null,
+      runMs: runMs2,
+      processed,
+      failed,
+      remaining,
+      staleSkipped,
+      delayedExec,
+      cursors: finalCursors,
+      runningUntil: 0,
+      // lease released — the next hop may start immediately
+      updatedAt: started
+    }, { merge: true });
+    if (prevRun && started - prevRun > 15 * 6e4) {
+      void writeAdminAlert({
+        type: "engine_error",
+        severity: "warning",
+        text: `Trading cron gap detected: previous evaluation ran ${Math.round((started - prevRun) / 6e4)} min late`,
+        details: { processed, failed }
+      }, "cron_gap", 60 * 6e4);
+    }
+  } catch (e) {
+    fatal = e instanceof Error ? e.message : String(e);
     try {
-      await evaluate(t.uid, t.aid);
-      processed++;
-    } catch (e) {
-      failed++;
-      if (errors.length < 5) errors.push(`${t.aid}: ${e instanceof Error ? e.message : String(e)}`);
+      await monRef.set({
+        lastError: `fatal: ${fatal}`,
+        lastRunAt: started,
+        cursors: startCursors,
+        runningUntil: 0,
+        updatedAt: started
+      }, { merge: true });
+    } catch {
     }
   }
-  const monRef = dbx.collection("platformMonitoring").doc("tradingCron");
-  const prev = (await monRef.get()).data();
   const runMs = Date.now() - started;
-  const remaining = Math.max(0, ordered.length - processed - failed);
-  await monRef.set({ lastRunAt: started, runMs, processed, failed, remaining }, { merge: true });
-  if (prev?.lastRunAt && started - prev.lastRunAt > 15 * 6e4) {
-    void writeAdminAlert({
-      type: "engine_error",
-      severity: "warning",
-      text: `Trading cron gap detected: previous evaluation ran ${Math.round((started - prev.lastRunAt) / 6e4)} min late`,
-      details: { processed, failed }
-    }, "cron_gap", 60 * 6e4);
+  if (chain?.baseUrl) {
+    await fireChainHop(chain.baseUrl, process.env.CRON_SECRET);
   }
-  return { ok: true, targets: ordered.length, processed, failed, remaining, runMs, errors };
+  return { ok: true, targets: ordered.length, processed, failed, remaining: Math.max(0, ordered.length - processed - failed), runMs, errors, skipped: fatal ? `error: ${fatal}` : void 0 };
 }
 
 // api/_src/trading/admin.ts
@@ -2518,9 +2695,15 @@ var routes = {
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
     json(res, 200, await cancelOrder(user.uid, String(body.accountId), String(body.orderId)));
   },
-  async evaluate(_req, res, user, body) {
+  async evaluate(req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     json(res, 200, await evaluate(user.uid, String(body.accountId)));
+    try {
+      const proto = String(req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "localhost");
+      await kickCronChainIfStale(`${proto}://${host}`);
+    } catch {
+    }
   },
   async reset(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
@@ -2607,16 +2790,36 @@ var index_default = handle(async (req, res) => {
   if (!action) return health(res);
   if (action === "platform-status") {
     const settings = await getPlatformSettings();
-    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED });
+    let cron = null;
+    try {
+      const db2 = (await Promise.resolve().then(() => (init_firebase(), firebase_exports))).firestore();
+      const mon = (await db2.collection("platformMonitoring").doc("tradingCron").get()).data();
+      if (mon?.lastRunAt) {
+        cron = {
+          ageSec: Math.round((Date.now() - mon.lastRunAt) / 1e3),
+          processed: mon.processed ?? 0,
+          failed: mon.failed ?? 0,
+          remaining: mon.remaining ?? 0,
+          lastError: mon.lastError ?? null
+        };
+      }
+    } catch {
+    }
+    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED, cron });
   }
   if (action === "cron-evaluate") {
     const secret = process.env.CRON_SECRET;
+    if (!secret && process.env.VERCEL === "1") {
+      return json(res, 401, { ok: false, error: "CRON_SECRET_NOT_CONFIGURED" });
+    }
     if (secret) {
       const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
       if (got !== secret) return json(res, 401, { ok: false, error: "UNAUTHORIZED" });
     }
     try {
-      const result = await runTradingCron(8e3);
+      const proto = String(req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "localhost");
+      const result = await runTradingCron(45e3, { baseUrl: `${proto}://${host}` });
       return json(res, 200, result);
     } catch (e) {
       return json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });

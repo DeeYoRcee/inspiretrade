@@ -39,7 +39,7 @@ import { assertRole } from "../admin/platform-guard";
 import * as store from "./store";
 import { orderBodyToPlaceOrderRequest, modifyOrderBodyToPatch } from "./route-bodies";
 import { rateLimit } from "../lib/rate-limit";
-import { runTradingCron } from "./cron";
+import { runTradingCron, kickCronChainIfStale } from "./cron";
 import { getQuotes } from "./prices";
 import * as propAdmin from "./admin";
 import * as leaderboard from "./leaderboard";
@@ -181,9 +181,18 @@ const routes: Record<string, (req: any, res: any, user: AuthedUser, body: any) =
     if (!body.orderId) throw Object.assign(new Error("orderId is required"), { status: 400 });
     json(res, 200, await store.cancelOrder(user.uid, String(body.accountId), String(body.orderId)));
   },
-  async evaluate(_req, res, user, body) {
+  async evaluate(req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
     json(res, 200, await store.evaluate(user.uid, String(body.accountId)));
+    // PHASE 64 §3 — the browser is a SEED, never the authority: when the
+    // 24/7 monitoring chain has gone quiet (no successful pass for 90s), an
+    // online user's evaluate request re-seeds it. Financial execution is
+    // always the shared transactional engine either way.
+    try {
+      const proto = String(req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "localhost");
+      await kickCronChainIfStale(`${proto}://${host}`);
+    } catch { /* diagnostics only */ }
   },
   async reset(_req, res, user, body) {
     await requireAccountAccess(user, user.uid, requireAccountId(body));
@@ -281,7 +290,21 @@ export default handle(async (req, res) => {
   // public platform-status probe (no auth) — maintenance/registration flags
   if (action === "platform-status") {
     const settings = await getPlatformSettings();
-    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED });
+    // PHASE 64 §12 — public-safe health summary: only "is monitoring alive"
+    // counters, never account data. Full diagnostics stay admin-only.
+    let cron: { ageSec: number; processed: number; failed: number; remaining: number; lastError: string | null } | null = null;
+    try {
+      const db = (await import("../lib/firebase")).firestore();
+      const mon = (await db.collection("platformMonitoring").doc("tradingCron").get()).data() as any;
+      if (mon?.lastRunAt) {
+        cron = {
+          ageSec: Math.round((Date.now() - mon.lastRunAt) / 1000),
+          processed: mon.processed ?? 0, failed: mon.failed ?? 0,
+          remaining: mon.remaining ?? 0, lastError: mon.lastError ?? null,
+        };
+      }
+    } catch { /* monitoring read is best-effort */ }
+    return json(res, 200, { maintenance: settings.maintenanceMode, registrationOpen: settings.registrationOpen, challengesEnabled: CHALLENGES_ENABLED, cron });
   }
 
   // PHASE 62 §3 — server-authoritative trade-lifecycle evaluation entry
@@ -291,13 +314,21 @@ export default handle(async (req, res) => {
   // /api/trading?action=cron-evaluate; the vercel.json daily cron is the
   // guaranteed catch-up floor.
   if (action === "cron-evaluate") {
+    // PHASE 64 §3 — the chain hop MUST be authenticated. On Vercel an unset
+    // CRON_SECRET would leave the endpoint wide open to anyone (it triggers
+    // evaluation of every account) — hard-fail in production instead.
     const secret = process.env.CRON_SECRET;
+    if (!secret && process.env.VERCEL === "1") {
+      return json(res, 401, { ok: false, error: "CRON_SECRET_NOT_CONFIGURED" });
+    }
     if (secret) {
       const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
       if (got !== secret) return json(res, 401, { ok: false, error: "UNAUTHORIZED" });
     }
     try {
-      const result = await runTradingCron(8_000);
+      const proto = String(req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "localhost");
+      const result = await runTradingCron(45_000, { baseUrl: `${proto}://${host}` });
       return json(res, 200, result);
     } catch (e) {
       return json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });

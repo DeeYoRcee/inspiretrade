@@ -30,7 +30,9 @@ const CRYPTO_TTL = 3000;
 const SPOT_TTL = 5000;
 const YAHOO_TTL = 45000;
 
-type MidInfo = { mid: number; source: string; live: boolean; time: number; bid?: number; ask?: number };
+type MidInfo = { mid: number; source: string; live: boolean; time: number; bid?: number; ask?: number;
+  /** PHASE 64 §9 — true when a real-time FX provider is down and this is the
+   *  delayed Yahoo fallback; the execution gate refuses to act on it */ stale?: boolean };
 const cache = new Map<string, MidInfo>();
 
 async function fetchJson(url: string, timeoutMs = 6000, headers: Record<string, string> = {}): Promise<any> {
@@ -141,7 +143,12 @@ export async function getMids(symbols: string[]): Promise<Record<string, MidInfo
             cache.set(s, out[s]);
             continue;
           }
-          await fetchYahooFor(s, out);
+          // PHASE 64 §9 — an FX major whose real-time provider is DOWN falls
+          // back to the DELAYED Yahoo feed; that price must never drive an
+          // execution (SL/TP/stop-out/breach). Flagged `stale` so the store's
+          // execution gate treats the symbol as unquotable (positions are
+          // skipped + alerted, not executed on 15-minute-old prices).
+          await fetchYahooFor(s, out, true);
         }
         for (const s of rest) await fetchYahooFor(s, out);
       })(),
@@ -152,12 +159,12 @@ export async function getMids(symbols: string[]): Promise<Record<string, MidInfo
 
 /** Yahoo chart-meta mid (delayed by source, honest live:false) — the fallback
  *  execution path for instruments TrueFX does not carry. */
-async function fetchYahooFor(sym: string, out: Record<string, MidInfo>): Promise<void> {
+async function fetchYahooFor(sym: string, out: Record<string, MidInfo>, stale = false): Promise<void> {
   const inst = getInstrument(sym);
   if (!inst?.yahoo) return;
   try {
     const p = await fetchYahooMid(inst.yahoo);
-    const info = { mid: p, source: "yahoo", live: false, time: Date.now() };
+    const info = { mid: p, source: "yahoo", live: false, stale, time: Date.now() };
     out[sym] = info;
     cache.set(sym, info);
   } catch { /* leave missing — caller treats as unavailable */ }

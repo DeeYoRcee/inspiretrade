@@ -118,6 +118,39 @@ function requireQuote(quotes: Record<string, Quote>, symbol: string): Quote {
   return q;
 }
 
+/**
+ * PHASE 64 §9 — quotes the server is allowed to EXECUTE against.
+ *
+ * A price is executable only when the platform trusts its freshness:
+ *  - live sources (Binance/gold spot/TrueFX): must be ≤ EXEC_STALE_MS old
+ *    (their cache TTLs are 3-5s, so in practice they are always fresh);
+ *  - `stale: true` quotes (PHASE 64 prices.ts flag — an FX symbol whose
+ *    real-time TrueFX provider is DOWN and which fell back to the delayed
+ *    Yahoo feed) must NEVER drive an execution: a 15-minute-delayed price
+ *    would fabricate SL/TP fills, stop-outs and breach closures.
+ *    Those positions are skipped + alerted instead of executed blind.
+ *  - live:false Yahoo quotes for NON-FX instruments remain usable (they are
+ *    the ONLY source for those symbols — hard-gating would leave exotic
+ *    positions unmonitored forever); every execution against one is recorded
+ *    (delayed-execution diagnostics) so provider outages stay visible.
+ */
+export const EXEC_STALE_MS = 120_000;
+
+export function filterExecutableQuotes(quotes: Record<string, Quote>, now: number): Record<string, Quote> {
+  const out: Record<string, Quote> = {};
+  for (const [sym, q] of Object.entries(quotes)) {
+    if (!q || !(q.mid > 0)) continue;
+    if (q.live === true && now - (q.time || 0) > EXEC_STALE_MS) continue;
+    if ((q as { stale?: boolean }).stale === true) continue;
+    out[sym] = q;
+  }
+  return out;
+}
+
+/** Diagnostics counters returned to the caller of store.evaluate() so the
+ *  cron can aggregate provider health into the monitoring document. */
+export interface EvalDiag { skipped: number; delayed: number; }
+
 // ---------------------------------------------------------------------------
 // Evaluation application (shared by every mutation)
 // ---------------------------------------------------------------------------
@@ -202,30 +235,57 @@ function settleSwap(state: AccountState, pos: StorePosition, now: number): numbe
 function applyEvaluationTx(
   tx: any, uid: string, aid: string, state: AccountState,
   quotes: Record<string, Quote>, prices: Record<string, number>,
-): { closed: CloseOutcome[]; filled: number; ruleState: RuleEvaluation | null } {
+): { closed: CloseOutcome[]; filled: number; ruleState: RuleEvaluation | null; diag: EvalDiag } {
   const leverage = state.account.leverage || DEFAULT_LEVERAGE;
   const now = Date.now();
+  // PHASE 64 §9 — execution decisions run ONLY on quotes the server trusts;
+  // display/margin math keeps the full set (margin anchors to entry when a
+  // symbol is unquotable — the existing worst-case rule).
+  const exec = filterExecutableQuotes(quotes, now);
+  const diag: EvalDiag = { skipped: 0, delayed: 0 };
+  for (const sym of Object.keys(quotes)) {
+    if (!exec[sym]) diag.skipped++;
+  }
   const result = evaluateAccount({
     balance: state.account.balance,
     positions: state.positions,
     orders: state.orders,
-    quotes,
+    quotes: exec,
     prices,
     leverage,
   });
   const closed: CloseOutcome[] = [];
 
   // ---- stop-out force-closes everything; otherwise close the SL/TP hits --
+  // PHASE 64 §5 — a symbol with no trustworthy price must NOT abort the whole
+  // stop-out (the old requireQuote throw killed evaluation for the account
+  // when ONE symbol was unquotable): close what is quotable, record the rest.
   const toClose: { pos: StorePosition; exit: number; reason: string }[] = [];
   if (result.stopOut) {
     for (const p of state.positions) {
-      const q = requireQuote(quotes, p.symbol);
+      const q = exec[p.symbol];
+      if (!q) {
+        diag.skipped++;
+        writeEventTx(tx, uid, aid, "evaluation_skipped", { positionId: p.id, symbol: p.symbol, reason: "stopout_no_quote" });
+        continue;
+      }
       toClose.push({ pos: p, exit: exitPriceFor(p.side, q), reason: "stopout" });
     }
   } else {
     for (const e of result.exits) {
       const pos = state.positions.find((p) => p.id === e.positionId);
       if (pos) toClose.push({ pos, exit: e.exit, reason: e.reason });
+    }
+  }
+  // delayed-source executions stay visible (PHASE 64 §12 provider health)
+  for (const t of toClose) {
+    if ((quotes[t.pos.symbol] as { source?: string })?.source === "yahoo") {
+      diag.delayed++;
+      void writeAdminAlert({
+        type: "engine_error", severity: "warning",
+        text: `Executed ${t.reason} on a DELAYED quote for ${t.pos.symbol}`,
+        uid, details: { aid, symbol: t.pos.symbol },
+      }, `delayed_execution:${t.pos.symbol}`, 30 * 60_000);
     }
   }
   for (const { pos, exit, reason } of toClose) {
@@ -311,9 +371,15 @@ function applyEvaluationTx(
   }
 
   // ---- daily balance snapshot (for daily-drawdown rules) -------------------
+  // PHASE 64 §8 — the anchor is the day-start EQUITY (balance + floating
+  // P/L): floating profit held across UTC midnight previously escaped the
+  // daily-drawdown denominator and let a losing day hide inside carry.
   const today = dayKey();
   const dayStart = { ...(state.account.dayStart || {}) };
-  if (dayStart[today] == null) dayStart[today] = state.account.balance;
+  if (dayStart[today] == null) {
+    const m0 = computeMetrics(state.account.balance, state.positions, exec, prices, leverage);
+    dayStart[today] = Math.round(m0.equity * 100) / 100;
+  }
   state.account.dayStart = dayStart;
 
   // ---- prop-rule enforcement ----------------------------------------------
@@ -355,12 +421,24 @@ function applyEvaluationTx(
     }
 
     if (ruleState.hardBreach) {
-      // terminate the account: close the whole book at market, kill pendings
+      // terminate the account: close the whole book at market, kill pendings.
+      // PHASE 64 §8 — same partial-close discipline as stop-out: a symbol
+      // without a trustworthy price is skipped + recorded, it does not abort
+      // the breach handling for the rest of the book (status change is the
+      // authoritative outcome either way — no new trades are possible on a
+      // failed account).
       writeEventTx(tx, uid, aid, "challenge_breached", {
         reason: ruleState.failedReason || null, status: ruleState.status,
       });
-      for (const p of [...state.positions]) {
-        const q = requireQuote(quotes, p.symbol);
+      const remaining: StorePosition[] = [];
+      for (const p of state.positions) {
+        const q = exec[p.symbol];
+        if (!q) {
+          diag.skipped++;
+          writeEventTx(tx, uid, aid, "evaluation_skipped", { positionId: p.id, symbol: p.symbol, reason: "breach_no_quote" });
+          remaining.push(p);
+          continue;
+        }
         const spec = getInstrument(p.symbol)!;
         const swap = settleSwap(state, p, now);
         const exit = exitPriceFor(p.side, q);
@@ -374,14 +452,14 @@ function applyEvaluationTx(
         recordClose(state, tx, uid, aid, outcome);
         tx.delete(posCol(uid, aid).doc(p.id));
       }
-      state.positions = [];
+      state.positions = remaining;
       for (const o of state.orders) tx.delete(ordCol(uid, aid).doc(o.id));
       state.orders = [];
     }
-    return { closed, filled: result.fills.length, ruleState };
+    return { closed, filled: result.fills.length, ruleState, diag };
   }
 
-  return { closed, filled: result.fills.length, ruleState: null };
+  return { closed, filled: result.fills.length, ruleState: null, diag };
 }
 
 /** Count the day of a closed trade toward the minimum-trading-days rule. */
@@ -397,6 +475,9 @@ function persistAccountTx(tx: any, uid: string, aid: string, state: AccountState
   const leverage = state.account.leverage || DEFAULT_LEVERAGE;
   const metrics = computeMetrics(state.account.balance, state.positions, quotes, prices, leverage);
   tx.update(accountsCol(uid).doc(aid), {
+    // PHASE 64 §12 — per-account freshness: the monitoring surface can list
+    // accounts the scheduler has not reached for too long.
+    lastEvaluatedAt: Date.now(),
     balance: state.account.balance,
     dayStart: state.account.dayStart,
     status: state.account.status || "active",
@@ -605,14 +686,16 @@ export async function resetAccount(uid: string, aid: string) {
 export async function evaluate(uid: string, aid: string) {
   const dbRef = db();
   const accRef = accountsCol(uid).doc(aid);
-  const preState = await readState(uid, aid);
-  const { quotes, prices } = await quotesForState(preState);
+  // PHASE 64 §10 — quotes are fetched INSIDE the transaction callback: the
+  // SDK retries the whole callback on contention, so every retry re-prices
+  // instead of reusing the snapshot captured before the race.
   return dbRef.runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, aid);
+    const { quotes, prices } = await quotesForState(state);
     const before = state.account.balance;
-    const { closed } = applyEvaluationTx(tx, uid, aid, state, quotes, prices);
+    const { closed, diag } = applyEvaluationTx(tx, uid, aid, state, quotes, prices);
     const metrics = persistAccountTx(tx, uid, aid, state, quotes, prices);
-    return { metrics, realized: Math.round((state.account.balance - before) * 100) / 100, closed };
+    return { metrics, realized: Math.round((state.account.balance - before) * 100) / 100, closed, diag };
   });
 }
 
@@ -686,27 +769,42 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
     throw new HttpError(403, "LOT_LIMIT", `Max lot per order is ${settings.maxLotPerOrder}`);
   }
 
-  const preState = await readState(uid, req.accountId);
-  const { quotes, prices } = await quotesForState(preState, [spec.symbol]);
-  if (!quotes[spec.symbol]) {
-    void writeAdminAlert({
-      type: "engine_error", severity: "warning",
-      text: `No executable price for ${spec.symbol}`,
-      uid, details: { aid: req.accountId, symbol: spec.symbol },
-    }, `no_quote:${spec.symbol}`, 30 * 60_000);
-  }
-
   return dbRef.runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, req.accountId);
+    // PHASE 64 §10 — quotes re-price on every SDK retry (fetched inside the
+    // transaction callback, after the reads, before the first write)
+    const { quotes, prices } = await quotesForState(state, [spec.symbol]);
+    if (!quotes[spec.symbol]) {
+      void writeAdminAlert({
+        type: "engine_error", severity: "warning",
+        text: `No executable price for ${spec.symbol}`,
+        uid, details: { aid: req.accountId, symbol: spec.symbol },
+      }, `no_quote:${spec.symbol}`, 30 * 60_000);
+    }
     // bring the account fully up to date first (SL/TP/pending/stop-out/rules)
     applyEvaluationTx(tx, uid, req.accountId, state, quotes, prices);
 
     // PHASE 61 §3/§10 — duplicate-submission protection: a retried submit with
-    // the same requestId never opens a second position/order.
+    // the same requestId never opens a second position/order. PHASE 64 §10 —
+    // the check is DURABLE: live-doc matching alone loses the key once the
+    // first attempt fills AND closes, so a late replay would duplicate. The
+    // requestIds/{uid}_{account}_{key} doc is checked+written here in the SAME
+    // transaction (reads precede the evaluation writes); entries older than
+    // 7 days count as expired and self-clean. A rejected order aborts the
+    // whole transaction, so the marker is never consumed by a failure.
     if (req.requestId) {
       const dup = state.orders.find((o) => o.requestId === req.requestId)
         ?? state.positions.find((p) => p.requestId === req.requestId);
       if (dup) throw new HttpError(409, "DUPLICATE_REQUEST", "This exact order was already submitted moments ago — check your open positions and orders");
+      const reqKey = String(req.requestId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
+      if (reqKey && reqKey === String(req.requestId)) {
+        const reqRef = firestore().collection("requestIds").doc(`${uid}_${req.accountId}_${reqKey}`);
+        const reqSnap = await tx.get(reqRef);
+        if (reqSnap.exists && Date.now() - (reqSnap.get("at") || 0) < 7 * 86_400_000) {
+          throw new HttpError(409, "DUPLICATE_REQUEST", "This exact order was already submitted — check your open positions and orders");
+        }
+        tx.set(reqRef, { at: Date.now(), symbol: req.symbol, kind, lots: req.lots });
+      }
     }
 
     const leverage = state.account.leverage || DEFAULT_LEVERAGE;
@@ -812,11 +910,11 @@ export async function placeOrder(uid: string, req: PlaceOrderRequest) {
 export async function closePosition(uid: string, accountId: string, positionId: string, lots?: number | null) {
   const spec = getInstrument((await posCol(uid, accountId).doc(positionId).get()).data()?.symbol || "");
   if (!spec) throw new HttpError(404, "NO_POSITION", "Position not found");
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
 
   return db().runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, accountId);
+    // PHASE 64 §10 — quotes re-price on every SDK retry
+    const { quotes, prices } = await quotesForState(state);
     // evaluate first so the position set is current (a pending SL may have hit)
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const pos = state.positions.find((p) => p.id === positionId);
@@ -857,10 +955,10 @@ export async function closePosition(uid: string, accountId: string, positionId: 
 }
 
 export async function modifyPosition(uid: string, accountId: string, positionId: string, sl: number | null | undefined, tp: number | null | undefined, tsPct?: number) {
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, accountId);
+    // PHASE 64 §10 — quotes re-price on every SDK retry
+    const { quotes, prices } = await quotesForState(state);
     // evaluate first so SL/TP set is current (a stale TP would fail validation)
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const pos = state.positions.find((p) => p.id === positionId);
@@ -887,10 +985,10 @@ export async function modifyOrder(
   uid: string, accountId: string, orderId: string,
   patch: { price?: number | null; sl?: number | null; tp?: number | null; lots?: number | null; tsPct?: number | null; expiryAt?: number | null },
 ) {
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, accountId);
+    // PHASE 64 §10 — quotes re-price on every SDK retry
+    const { quotes, prices } = await quotesForState(state);
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const order = state.orders.find((o) => o.id === orderId);
     if (!order) throw new HttpError(404, "NO_ORDER", "Order not found (maybe it already filled)");
@@ -933,10 +1031,10 @@ export async function modifyOrder(
 
 /** Close every open position at market (evaluates first so SL/TP settle). */
 export async function closeAll(uid: string, accountId: string) {
-  const preState = await readState(uid, accountId);
-  const { quotes, prices } = await quotesForState(preState);
   return db().runTransaction(async (tx: any) => {
     const state = await txGetState(tx, uid, accountId);
+    // PHASE 64 §10 — quotes re-price on every SDK retry
+    const { quotes, prices } = await quotesForState(state);
     applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
     const closed: CloseOutcome[] = [];
     const now = Date.now();
@@ -962,9 +1060,21 @@ export async function closeAll(uid: string, accountId: string) {
 }
 
 export async function cancelOrder(uid: string, accountId: string, orderId: string) {
-  const ref = ordCol(uid, accountId).doc(orderId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpError(404, "NO_ORDER", "Order not found");
-  await ref.delete();
-  return { ok: true };
+  // PHASE 64 §10 — cancellation is now transactional and evaluate-first like
+  // every other mutation: a pending order whose trigger just hit is FILLED
+  // (the tx shows it gone) instead of racing a bare ref.delete() against the
+  // fill transaction; balance/metrics stay consistent; the event is auditable.
+  return db().runTransaction(async (tx: any) => {
+    const state = await txGetState(tx, uid, accountId);
+    const { quotes, prices } = await quotesForState(state);
+    applyEvaluationTx(tx, uid, accountId, state, quotes, prices);
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order) throw new HttpError(404, "NO_ORDER", "Order not found (it may have already filled, expired or been cancelled)");
+    tx.delete(ordCol(uid, accountId).doc(orderId));
+    writeEventTx(tx, uid, accountId, "order_cancelled", {
+      orderId, symbol: order.symbol, kind: order.kind, side: order.side, lots: order.lots,
+    });
+    persistAccountTx(tx, uid, accountId, state, quotes, prices);
+    return { ok: true };
+  });
 }
