@@ -825,7 +825,7 @@ class QuotesProvider {
         const cachedBars = spotDukaCache.get(code);
         if (cachedBars && Date.now() - (spotDukaAt.get(code) ?? 0) < 25000) return cachedBars;
         spotDukaAt.set(code, Date.now());
-        const res = await fetch(`/api/quotes?action=spot-duka-tail&code=${code}`).then((r) => r.json()).catch(() => null);
+        const res = await authedFetch<any>(`/api/quotes?action=spot-duka-tail&code=${code}`).catch(() => null);
         if (!res?.ok || !Array.isArray(res.bars)) return cachedBars ?? [];
         const band = (inst.priceBand ?? null) as [number, number] | null;
         const { bars: clean } = validateDukaTailBars(res.bars, now, band);
