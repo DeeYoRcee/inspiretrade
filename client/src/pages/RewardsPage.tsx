@@ -566,12 +566,15 @@ export default function RewardsPage() {
         </Card>
       )}
 
-      {/* Case opening — preview (3D + contains, odds hidden) → roll → reel */}
+      {/* Case opening — preview (3D + contains, odds hidden) → roll → reel.
+          P77 fix — caseType must be THE case the user clicked, not the
+          last-rolled one: openCaseType only updates after the roll, so
+          opening Gold right after Trading rendered the Trading pool/skin. */}
       <CaseOpeningDialog
         open={!!previewCase || !!caseResult || !!blackResult}
         result={caseResult}
         black={blackResult}
-        caseType={openCaseType}
+        caseType={previewCase ?? openCaseType}
         onConfirm={async () => {
           const res = await confirmOpenCase(previewCase ?? openCaseType);
           return res;

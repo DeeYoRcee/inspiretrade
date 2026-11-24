@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { CASES, RARITY_META, type CaseType, type FragmentDef } from "@shared/fragments";
 import { FragmentCard } from "./FragmentCard";
-import { Gem, Sparkles, Crown, Lock } from "lucide-react";
+import { Gem, Sparkles, Crown, Lock, TrendingUp } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
 import { casePop, caseRattle, caseReveal, caseSpin, caseSpinStop } from "@/lib/sfx";
 import { cn } from "@/lib/utils";
@@ -54,7 +54,7 @@ function blackAsItem(black: BlackResult): FragmentDef {
   return { id: "__prop_black__", name: black.label, icon: "Crown", rarity: "black", dropPercent: 0 };
 }
 
-/** Per-case skin: inspire = primary/blue, gold = amber with a crown. */
+/** Per-case skin: inspire = primary/blue, gold = amber, trading = emerald. */
 const CASE_SKIN: Record<CaseType, { border: string; glow: string; iconTint: string; badge: string; lid: string; body: string }> = {
   inspire: {
     border: "border-primary/50",
@@ -83,14 +83,16 @@ const CASE_SKIN: Record<CaseType, { border: string; glow: string; iconTint: stri
 };
 
 /**
- * P77 — the CS2-style 3D container (pure CSS 3D: perspective crate with a
- * front emblem, twin latches, a hanging lock and a lid that pops on open).
- * One component drives BOTH the preview ("Unlock Container") and the opening
- * show, so the case the user inspects is the case that opens.
+ * P77 — the CS2-style 3D container, rebuilt to read like a REAL metal case:
+ * brushed-steel faces, a recessed front panel with corner brackets and
+ * rivets, twin latch plates with screws, a hasp lock on the lid, a metal
+ * emblem ring and per-case accents (pure CSS 3D — no assets). One component
+ * drives BOTH the preview ("Unlock Container") and the opening show, so the
+ * case the user inspects is the case that opens.
  */
-function Case3D({ skin, isGold, name, open: popped, shake, size = 1 }: {
+function Case3D({ skin, kind, name, open: popped, shake, size = 1 }: {
   skin: { border: string; lid: string; body: string; glow: string; iconTint: string; badge: string };
-  isGold: boolean;
+  kind: CaseType | string;
   name: string;
   open: boolean;
   shake: boolean;
@@ -99,16 +101,23 @@ function Case3D({ skin, isGold, name, open: popped, shake, size = 1 }: {
   const w = 208 * size; // front face width px
   const h = 124 * size; // front face height px
   const d = 84 * size; // depth px
-  const lidH = 30 * size;
-  const Emblem = isGold ? Crown : Gem;
+  const lidH = 32 * size;
+  const accent = skin.glow;
+  const Emblem = kind === "gold" ? Crown : kind === "trading" ? TrendingUp : Gem;
+  // brushed steel — fine horizontal grain bands over a dark metal ramp
+  const steel = (dark: boolean) =>
+    `repeating-linear-gradient(180deg, rgba(255,255,255,0.05) 0 1px, rgba(0,0,0,0.06) 1px 3px), linear-gradient(180deg, ${dark ? "#262c38" : "#333a48"} 0%, ${dark ? "#1b2029" : "#272d39"} 52%, ${dark ? "#10141b" : "#1a1f28"} 100%)`;
+  const Rivet = ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+    <span className={cn("absolute h-1.5 w-1.5 rounded-full", className)} style={{ background: "radial-gradient(circle at 35% 30%, #8a93a5, #3a4150 65%, #161a22)", boxShadow: "0 1px 1px rgba(0,0,0,0.6)", ...style }} />
+  );
   return (
-    <div className="relative" style={{ width: w + d, height: h + lidH + 26 * size, perspective: 900 }}>
+    <div className="relative" style={{ width: w + d, height: h + lidH + 26 * size, perspective: 950 }}>
       {/* floor shadow */}
       <div
         className="absolute rounded-[50%]"
         style={{
           left: d * 0.4, right: 0, bottom: -8 * size, height: 26 * size,
-          background: `radial-gradient(ellipse at center, ${skin.glow.includes("hsl") ? "rgba(0,0,0,0.55)" : "rgba(0,0,0,0.55)"}, transparent 68%)`,
+          background: "radial-gradient(ellipse at center, rgba(0,0,0,0.55), transparent 68%)",
           transform: "rotateX(72deg)",
         }}
       />
@@ -116,18 +125,30 @@ function Case3D({ skin, isGold, name, open: popped, shake, size = 1 }: {
         className="absolute inset-0"
         style={{ transformStyle: "preserve-3d" }}
         initial={false}
-        animate={shake && !popped ? { x: [0, -9, 9, -7, 7, -4, 4, -2, 2, 0], rotateY: [-14, -11, -17, -12, -16, -13, -15, -14] } : { x: 0, rotateY: -14 }}
-        transition={shake && !popped ? { duration: 1.3, ease: "easeInOut" } : { duration: 0.4 }}
+        animate={
+          popped
+            ? { x: 0, rotateY: -14, y: 0 }
+            : shake
+              ? { x: [0, -9, 9, -7, 7, -4, 4, -2, 2, 0], rotateY: [-14, -11, -17, -12, -16, -13, -15, -14] }
+              : { x: 0, rotateY: -14, y: [0, -3, 0] } // idle float — the case breathes on the shelf
+        }
+        transition={
+          popped
+            ? { duration: 0.4 }
+            : shake
+              ? { duration: 1.3, ease: "easeInOut" }
+              : { duration: 3.2, repeat: Infinity, ease: "easeInOut" }
+        }
       >
-        {/* LID — pops up and tilts when the case opens */}
+        {/* LID — metal cap with a center hasp; pops up and tilts on open */}
         <motion.div
-          className="absolute rounded-t-xl border-2 border-b-0"
+          className="absolute rounded-t-xl"
           style={{
             width: w, height: lidH, left: d / 2,
             transformStyle: "preserve-3d",
             transformOrigin: "bottom center",
             zIndex: 30,
-            boxShadow: `0 0 26px -4px ${skin.glow}`,
+            boxShadow: `0 0 26px -4px ${accent}`,
           }}
           initial={false}
           animate={popped
@@ -135,44 +156,76 @@ function Case3D({ skin, isGold, name, open: popped, shake, size = 1 }: {
             : { rotateX: 0, y: 0, opacity: 1 }}
           transition={{ duration: 0.5, ease: "easeOut" }}
         >
-          <div className={cn("absolute inset-0 rounded-t-xl border-2 border-b-0 bg-gradient-to-b", skin.lid)} />
-          {/* lid handle */}
-          <div className={cn("absolute left-1/2 top-1 h-2 w-14 -translate-x-1/2 rounded-full border", isGold ? "border-amber-400/70" : "border-primary/60")} />
+          <div className="absolute inset-0 overflow-hidden rounded-t-xl" style={{ background: steel(false), boxShadow: `inset 0 1px 0 rgba(255,255,255,0.16), inset 0 -2px 0 ${accent}55` }}>
+            {/* accent stripe along the lid */}
+            <div className="absolute left-3 right-3 top-1.5 h-[3px] rounded-full" style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)`, opacity: 0.8 }} />
+            {/* hasp lock — a real clasp with a keyhole */}
+            <div className="absolute left-1/2 top-1/2 h-[62%] w-9 -translate-x-1/2 -translate-y-1/2 rounded-b-md rounded-t-sm border border-black/60" style={{ background: steel(true), boxShadow: "0 2px 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.14)" }}>
+              <span className="absolute left-1/2 top-[58%] h-2 w-2 -translate-x-1/2 rounded-full border border-black/70 bg-[#0c0f15]" />
+              <Rivet className="left-0.5 top-0.5" />
+              <Rivet className="right-0.5 top-0.5" />
+            </div>
+            {/* lid corner screws */}
+            <Rivet className="left-1.5 bottom-1" />
+            <Rivet className="right-1.5 bottom-1" />
+          </div>
           {/* lid front edge (depth) */}
-          <div className={cn("absolute left-0 right-0 top-full origin-top border-x-2 bg-gradient-to-b", skin.lid)}
-            style={{ height: d * 0.42, transform: "rotateX(-88deg)", transformOrigin: "top center" }} />
+          <div className="absolute left-0 right-0 top-full origin-top"
+            style={{ height: d * 0.42, transform: "rotateX(-88deg)", transformOrigin: "top center", background: steel(true), boxShadow: `inset 0 -2px 0 ${accent}44` }} />
         </motion.div>
 
-        {/* BODY — front face */}
+        {/* BODY — front face: brushed steel with a recessed emblem panel */}
         <div
-          className={cn("absolute rounded-b-xl rounded-t-md border-2 bg-gradient-to-b to-transparent", skin.border, skin.body)}
-          style={{ width: w, height: h, left: d / 2, top: lidH, transform: `translateZ(${d / 2}px)`, zIndex: 20 }}
+          className="absolute rounded-b-xl rounded-t-md border border-black/60"
+          style={{ width: w, height: h, left: d / 2, top: lidH, transform: `translateZ(${d / 2}px)`, zIndex: 20, background: steel(false), boxShadow: `inset 0 2px 0 rgba(255,255,255,0.12), inset 0 -2px 0 rgba(0,0,0,0.5), 0 10px 26px -8px rgba(0,0,0,0.7)` }}
         >
-          {/* circular emblem badge (the CS2 container look) */}
-          <div
-            className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 bg-background/70 backdrop-blur-[2px]"
-            style={{ width: h * 0.52, height: h * 0.52, borderColor: isGold ? "rgba(245,158,11,0.7)" : "hsl(var(--primary)/0.55)", boxShadow: `0 0 18px -4px ${skin.glow}` }}
-          >
-            <Emblem className={cn("h-1/2 w-1/2", skin.iconTint)} />
+          {/* accent seam under the lid */}
+          <div className="absolute left-0 right-0 top-0 h-[3px]" style={{ background: `linear-gradient(90deg, transparent, ${accent}aa 30%, ${accent}aa 70%, transparent)` }} />
+          {/* recessed panel */}
+          <div className="absolute left-3 right-3 top-4 bottom-7 rounded-lg" style={{ background: "radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0.42), rgba(0,0,0,0.16) 75%)", boxShadow: "inset 0 2px 8px rgba(0,0,0,0.65), inset 0 -1px 0 rgba(255,255,255,0.08)", border: `1px solid ${accent}2e` }}>
+            {/* metal emblem ring + icon */}
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full p-[3px]" style={{ background: "conic-gradient(from 210deg, #565f72, #232833 25%, #78829a 50%, #232833 75%, #565f72)", boxShadow: `0 0 16px -3px ${accent}` }}>
+              <div className="flex items-center justify-center rounded-full border border-black/50" style={{ width: h * 0.42, height: h * 0.42, background: "radial-gradient(circle at 38% 30%, #2e3542, #14181f 70%)", boxShadow: `inset 0 0 12px ${accent}33` }}>
+                <Emblem className={cn("h-[46%] w-[46%]", skin.iconTint)} style={{ filter: `drop-shadow(0 0 6px ${accent})` }} />
+              </div>
+            </div>
+            {/* corner brackets */}
+            <span className="absolute left-1 top-1 h-3.5 w-3.5 rounded-tl border-l-2 border-t-2" style={{ borderColor: `${accent}66` }} />
+            <span className="absolute right-1 top-1 h-3.5 w-3.5 rounded-tr border-r-2 border-t-2" style={{ borderColor: `${accent}66` }} />
+            <span className="absolute bottom-1 left-1 h-3.5 w-3.5 rounded-bl border-b-2 border-l-2" style={{ borderColor: `${accent}66` }} />
+            <span className="absolute bottom-1 right-1 h-3.5 w-3.5 rounded-br border-b-2 border-r-2" style={{ borderColor: `${accent}66` }} />
+            {/* panel rivets */}
+            <Rivet className="left-2 top-2" />
+            <Rivet className="right-2 top-2" />
+            <Rivet className="bottom-2 left-2" />
+            <Rivet className="bottom-2 right-2" />
           </div>
-          {/* latches */}
-          <div className={cn("absolute -left-1 top-3 h-5 w-3 rounded-l border-2 border-r-0 bg-background/60", skin.border)} />
-          <div className={cn("absolute -right-1 top-3 h-5 w-3 rounded-r border-2 border-l-0 bg-background/60", skin.border)} />
-          {/* case name plate */}
-          <span className={cn("absolute bottom-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap text-[8px] font-black uppercase tracking-[0.28em]", skin.badge)}>
-            {name}
+          {/* latch plates, left + right */}
+          <div className="absolute -left-0.5 top-3 h-6 w-3.5 rounded-l border border-black/60" style={{ background: steel(true), boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12)" }}>
+            <Rivet className="left-0.5 top-1" />
+            <Rivet className="left-0.5 bottom-1" />
+          </div>
+          <div className="absolute -right-0.5 top-3 h-6 w-3.5 rounded-r border border-black/60" style={{ background: steel(true), boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12)" }}>
+            <Rivet className="right-0.5 top-1" />
+            <Rivet className="right-0.5 bottom-1" />
+          </div>
+          {/* engraved name plate */}
+          <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded border border-black/50 px-2 text-[8px] font-black uppercase tracking-[0.28em]" style={{ color: "inherit", background: "rgba(0,0,0,0.45)", boxShadow: "inset 0 1px 2px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.06)" }}>
+            <span className={cn(skin.badge)}>{name}</span>
           </span>
         </div>
 
         {/* BODY — right side face */}
         <div
-          className={cn("absolute rounded-r-md border-2 bg-gradient-to-b to-transparent", skin.border, skin.body)}
+          className="absolute rounded-r-md border border-black/60"
           style={{
             width: d, height: h, top: lidH, right: 0,
             transform: `rotateY(64deg) translateZ(${w - d * 0.06}px)`,
             transformOrigin: "right center",
             zIndex: 10,
-            filter: "brightness(0.72)",
+            background: steel(true),
+            filter: "brightness(0.8)",
+            boxShadow: "inset -6px 0 12px rgba(0,0,0,0.45)",
           }}
         >
           {/* vent grooves */}
@@ -183,25 +236,27 @@ function Case3D({ skin, isGold, name, open: popped, shake, size = 1 }: {
 
         {/* BODY — left side face (mostly hidden, closes the silhouette) */}
         <div
-          className={cn("absolute rounded-l-md border-2 bg-gradient-to-b to-transparent", skin.border, skin.body)}
+          className="absolute rounded-l-md border border-black/60"
           style={{
             width: d * 0.9, height: h, top: lidH, left: 0,
             transform: `rotateY(-64deg) translateZ(${w - d * 0.06}px)`,
             transformOrigin: "left center",
             zIndex: 5,
-            filter: "brightness(0.6)",
+            background: steel(true),
+            filter: "brightness(0.65)",
           }}
         />
 
         {/* BODY — top face (visible under the open lid) */}
         <div
-          className={cn("absolute border-2 bg-gradient-to-b to-transparent", skin.border, skin.body)}
+          className="absolute border border-black/60"
           style={{
             width: w, height: d * 0.92, left: d / 2, top: lidH,
             transform: `rotateX(90deg) translateZ(0px) translateY(-${d * 0.46}px)`,
             transformOrigin: "center",
             zIndex: 8,
-            filter: "brightness(0.8)",
+            background: steel(false),
+            filter: "brightness(0.85)",
           }}
         />
       </motion.div>
@@ -232,7 +287,6 @@ export function CaseOpeningDialog({ open, result, black = null, caseType = "insp
     ? CASES[caseType as CaseType]
     : { id: caseType as CaseType, name: caseName || caseType, fragments: pool || [], blackDrop: null };
   const skin = CASE_SKIN[caseType as CaseType] ?? CASE_SKIN.inspire;
-  const isGold = caseType === "gold";
   const activeBlack = rolledBlack ?? black;
   const activeFragment = rolledFragment ?? result;
   const hasPool = caseDef.fragments.length > 0;
@@ -354,7 +408,7 @@ export function CaseOpeningDialog({ open, result, black = null, caseType = "insp
                 <p className="text-sm text-muted-foreground">Unlock <span className="font-semibold text-foreground">{caseDef.name}</span></p>
               </div>
               <div className="flex justify-center py-2">
-                <Case3D skin={skin} isGold={isGold} name={caseDef.name} open={false} shake={false} />
+                <Case3D skin={skin} kind={caseType} name={caseDef.name} open={false} shake={false} />
               </div>
               <div className="w-full min-w-0">
                 <div className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -408,7 +462,7 @@ export function CaseOpeningDialog({ open, result, black = null, caseType = "insp
                     style={{ background: `radial-gradient(ellipse at center, ${skin.glow.replace("hsl(var(--primary))", "hsl(var(--primary)/0.55)")}, transparent 65%)` }}
                   />
                 )}
-                <Case3D skin={skin} isGold={isGold} name={caseDef.name} open={stage !== "case"} shake={true} />
+                <Case3D skin={skin} kind={caseType} name={caseDef.name} open={stage !== "case"} shake={true} />
               </div>
 
               {/* fragments dropping from the case */}
