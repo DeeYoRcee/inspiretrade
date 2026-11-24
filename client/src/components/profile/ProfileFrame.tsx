@@ -31,19 +31,25 @@ export function ProfileFrame({
   const def = getFrame(frame);
   if (!def) return <div className={cn(variant === "card" ? "w-full" : "w-fit", className)}>{children}</div>;
   if (variant === "card") {
+    // P77 user request — PUBG-Mobile-style frame: a THICK layered band
+    // (7px gradient body + a crisp bright inner edge line + a soft outer
+    // glow), hugging the card's rounded shape
     return (
-      // 3px gradient band hugging the card's outer edge, same radius — the
-      // card inside keeps its own border/background untouched
       <div
-        className={cn("w-full rounded-3xl p-[3px]", className)}
+        className={cn("w-full rounded-3xl p-[7px]", className)}
         style={{
           background: def.ring,
           boxShadow: def.glow
-            ? `inset 0 0 0 1px ${def.edge}, 0 0 18px ${def.glow}`
+            ? `inset 0 0 0 1px ${def.edge}, 0 0 24px ${def.glow}`
             : `inset 0 0 0 1px ${def.edge}`,
         }}
       >
-        <div className="overflow-hidden rounded-3xl">{children}</div>
+        <div
+          className="overflow-hidden rounded-3xl"
+          style={{ boxShadow: `inset 0 0 0 1.5px ${def.edge}, inset 0 0 0 3px rgba(0,0,0,0.35)` }}
+        >
+          {children}
+        </div>
       </div>
     );
   }

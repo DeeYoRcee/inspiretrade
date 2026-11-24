@@ -97,6 +97,13 @@ export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSe
   { id: "amber", label: "Amber", s: { bgColor: "#0c0c0c", gridColor: "#171717", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#ffd63d", downColor: "#9c9c9c" } },
   { id: "steel-blue", label: "Steel Blue", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#738bae", downColor: "#9c9c9c" } },
   { id: "deep-forest", label: "Deep Forest", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(219,219,219,0.4)", upColor: "#16302b", downColor: "#dbdbdb" } },
+  // P77 user request — ICT (Inner Circle Trader) style themes: the color
+  // schemes the ICT community actually trades on — deep navy backgrounds,
+  // teal/cyan bullish candles against coral bearish ones, tuned for contrast
+  // on the session-grid look.
+  { id: "ict-classic", label: "ICT Classic", s: { bgColor: "#0b0e14", gridColor: "#1c2333", crosshairColor: "rgba(34,211,238,0.45)", upColor: "#0ecb81", downColor: "#f6465d" } },
+  { id: "ict-midnight", label: "ICT Midnight", s: { bgColor: "#131722", gridColor: "#1e222d", crosshairColor: "rgba(120,123,134,0.5)", upColor: "#089981", downColor: "#f23645" } },
+  { id: "ict-cyan", label: "ICT Cyan", s: { bgColor: "#050a12", gridColor: "#12202e", crosshairColor: "rgba(34,211,238,0.5)", upColor: "#22d3ee", downColor: "#f43f5e" } },
 ];
 
 // ---------------------------------------------------------------------------

@@ -66,11 +66,16 @@ function makeForming(bar: Bar, progress: number, tfSec: number): { bar: Bar; pri
   const points = barPathPoints(bar);
   const segs = points.length - 1;
   const pos = Math.min(segs, Math.max(0, progress * segs));
-  const i = Math.min(segs - 1, Math.floor(pos));
+  // P77 hotfix — a FLAT bar (open===high===low===close) yields one path point;
+  // i collapsed to -1 and points[-1] made the forming price NaN, silently
+  // corrupting the replay wallet through every open/fill on that candle.
+  const i = segs < 1 ? 0 : Math.min(segs - 1, Math.floor(pos));
   const frac = segs === 0 ? 1 : pos - i;
-  const price = i + 1 < points.length
-    ? points[i] + (points[i + 1] - points[i]) * frac
-    : points[points.length - 1];
+  const price = segs === 0
+    ? bar.close
+    : i + 1 < points.length
+      ? points[i] + (points[i + 1] - points[i]) * frac
+      : points[points.length - 1];
   const revealed = points.slice(0, i + 1).concat(price);
   const forming: Bar = {
     time: bar.time,

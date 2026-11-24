@@ -216,17 +216,17 @@ export function DrawingPropsBar({
                 />
               </label>
             ))}
-            <label className="flex items-center gap-0.5" title="Risk % — the position is sized so a stop-out loses this share of the balance">
-              <span className="text-slate-400">Risk%</span>
-              <input
-                type="number" min={0.01} max={100} step={0.05}
-                value={drawing.riskPct ?? 1}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v) && v > 0) onChange({ riskPct: Math.min(100, v) });
-                }}
-                className="h-5 w-12 rounded border border-slate-700 bg-slate-800 px-1 text-slate-200 tabular-nums"
-              />
+            {/* P77 user request — the Risk% input is GONE from the bar; the
+                position sizing math keeps a sensible internal default */}
+            {/* P77 user request — Profit/Loss zone colors sit DIRECTLY on the
+                bar (both sides colorable), not buried in the R:R popup */}
+            <label className="flex items-center gap-1" title="Profit-zone color">
+              <span className="text-slate-400">Profit</span>
+              <ColorPicker value={style.profitColor || "#22c55e"} title="Take-profit zone color" onChange={(c) => setStyle({ profitColor: c })} />
+            </label>
+            <label className="flex items-center gap-1" title="Loss-zone color">
+              <span className="text-slate-400">Loss</span>
+              <ColorPicker value={style.lossColor || "#ef4444"} title="Stop-loss zone color" onChange={(c) => setStyle({ lossColor: c })} />
             </label>
             <details className="relative">
               <summary className="cursor-pointer list-none rounded px-1 text-slate-400 hover:bg-slate-800" title="Position calculations & zone colors">
@@ -247,14 +247,6 @@ export function DrawingPropsBar({
                   <span className="text-slate-500">Gain @ target</span><span>{posCalc.rewardAmount != null ? `$${posCalc.rewardAmount.toFixed(2)}` : "—"}</span>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
-                  <label className="flex items-center gap-1.5" title="Take-profit zone color">
-                    <span className="text-slate-500">Profit</span>
-                    <ColorPicker value={style.profitColor || "#22c55e"} title="Take-profit zone color" onChange={(c) => setStyle({ profitColor: c })} />
-                  </label>
-                  <label className="flex items-center gap-1.5" title="Stop-loss zone color">
-                    <span className="text-slate-500">Loss</span>
-                    <ColorPicker value={style.lossColor || "#ef4444"} title="Stop-loss zone color" onChange={(c) => setStyle({ lossColor: c })} />
-                  </label>
                   <label className="flex items-center gap-1" title="Zone opacity">
                     <span className="text-slate-500">Zones</span>
                     <input
@@ -270,8 +262,8 @@ export function DrawingPropsBar({
                   <ToggleBtn label="Stats" on={style.showStats === true} onClick={() => setStyle({ showStats: style.showStats === true ? undefined : true })} />
                 </div>
                 <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
-                  Size derives from the instrument's contract size and the live balance so a stop-out loses
-                  the Risk% — no invented figures; "—" means metadata/balance is unavailable.
+                  Size derives from the instrument's contract size and the live balance — no invented figures;
+                  "—" means metadata/balance is unavailable.
                 </p>
               </div>
             </details>

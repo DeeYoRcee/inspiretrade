@@ -1610,6 +1610,10 @@ export function PriceChart({
         })();
 
         unsub = subscribeFeed(symbol, timeframe, ({ bars, lastBar }) => {
+          // P77 hotfix — a feed delivery without a lastBar (empty spot store)
+          // must never touch the series: upsertLocal pushed `undefined` into
+          // the bars array and toCandle crashed reading 'time' of it.
+          if (!lastBar) return;
           const prev = barsRef.current;
           // PURE APPEND (new minute/tail fills ≤6 bars, nothing prepended or
           // replaced) → cheap series.update() per new bar: the user's zoom,

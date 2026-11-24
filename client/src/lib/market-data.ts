@@ -926,7 +926,10 @@ class QuotesProvider {
     // Phase 30 §5: a re-load (e.g. the range buttons asking for deeper
     // history) must repaint a LIVE chart even though the caller may still
     // be between loadFeed and subscribe — notify active subscribers here.
-    this.listeners.get(key)?.forEach((c) => c({ bars: fast, lastBar: fast[fast.length - 1], isRealtime: false }));
+    // P77 hotfix — an EMPTY recorded store produced bars: [] with
+    // lastBar: undefined and crashed the whole terminal ("reading 'time'"):
+    // never emit an empty payload (mirrors the guarded emissions elsewhere).
+    if (fast.length) this.listeners.get(key)?.forEach((c) => c({ bars: fast, lastBar: fast[fast.length - 1], isRealtime: false }));
     // Phase 33: keep the promise — the chart awaits it for the first-visit repaint
     const deep = this.deepenSpotHistory(symbol, tf, key, code, now, m1, sec);
     this.deepPending.set(key, deep);
@@ -1048,7 +1051,7 @@ class QuotesProvider {
         serverAgg.length ? "store-fold" : null,
       ].filter(Boolean).join("+");
       this.source.set(key, deepLayers ? `spot+deep(${deepLayers})` : (tf === "1m" ? "spot-recorded(1m)" : `spot-recorded→${tf}`));
-      if (changed) {
+      if (changed && merged.length) { // P77 hotfix — never emit an empty payload
         this.listeners.get(key)?.forEach((c) => c({ bars: merged, lastBar: merged[merged.length - 1], isRealtime: false }));
       }
     } catch { /* deep layers are best-effort — the recorded series stays */ }

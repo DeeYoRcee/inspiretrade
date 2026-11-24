@@ -77,6 +77,8 @@ export function TradingAlertsEngine() {
     for (const symbol of symbols) {
       try {
         const off = subscribeFeed(symbol, "1m", (u) => {
+          // P77 hotfix — an empty-store feed delivery can carry no lastBar
+          if (!u.lastBar) return;
           pricesRef.current.set(symbol, u.lastBar.close);
           priceBusUpdateMany({ [symbol]: u.lastBar.close });
           const seen = barTimeRef.current.get(symbol);

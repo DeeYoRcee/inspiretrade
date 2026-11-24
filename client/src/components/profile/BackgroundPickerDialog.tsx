@@ -116,15 +116,26 @@ export function BackgroundPickerDialog({
               )}
               style={{ background: bg.tint }}
             >
-              <video
-                src={bg.src}
-                autoPlay
-                loop
-                muted
-                playsInline
-                preload="metadata"
-                className="absolute inset-0 h-full w-full object-cover"
-              />
+              {/* P77 fix — image picks (knight/skywalker JPGs) must render an
+                  <img> thumbnail: a <video> element with an image src fails
+                  silently and the tile showed only the tint gradient */}
+              {/\.(png|jpe?g|webp|gif|avif|svg)(\?|#|$)/i.test(bg.src) ? (
+                <img
+                  src={bg.src}
+                  alt={bg.name}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              ) : (
+                <video
+                  src={bg.src}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              )}
               <span className="relative z-10 flex items-center justify-between bg-black/45 px-3 py-1.5 text-sm font-semibold text-white backdrop-blur-sm">
                 {bg.name}
                 {busy === bg.id && <Loader2 className="h-4 w-4 animate-spin" />}

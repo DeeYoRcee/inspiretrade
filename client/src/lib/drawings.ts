@@ -738,6 +738,10 @@ export function hitTest(
     if (d.locked || d.hidden) continue;
     const pts = toCanvas(d);
     if (!pts.length) continue;
+    // P77 hotfix — the converter drops anchors with a failed x-projection;
+    // indexing pts[1]/pts[2] on the shorted array crashed the hit-test. Skip
+    // only when an anchor was actually dropped (geometry is broken then).
+    if (pts.length < d.points.length) continue;
 
     // P41 — position tools: five SEMANTIC handles (3 levels on the right
     // edge + 2 band edges) and a body hit on the zone rect; the raw anchor
@@ -1189,6 +1193,11 @@ export function renderDrawing(
   env?: DrawingRenderEnv,
 ): void {
   if (!pts.length || d.hidden) return;
+  // P77 hotfix — toCanvas can DROP anchors whose x-conversion failed (off-
+  // scale / empty-bar windows); indexing pts[1]/pts[2] on the shorted array
+  // crashed the canvas loop. Skip only when an anchor was actually dropped —
+  // a drawing with broken geometry must not render from wrong points.
+  if (pts.length < d.points.length) return;
   applyStyle(ctx, d.style, (selected ? 1 : 0.92) * (d.style.opacity ?? 1));
 
   switch (d.type) {
@@ -1956,21 +1965,10 @@ export function renderDrawing(
       ctx.fillStyle = profitCol;
       ctx.fillRect(xL, Math.min(entry.y, target.y), w, Math.abs(target.y - entry.y));
       ctx.restore();
-      // level lines + band edges
-      ctx.save();
-      ctx.setLineDash([]);
-      ctx.lineWidth = Math.max(1, d.style.width);
-      // P77 user request: ALL level lines render WHITE (the tool color,
-      // white by default) — only the translucent zone fills keep the
-      // green/red long/short semantics
-      ctx.strokeStyle = d.style.color;
-      drawSegment(ctx, { x: xL, y: entry.y }, { x: xR, y: entry.y });
-      drawSegment(ctx, { x: xL, y: stop.y }, { x: xR, y: stop.y });
-      drawSegment(ctx, { x: xL, y: target.y }, { x: xR, y: target.y });
-      // P66 §5 — the blue outer band frame is GONE (user request): the clean
-      // TradingView look keeps only the three level lines + the zone fills;
-      // band edges remain fully editable through their dedicated handles
-      ctx.restore();
+      // P77 user request — the three horizontal level lines (entry/stop/
+      // target across the band) are REMOVED: the clean look keeps only the
+      // two translucent zone fills + the price labels; the zone edges stay
+      // fully editable through their dedicated handles
       // P41 §3 — market-space math with REAL instrument precision
       const entryP = d.points[0]?.price ?? 0;
       const stopP = d.points[1]?.price ?? 0;

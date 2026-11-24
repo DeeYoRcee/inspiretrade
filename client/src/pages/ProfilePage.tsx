@@ -753,17 +753,10 @@ export default function ProfilePage() {
       {/* P75 — profile frames: gallery + preview + equip/remove. The CEO card
           only renders for accounts the SERVER reports as super_admin; the
           actual equip check happens server-side regardless. */}
+      {/* P77 user request — no section title / equipped line / hint copy:
+          the gallery itself (preview + one CEO frame + equip) says enough */}
       <section className="mt-4 rounded-3xl border border-border/50 bg-card/60 p-4">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="font-display text-lg font-semibold tracking-tight">{t("frameTitle")}</h2>
-          {equippedFrame && (
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              {t("frameEquipped")}: {getFrame(equippedFrame)?.name ?? equippedFrame}
-            </span>
-          )}
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">{t("frameHint")}</p>
-        <div className="mt-4 flex flex-col items-center gap-2">
+        <div className="flex flex-col items-center gap-2">
           <ProfileFrame frame={previewFrame ?? equippedFrame}>
             {avatarVideoSrc || profileVideoSrc ? (
               <video src={avatarVideoSrc || profileVideoSrc!} autoPlay loop muted playsInline preload="metadata" className="h-20 w-20 rounded-full object-cover" />
@@ -787,7 +780,7 @@ export default function ProfilePage() {
           })()}
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-          {FRAMES.filter((f) => !f.exclusive || isSuperAdmin).map((f) => (
+          {FRAMES.filter((f) => f.id === "ceo" && (!f.exclusive || isSuperAdmin)).map((f) => (
             <button
               key={f.id}
               type="button"
@@ -812,7 +805,6 @@ export default function ProfilePage() {
             {t("frameRemove")}
           </Button>
         )}
-        <p className="mt-3 text-center text-[11px] text-muted-foreground/70">{t("frameExclusiveNote")}</p>
       </section>
 
       {/* Actions */}
