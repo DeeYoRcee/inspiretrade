@@ -218,9 +218,10 @@ function createMainSeries(chart: IChartApi, type: ChartType, s: { upColor: strin
 
 /** Theme the main series from user settings (per kind). P55 §7: the border
  *  and wick colors may be overridden independently (undefined = candle color). */
-function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: string; downColor: string; borderColor?: string; wickColor?: string }): void {
-  const bU = s.borderColor ?? s.upColor, bD = s.borderColor ?? s.downColor;
-  const wU = s.wickColor ?? s.upColor, wD = s.wickColor ?? s.downColor;
+function applyMainTheme(series: MainSeriesApi, kind: MainKind, s: { upColor: string; downColor: string; borderColor?: string; wickColor?: string; borderUpColor?: string; borderDownColor?: string; wickUpColor?: string; wickDownColor?: string }): void {
+  // P64R2 — per-side overrides first, then the shared ones, then the body color
+  const bU = s.borderUpColor ?? s.borderColor ?? s.upColor, bD = s.borderDownColor ?? s.borderColor ?? s.downColor;
+  const wU = s.wickUpColor ?? s.wickColor ?? s.upColor, wD = s.wickDownColor ?? s.wickColor ?? s.downColor;
   if (kind === "candle") {
     (series as ISeriesApi<"Candlestick">).applyOptions({
       upColor: s.upColor, downColor: s.downColor,
@@ -831,7 +832,8 @@ export function PriceChart({
     if (!chart || !candle) return;
     chart.applyOptions({
       // Phase 34: appearance (background / grid / crosshair) now user-settable
-      layout: { background: { type: ColorType.Solid, color: mergedSettings.bgColor ?? COLORS.bg }, textColor: mergedSettings.textColor ?? COLORS.text, fontSize: 11 },
+      // P64R2 — with a VIP background image the chart canvas must be transparent
+      layout: { background: { type: ColorType.Solid, color: mergedSettings.bgImage ? "rgba(0,0,0,0)" : (mergedSettings.bgColor ?? COLORS.bg) }, textColor: mergedSettings.textColor ?? COLORS.text, fontSize: 11 },
       grid: mergedSettings.grid
         ? { vertLines: { color: mergedSettings.gridColor ?? COLORS.grid }, horzLines: { color: mergedSettings.gridColor ?? COLORS.grid } }
         : { vertLines: { visible: false }, horzLines: { visible: false } },
@@ -847,8 +849,10 @@ export function PriceChart({
     });
     candle.applyOptions({
       upColor: mergedSettings.upColor, downColor: mergedSettings.downColor,
-      borderUpColor: mergedSettings.upColor, borderDownColor: mergedSettings.downColor,
-      wickUpColor: mergedSettings.upColor, wickDownColor: mergedSettings.downColor,
+      borderUpColor: mergedSettings.borderUpColor ?? mergedSettings.borderColor ?? mergedSettings.upColor,
+      borderDownColor: mergedSettings.borderDownColor ?? mergedSettings.borderColor ?? mergedSettings.downColor,
+      wickUpColor: mergedSettings.wickUpColor ?? mergedSettings.wickColor ?? mergedSettings.upColor,
+      wickDownColor: mergedSettings.wickDownColor ?? mergedSettings.wickColor ?? mergedSettings.downColor,
     } as any);
     // every main-series kind gets its theme + last-price visibility override
     applyMainTheme(candle, mainKindRef.current, mergedSettings);
@@ -997,7 +1001,7 @@ export function PriceChart({
     const s0 = mergedSettingsRef.current;
     const chart = createChart(el, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: s0.bgColor ?? COLORS.bg }, textColor: s0.textColor ?? COLORS.text, fontSize: 11, attributionLogo: false },
+      layout: { background: { type: ColorType.Solid, color: s0.bgImage ? "rgba(0,0,0,0)" : (s0.bgColor ?? COLORS.bg) }, textColor: s0.textColor ?? COLORS.text, fontSize: 11, attributionLogo: false },
       grid: s0.grid === false
         ? { vertLines: { visible: false }, horzLines: { visible: false } }
         : { vertLines: { color: s0.gridColor ?? COLORS.grid }, horzLines: { color: s0.gridColor ?? COLORS.grid } },
@@ -2779,8 +2783,23 @@ export function PriceChart({
             </button>
           </div>
         )}
+        {/* P64R2 user request — VIP chart background image behind the panes:
+            skywalker is a still; knight gets a slow Ken-Burns zoom (CSS) so the
+            "animated" feel works without any canvas repaint loop. */}
+        {mergedSettings.bgImage ? (
+          <img
+            src={mergedSettings.bgImage}
+            alt=""
+            aria-hidden
+            draggable={false}
+            className={cn(
+              "pointer-events-none absolute inset-0 z-0 h-full w-full select-none object-cover",
+              mergedSettings.bgImage.includes("knight") && "it-bg-anim",
+            )}
+          />
+        ) : null}
         {/* main pane */}
-        <div ref={mainHostRef} className="absolute inset-x-0 top-0" style={{ bottom: subList.length * SUB_PANE_HEIGHT }} />
+        <div ref={mainHostRef} className="absolute inset-x-0 top-0 z-10" style={{ bottom: subList.length * SUB_PANE_HEIGHT }} />
         {/* sub-panes */}
         {subList.map((cfg) => (
           <div

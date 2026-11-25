@@ -73,11 +73,11 @@ export function MobileTabBar() {
               onClick={() => { if (!active) navigate(href); setMoreOpen(false); }}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "relative flex h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors active:bg-accent/40",
+                "relative flex h-[52px] flex-col items-center justify-center gap-0.5 text-[9px] font-medium transition-colors active:bg-accent/40",
                 active ? "text-primary" : "text-muted-foreground",
               )}
             >
-              <Icon className={cn("h-5 w-5", active && "drop-shadow-[0_0_8px_hsl(var(--primary)/0.6)]")} />
+              <Icon className={cn("h-[18px] w-[18px]", active && "drop-shadow-[0_0_8px_hsl(var(--primary)/0.6)]")} />
               <span className="max-w-full truncate px-0.5">{item.key ? t(item.key) : item.label}</span>
               {active && <span className="absolute top-0 h-0.5 w-8 rounded-full bg-primary" />}
             </button>
@@ -86,9 +86,9 @@ export function MobileTabBar() {
         <button
           onClick={() => setMoreOpen(true)}
           aria-label={t("more")}
-          className="flex h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-muted-foreground transition-colors active:bg-accent/40"
+          className="flex h-[52px] flex-col items-center justify-center gap-0.5 text-[9px] font-medium text-muted-foreground transition-colors active:bg-accent/40"
         >
-          <LayoutGrid className="h-5 w-5" />
+          <LayoutGrid className="h-[18px] w-[18px]" />
           <span>{t("more")}</span>
         </button>
       </nav>

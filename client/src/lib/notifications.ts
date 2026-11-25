@@ -8,6 +8,7 @@
  */
 
 import { SYMBOLS } from "@/lib/news-api";
+import { toast } from "@/hooks/use-toast";
 
 export type AlertKind = "news" | "calendar" | "alert" | "system";
 
@@ -418,4 +419,20 @@ export function getUnreadCount(): number {
 export function markAllAlertsRead(): void {
   writeJson(READ_KEY, Date.now());
   window.dispatchEvent(new CustomEvent(ALERTS_CHANGED_EVENT));
+}
+
+// P64R2 — the service worker forwards a push as an in-page message whenever an
+// InspireTrade window is visible (Chrome tab OR the installed PWA). Render it
+// as a normal toast so the user gets ONE alert instead of duplicated OS
+// notifications from both surfaces.
+if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
+    const msg = event.data as { type?: string; data?: { title?: string; body?: string; url?: string } } | null;
+    if (msg?.type !== "it-push-alert") return;
+    toast({
+      title: String(msg.data?.title || "InspireTrade"),
+      description: String(msg.data?.body || "").slice(0, 200),
+      duration: 6000,
+    });
+  });
 }

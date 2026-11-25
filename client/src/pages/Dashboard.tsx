@@ -485,11 +485,14 @@ export default function Dashboard() {
                   classNames={{
                     months: "w-full space-y-4",
                     month: "w-full space-y-4",
-                    table: "w-full border-collapse space-y-1",
+                    // P64R2 — table-fixed + min-w-0: the 7 columns always split
+                    // the card width evenly (long "+12000$" values used to inflate
+                    // min-content and push the grid past the phone screen)
+                    table: "w-full table-fixed border-collapse",
                     head_row: "flex w-full gap-1",
                     head_cell: "text-muted-foreground rounded-md w-full font-normal text-[0.8rem]",
-                    row: "flex w-full mt-2 gap-1",
-                    cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 w-full h-14 sm:h-20",
+                    row: "flex w-full min-w-0 mt-2 gap-1",
+                    cell: "relative min-w-0 overflow-hidden p-0 text-center text-sm focus-within:relative focus-within:z-20 w-full h-14 sm:h-20",
                     day: "h-full w-full p-0 font-normal aria-selected:opacity-100 hover:bg-accent rounded-md transition-colors flex flex-col items-center justify-start py-1",
                     day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
                     day_today: "bg-accent text-accent-foreground",
@@ -531,7 +534,7 @@ export default function Dashboard() {
                           <span className="font-medium text-xs sm:text-sm">{format(date, "d")}</span>
                           {hasTrades && (
                             <span className={cn(
-                              "flex flex-1 items-end justify-center pb-0.5 text-[11px] sm:text-[13px] font-medium leading-none tracking-tight tabular-nums",
+                              "flex w-full min-w-0 flex-1 items-end justify-center overflow-hidden truncate px-0.5 pb-0.5 text-[10px] sm:text-[13px] font-medium leading-none tracking-tight tabular-nums",
                               dayPnL > 0 ? "text-success" : dayPnL < 0 ? "text-destructive" : "text-muted-foreground"
                             )}>
                               {dayPnL > 0 ? "+" : ""}{dayPnL.toFixed(0)}$

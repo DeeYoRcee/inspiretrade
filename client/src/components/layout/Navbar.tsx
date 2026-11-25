@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
 /** P64R — quick themes shown in the navbar dropdown; everything else lives in All settings. */
-const QUICK_THEMES: Theme[] = ["light", "ocean", "forest", "vader", "snow"];
+const QUICK_THEMES: Theme[] = ["dark", "light", "ocean", "forest", "vader", "snow"];
 import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
 import { AllSettingsDialog } from "@/components/layout/AllSettingsDialog";
 import { Button } from "@/components/ui/button";
@@ -60,8 +60,8 @@ export function Navbar() {
       </AlertDialog>
 
       <header className="sticky top-0 z-50 w-full shrink-0 border-b border-border/50 bg-background/95 backdrop-blur-md">
-        <div className="container mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4 xl:min-h-16 xl:flex-nowrap">
-          <button onClick={() => navigate("/")} aria-label="InspireTrade home" className="order-1 flex h-10 shrink-0 items-center"><img src="/logo.png" alt="InspireTrade" draggable={false} onDragStart={(e) => e.preventDefault()} onContextMenu={(e) => e.preventDefault()} className="select-none h-9 w-auto max-w-[130px] object-contain sm:h-10" /></button>
+        <div className="container mx-auto flex max-w-7xl flex-nowrap items-center gap-x-2 gap-y-2 px-2.5 py-2 sm:px-4 sm:gap-x-3 xl:min-h-16 xl:flex-nowrap">
+          <button onClick={() => navigate("/")} aria-label="InspireTrade home" className="order-1 flex h-10 shrink-0 items-center"><img src="/logo.png" alt="InspireTrade" draggable={false} onDragStart={(e) => e.preventDefault()} onContextMenu={(e) => e.preventDefault()} className="select-none h-6 w-auto max-w-[96px] min-w-0 shrink object-contain sm:h-9 sm:max-w-[130px] sm:shrink-0" /></button>
           {user && <nav aria-label="Main navigation" className="order-3 -mx-3 hidden w-[calc(100%+1.5rem)] min-w-0 items-center overflow-x-auto md:flex rounded-none border-t border-border/40 bg-card/60 px-3 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden xl:order-2 xl:mx-auto xl:w-auto xl:max-w-full xl:justify-center xl:overflow-visible xl:rounded-full xl:border xl:border-border/60 xl:p-1 xl:pt-1">
             {navItems.map(({ href, label, icon: Icon }) => {
               const active = href === "/" ? location === "/" : location.startsWith(href);

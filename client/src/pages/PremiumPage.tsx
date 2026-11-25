@@ -18,7 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language-context";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUserProfile, useWhopSubscription } from "@/hooks/use-premium";
-import { WHOP_CHECKOUT_URLS, YEARLY_SAVINGS, whopPendingMs, setWhopPending, clearWhopPending, whopFormatDate, type WhopPlanKey } from "@/lib/whop";
+import { WHOP_CHECKOUT_URLS, whopPendingMs, setWhopPending, clearWhopPending, whopFormatDate, type WhopPlanKey } from "@/lib/whop";
 
 // P64R user request — the perk list now sells the REAL VIP entitlements
 // (English copy per user request). Cases: the three case types (Inspire,
@@ -243,11 +243,6 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
           </motion.div>
         ))}
       </div>
-
-      {/* §3 — the yearly saving, stated with the exact numbers */}
-      <p className="text-xs text-muted-foreground mb-10 text-center">
-        {t("yearlyPlan")} — $49.99 {t("perYear")} = {t("monthlyPlan")} $4.17 · {t("whopYearlySave")} (${YEARLY_SAVINGS.amount}, −{YEARLY_SAVINGS.percent}%)
-      </p>
 
       <Card className="glass-panel border-border/40 w-full max-w-lg">
         <CardContent className="p-6">

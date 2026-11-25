@@ -119,7 +119,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) { setIsVip(false); return; }
       void import("firebase/database").then(({ getDatabase, ref, get }) => {
-        void get(ref(getDatabase(), `users/${u.uid}`)).then((snap) => {
+        // FIX (P64R2 user report): the premium flags live on the PROFILE node,
+        // users/{uid}/profile — reading users/{uid} returned null fields, so
+        // actual VIP members were being treated as free (locked themes).
+        void get(ref(getDatabase(), `users/${u.uid}/profile`)).then((snap) => {
           const v = (snap.val() ?? {}) as { isPremium?: boolean; premiumPlan?: string | null; ceo?: boolean };
           setIsVip(v.isPremium === true || (typeof v.premiumPlan === "string" && v.premiumPlan.length > 0) || v.ceo === true);
         }).catch(() => { /* offline → keep last known state */ });

@@ -27,7 +27,8 @@ export function Toaster() {
           </Toast>
         )
       })}
-      <ToastViewport />
+      {/* P64R2 user request — in-site toast notifications are not wanted on the phone version */}
+      <ToastViewport className="hidden sm:flex" />
     </ToastProvider>
   )
 }

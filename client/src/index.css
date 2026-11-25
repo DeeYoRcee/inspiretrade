@@ -686,3 +686,16 @@ html.density-cozy .wl-row { padding-top: 0.4rem; padding-bottom: 0.4rem; }
 @media (prefers-reduced-motion: reduce) {
   body::before, body::after { animation: none !important; }
 }
+
+/* P64R2 — VIP chart background: slow Ken-Burns zoom for the knight image */
+@keyframes it-bg-pan {
+  from { transform: scale(1.06) translate(0.5%, 0.5%); }
+  to { transform: scale(1.22) translate(-2%, -3%); }
+}
+.it-bg-anim {
+  animation: it-bg-pan 26s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .it-bg-anim { animation: none; }
+}

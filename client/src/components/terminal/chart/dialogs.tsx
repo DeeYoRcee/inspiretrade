@@ -40,6 +40,17 @@ export interface ChartSettings {
   borderColor?: string;
   wickColor?: string;
   textColor?: string;
+  // ---- P64R2 user request: per-side border/wick colors (the new presets
+  // style borders and wicks independently of the bodies; undefined = the
+  // shared override above, else the body color)
+  borderUpColor?: string;
+  borderDownColor?: string;
+  wickUpColor?: string;
+  wickDownColor?: string;
+  // ---- P64R2 user request: VIP background image behind the chart
+  // ("" = none; "/backgrounds/skywalker.jpg" static, "/backgrounds/knight.jpg"
+  // slow Ken-Burns animation)
+  bgImage?: string;
   // Phase 34: per-instrument override shadows merged from instrument settings
   precision?: number;
   lastPrice?: boolean;
@@ -67,6 +78,7 @@ export const DEFAULT_SETTINGS: ChartSettings = {
   upColor: "#22c55e", downColor: "#ef4444",
   bgColor: "#ffffff", gridColor: "#e5e7eb", crosshairColor: "rgba(120,123,134,0.5)",
   drawColor: "#2962ff", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
+  bgImage: "",
 };
 
 const GRID_OFF_MIGRATION_KEY = "it_grid_default_off";
@@ -84,26 +96,36 @@ export function applyGridDefaultOff(s: ChartSettings): ChartSettings {
   return { ...s, grid: false };
 }
 
-/** Phase 34: professional appearance presets — one click re-styles the chart. */
+/** P64R2 user request — the chart theme list was reset to SIX presets
+ *  (the old 12 are gone). Per-side border/wick colors ride along; undefined
+ *  fields inherit the body color exactly like before.
+ *  NOTE: "brown" ships with a white background — the user did not specify
+ *  one and the black-border candles read best on light. */
 export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSettings> }[] = [
-  { id: "inspire", label: "InspireTrade", s: { bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)", upColor: "#e9edf4", downColor: "#9598a1" } },
-  { id: "classic", label: "Classic Green", s: { bgColor: "#0a0a0a", gridColor: "#171717", crosshairColor: "rgba(163,163,163,0.45)", upColor: "#22c55e", downColor: "#ef4444" } },
-  { id: "midnight", label: "Midnight", s: { bgColor: "#05070d", gridColor: "#101827", crosshairColor: "rgba(148,163,184,0.4)", upColor: "#26a69a", downColor: "#ef5350" } },
-  { id: "contrast", label: "High Contrast", s: { bgColor: "#000000", gridColor: "#22262e", crosshairColor: "rgba(255,255,255,0.5)", upColor: "#4ade80", downColor: "#f87171" } },
-  // Phase 34b — the five minimal TradingView-style themes from the reference
-  // collection: pure black background, one accent bullish color, gray bearish.
-  { id: "neon-lime", label: "Neon Lime", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#9afc41", downColor: "#9c9c9c" } },
-  { id: "dusty-rose", label: "Dusty Rose", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#dd8ca0", downColor: "#9c9c9c" } },
-  { id: "amber", label: "Amber", s: { bgColor: "#0c0c0c", gridColor: "#171717", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#ffd63d", downColor: "#9c9c9c" } },
-  { id: "steel-blue", label: "Steel Blue", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#738bae", downColor: "#9c9c9c" } },
-  { id: "deep-forest", label: "Deep Forest", s: { bgColor: "#000000", gridColor: "#161616", crosshairColor: "rgba(219,219,219,0.4)", upColor: "#16302b", downColor: "#dbdbdb" } },
-  // P77 user request — ICT (Inner Circle Trader) style themes: the color
-  // schemes the ICT community actually trades on — deep navy backgrounds,
-  // teal/cyan bullish candles against coral bearish ones, tuned for contrast
-  // on the session-grid look.
-  { id: "ict-classic", label: "ICT Classic", s: { bgColor: "#0b0e14", gridColor: "#1c2333", crosshairColor: "rgba(34,211,238,0.45)", upColor: "#0ecb81", downColor: "#f6465d" } },
-  { id: "ict-midnight", label: "ICT Midnight", s: { bgColor: "#131722", gridColor: "#1e222d", crosshairColor: "rgba(120,123,134,0.5)", upColor: "#089981", downColor: "#f23645" } },
-  { id: "ict-cyan", label: "ICT Cyan", s: { bgColor: "#050a12", gridColor: "#12202e", crosshairColor: "rgba(34,211,238,0.5)", upColor: "#22d3ee", downColor: "#f43f5e" } },
+  {
+    id: "default", label: "Default",
+    s: { bgColor: "#ffffff", gridColor: "#e5e7eb", crosshairColor: "rgba(120,123,134,0.5)", upColor: "#22c55e", downColor: "#ef4444", borderUpColor: undefined, borderDownColor: undefined, wickUpColor: undefined, wickDownColor: undefined, borderColor: undefined, wickColor: undefined, bgImage: "" },
+  },
+  {
+    id: "inspire", label: "Inspire",
+    s: { bgColor: "#131722", gridColor: "#1e222d", crosshairColor: "rgba(120,123,134,0.5)", upColor: "#ffffff", downColor: "#5d606b", borderUpColor: "#ffffff", wickUpColor: "#ffffff", borderDownColor: "#5d606b", wickDownColor: "#5d606b", borderColor: undefined, wickColor: undefined, bgImage: "" },
+  },
+  {
+    id: "ict", label: "ICT",
+    s: { bgColor: "#ffffff", gridColor: "#eceff3", crosshairColor: "rgba(0,0,0,0.4)", upColor: "#66bb6a", downColor: "#000000", borderUpColor: "#000000", wickUpColor: "#000000", borderDownColor: "#000000", wickDownColor: "#000000", borderColor: undefined, wickColor: undefined, bgImage: "" },
+  },
+  {
+    id: "salvatore", label: "Salvatore",
+    s: { bgColor: "#181d2c", gridColor: "#232a3d", crosshairColor: "rgba(149,152,161,0.45)", upColor: "#da00ff", downColor: "#9598a1", borderUpColor: "#da00ff", wickUpColor: "#da00ff", borderDownColor: "#9598a1", wickDownColor: "#9598a1", borderColor: undefined, wickColor: undefined, bgImage: "" },
+  },
+  {
+    id: "gold", label: "Gold",
+    s: { bgColor: "#0c0c0c", gridColor: "#181818", crosshairColor: "rgba(156,156,156,0.45)", upColor: "#ffd63d", downColor: "#9c9c9c", borderUpColor: "#9c9c9c", wickUpColor: "#9c9c9c", borderDownColor: "#9c9c9c", wickDownColor: "#9c9c9c", borderColor: undefined, wickColor: undefined, bgImage: "" },
+  },
+  {
+    id: "brown", label: "Brown",
+    s: { bgColor: "#ffffff", gridColor: "#e8e2dc", crosshairColor: "rgba(60,50,40,0.45)", upColor: "#f0e5dd", downColor: "#a67864", borderUpColor: "#000000", wickUpColor: "#000000", borderDownColor: "#000000", wickDownColor: "#000000", borderColor: undefined, wickColor: undefined, bgImage: "" },
+  },
 ];
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,11 @@
  */
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { RotateCcw, X } from "lucide-react";
+import { RotateCcw, X, Lock } from "lucide-react";
+import { usePremiumStatus, useUserProfile } from "@/hooks/use-premium";
+import { useIsAdmin } from "@/hooks/use-admin";
+import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { getInstrument } from "@shared/terminal";
 import {
@@ -140,6 +144,13 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
   useEffect(() => {
     if (open) setGlobal(readGlobalSettings());
   }, [open]);
+  // P64R2 — VIP gate for the chart background subsection
+  const { data: bgIsPremium = false } = usePremiumStatus();
+  const bgProfileQ = useUserProfile();
+  const bgIsAdmin = useIsAdmin();
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const isVip = bgIsPremium || bgIsAdmin || !!(bgProfileQ.data?.isPremium || (bgProfileQ.data as unknown as { ceo?: boolean } | null)?.ceo);
 
   if (!open) return null;
 
@@ -279,6 +290,54 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
                   {p.label}
                 </button>
               ))}
+            </div>
+            {/* P64R2 user request — chart background IMAGE subsection, VIP-only
+                (the lock routes non-VIPs to the Premium page). Skywalker is a
+                still; Knight animates with a slow Ken-Burns zoom. */}
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-2" data-bg-section="1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">Background</span>
+                {!isVip && <Lock className="h-3 w-3 text-amber-300" />}
+              </div>
+              <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                {[
+                  { id: "", label: "None", src: "" },
+                  { id: "/backgrounds/skywalker.jpg", label: "Skywalker", src: "/backgrounds/skywalker.jpg" },
+                  { id: "/backgrounds/knight.jpg", label: "Knight", src: "/backgrounds/knight.jpg", anim: true },
+                ].map((o) => {
+                  const active = (global.bgImage ?? "") === o.id;
+                  return (
+                    <button
+                      key={o.label}
+                      disabled={!isVip}
+                      title={isVip ? `${o.label}${o.anim ? " (animated)" : ""}` : "VIP only — unlock on the Premium page"}
+                      onClick={() => {
+                        if (!isVip) {
+                          toast({ title: "VIP background", description: "Chart backgrounds are part of Premium — unlock on the Premium page." });
+                          navigate("/premium");
+                          return;
+                        }
+                        setGlobalCfg({ bgImage: o.id });
+                      }}
+                      className={cn(
+                        "relative h-14 overflow-hidden rounded-lg border transition-all",
+                        active ? "border-primary ring-2 ring-primary/40" : "border-slate-700/60 hover:border-primary/40",
+                        !isVip && "opacity-50",
+                      )}
+                    >
+                      {o.src ? (
+                        <img src={o.src} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                      ) : (
+                        <span className="absolute inset-0 flex items-center justify-center bg-slate-900 text-[10px] font-semibold text-slate-400">None</span>
+                      )}
+                      <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-[9px] font-semibold text-white">
+                        {o.label}{o.anim && isVip ? " ✦" : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-[10px] text-muted-foreground">The image sits behind the candles (chart colors go transparent). VIP only.</p>
             </div>
             <Row label="Grid" hint="Background grid lines">
               <Toggle on={per.grid ?? global.grid} onChange={(v) => setPer({ grid: v })} />

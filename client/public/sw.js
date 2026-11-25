@@ -1,4 +1,4 @@
-const CACHE_NAME = "inspiretrade-v7";
+const CACHE_NAME = "inspiretrade-v8";
 const APP_SHELL = ["/", "/index.html", "/favicon.png"];
 // the alert state lives in its own cache so the background sync can diff
 // fresh news/calendar events even when every tab of the site is closed
@@ -142,13 +142,27 @@ self.addEventListener("push", (event) => {
     data = { title: "InspireTrade", body: event.data ? event.data.text() : "" };
   }
   event.waitUntil(
-    self.registration.showNotification(String(data.title || "InspireTrade"), {
-      body: String(data.body || "").slice(0, 200),
-      tag: data.tag,
-      icon: "/favicon.png",
-      badge: "/favicon.png",
-      data: { url: data.url || "/" },
-    }),
+    (async () => {
+      // P64R2 — user report: alerts arrived from BOTH "Google Chrome" and the
+      // installed InspireTrade app (the tab and the PWA each hold their own
+      // push subscription). If any of our windows is open and visible, deliver
+      // the message IN-PAGE (one toast) and skip the OS notification.
+      const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const visible = clientList.filter((c) => c.visibilityState === "visible");
+      if (visible.length) {
+        for (const client of visible) {
+          client.postMessage({ type: "it-push-alert", data });
+        }
+        return;
+      }
+      await self.registration.showNotification(String(data.title || "InspireTrade"), {
+        body: String(data.body || "").slice(0, 200),
+        tag: data.tag,
+        icon: "/icon-192.png",
+        badge: "/favicon-32.png",
+        data: { url: data.url || "/" },
+      });
+    })(),
   );
 });
 

@@ -146,7 +146,7 @@ export function DailyRewardDialog() {
           if (!o) dismiss();
         }}
       >
-        <DialogContent className="glass-panel max-h-[calc(100dvh-1.5rem)] max-w-md overflow-x-hidden overflow-y-auto border-primary/30 p-4 text-center sm:p-6">
+        <DialogContent className="glass-panel max-h-[calc(100dvh-1.5rem)] w-[min(28rem,calc(100vw-1.5rem))] max-w-md overflow-x-hidden overflow-y-auto border-primary/30 p-4 text-center sm:p-6">
           <button
             onClick={dismiss}
             aria-label={t("later")}
@@ -189,7 +189,7 @@ export function DailyRewardDialog() {
 
               {/* 7-day reward calendar — no streak tile */}
               {!vipTab && (<>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                 {days.map((day) => {
                   const isGold = day === GOLD_CASE_DAY;
                   const isClaimed = day <= claimedInCycle;
@@ -201,7 +201,7 @@ export function DailyRewardDialog() {
                       animate={isNext ? { scale: [1, 1.05, 1] } : { scale: 1 }}
                       transition={isNext ? { duration: 1.6, repeat: Infinity, ease: "easeInOut" } : undefined}
                       className={cn(
-                        "relative flex flex-col items-center justify-center gap-1 rounded-2xl border px-1 py-3 transition-colors",
+                        "relative flex flex-col items-center justify-center gap-1 min-w-0 rounded-2xl border px-1 py-3 transition-colors",
                         isGold ? "border-amber-500/50" : "border-border/60",
                         isClaimed && "bg-muted/40 opacity-55",
                         isNext && (isGold
@@ -275,7 +275,7 @@ export function DailyRewardDialog() {
               </>)}
 
               {vipTab && isVip && (<>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                   {days.map((day) => {
                     const isTradingDay = day === REWARD_CYCLE_DAYS;
                     const vipDay = cycleDayOf(Math.max(1, claimedToday ? Number(economy?.vipStreak) || 1 : (Number(economy?.vipStreak) || 0) + 1));

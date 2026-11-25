@@ -31,6 +31,7 @@ import {
 import { get, ref, set } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/hooks/use-auth";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 interface Track {
@@ -311,6 +312,8 @@ async function itunesSearch(q: string): Promise<Track[]> {
 }
 
 export function MusicPlayer() {
+  // P64R2 user request — the music section is not wanted on the phone version
+  const isMobile = useIsMobile();
   const { user } = useAuth();
   const [prefs, setPrefs] = useMusicPrefs();
   const [term, setTerm] = useState("");
@@ -786,7 +789,8 @@ export function MusicPlayer() {
   );
 
   // account feature — the player is hidden entirely until the visitor signs in
-  if (!user) return null;
+  // (P64R2: also hidden on phones — music is a desktop-only section now)
+  if (!user || isMobile) return null;
 
   return (
     <>
