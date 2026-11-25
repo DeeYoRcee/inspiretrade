@@ -9,7 +9,7 @@
  * date and the official Whop management link (§7).
  */
 import { motion } from "framer-motion";
-import { ArrowLeft, Crown, Check, Zap, Star, Shield, TrendingUp, X, ExternalLink, RefreshCw, Loader2, Clock } from "lucide-react";
+import { ArrowLeft, Crown, Check, X, ExternalLink, RefreshCw, Loader2, Clock, Gift, Frame as FrameIcon, AtSign, BadgeCheck, Package, Image as ImageIcon, Palette } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -20,12 +20,17 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useUserProfile, useWhopSubscription } from "@/hooks/use-premium";
 import { WHOP_CHECKOUT_URLS, YEARLY_SAVINGS, whopPendingMs, setWhopPending, clearWhopPending, whopFormatDate, type WhopPlanKey } from "@/lib/whop";
 
+// P64R user request — the perk list now sells the REAL VIP entitlements
+// (English copy per user request). Cases: the three case types (Inspire,
+// Gold, Trading) are granted once on the first Premium purchase.
 const FEATURES = [
-  { icon: <Crown className="w-4 h-4" />, textKey: "premiumBadge" },
-  { icon: <TrendingUp className="w-4 h-4" />, textKey: "leaderboardUsername" },
-  { icon: <Star className="w-4 h-4" />, textKey: "topTraderRanking" },
-  { icon: <Shield className="w-4 h-4" />, textKey: "futureFeatures" },
-  { icon: <Zap className="w-4 h-4" />, textKey: "prioritySupport" },
+  { icon: Gift, tint: "text-violet-400 bg-violet-500/10 border-violet-500/25", title: "VIP rewards", desc: "Exclusive VIP-only rewards dropped on the Rewards page." },
+  { icon: FrameIcon, tint: "text-amber-400 bg-amber-500/10 border-amber-500/25", title: "VIP frame", desc: "The gold VIP frame wrapped around your avatar everywhere." },
+  { icon: AtSign, tint: "text-sky-400 bg-sky-500/10 border-sky-500/25", title: "Usernames — up to 5", desc: "Hold up to 5 collectible usernames (standard accounts hold 1)." },
+  { icon: BadgeCheck, tint: "text-emerald-400 bg-emerald-500/10 border-emerald-500/25", title: "VIP title", desc: "The exclusive VIP title on your profile and public page." },
+  { icon: Package, tint: "text-yellow-500 bg-yellow-500/10 border-yellow-500/25", title: "Welcome case bundle", desc: "Inspire, Gold and Trading cases — granted once on your first Premium purchase." },
+  { icon: ImageIcon, tint: "text-fuchsia-400 bg-fuchsia-500/10 border-fuchsia-500/25", title: "VIP profile backgrounds", desc: "The Skywalker and Knight profile backgrounds become VIP-only." },
+  { icon: Palette, tint: "text-cyan-400 bg-cyan-500/10 border-cyan-500/25", title: "VIP themes", desc: "Formula 1, Money Rain, Cosmos, Neon Grid, Knight and CR7 themes." },
 ] as const;
 
 type PlanKey = "monthly" | "yearly";
@@ -244,15 +249,21 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
         {t("yearlyPlan")} — $49.99 {t("perYear")} = {t("monthlyPlan")} $4.17 · {t("whopYearlySave")} (${YEARLY_SAVINGS.amount}, −{YEARLY_SAVINGS.percent}%)
       </p>
 
-      <Card className="glass-panel border-border/40 w-full max-w-md">
+      <Card className="glass-panel border-border/40 w-full max-w-lg">
         <CardContent className="p-6">
           <h3 className="font-display font-semibold mb-4 text-center">{t("premiumFeatures")}</h3>
-          <ul className="space-y-3">
+          {/* P64R — richer perk rows: tinted icon chip + title + description */}
+          <ul className="space-y-2.5">
             {FEATURES.map((f, i) => (
-              <li key={i} className="flex items-center gap-3 text-sm">
-                <span className="text-primary">{f.icon}</span>
-                <span>{t(f.textKey as Parameters<typeof t>[0])}</span>
-                <Check className="w-4 h-4 text-success ml-auto" />
+              <li key={i} className="flex items-start gap-3 rounded-xl border border-border/40 bg-secondary/25 p-3">
+                <span className={cn("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border", f.tint)}>
+                  <f.icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold">{f.title}</span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{f.desc}</span>
+                </span>
+                <Check className="mt-1 h-4 w-4 shrink-0 text-success ml-auto" />
               </li>
             ))}
           </ul>

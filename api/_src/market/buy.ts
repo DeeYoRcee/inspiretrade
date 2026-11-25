@@ -182,7 +182,7 @@ async function deliverUsername(db: any, buyerUid: string, listing: any, revertLi
   const sellerUid = String(listing.sellerUid || "");
 
   // Phase 32 — collectible handle CAP: the buyer may hold at most
-  // VIP 5 / regular 2 usernames (the primary + purchased collectibles,
+  // VIP 5 / regular 1 username (the primary + purchased collectibles,
   // Telegram-style). VIP = premium profile flag, a premium plan, the CEO
   // profile or the owner node in admins/{uid}. Checked BEFORE the handle
   // moves so a rejected buy never leaves a half-delivered state.
@@ -194,7 +194,8 @@ async function deliverUsername(db: any, buyerUid: string, listing: any, revertLi
   const buyerVip =
     buyerProfile.isPremium === true || !!buyerProfile.premiumPlan ||
     buyerProfile.ceo === true || buyerAdminSnap.val() === true;
-  const USERNAME_CAP = buyerVip ? 5 : 2;
+  // P64R user request: standard accounts hold 1 username, Premium/VIP 5.
+  const USERNAME_CAP = buyerVip ? 5 : 1;
   const heldBefore: Record<string, unknown> = { ...((buyerProfile.usernames as Record<string, unknown>) || {}) };
   const primaryBefore = typeof buyerProfile.username === "string" ? buyerProfile.username.toLowerCase() : "";
   const willHold = new Set([...Object.keys(heldBefore), primaryBefore, key].filter(Boolean));
@@ -205,7 +206,7 @@ async function deliverUsername(db: any, buyerUid: string, listing: any, revertLi
       "USERNAME_CAP_REACHED",
       buyerVip
         ? `VIP accounts can hold at most ${USERNAME_CAP} usernames`
-        : `Accounts can hold at most ${USERNAME_CAP} usernames (VIP raises the cap to 5)`,
+        : `Standard accounts hold at most ${USERNAME_CAP} username (Premium raises the cap to 5)`,
     );
   }
 

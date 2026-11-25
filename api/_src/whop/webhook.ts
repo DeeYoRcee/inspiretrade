@@ -19,6 +19,7 @@
  */
 import Whop from "@whop/sdk";
 import { rtdb, logLedger } from "../lib/firebase";
+import { grantVipWelcomeBundle } from "./welcome";
 import {
   PREMIUM_PRODUCT_ID, decideEntitlement, isPremiumMembership,
   extractUidCandidates, extractEmail, verifyWebhookSignature,
@@ -163,6 +164,8 @@ async function applyMembership(m: MembershipLike, uid: string | null, lastEvent:
       whopMembershipId: m.id,
     });
     await logLedger({ type: "whop_entitlement", action: "grant", uid, membershipId: m.id, status: decision.status, planKey: decision.planKey, event: lastEvent, at: Date.now() });
+    // P64R — one-time welcome bundle (Inspire + Gold + Trading case) on the first grant
+    await grantVipWelcomeBundle(uid, m.id).catch(() => { /* bundle must never break the entitlement write */ });
   } else {
     // revoke — journal/trades/personal data live on separate nodes and are
     // NOT touched; only the premium flags flip off

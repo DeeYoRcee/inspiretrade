@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { useUserProfile } from "@/hooks/use-premium";
 import { useAuth } from "@/hooks/use-auth";
 import { useLanguage } from "@/lib/language-context";
+import { FramesGallery } from "@/components/profile/FramesGallery";
 import { cn } from "@/lib/utils";
 
 /**
@@ -143,6 +144,11 @@ export default function TitlesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* P64R user request — profile FRAMES now live inside the Titles
+          section: preview band + gallery + equip/remove, one card below the
+          title lists. */}
+      <FramesGallery />
 
       <Card className="glass-panel border-border/50">
         <CardHeader className="pb-3">

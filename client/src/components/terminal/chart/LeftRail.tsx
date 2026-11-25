@@ -125,7 +125,7 @@ export function ToolIcon({ id, className }: { id: DrawingType; className?: strin
 // ---------------------------------------------------------------------------
 const g = (id: DrawingType, label: string, hint?: string) => ({ id, label, hint });
 
-interface ToolGroup {
+export interface ToolGroup {
   id: string;
   title: string;
   tools: { id: DrawingType; label: string; hint?: string }[];
@@ -151,7 +151,7 @@ export function toolDisplayName(id: DrawingType): string {
 
 
 
-const GROUPS: ToolGroup[] = [
+export const GROUPS: ToolGroup[] = [
   {
     id: "trend",
     title: "Trend line tools",

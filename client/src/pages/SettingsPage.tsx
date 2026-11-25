@@ -4,15 +4,16 @@
  * instrument/trading/notifications/data/shortcuts).
  */
 import { useState } from "react";
-import { Check, Globe2, Palette, Settings2 } from "lucide-react";
+import { Check, Globe2, Palette, Settings2 , Lock } from "lucide-react";
 import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
-import { useTheme, THEMES, THEME_LABELS, type Theme } from "@/lib/theme-context";
+import { useTheme, useThemeChipGuard, THEMES, THEME_LABELS, isVipTheme, type Theme } from "@/lib/theme-context";
 import { TerminalSettingsDialog } from "@/components/terminal/TerminalSettingsDialog";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
   const { t, language, setLanguage } = useLanguage();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, isVip } = useTheme();
+  const guard = useThemeChipGuard();
   const [terminalOpen, setTerminalOpen] = useState(false);
 
   return (
@@ -61,22 +62,26 @@ export default function SettingsPage() {
             chips keep constant size and every chip reserves the check slot,
             so selecting a theme can never reflow the row ("falling apart") */}
         <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4">
-          {THEMES.map((th: Theme) => (
-            <button
-              key={th}
-              onClick={() => setTheme(th)}
-              className={cn(
-                "flex h-11 items-center gap-2 overflow-hidden rounded-xl border px-3 text-sm font-medium transition-colors",
-                theme === th ? "border-primary/60 bg-primary/10 text-primary" : "border-border/60 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <span className={cn("h-3.5 w-3.5 shrink-0 rounded-full border border-foreground/20", `theme-dot-${th}`)} />
-              <span className="truncate">{THEME_LABELS[th]}</span>
-              <span className="ml-auto flex w-3.5 shrink-0 justify-center">
-                {theme === th && <Check className="h-3.5 w-3.5" />}
-              </span>
-            </button>
-          ))}
+          {THEMES.map((th: Theme) => {
+            const locked = isVipTheme(th) && !isVip;
+            return (
+              <button
+                key={th}
+                onClick={() => { if (!guard(th)) return; setTheme(th); }}
+                title={locked ? "Premium theme — unlock on the Premium page" : undefined}
+                className={cn(
+                  "flex h-11 items-center gap-2 overflow-hidden rounded-xl border px-3 text-sm font-medium transition-colors",
+                  locked ? "border-border/40 text-muted-foreground/60" : theme === th ? "border-primary/60 bg-primary/10 text-primary" : "border-border/60 text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <span className={cn("h-3.5 w-3.5 shrink-0 rounded-full border border-foreground/20", `theme-dot-${th}`)} />
+                <span className="truncate">{THEME_LABELS[th]}</span>
+                <span className="ml-auto flex w-3.5 shrink-0 justify-center">
+                  {locked ? <Lock className="h-3 w-3" /> : theme === th && <Check className="h-3.5 w-3.5" />}
+                </span>
+              </button>
+            );
+          })}
         </div>
         <p className="mt-3 text-[11px] text-muted-foreground">{t("settingsSavedNote")}</p>
       </section>

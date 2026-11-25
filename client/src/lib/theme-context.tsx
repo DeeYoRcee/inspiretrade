@@ -1,9 +1,16 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useToast } from "@/hooks/use-toast";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
 export const THEMES = ["dark", "light", "ocean", "forest", "vader", "cr7", "knight", "neon", "cosmos", "money", "f1", "snow"] as const;
 export type Theme = (typeof THEMES)[number];
+
+/** P64R user request — six themes became part of Premium: Formula 1, Money
+ *  Rain, Cosmos, Neon Grid, Knight and CR7. Free users keep Dark, Light,
+ *  Ocean, Forest, Skywalker (vader) and Snow. */
+export const VIP_THEMES: readonly Theme[] = ["cr7", "knight", "neon", "cosmos", "money", "f1"] as const;
+export const isVipTheme = (t: Theme): boolean => VIP_THEMES.includes(t);
 
 /** P77 — the Christmas theme was replaced by Snow: old saved keys (localStorage
  *  and the RTDB prefs sync) migrate silently to "snow". */
@@ -40,14 +47,18 @@ function getSavedTheme(): Theme {
   }
 }
 
-const ThemeContext = createContext<{ theme: Theme; setTheme: (theme: Theme) => void; toggleTheme: () => void }>({
+const ThemeContext = createContext<{ theme: Theme; setTheme: (theme: Theme) => void; toggleTheme: () => void; isVip: boolean }>({
   theme: "vader",
   setTheme: () => {},
   toggleTheme: () => {},
+  isVip: false,
 });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(getSavedTheme);
+  // P64R — Premium themes are gated on this flag (RTDB users/{uid}):
+  // isPremium/premiumPlan/ceo unlock the VIP theme set.
+  const [isVip, setIsVip] = useState(false);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -67,6 +78,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // stamp; the remote value is read ONCE per login and only applied when it is
   // NEWER than the local stamp (a stale device never overwrites a newer choice).
   const setThemeSync = (t: Theme) => {
+    // backstop: a locked VIP theme can never be applied without Premium —
+    // the pickers show a lock and route users to the Premium page instead
+    if (isVipTheme(t) && !isVip) return;
     setTheme(t);
     try { localStorage.setItem("tj-theme-at", String(Date.now())); } catch { /* private mode */ }
   };
@@ -99,7 +113,36 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
-  return <ThemeContext.Provider value={{ theme, setTheme: setThemeSync, toggleTheme }}>{children}</ThemeContext.Provider>;
+  // P64R — Premium status for theme gating (single read per auth change;
+  // cheap, and premium upgrades propagate on the next page load / re-login).
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!u) { setIsVip(false); return; }
+      void import("firebase/database").then(({ getDatabase, ref, get }) => {
+        void get(ref(getDatabase(), `users/${u.uid}`)).then((snap) => {
+          const v = (snap.val() ?? {}) as { isPremium?: boolean; premiumPlan?: string | null; ceo?: boolean };
+          setIsVip(v.isPremium === true || (typeof v.premiumPlan === "string" && v.premiumPlan.length > 0) || v.ceo === true);
+        }).catch(() => { /* offline → keep last known state */ });
+      }).catch(() => { /* firebase unavailable */ });
+    });
+    return () => unsub();
+  }, []);
+
+  return <ThemeContext.Provider value={{ theme, setTheme: setThemeSync, toggleTheme, isVip }}>{children}</ThemeContext.Provider>;
 }
 
 export const useTheme = () => useContext(ThemeContext);
+
+/** P64R — shared behavior for locked Premium themes on every theme picker:
+ *  show a lock, and a click explains the paywall instead of switching. */
+export function useThemeChipGuard() {
+  const { isVip } = useTheme();
+  const { toast } = useToast();
+  return (th: Theme): boolean => {
+    if (isVipTheme(th) && !isVip) {
+      toast({ title: "Premium theme", description: `${THEME_LABELS[th]} is part of Premium — unlock it on the Premium page.`, duration: 4200 });
+      return false;
+    }
+    return true;
+  };
+}

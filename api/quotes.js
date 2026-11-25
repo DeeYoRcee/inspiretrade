@@ -1054,7 +1054,7 @@ async function tdWalkM1(apiKey, tdSym, startSec, endSec, maxPages, spentToday) {
   bars.sort((a, b) => a.time - b.time);
   return { bars, pages, oldest: bars.length ? bars[0].time : null, exhausted };
 }
-async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed, deadlineMs = 45e3, skip = null) {
+async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed, deadlineMs = 45e3) {
   const dukaSym = DUKA_MAP[code] ?? DUKA_METALS[code];
   if (!dukaSym) throw new Error("NOT_ON_DUKA");
   const startedAt = Date.now();
@@ -1062,17 +1062,8 @@ async function dukaWalkM1(code, fromSec, toSec, maxDays, fileBudget, fileUsed, d
   let files = 0;
   let oldest = null;
   let timedOut = false;
-  // P77 fix — with a skip set the walk covers the WHOLE span (stored days
-  // cost nothing: they are not fetched), so the recent gap between the
-  // deep-walk cursor and today finally gets backfilled. Without a skip set
-  // the behavior stays exactly as before (maxDays caps the day list).
-  const spanDays = Math.ceil((toSec - fromSec) / 86400) + 1;
-  const listCap = skip ? Math.min(Math.max(maxDays, spanDays), 400) : maxDays;
   const days = [];
-  for (let day = Math.floor(toSec / 86400) * 86400; day >= fromSec && days.length < listCap; day -= 86400) {
-    if (skip && skip.has(new Date(day * 1e3).toISOString().slice(0, 10))) continue;
-    days.push(new Date(day * 1e3));
-  }
+  for (let day = Math.floor(toSec / 86400) * 86400; day >= fromSec && days.length < maxDays; day -= 86400) days.push(new Date(day * 1e3));
   for (let i = 0; i < days.length && fileUsed + files < fileBudget; i += 5) {
     if (Date.now() - startedAt > deadlineMs) {
       timedOut = true;
@@ -1114,14 +1105,8 @@ async function runBackfillStep(req) {
         const usageRef = rtdb().ref(`config/dukaUsage/${DUKA_METALS[symbol] ? "metals" : "fx"}/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        // P77 fix — the walk now covers [covered .. now-2d] with stored-day
-        // skipping: the recent gap ABOVE state.newest (the Mar-11-class hole
-        // that only the live recorder used to touch) is backfilled FIRST
-        // (newest-first), then the deeper past continues below state.oldest.
-        const metaDays = await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value");
-        const storedDays = new Set(Object.keys(metaDays.val() || {}).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)));
-        const recentTop = now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, recentTop, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18e3, storedDays);
+        const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         let foldedNote = "";
@@ -1135,15 +1120,12 @@ async function runBackfillStep(req) {
           }
         } catch {
         }
-        // never regress the covered extremes: keep the DEEPER oldest and the
-        // NEWER newest across both segments
-        const newOldest = walk.oldest != null && state.oldest != null ? Math.min(walk.oldest, state.oldest) : walk.oldest ?? state.oldest ?? null;
-        const newNewest = state.newest != null ? Math.max(state.newest, recentTop) : recentTop;
+        const newOldest = walk.oldest ?? state.oldest ?? null;
         const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
           provider: "dukascopy-bid",
           oldest: newOldest,
-          newest: newNewest,
+          newest: state.newest ?? now - 2 * 86400,
           cursor: newOldest,
           targetFrom: wantFrom,
           done,
@@ -1154,12 +1136,12 @@ async function runBackfillStep(req) {
           error: null
         });
         if (sh2.written > 0 || done) {
-          return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, newest: newNewest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}${foldedNote}` };
+          return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}${foldedNote}` };
         }
         if (walk.files === 0) {
           return { ...base, ok: false, provider: "dukascopy-bid", error: "CDN_UNREACHABLE", note: "Dukascopy returned 0 day files (429/503 rate-limit or network block) \u2014 depth resumes when the CDN answers; TwelveData fallback needs a stored key" };
         }
-        return { ...base, provider: "dukascopy-bid", written: 0, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, newest: newNewest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files fetched, ${sh2.skipped} already stored \u2014 no new days in this window (resume walks deeper)${foldedNote}` };
+        return { ...base, provider: "dukascopy-bid", written: 0, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files fetched, ${sh2.skipped} already stored \u2014 no new days in this window (resume walks deeper)${foldedNote}` };
       }
       const tdSym = HIST_TD[symbol];
       if (tdSym) {
@@ -1189,14 +1171,8 @@ async function runBackfillStep(req) {
         const usageRef = rtdb().ref(`config/dukaUsage/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         const used = Number((await usageRef.once("value")).val() || 0);
         if (used >= 1200) return { ...base, ok: false, provider: "dukascopy", error: "daily-file-cap" };
-        // P77 fix — the walk now covers [covered .. now-2d] with stored-day
-        // skipping: the recent gap ABOVE state.newest (the Mar-11-class hole
-        // that only the live recorder used to touch) is backfilled FIRST
-        // (newest-first), then the deeper past continues below state.oldest.
-        const metaDays = await rtdb().ref(`histMeta/${symbol}/${tf}`).once("value");
-        const storedDays = new Set(Object.keys(metaDays.val() || {}).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)));
-        const recentTop = now - 2 * 86400;
-        const walk = await dukaWalkM1(symbol, covered, recentTop, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18e3, storedDays);
+        const top = state.oldest != null ? Math.min(state.oldest, now - 2 * 86400) : now - 2 * 86400;
+        const walk = await dukaWalkM1(symbol, covered, top, req.maxDays ?? 240, 900, used, req.deadlineMs ?? 18e3);
         const sh2 = await writeShards(symbol, tf, walk.bars, "dukascopy-bid", { force: req.force });
         await usageRef.set(used + walk.files);
         let foldedNote = "";
@@ -1210,15 +1186,12 @@ async function runBackfillStep(req) {
           }
         } catch {
         }
-        // never regress the covered extremes: keep the DEEPER oldest and the
-        // NEWER newest across both segments
-        const newOldest = walk.oldest != null && state.oldest != null ? Math.min(walk.oldest, state.oldest) : walk.oldest ?? state.oldest ?? null;
-        const newNewest = state.newest != null ? Math.max(state.newest, recentTop) : recentTop;
+        const newOldest = walk.oldest ?? state.oldest ?? null;
         const done = newOldest != null && newOldest <= covered;
         await stateRef.set({
           provider: "dukascopy-bid",
           oldest: newOldest,
-          newest: newNewest,
+          newest: state.newest ?? now - 2 * 86400,
           cursor: newOldest,
           targetFrom: wantFrom,
           done,
@@ -1228,7 +1201,7 @@ async function runBackfillStep(req) {
           updatedAt: Date.now(),
           error: null
         });
-        return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, newest: newNewest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}${foldedNote}` };
+        return { ...base, provider: "dukascopy-bid", written: sh2.written, skipped: sh2.skipped, rejected: sh2.rejected, oldest: newOldest, cursor: newOldest, done, timedOut: walk.timedOut, note: `${walk.files} day files${walk.timedOut ? " \xB7 wall-clock budget reached \u2014 resume to continue" : ""}${foldedNote}` };
       }
       return { ...base, ok: false, provider: "none", error: "NO_1M_SOURCE (stooq refuses 1m; metals are not on the Dukascopy feed; TwelveData key missing)" };
     }

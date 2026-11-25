@@ -17,6 +17,7 @@
  */
 import Whop from "@whop/sdk";
 import { requireUser, rtdb, logLedger, HttpError } from "../lib/firebase";
+import { grantVipWelcomeBundle } from "./welcome";
 import {
   PREMIUM_PRODUCT_ID, decideEntitlement, isPremiumMembership,
   extractUidCandidates, extractEmail, type MembershipLike,
@@ -107,6 +108,8 @@ export default async function handler(req: any, res: any) {
         premiumSource: "whop",
         whopMembershipId: best.id,
       });
+      // P64R — one-time welcome bundle (Inspire + Gold + Trading case)
+      await grantVipWelcomeBundle(uid, best.id).catch(() => { /* non-fatal */ });
       return res.status(200).json({
         isPremium: true,
         plan: decision.planKey,

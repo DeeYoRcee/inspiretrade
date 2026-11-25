@@ -3,15 +3,16 @@
  * "All settings" entry at the bottom, and LANGUAGE + THEME live inside it
  * (the panels were lifted from the retired /settings page sections).
  */
-import { Check, Globe2, Palette } from "lucide-react";
+import { Check, Globe2, Lock, Palette } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
-import { useTheme, THEMES, THEME_LABELS, type Theme } from "@/lib/theme-context";
+import { useTheme, useThemeChipGuard, THEMES, THEME_LABELS, isVipTheme, type Theme } from "@/lib/theme-context";
 import { cn } from "@/lib/utils";
 
 export function AllSettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { language, setLanguage } = useLanguage();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, isVip } = useTheme();
+  const guard = useThemeChipGuard();
 
   return (
     <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : null)}>
@@ -54,22 +55,26 @@ export function AllSettingsDialog({ open, onClose }: { open: boolean; onClose: (
           {/* constant-size chips — the check slot is reserved so picking a
               theme never reflows the row (Phase 19 pattern) */}
           <div className="mt-2.5 grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {THEMES.map((th: Theme) => (
-              <button
-                key={th}
-                onClick={() => setTheme(th)}
-                className={cn(
-                  "flex h-11 items-center gap-2 overflow-hidden rounded-xl border px-3 text-sm font-medium transition-colors",
-                  theme === th ? "border-primary/60 bg-primary/10 text-primary" : "border-border/60 text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <span className={cn("h-3.5 w-3.5 shrink-0 rounded-full border border-foreground/20", `theme-dot-${th}`)} />
-                <span className="truncate">{THEME_LABELS[th]}</span>
-                <span className="ml-auto flex w-3.5 shrink-0 justify-center">
-                  {theme === th && <Check className="h-3.5 w-3.5" />}
-                </span>
-              </button>
-            ))}
+            {THEMES.map((th: Theme) => {
+              const locked = isVipTheme(th) && !isVip;
+              return (
+                <button
+                  key={th}
+                  onClick={() => { if (!guard(th)) return; setTheme(th); }}
+                  title={locked ? "Premium theme — unlock on the Premium page" : undefined}
+                  className={cn(
+                    "flex h-11 items-center gap-2 overflow-hidden rounded-xl border px-3 text-sm font-medium transition-colors",
+                    locked ? "border-border/40 text-muted-foreground/60" : theme === th ? "border-primary/60 bg-primary/10 text-primary" : "border-border/60 text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className={cn("h-3.5 w-3.5 shrink-0 rounded-full border border-foreground/20", `theme-dot-${th}`)} />
+                  <span className="truncate">{THEME_LABELS[th]}</span>
+                  <span className="ml-auto flex w-3.5 shrink-0 justify-center">
+                    {locked ? <Lock className="h-3 w-3" /> : theme === th && <Check className="h-3.5 w-3.5" />}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </section>
       </DialogContent>

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useTheme, THEME_LABELS, THEMES, type Theme } from "@/lib/theme-context";
+/** P64R — quick themes shown in the navbar dropdown; everything else lives in All settings. */
+const QUICK_THEMES: Theme[] = ["light", "ocean", "forest", "vader", "snow"];
 import { useLanguage, LANGUAGE_LABELS, LANG_FLAGS, type Language } from "@/lib/language-context";
 import { AllSettingsDialog } from "@/components/layout/AllSettingsDialog";
 import { Button } from "@/components/ui/button";
@@ -92,7 +94,17 @@ export function Navbar() {
 
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Theme" title={`Theme: ${THEME_LABELS[theme]}`} className="h-9 gap-1.5 rounded-full px-2.5"><Palette className="h-4 w-4" /><span className="hidden text-xs sm:inline sm:text-sm">Theme</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">{THEMES.map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("me-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ms-auto text-xs">✓</span>}</DropdownMenuItem>)}</DropdownMenuContent>
+              {/* P64R user request: the navbar dropdown no longer spills twelve
+                  themes down the screen — five quick themes (plus the active
+                  one when it is not among them) and a "More themes…" entry
+                  that opens the All settings panel, where the FULL list lives. */}
+              <DropdownMenuContent align="end" className="glass-panel w-48 border-border/60">
+                {(QUICK_THEMES.includes(theme) ? QUICK_THEMES : [theme, ...QUICK_THEMES]).map((themeOption: Theme) => <DropdownMenuItem key={themeOption} onSelect={() => setTheme(themeOption)} className={cn("cursor-pointer", theme === themeOption && "bg-primary/10 font-semibold text-primary")}><span className={cn("me-2 h-3 w-3 rounded-full border border-foreground/20", `theme-dot-${themeOption}`)} />{THEME_LABELS[themeOption]}{theme === themeOption && <span className="ms-auto text-xs">✓</span>}</DropdownMenuItem>)}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setAllSettingsOpen(true); }} className="cursor-pointer gap-2 font-medium">
+                  <Palette className="h-4 w-4 text-primary" />More themes…<span className="ms-auto text-[10px] text-muted-foreground">{THEMES.length}</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
             </DropdownMenu>
 
             <DropdownMenu modal={false} onOpenChange={(o) => { if (!o) setLangOpen(false); }}>

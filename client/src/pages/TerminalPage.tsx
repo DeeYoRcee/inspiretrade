@@ -39,7 +39,7 @@ import { validateReplayStart } from "@shared/replay-engine";
 import { historyAvailability } from "@/lib/history-loader";
 import CalendarWorkspace from "@/components/terminal/CalendarWorkspace";
 import NewsWorkspace from "@/components/terminal/NewsWorkspace";
-import EventStrip from "@/components/terminal/EventStrip";
+
 import { useEventWarning, useEconWarnSettings } from "@/hooks/use-terminal-econ";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -298,6 +298,7 @@ export default function TerminalPage() {
           metrics={null} busy={false} onRefresh={refreshNow}
           account={null} onReset={resetAccount}
           onNewAccount={() => setNewAccountOpen(true)}
+          mcLayout={mcLayout} onMcLayoutChange={setMcLayout}
         />
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/30">
           {mode === "calendar" && <CalendarWorkspace symbol={symbol} />}
@@ -331,9 +332,8 @@ export default function TerminalPage() {
         metrics={mode === "live" ? metrics : null} busy={busy} onRefresh={refreshNow}
         account={mode === "live" ? account : null} onReset={resetAccount}
         onNewAccount={() => setNewAccountOpen(true)}
+        mcLayout={mcLayout} onMcLayoutChange={setMcLayout}
       />
-      {/* Phase 5 event strip: upcoming high-impact releases + relevant news */}
-      <EventStrip symbol={chartSymbol} rightSlot={<LayoutPicker layout={mcLayout} onChange={setMcLayout} />} />
 
       {/* P76 — compact playback bar directly below the chart area */}
       {replayActive && (
@@ -436,6 +436,7 @@ function Toolbar({
   accounts, activeId, onAccountChange,
   metrics, busy, onRefresh, account, onReset, onNewAccount,
   replayLocked = false,
+  mcLayout, onMcLayoutChange,
 }: {
   mode: TerminalMode; onModeChange: (m: TerminalMode) => void;
   /** P76 — a running replay session binds the chart to its symbol/tf */
@@ -450,6 +451,9 @@ function Toolbar({
   busy: boolean; onRefresh: () => void;
   account: { id: string; label: string } | null; onReset: () => void;
   onNewAccount: () => void;
+  /** P64R — the 6-chart split picker moved from the events strip into the
+      toolbar's open space (the strip itself is retired). */
+  mcLayout: LayoutId; onMcLayoutChange: (id: LayoutId) => void;
 }) {
   const [resetOpen, setResetOpen] = useState(false);
   const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -568,6 +572,10 @@ function Toolbar({
           Replay running — the future is hidden; exit replay to switch instrument.
         </div>
       )}
+
+      {/* P64R user request — 6-layout chart splits live in the toolbar now */}
+      <div className="mx-1 hidden h-6 w-px bg-slate-700 sm:block" />
+      <LayoutPicker layout={mcLayout} onChange={onMcLayoutChange} />
 
       <div className="ml-auto flex items-center gap-1.5">
         {liveOnly && (

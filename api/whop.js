@@ -7833,6 +7833,31 @@ async function handler(req, res) {
 
 // api/_src/whop/verify.ts
 init_firebase();
+
+// api/_src/whop/welcome.ts
+init_firebase();
+async function grantVipWelcomeBundle(uid, membershipId) {
+  const db = rtdb();
+  const now = Date.now();
+  const token = `${uid}-${now}-${Math.floor(Math.random() * 1e9)}`;
+  const claimTx = await db.ref(`users/${uid}/profile/vipWelcomeBundle`).transaction((current) => {
+    if (current?.granted === true) return;
+    return { granted: true, at: now, membershipId, token };
+  });
+  const claimed = claimTx?.committed && claimTx?.snapshot?.val?.()?.token === token;
+  if (!claimed) return false;
+  await db.ref(`economy/${uid}`).transaction((eco) => ({
+    ...eco,
+    cases: (eco?.cases || 0) + 1,
+    goldCases: (eco?.goldCases || 0) + 1,
+    tradingCases: (eco?.tradingCases || 0) + 1,
+    updatedAt: now
+  }));
+  await logLedger({ type: "vip_welcome_bundle", uid, membershipId, cases: 3, at: now });
+  return true;
+}
+
+// api/_src/whop/verify.ts
 var COMPANY_ID2 = process.env.WHOP_COMPANY_ID || "biz_lYc5Z0SFSvie4m";
 async function listValidMemberships(whop) {
   const out = [];
@@ -7908,6 +7933,8 @@ async function handler2(req, res) {
         premiumSince: since,
         premiumSource: "whop",
         whopMembershipId: best.id
+      });
+      await grantVipWelcomeBundle(uid, best.id).catch(() => {
       });
       return res.status(200).json({
         isPremium: true,
@@ -8081,6 +8108,8 @@ async function applyMembership(m, uid, lastEvent) {
       whopMembershipId: m.id
     });
     await logLedger({ type: "whop_entitlement", action: "grant", uid, membershipId: m.id, status: decision.status, planKey: decision.planKey, event: lastEvent, at: Date.now() });
+    await grantVipWelcomeBundle(uid, m.id).catch(() => {
+    });
   } else {
     await db.ref(`users/${uid}/profile`).update({
       isPremium: false,

@@ -11,7 +11,8 @@
  * Anchors are market coordinates (time/price) via the parent-provided
  * converter, so drawings survive timeframe switches and prepended history.
  */
-import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, forwardRef } from "react";
+import { isVisibleTool, subscribeToolVisibility, getToolVisibilitySnapshot } from "@/lib/drawing-visibility";
 import {
   hitTest, makeDrawing, renderDrawing, setupCanvas, regressionLine,
   rectHandlePoints, rectHandleApply,
@@ -147,6 +148,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
   }, [activeTool, attachRef]);
   const drawingsRef = useRef(drawings);
   drawingsRef.current = drawings;
+  // P64R — per-tool-type visibility (settings "Scales & lines"): re-render
+  // (→ redraw via the every-render effect) when the map changes
+  const visVersion = useSyncExternalStore(subscribeToolVisibility, getToolVisibilitySnapshot);
+  void visVersion; // consumed implicitly: the value change drives re-render
+  const visibleDrawings = () => drawingsRef.current.filter((d) => isVisibleTool(d.type));
   /** P46 §2 — 0=off · 1=normal · 2=strong (legacy boolean prop maps true→1) */
   const magnetModeRef = useRef<0 | 1 | 2>(0);
   magnetModeRef.current = (magnetMode ?? (magnet ? 1 : 0)) as 0 | 1 | 2;
@@ -292,6 +298,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (!hiddenAllRef.current) {
       const selSet = new Set(multiIdsRef.current);
       for (const d of drawingsRef.current) {
+        if (!isVisibleTool(d.type)) continue; // P64R per-tool visibility
         const pts = toCanvas(d);
         // PHASE 62 fix #13: the measure label is computed at RENDER time from
         // the live points — XY-editor/props-bar anchor edits used to leave the
@@ -475,6 +482,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       const dEnv = env?.digits ?? digitsRef.current;
       for (const d of drawingsRef.current) {
         if (hiddenAllRef.current) break; // Phase 59: hide-all also hides the axis tags
+        if (!isVisibleTool(d.type)) continue; // P64R per-tool visibility
         if (!isPositionTool(d.type) || d.hidden || d.points.length < 3) continue;
         const tags: Array<[number, string, string]> = [
           [d.points[0].price, fmtPositionPrice(d.points[0].price, dEnv), d.style.color],
@@ -550,10 +558,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (!conv) return "default";
     if (toolRef.current) return lockedRef.current ? "not-allowed" : "crosshair";
     if (hiddenAllRef.current || lockedRef.current) return "default";
-    const hit = hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
+    const vis = visibleDrawings();
+    const hit = hitTest(p, vis, canvasPts, conv.paneW, conv.paneH);
     // Phase 59: feed the hover renderer — this ref was declared but never
     // written, so the hover glow/handle dots never appeared
-    const hitId = hit != null ? drawingsRef.current[hit.index]?.id : undefined;
+    const hitId = hit != null ? vis[hit.index]?.id : undefined;
     hoverRef.current = hit != null && hitId ? { id: hitId, handle: hit.handle } : null;
     if (hit?.handle != null) {
       // P66 §6 — directional resize cursors on the semantic handles
@@ -744,9 +753,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
     // 3) hit-test drawings → select + begin move/handle
     if (lockedRef.current || hiddenAllRef.current) return; // LOCK/HIDE: objects are frozen
-    const hit = hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
+    const vis = visibleDrawings();
+    const hit = hitTest(p, vis, canvasPts, conv.paneW, conv.paneH);
     if (hit) {
-      const d = drawingsRef.current[hit.index];
+      const d = vis[hit.index];
       // Ctrl/Shift-click edits the multi-selection — no drag, no chart pan
       if ((e.ctrlKey || e.metaKey || e.shiftKey) && onSelectIds) {
         const cur = new Set(multiIdsRef.current);
@@ -1138,11 +1148,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     if (toolRef.current) { e.stopPropagation(); e.preventDefault(); return; }
     if (lockedRef.current || hiddenAllRef.current) return;
     const p = localXY(e);
-    const hit = hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
+    const vis = visibleDrawings();
+    const hit = hitTest(p, vis, canvasPts, conv.paneW, conv.paneH);
     if (hit) {
       e.stopPropagation();
-      cbRef.current.onSelect(drawingsRef.current[hit.index].id);
-      cbRef.current.onEdit(drawingsRef.current[hit.index].id);
+      cbRef.current.onSelect(vis[hit.index].id);
+      cbRef.current.onEdit(vis[hit.index].id);
     }
   };
 
@@ -1163,9 +1174,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     e.preventDefault();
     e.stopPropagation();
     if (p.x > conv.paneW || p.y > conv.paneH) return;
-    const hit = (lockedRef.current || hiddenAllRef.current) ? null
-      : hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
-    cbRef.current.onContextMenu(e.clientX, e.clientY, hit ? drawingsRef.current[hit.index].id : null);
+    const vis = (lockedRef.current || hiddenAllRef.current) ? [] : visibleDrawings();
+    const hit = hitTest(p, vis, canvasPts, conv.paneW, conv.paneH);
+    cbRef.current.onContextMenu(e.clientX, e.clientY, hit ? vis[hit.index].id : null);
   };
 
   // hover cursor updates without storms — one rAF per burst

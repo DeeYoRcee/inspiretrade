@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Check, Clapperboard, Loader2, Upload } from "lucide-react";
+import { Check, Clapperboard, Loader2, Lock, Upload } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/lib/language-context";
@@ -10,6 +10,7 @@ import { saveUserProfile, type UserProfile } from "@/hooks/use-premium";
 import { authedFetch } from "@/lib/api";
 import { PROFILE_BACKGROUNDS, getProfileBackground, type ProfileBackground } from "@/lib/profile-backgrounds";
 import { cn } from "@/lib/utils";
+import { useLocation } from "wouter";
 
 interface BackgroundPickerDialogProps {
   open: boolean;
@@ -38,9 +39,12 @@ export function BackgroundPickerDialog({
 }: BackgroundPickerDialogProps) {
   const { t } = useLanguage();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const isAdmin = useIsAdmin();
   // Phase 33: VIP members get the file upload too (server allows admin or VIP)
   const isVip = isAdmin || !!(profile?.isPremium || (profile as unknown as { ceo?: boolean })?.ceo);
+  // P64R — Premium-only catalog picks (id keys of PROFILE_BACKGROUNDS)
+  const VIP_BACKGROUNDS: string[] = ["skywalker", "knight"];
   const [busy, setBusy] = useState<string | null>(null);
   const [customUrl, setCustomUrl] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -103,16 +107,28 @@ export function BackgroundPickerDialog({
             )}
           </button>
 
-          {PROFILE_BACKGROUNDS.map((bg: ProfileBackground) => (
+          {/* P64R user request — Skywalker and Knight are VIP-only now: the
+              tile shows a lock and a click routes to the Premium page instead
+              of applying. Admins/CEO keep access. */}
+          {PROFILE_BACKGROUNDS.map((bg: ProfileBackground) => {
+            const bgLocked = VIP_BACKGROUNDS.includes(bg.id) && !isVip;
+            return (
             <motion.button
               key={bg.id}
               type="button"
-              whileHover={{ scale: busy ? 1 : 1.02 }}
-              onClick={() => apply(bg.id)}
+              whileHover={{ scale: busy || bgLocked ? 1 : 1.02 }}
+              onClick={() => {
+                if (bgLocked) {
+                  toast({ title: "VIP background", description: `${bg.name} is part of Premium — unlock it on the Premium page.` });
+                  navigate("/premium");
+                  return;
+                }
+                apply(bg.id);
+              }}
               disabled={!!busy}
               className={cn(
                 "group relative flex h-28 flex-col justify-end overflow-hidden rounded-2xl border transition-all",
-                current === bg.id ? "border-primary ring-2 ring-primary/40" : "border-border/60 hover:border-primary/40",
+                bgLocked ? "border-border/40 opacity-80" : current === bg.id ? "border-primary ring-2 ring-primary/40" : "border-border/60 hover:border-primary/40",
               )}
               style={{ background: bg.tint }}
             >
@@ -138,15 +154,17 @@ export function BackgroundPickerDialog({
               )}
               <span className="relative z-10 flex items-center justify-between bg-black/45 px-3 py-1.5 text-sm font-semibold text-white backdrop-blur-sm">
                 {bg.name}
-                {busy === bg.id && <Loader2 className="h-4 w-4 animate-spin" />}
-                {current === bg.id && (
+                {bgLocked && <Lock className="h-3.5 w-3.5 text-amber-300" />}
+                {!bgLocked && busy === bg.id && <Loader2 className="h-4 w-4 animate-spin" />}
+                {!bgLocked && current === bg.id && (
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
                     <Check className="h-3.5 w-3.5" />
                   </span>
                 )}
               </span>
             </motion.button>
-          ))}
+            );
+          })}
         </div>
 
         {/* owner-only: upload a real video/image FILE (stored content-addressed

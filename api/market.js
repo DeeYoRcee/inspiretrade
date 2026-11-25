@@ -414,7 +414,7 @@ async function deliverUsername(db, buyerUid, listing, revertListing, sellerRecei
   ]);
   const buyerProfile = buyerProfileSnap.val() || {};
   const buyerVip = buyerProfile.isPremium === true || !!buyerProfile.premiumPlan || buyerProfile.ceo === true || buyerAdminSnap.val() === true;
-  const USERNAME_CAP = buyerVip ? 5 : 2;
+  const USERNAME_CAP = buyerVip ? 5 : 1;
   const heldBefore = { ...buyerProfile.usernames || {} };
   const primaryBefore = typeof buyerProfile.username === "string" ? buyerProfile.username.toLowerCase() : "";
   const willHold = new Set([...Object.keys(heldBefore), primaryBefore, key].filter(Boolean));
@@ -423,7 +423,7 @@ async function deliverUsername(db, buyerUid, listing, revertListing, sellerRecei
     throw new HttpError(
       409,
       "USERNAME_CAP_REACHED",
-      buyerVip ? `VIP accounts can hold at most ${USERNAME_CAP} usernames` : `Accounts can hold at most ${USERNAME_CAP} usernames (VIP raises the cap to 5)`
+      buyerVip ? `VIP accounts can hold at most ${USERNAME_CAP} usernames` : `Standard accounts hold at most ${USERNAME_CAP} username (Premium raises the cap to 5)`
     );
   }
   const mapTx = await db.ref(`usernames/${key}`).transaction((current) => {

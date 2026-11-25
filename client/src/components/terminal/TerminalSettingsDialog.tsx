@@ -9,7 +9,11 @@
  * overrides (instrument-settings) and the alerts store (notifications.ts).
  * Data & Connectivity and Shortcuts are honest read-only surfaces.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { SlidersHorizontal, Paintbrush, ChartCandlestick, PencilRuler, Coins, ArrowLeftRight, Bell, Database, Keyboard, Eye, EyeOff } from "lucide-react";
+import { GROUPS, toolDisplayName } from "@/components/terminal/chart/LeftRail";
+import { getToolVisibilitySnapshot, subscribeToolVisibility, isVisibleTool, setToolVisible, setAllToolsVisible } from "@/lib/drawing-visibility";
+import type { DrawingType } from "@/lib/drawings";
 import { INSTRUMENTS, TIMEFRAMES, getInstrument, availableTimeframes } from "@shared/terminal";
 import { cn } from "@/lib/utils";
 import {
@@ -31,18 +35,87 @@ import { DEFAULT_SETTINGS, magnetModeOf, applyGridDefaultOff } from "@/component
 import { ShortcutsPanel } from "@/components/terminal/ShortcutsPanel";
 import { loadShortcuts, saveShortcuts, pushShortcutsToRtdb, DEFAULT_SHORTCUTS, type ShortcutAction } from "@/lib/shortcuts";
 
+// P64R — TradingView-style icon+text sidebar, plus the new "Scales & lines"
+// section (per-tool-type drawing visibility).
 const SECTIONS = [
-  { id: "general", label: "General" },
-  { id: "appearance", label: "Appearance" },
-  { id: "chart", label: "Chart settings" },
-  { id: "instrument", label: "Instrument" },
-  { id: "trading", label: "Trading" },
-  { id: "notifications", label: "Notifications" },
-  { id: "data", label: "Data & Connectivity" },
-  { id: "shortcuts", label: "Shortcuts" },
+  { id: "general", label: "General", icon: SlidersHorizontal },
+  { id: "appearance", label: "Appearance", icon: Paintbrush },
+  { id: "chart", label: "Chart settings", icon: ChartCandlestick },
+  { id: "lines", label: "Scales & lines", icon: PencilRuler },
+  { id: "instrument", label: "Instrument", icon: Coins },
+  { id: "trading", label: "Trading", icon: ArrowLeftRight },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "data", label: "Data & Connectivity", icon: Database },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
+
+/** P64R user request — TradingView-style "Scales and lines": every drawing
+ *  tool type gets a text label + visibility checkbox, grouped like the left
+ *  rail palette. Display filter only — stored drawings are never touched. */
+function DrawingVisibilitySection() {
+  const vis = useSyncExternalStore(subscribeToolVisibility, getToolVisibilitySnapshot);
+  const hiddenCount = GROUPS.reduce((n, g) => n + g.tools.filter((t) => !isVisibleTool(t.id)).length, 0);
+  const allHidden = vis.__all__ === false;
+  return (
+    <div className="space-y-3" data-section="lines">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] text-slate-500">Choose which drawing tools are visible on the chart. Hiding a type only affects the display — the drawings are kept and come back when re-enabled.</p>
+        <div className="flex shrink-0 gap-1.5">
+          <button
+            onClick={() => setAllToolsVisible(true)}
+            className="inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-800"
+          >
+            <Eye className="h-3 w-3" />Show all
+          </button>
+          <button
+            onClick={() => setAllToolsVisible(false)}
+            className="inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-800"
+          >
+            <EyeOff className="h-3 w-3" />Hide all
+          </button>
+        </div>
+      </div>
+      {GROUPS.map((g) => (
+        <div key={g.id} className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{g.title}</div>
+          <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {g.tools.map((t) => {
+              const on = isVisibleTool(t.id);
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setToolVisible(t.id, !on)}
+                  title={`${t.label} — ${on ? "visible" : "hidden"} (click to toggle)`}
+                  className={cn(
+                    "flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-slate-800/60",
+                    on ? "text-slate-200" : "text-slate-500",
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border",
+                      on ? "border-emerald-500 bg-emerald-500/20 text-emerald-400" : "border-slate-600 bg-transparent",
+                    )}
+                  >
+                    {on && (
+                      <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1.5 5.5 4 8l4.5-6" /></svg>
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{toolDisplayName(t.id)}</span>
+                  <span className="shrink-0 text-[9px] uppercase text-slate-600">{on ? "visible" : "hidden"}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <p className="text-[10px] text-slate-600">{hiddenCount === 0 && !allHidden ? "All drawing tools are visible." : `${hiddenCount} tool types hidden${allHidden ? " (hide-all active)" : ""}.`}</p>
+    </div>
+  );
+}
 
 // tiny dark primitives (match the chart dialog chrome) ----------------------
 
@@ -233,10 +306,11 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                 key={s.id}
                 onClick={() => setSection(s.id)}
                 className={cn(
-                  "mb-0.5 flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs font-semibold transition-colors",
+                  "mb-0.5 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-semibold transition-colors",
                   section === s.id ? "bg-sky-500/15 text-sky-300" : "text-slate-400 hover:bg-slate-800/70 hover:text-slate-200",
                 )}
               >
+                <s.icon className="h-3.5 w-3.5 shrink-0" />
                 {s.label}
               </button>
             ))}
@@ -319,6 +393,8 @@ export function TerminalSettingsDialog({ open, onClose, symbol }: {
                 </Show>
               </div>
             )}
+
+            {section === "lines" && <DrawingVisibilitySection />}
 
             {section === "chart" && (
               <div className="divide-y divide-slate-800/60">
