@@ -9,7 +9,9 @@
  * the actual equip check happens server-side regardless.
  */
 import { useState } from "react";
+import { Frame } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProfileFrame } from "@/components/profile/ProfileFrame";
 import { useAuth } from "@/hooks/use-auth";
 import { useEquippedFrame, useFrameRole } from "@/hooks/use-frame";
@@ -46,7 +48,17 @@ export function FramesGallery() {
   };
 
   return (
-    <section className="rounded-3xl border border-border/50 bg-card/60 p-4">
+    <Card className="glass-panel border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Frame className="h-5 w-5 text-primary" />
+          {t("frameTitle")}
+        </CardTitle>
+        {/* P64R2 — the section now carries its own heading + hint so it reads
+            as a separate section, not part of the title cards */}
+        <p className="text-xs text-muted-foreground">{t("frameHint")}</p>
+      </CardHeader>
+      <CardContent>
       <div className="flex flex-col items-center gap-2">
         {/* the same rectangular PUBG-style preview band used on the profile card */}
         <div className="w-full max-w-[280px]">
@@ -98,6 +110,8 @@ export function FramesGallery() {
           {t("frameRemove")}
         </Button>
       )}
-    </section>
+      <p className="mt-3 text-center text-[11px] leading-relaxed text-muted-foreground/80">{t("frameExclusiveNote")}</p>
+      </CardContent>
+    </Card>
   );
 }

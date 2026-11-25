@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Crown, Sparkles, Award, Gem } from "lucide-react";
+import { Crown, Sparkles, Award, Gem, Frame } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useUserProfile } from "@/hooks/use-premium";
@@ -145,11 +145,6 @@ export default function TitlesPage() {
         </CardContent>
       </Card>
 
-      {/* P64R user request — profile FRAMES now live inside the Titles
-          section: preview band + gallery + equip/remove, one card below the
-          title lists. */}
-      <FramesGallery />
-
       <Card className="glass-panel border-border/50">
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">All titles</CardTitle>
@@ -171,6 +166,16 @@ export default function TitlesPage() {
           ))}
         </CardContent>
       </Card>
+
+      {/* P64R2 user request — TITLES and FRAMES are two SEPARATE sections:
+          the title cards stay grouped above; frames get their own section
+          (own heading card) below a clear divider. */}
+      <div className="flex items-center gap-3 pt-1" role="separator" aria-label="frames-section">
+        <span className="h-px flex-1 bg-border/40" />
+        <Frame className="h-4 w-4 text-primary/70" />
+        <span className="h-px flex-1 bg-border/40" />
+      </div>
+      <FramesGallery />
     </div>
   );
 }
