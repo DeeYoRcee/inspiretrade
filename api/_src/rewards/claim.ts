@@ -12,6 +12,7 @@
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, localDate, previousDate, logLedger } from "../lib/firebase";
 import { REWARD_CYCLE_DAYS, cycleDayOf, caseTypeForCycleDay, CASES } from "../lib/fragments";
+import { isVipActive } from "../lib/vip";
 
 export default handle(async (req, res) => {
   assertPost(req);
@@ -26,7 +27,9 @@ export default handle(async (req, res) => {
     rtdb().ref(`admins/${user.uid}`).get(),
   ]);
   const p = profile.val() || {};
-  const isVip = p.isPremium === true || !!p.premiumPlan || p.ceo === true || adminFlag.val() === true;
+  // P64R4 — expiry-aware check (premiumPlan presence alone no longer grants:
+  // revoked/expired rows keep the old plan label)
+  const isVip = isVipActive(p) || adminFlag.val() === true;
 
   const result = await rtdb()
     .ref(`economy/${user.uid}`)

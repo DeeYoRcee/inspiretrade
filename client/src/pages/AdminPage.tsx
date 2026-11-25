@@ -64,6 +64,9 @@ export default function AdminPage() {
   const [spawnTrading, setSpawnTrading] = useState("");
   const [spawnCoins, setSpawnCoins] = useState("");
   const [vipTarget, setVipTarget] = useState("");
+  // P64R4 user request — the owner chooses the grant duration explicitly:
+  // monthly = 30 days, yearly = 365 days, permanent = open-ended (legacy).
+  const [vipPlan, setVipPlan] = useState<"monthly" | "yearly" | "permanent">("monthly");
   const [claimName, setClaimName] = useState("");
   const [histBusy, setHistBusy] = useState(false);
   const [histLog, setHistLog] = useState("");
@@ -262,13 +265,15 @@ export default function AdminPage() {
   const vipMutation = useMutation({
     mutationFn: async ({ vip }: { vip: boolean }) => {
       const trimmed = vipTarget.trim();
-      const payload: Record<string, unknown> = { vip };
+      const payload: Record<string, unknown> = { vip, plan: vipPlan };
       if (trimmed.includes("@")) payload.username = trimmed.replace("@", "").toLowerCase();
       else payload.uid = trimmed;
       return authedFetch("/api/admin?action=grant-vip", payload);
     },
     onSuccess: (_d, vars) => {
-      toast({ title: vars.vip ? t("grantVipDone") : t("grantVipRevokedDone") });
+      // P64R4 — the toast states WHICH plan was granted and for how long
+      const label = vipPlan === "monthly" ? "Monthly · 30 days" : vipPlan === "yearly" ? "Yearly · 365 days" : "Permanent · no expiry";
+      toast({ title: vars.vip ? `${t("grantVipDone")} — ${label}` : t("grantVipRevokedDone") });
       setVipTarget("");
     },
     onError: (error: any) => {
@@ -357,6 +362,25 @@ export default function AdminPage() {
                   placeholder="username or firebase-uid"
                   className="h-11 rounded-xl"
                 />
+                {/* P64R4 — grant duration selector (monthly/yearly/permanent) */}
+                <div className="grid grid-cols-3 gap-2">
+                  {(["monthly", "yearly", "permanent"] as const).map((pl) => (
+                    <button
+                      key={pl}
+                      type="button"
+                      onClick={() => setVipPlan(pl)}
+                      className={cn(
+                        "rounded-xl border px-2 py-2 text-center transition-colors",
+                        vipPlan === pl
+                          ? "border-violet-500/70 bg-violet-500/15 text-violet-200"
+                          : "border-border/60 text-muted-foreground hover:bg-muted/40",
+                      )}
+                    >
+                      <span className="block text-xs font-semibold">{pl === "monthly" ? "Monthly" : pl === "yearly" ? "Yearly" : "Permanent"}</span>
+                      <span className="block text-[9px] opacity-70">{pl === "monthly" ? "30 days" : pl === "yearly" ? "365 days" : "no expiry"}</span>
+                    </button>
+                  ))}
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Button
                     size="lg"

@@ -15,6 +15,7 @@
  */
 import { createHash } from "crypto";
 import { handle, assertPost, requireAdmin, requireUser, rtdb, HttpError } from "../lib/firebase";
+import { isVipActive } from "../lib/vip";
 
 const MAX_BYTES = 6 * 1024 * 1024;
 const MIME_ALLOWED = new Set(["video/mp4", "image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -42,7 +43,8 @@ export async function mediaUpload(req: any, res: any): Promise<void> {
       rtdb().ref(`admins/${user.uid}`).get(),
     ]);
     const p = profile.val() || {};
-    const isVip = p.isPremium === true || !!p.premiumPlan || p.ceo === true || adminFlag.val() === true;
+    // P64R4 — expiry-aware VIP check
+    const isVip = isVipActive(p) || adminFlag.val() === true;
     if (!isVip) throw new HttpError(403, "VIP_ONLY", "Profile media upload is a VIP feature");
     uploader = user.uid;
   }

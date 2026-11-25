@@ -5,8 +5,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
-  Camera, ChevronDown, Eye, EyeOff, LayoutTemplate, Maximize2, Palette, Plus, Redo2, RotateCcw, Rewind,
-  Settings, Undo2, X, SlidersHorizontal, Waves,
+  Camera, ChevronDown, Eye, EyeOff, Image as ImageIcon, LayoutTemplate, Lock, Maximize2, Palette, Plus, Redo2,
+  RotateCcw, Rewind, Settings, Undo2, X, SlidersHorizontal, Waves,
 } from "lucide-react";
 import type { ChartType } from "@/lib/chart-types";
 import type { DrawingType } from "@/lib/drawings";
@@ -14,6 +14,13 @@ import { indicatorLabel, type IndicatorConfig, type IndicatorType } from "@/lib/
 import { cn } from "@/lib/utils";
 import { APPEARANCE_PRESETS, type ChartSettings } from "@/components/terminal/chart/dialogs";
 import { updateInstrumentSettings } from "@/lib/instrument-settings";
+import { applyChartSettings } from "@/lib/chart-persistence";
+import { SYMBOLS } from "@/lib/news-api";
+import { useAuth } from "@/hooks/use-auth";
+import { usePremiumStatus, useUserProfile } from "@/hooks/use-premium";
+import { useIsAdmin } from "@/hooks/use-admin";
+import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
 
 
 
@@ -58,25 +65,54 @@ export function ChartToolbar({
   // Phase 34b: chart theme dropdown (minimal preset collection)
   const [themeOpen, setThemeOpen] = useState(false);
   const themeRef = useRef<HTMLDivElement | null>(null);
+  // P64R4 user request: chart BACKGROUND dropdown to the LEFT of the theme icon
+  const [bgOpen, setBgOpen] = useState(false);
+  const bgRef = useRef<HTMLDivElement | null>(null);
+  const { user } = useAuth();
+  const { data: bgIsPremium = false } = usePremiumStatus();
+  const bgProfileQ = useUserProfile();
+  const bgIsAdmin = useIsAdmin();
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const bgIsVip = bgIsPremium || bgIsAdmin
+    || !!(bgProfileQ.data?.isPremium || (bgProfileQ.data as unknown as { ceo?: boolean } | null)?.ceo);
   useEffect(() => {
-    if (!typeOpen && !themeOpen) return;
+    if (!typeOpen && !themeOpen && !bgOpen) return;
     const close = (e: MouseEvent) => {
       if (typeRef.current && !typeRef.current.contains(e.target as Node)) setTypeOpen(false);
       if (themeRef.current && !themeRef.current.contains(e.target as Node)) setThemeOpen(false);
+      if (bgRef.current && !bgRef.current.contains(e.target as Node)) setBgOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, [typeOpen, themeOpen]);
+  }, [typeOpen, themeOpen, bgOpen]);
 
-  /** Apply an appearance preset globally; per-instrument color overrides are
-   * cleared so the theme is never masked by an instrument's saved colors. */
-  const applyPreset = (s: Partial<ChartSettings>) => {
+  const readBgImage = (): string => {
+    try { return String(JSON.parse(localStorage.getItem("it_chart_settings") || "{}").bgImage ?? ""); }
+    catch { return ""; }
+  };
+  const applyBgImage = (id: string) => {
+    let next: ChartSettings;
     try {
-      const next = { ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}"), ...s };
-      localStorage.setItem("it_chart_settings", JSON.stringify(next));
-      window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: next }));
-    } catch { /* private mode */ }
-    updateInstrumentSettings(symbol, { upColor: undefined, downColor: undefined });
+      next = { ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}"), bgImage: id };
+    } catch { next = { bgImage: id } as ChartSettings; }
+    applyChartSettings(user?.uid, next); // P64R4 — cloud-save included
+  };
+
+  /** Apply an appearance preset globally and persist EVERYWHERE — local
+   * mirror, broadcast AND the debounced cloud copy (P64R4: the missing cloud
+   * write let SettingsSync resurrect the previous theme on the next visit —
+   * the "theme not saved" report). The candle-color overrides of EVERY symbol
+   * are cleared so no stale per-instrument colors can mask the preset. */
+  const applyPreset = (s: Partial<ChartSettings>) => {
+    let next: ChartSettings;
+    try {
+      next = { ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}"), ...s };
+    } catch { next = { ...(s as ChartSettings) }; }
+    applyChartSettings(user?.uid, next);
+    for (const sym of Array.from(new Set<string>([symbol, ...SYMBOLS]))) {
+      updateInstrumentSettings(sym, { upColor: undefined, downColor: undefined });
+    }
   };
 
   return (
@@ -167,6 +203,49 @@ export function ChartToolbar({
 
       {/* right cluster — Phase 34b: chart theme dropdown leads it */}
       <div className="ml-auto flex items-center gap-0.5">
+        {/* P64R4 user request — BACKGROUND sits to the LEFT of the theme
+            (palette) icon: VIP-only image behind the candles. */}
+        <div ref={bgRef} className="relative">
+          <ToolButton title="Chart background" active={bgOpen} onClick={() => setBgOpen((v) => !v)}><ImageIcon className="h-4 w-4" /></ToolButton>
+          {bgOpen && (
+            <div className="absolute right-0 top-7 z-40 w-44 rounded-lg border border-slate-700 bg-slate-900 p-1 shadow-xl">
+              <p className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                Background {!bgIsVip && <Lock className="h-3 w-3" />}
+              </p>
+              {[
+                { id: "", label: "None" },
+                { id: "/backgrounds/skywalker.jpg", label: "Skywalker" },
+                { id: "/backgrounds/knight.jpg", label: "Knight ✦" },
+              ].map((o) => {
+                const active = readBgImage() === o.id;
+                return (
+                  <button
+                    key={o.label}
+                    onClick={() => {
+                      setBgOpen(false);
+                      if (!bgIsVip) {
+                        toast({ title: "VIP background", description: "Chart backgrounds are part of Premium — unlock on the Premium page." });
+                        navigate("/premium");
+                        return;
+                      }
+                      applyBgImage(o.id);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] hover:bg-slate-800",
+                      active ? "bg-slate-800 text-primary" : "text-slate-300",
+                    )}
+                  >
+                    {o.id
+                      ? <img src={o.id} alt="" className="h-4 w-7 shrink-0 rounded-sm border border-slate-700 object-cover" />
+                      : <span className="h-4 w-7 shrink-0 rounded-sm border border-slate-700 bg-slate-800" />}
+                    {o.label}
+                  </button>
+                );
+              })}
+              <p className="px-2 pb-1 pt-1 text-[9px] leading-snug text-slate-500">VIP only — image behind the candles</p>
+            </div>
+          )}
+        </div>
         <div ref={themeRef} className="relative">
           <ToolButton title="Chart theme" active={themeOpen} onClick={() => setThemeOpen((v) => !v)}><Palette className="h-4 w-4" /></ToolButton>
           {themeOpen && (

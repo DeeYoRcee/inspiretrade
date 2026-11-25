@@ -135,6 +135,14 @@ export default async function handler(req: any, res: any) {
       await logLedger({ type: "whop_auto_revoke", uid, reason: "verify_no_valid_membership", at: Date.now() });
     }
 
+    // P64R4 — owner grants now carry premiumUntil (30/365 days); expire them
+    // reactively here the same way the whop self-heal does (no cron exists).
+    const ownerUntil = typeof profile.premiumUntil === "number" ? profile.premiumUntil : 0;
+    if (!whopOwned && profile.isPremium === true && ownerUntil > 0 && Date.now() > ownerUntil) {
+      await db.ref(`users/${uid}/profile`).update({ isPremium: false, vip: false });
+      await logLedger({ type: "owner_grant_expired", uid, at: Date.now() });
+    }
+
     return res.status(200).json({
       isPremium: profile.isPremium === true,
       plan: typeof profile.premiumPlan === "string" ? profile.premiumPlan : null,

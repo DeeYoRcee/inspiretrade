@@ -14,6 +14,7 @@ import { __sanitizeDrawingList, filterTombstonedDrawings } from "@/lib/drawings"
 import { readFavoritesLocal, writeFavoritesLocal, MAX_FAVORITES } from "@/lib/drawing-favorites";
 import { sanitizeGroups, type DrawingGroup } from "@/lib/drawing-tree";
 import { sanitizeDefaultsMap, type DrawingDefaultsMap } from "@/lib/drawing-defaults";
+import type { ChartSettings } from "@/components/terminal/chart/dialogs";
 import type { Drawing, FibLevel } from "@/lib/drawings";
 import { sanitizeFibLevels } from "@/lib/drawings";
 import { sanitizeIndicatorList } from "@/lib/indicators-config";
@@ -253,6 +254,16 @@ export function clearDrawings(uid: string, symbol: string): void {
 // ---------------------------------------------------------------------------
 
 const pendingChartSettingsWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** P64R4 — persist a GLOBAL chart-settings change in ONE call: LS mirror +
+ * broadcast + debounced cloud save. The old preset/panel writers skipped the
+ * cloud, so the SettingsSync loader resurrected the previous theme on the
+ * next terminal visit (the "theme not saved" report). */
+export function applyChartSettings(uid: string | undefined | null, next: ChartSettings): void {
+  try { localStorage.setItem("it_chart_settings", JSON.stringify(next)); } catch { /* private mode */ }
+  window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: next }));
+  saveChartSettingsCloud(uid ?? "", next as unknown as Record<string, unknown>);
+}
 
 export function saveChartSettingsCloud(uid: string, cfg: Record<string, unknown>): void {
   if (!uid) return;

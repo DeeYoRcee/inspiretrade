@@ -9,6 +9,7 @@
  */
 import { handle, requireUser, assertPost, rtdb, HttpError, logLedger } from "../lib/firebase";
 import { MARKET_FEE_PERCENT } from "../lib/fragments";
+import { isVipActive } from "../lib/vip";
 
 const CASE_ID_RE = /^[a-z0-9][a-z0-9-]{2,23}$/;
 
@@ -191,9 +192,8 @@ async function deliverUsername(db: any, buyerUid: string, listing: any, revertLi
     db.ref(`admins/${buyerUid}`).once("value"),
   ]);
   const buyerProfile = buyerProfileSnap.val() || {};
-  const buyerVip =
-    buyerProfile.isPremium === true || !!buyerProfile.premiumPlan ||
-    buyerProfile.ceo === true || buyerAdminSnap.val() === true;
+  // P64R4 — expiry-aware VIP check
+  const buyerVip = isVipActive(buyerProfile) || buyerAdminSnap.val() === true;
   // P64R user request: standard accounts hold 1 username, Premium/VIP 5.
   const USERNAME_CAP = buyerVip ? 5 : 1;
   const heldBefore: Record<string, unknown> = { ...((buyerProfile.usernames as Record<string, unknown>) || {}) };

@@ -74,7 +74,9 @@ export const DEFAULT_SETTINGS: ChartSettings = {
   // PHASE 65 (user request) — TradingView-style FIRST-VISIT defaults: clean
   // white chart, classic green/red candles. Users who already saved settings
   // (localStorage it_chart_settings) keep their own values.
-  grid: false, countdown: true, legend: true, magnet: true, magnetMode: 1, bidAsk: true,
+  // P64R4 user request — the magnet must NEVER turn itself on: ships OFF now,
+  // user toggles it on (rail/settings) and it then stays until they turn it off.
+  grid: false, countdown: true, legend: true, magnet: false, magnetMode: 0, bidAsk: true,
   upColor: "#22c55e", downColor: "#ef4444",
   bgColor: "#ffffff", gridColor: "#e5e7eb", crosshairColor: "rgba(120,123,134,0.5)",
   drawColor: "#2962ff", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
@@ -124,7 +126,7 @@ export const APPEARANCE_PRESETS: { id: string; label: string; s: Partial<ChartSe
   },
   {
     id: "brown", label: "Brown",
-    s: { bgColor: "#ffffff", gridColor: "#e8e2dc", crosshairColor: "rgba(60,50,40,0.45)", upColor: "#f0e5dd", downColor: "#a67864", borderUpColor: "#000000", wickUpColor: "#000000", borderDownColor: "#000000", wickDownColor: "#000000", borderColor: undefined, wickColor: undefined, bgImage: "" },
+    s: { bgColor: "#D5C2B4", gridColor: "#b9a694", crosshairColor: "rgba(60,50,40,0.45)", upColor: "#f0e5dd", downColor: "#a67864", borderUpColor: "#000000", wickUpColor: "#000000", borderDownColor: "#000000", wickDownColor: "#000000", borderColor: undefined, wickColor: undefined, bgImage: "" },
   },
 ];
 

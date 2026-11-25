@@ -49,7 +49,7 @@ import { captureRefFromUrl, popStoredRef, clearStoredRef } from "@/lib/referral"
 import { useTerminalSettings, setTerminalSettingsUser } from "@/lib/terminal-settings";
 import { setInstrumentSettingsUser } from "@/lib/instrument-settings";
 import { setWatchlistsUser } from "@/lib/watchlists";
-import { loadChartSettingsCloud } from "@/lib/chart-persistence";
+import { loadChartSettingsCloud , saveChartSettingsCloud } from "@/lib/chart-persistence";
 import { Activity, Send } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -66,21 +66,54 @@ function SettingsSync() {
     void setTerminalSettingsUser(uid);
     void setInstrumentSettingsUser(uid);
     void setWatchlistsUser(uid);
+    // P64R4 user request — the magnet shipped ON and must never turn itself
+    // back on: a one-time flip for existing saved blobs, applied AFTER the
+    // cloud merge (and cloud-corrected) so the stale cloud cannot re-enable it.
+    const MAGNET_FLAG = "it_magnet_default_off";
+    const magnetFlip = (() => {
+      try {
+        if (localStorage.getItem(MAGNET_FLAG)) return false;
+        localStorage.setItem(MAGNET_FLAG, "1");
+        return true;
+      } catch { return false; }
+    })();
+    const persistMerged = (merged: Record<string, unknown>) => {
+      try {
+        localStorage.setItem("it_chart_settings", JSON.stringify(merged));
+        window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: merged }));
+      } catch { /* private mode */ }
+      if (uid && magnetFlip) saveChartSettingsCloud(uid, merged);
+    };
     // P41 — restore the user's chart look (candle colors, chart type) from
-    // RTDB; the LS mirror is the offline cache, the cloud copy is canonical
+    // RTDB; the LS mirror is the offline cache, the cloud copy is canonical.
+    // P64R4: every chart-settings writer now cloud-saves on change (see
+    // applyChartSettings), so "cloud over local" can no longer resurrect an
+    // older theme after a preset click.
     if (uid) {
       void loadChartSettingsCloud(uid).then((cloud) => {
-        if (!cloud || typeof cloud !== "object") return;
-        const cfg: Record<string, unknown> = { ...cloud };
-        delete cfg.savedAt;
-        if (!Object.keys(cfg).length) return;
+        let base: Record<string, unknown> = {};
         try {
           const localRaw = localStorage.getItem("it_chart_settings");
-          const merged = { ...(localRaw ? JSON.parse(localRaw) as Record<string, unknown> : {}), ...cfg };
-          localStorage.setItem("it_chart_settings", JSON.stringify(merged));
-          window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: merged }));
+          if (localRaw) base = JSON.parse(localRaw) as Record<string, unknown>;
         } catch { /* private mode */ }
+        const cfg: Record<string, unknown> = { ...(cloud && typeof cloud === "object" ? cloud : {}) };
+        delete cfg.savedAt;
+        const merged = { ...base, ...cfg };
+        if (magnetFlip) { merged.magnet = false; merged.magnetMode = 0; }
+        persistMerged(merged);
       });
+    } else if (magnetFlip) {
+      try {
+        const localRaw = localStorage.getItem("it_chart_settings");
+        if (localRaw) {
+          const merged = JSON.parse(localRaw) as Record<string, unknown>;
+          if (merged.magnet === true || merged.magnetMode === 1) {
+            merged.magnet = false;
+            merged.magnetMode = 0;
+            persistMerged(merged);
+          }
+        }
+      } catch { /* private mode */ }
     }
   }, [user?.uid]);
   useEffect(() => {

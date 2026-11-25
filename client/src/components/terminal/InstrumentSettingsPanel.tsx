@@ -14,6 +14,8 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { RotateCcw, X, Lock } from "lucide-react";
 import { usePremiumStatus, useUserProfile } from "@/hooks/use-premium";
+import { useAuth } from "@/hooks/use-auth";
+import { applyChartSettings } from "@/lib/chart-persistence";
 import { useIsAdmin } from "@/hooks/use-admin";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
@@ -144,6 +146,8 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
   useEffect(() => {
     if (open) setGlobal(readGlobalSettings());
   }, [open]);
+  // P64R4 — cloud-aware settings writes need the uid
+  const { user: authUser } = useAuth();
   // P64R2 — VIP gate for the chart background subsection
   const { data: bgIsPremium = false } = usePremiumStatus();
   const bgProfileQ = useUserProfile();
@@ -158,8 +162,10 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
   const setGlobalCfg = (patch: Partial<ChartSettings>) => {
     const next = { ...global, ...patch };
     setGlobal(next);
-    try { localStorage.setItem("it_chart_settings", JSON.stringify(next)); } catch { /* private mode */ }
-    window.dispatchEvent(new CustomEvent("it_chart_settings_changed", { detail: next }));
+    // P64R4 — persist everywhere (LS + broadcast + cloud) so the settings
+    // survive a terminal remount; previously the cloud was never written and
+    // the next visit reverted to the stale cloud copy.
+    applyChartSettings(authUser?.uid, next);
   };
   const setAux = (detail: Record<string, unknown>) => window.dispatchEvent(new CustomEvent("it_chart_aux_changed", { detail }));
 
