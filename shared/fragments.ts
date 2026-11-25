@@ -30,7 +30,9 @@ export const RARITY_META: Record<
   // near-black with a silver rim. It is never stored as an inventory
   // fragment: a black roll deposits a pending PROP ACCOUNT claim instead,
   // and the tier only ever appears inside the case-opening show.
-  black: { label: "Black", color: "#1c1f26", order: 5 },
+  // P77 user request — the tier is never called "Black" in the UI; the
+  // label reads as the prop account it deposits
+  black: { label: "Prop Account", color: "#1c1f26", order: 5 },
 };
 
 /**

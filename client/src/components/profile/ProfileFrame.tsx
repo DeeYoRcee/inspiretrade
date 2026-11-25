@@ -31,12 +31,13 @@ export function ProfileFrame({
   const def = getFrame(frame);
   if (!def) return <div className={cn(variant === "card" ? "w-full" : "w-fit", className)}>{children}</div>;
   if (variant === "card") {
-    // P77 user request — PUBG-Mobile-style frame: a THICK layered band
+    // P77 user request — PUBG-Mobile-style frame: a THICK RECTANGULAR band
     // (7px gradient body + a crisp bright inner edge line + a soft outer
-    // glow), hugging the card's rounded shape
+    // glow) with the frame NAME as a gold nameplate centered on the bottom
+    // band — like PUBG Mobile profile frames
     return (
       <div
-        className={cn("w-full rounded-3xl p-[7px]", className)}
+        className={cn("relative w-full rounded-lg p-[7px]", className)}
         style={{
           background: def.ring,
           boxShadow: def.glow
@@ -44,12 +45,27 @@ export function ProfileFrame({
             : `inset 0 0 0 1px ${def.edge}`,
         }}
       >
+        {/* small rounding squashes the child card's rounded-3xl corners — the
+            band reads as one clean PUBG rectangle with no corner notches */}
         <div
-          className="overflow-hidden rounded-3xl"
+          className="overflow-hidden rounded-[5px]"
           style={{ boxShadow: `inset 0 0 0 1.5px ${def.edge}, inset 0 0 0 3px rgba(0,0,0,0.35)` }}
         >
           {children}
         </div>
+        {/* gold nameplate on the bottom band, dead-center (PUBG look) */}
+        <span
+          className="absolute -bottom-[9px] left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border px-3 py-[2px] text-[11px] font-black uppercase tracking-[0.22em]"
+          style={{
+            color: "#ffd66b",
+            borderColor: "rgba(255,214,107,0.55)",
+            background: "linear-gradient(180deg, rgba(28,22,8,0.96), rgba(10,8,3,0.96))",
+            textShadow: "0 0 8px rgba(255,190,60,0.55)",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.55), 0 0 14px rgba(255,190,60,0.25)",
+          }}
+        >
+          {def.name}
+        </span>
       </div>
     );
   }

@@ -256,7 +256,8 @@ export function DrawingPropsBar({
                       className="h-3 w-14 accent-sky-500"
                     />
                   </label>
-                  <ToggleBtn label="Labels" on={style.showLabels !== false} onClick={() => setStyle({ showLabels: style.showLabels === false ? undefined : false })} />
+                  {/* P77 — position labels default OFF (numbers hidden) */}
+                  <ToggleBtn label="Labels" on={style.showLabels === true} onClick={() => setStyle({ showLabels: style.showLabels === true ? undefined : true })} />
                   {/* PHASE 65 §3 — verbose stats (%/pips/lots/$) are off the
                       chart by default; this toggle brings them back */}
                   <ToggleBtn label="Stats" on={style.showStats === true} onClick={() => setStyle({ showStats: style.showStats === true ? undefined : true })} />
@@ -371,7 +372,8 @@ export function DrawingPropsBar({
               <div className="absolute bottom-6 left-0 z-40 w-64 rounded-lg border border-slate-700 bg-slate-900/97 p-2 shadow-2xl">
                 {/* Phase 37 §2 — display options */}
                 <div className="mb-1.5 flex flex-wrap gap-1">
-                  <ToggleBtn label="Labels" on={style.showLabels !== false} onClick={() => setStyle({ showLabels: style.showLabels === false ? undefined : false })} />
+                  {/* P77 — position labels default OFF (numbers hidden) */}
+                  <ToggleBtn label="Labels" on={style.showLabels === true} onClick={() => setStyle({ showLabels: style.showLabels === true ? undefined : true })} />
                   {/* PHASE 65 §3 — verbose stats (%/pips/lots/$) are off the
                       chart by default; this toggle brings them back */}
                   <ToggleBtn label="Stats" on={style.showStats === true} onClick={() => setStyle({ showStats: style.showStats === true ? undefined : true })} />

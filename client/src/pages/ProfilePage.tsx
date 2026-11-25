@@ -25,7 +25,7 @@ import { UsernameDialog } from "@/components/dashboard/UsernameDialog";
 import { BackgroundPickerDialog } from "@/components/profile/BackgroundPickerDialog";
 import { createPublicProfileSnapshot, createDefaultPublicProfileSettings } from "@/lib/public-profile";
 import { ProfilePresentation } from "@/components/public-profile/ProfilePresentation";
-import { ProfileFrame, FrameSwatch } from "@/components/profile/ProfileFrame";
+import { ProfileFrame } from "@/components/profile/ProfileFrame";
 import { useEquippedFrame, useFrameRole } from "@/hooks/use-frame";
 import { FRAMES, getFrame } from "@shared/frames";
 
@@ -757,17 +757,16 @@ export default function ProfilePage() {
           the gallery itself (preview + one CEO frame + equip) says enough */}
       <section className="mt-4 rounded-3xl border border-border/50 bg-card/60 p-4">
         <div className="flex flex-col items-center gap-2">
-          <ProfileFrame frame={previewFrame ?? equippedFrame}>
-            {avatarVideoSrc || profileVideoSrc ? (
-              <video src={avatarVideoSrc || profileVideoSrc!} autoPlay loop muted playsInline preload="metadata" className="h-20 w-20 rounded-full object-cover" />
-            ) : avatarSrc ? (
-              <img src={avatarSrc} alt={displayName} className="h-20 w-20 rounded-full object-cover" referrerPolicy="no-referrer" />
-            ) : (
-              <span className="flex h-20 w-20 items-center justify-center rounded-full text-2xl font-bold text-white" style={{ background: `linear-gradient(160deg, ${gradient[0]}, ${gradient[1]})` }}>
-                {initials}
-              </span>
-            )}
-          </ProfileFrame>
+          {/* P77 user request — the round avatar-frame preview is GONE; the
+              frame preview is now the same rectangular PUBG-style band used
+              on the profile card itself */}
+          <div className="w-full max-w-[280px]">
+            <ProfileFrame variant="card" frame={previewFrame ?? equippedFrame}>
+              <div className="flex h-16 items-center justify-center bg-card/80 text-[10px] font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+                Preview
+              </div>
+            </ProfileFrame>
+          </div>
           {(() => {
             const d = getFrame(previewFrame ?? equippedFrame);
             return d ? (
@@ -791,7 +790,12 @@ export default function ProfilePage() {
                 (previewFrame ?? equippedFrame) === f.id && "ring-2 ring-primary ring-offset-2 ring-offset-background",
               )}
             >
-              <FrameSwatch frame={f.id} />
+              <span
+              className="inline-flex h-9 w-24 items-center justify-center text-[11px] font-black uppercase tracking-[0.22em]"
+              style={{ background: f.ring, boxShadow: `inset 0 0 0 1px ${f.edge}${f.glow ? `, 0 0 12px ${f.glow}` : ""}`, color: "#ffd66b" }}
+            >
+              {f.name}
+            </span>
             </button>
           ))}
         </div>

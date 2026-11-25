@@ -1983,7 +1983,10 @@ export function renderDrawing(
       ctx.save();
       ctx.setLineDash([]);
       ctx.font = `bold ${d.style.fontSize}px ui-sans-serif, system-ui`;
-      if (d.style.showLabels !== false) {
+      // P77 user request — position tools show NO numbers by default (the
+      // Entry/Stop/Target prices stay in the drawing and in the properties
+      // bar; only the Labels toggle brings them back onto the chart)
+      if (d.style.showLabels === true) {
         // PHASE 65 §3 — TradingView-clean default view: Entry/Stop/Target
         // prices OUTSIDE the right band edge (collision-aware vertical layout)
         // + ONE compact direction·RR label centered in the reward zone. The
