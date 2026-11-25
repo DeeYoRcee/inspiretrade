@@ -216,13 +216,8 @@ export default function PremiumPage({ onClose }: { onClose?: () => void }) {
                   <span className="text-muted-foreground text-sm">{t(planCard.periodKey as Parameters<typeof t>[0])}</span>
                 </div>
                 <p className="text-xs text-muted-foreground mb-1">{t(planCard.descKey as Parameters<typeof t>[0])}</p>
-                {planCard.key === "yearly" && (
-                  <p className="text-xs font-semibold text-success mb-5">
-                    <Check className="inline w-3 h-3 me-1" />
-                    {t("whopYearlySave")}
-                  </p>
-                )}
-                {planCard.key === "monthly" && <div className="mb-5" />}
+                {/* P64R2 user request — the savings claim line is removed */}
+                <div className="mb-5" />
                 <Button
                   className={cn("w-full gap-2", planCard.highlight && "bg-primary hover:bg-primary/90")}
                   variant={planCard.highlight ? "default" : "outline"}
