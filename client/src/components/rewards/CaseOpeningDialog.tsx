@@ -428,7 +428,6 @@ export function CaseOpeningDialog({ open, result, black = null, caseType = "insp
                   {isBuiltin && CASES[caseType as CaseType].blackDrop && (
                     <div className="flex h-16 flex-col items-center justify-center gap-0.5 rounded-lg border border-white/25 bg-gradient-to-b from-black/80 via-[#0b0c10] to-black text-center shadow-[0_0_18px_-6px_rgba(230,240,255,0.4)]">
                       <span className="px-1 text-[11px] font-bold leading-tight text-slate-200">★ {CASES[caseType as CaseType].blackDrop.label} ★</span>
-                      <span className="text-[8px] font-semibold uppercase tracking-wider text-slate-400">Prop Account</span>
                     </div>
                   )}
                 </div>
@@ -503,8 +502,10 @@ export function CaseOpeningDialog({ open, result, black = null, caseType = "insp
                               <span className="text-sm font-bold" style={{ color: isBlack ? "#dfe6ef" : itemMeta.color }}>
                                 {item.name}
                               </span>
+                              {/* P78 user request — the special drop's name already
+                                  reads "… Prop Account"; no second copy underneath */}
                               <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                {itemMeta.label}
+                                {isBlack ? "" : itemMeta.label}
                               </span>
                             </div>
                           );
@@ -540,7 +541,6 @@ export function CaseOpeningDialog({ open, result, black = null, caseType = "insp
                 <div className="relative z-10 flex h-56 w-64 flex-col items-center justify-center gap-2 rounded-2xl border border-white/25 bg-gradient-to-b from-black via-[#0b0c10] to-black shadow-[0_0_44px_-8px_rgba(230,240,255,0.55)]">
                   <span className="text-3xl font-black tracking-[0.3em] text-slate-200">★ ★ ★</span>
                   <span className="px-3 text-center text-lg font-bold text-slate-100">{activeBlack.label}</span>
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400">Prop Account</span>
                   <span className="mt-1 px-4 text-center text-[11px] text-muted-foreground">
                     A pending prop-account claim has been deposited — check your Wallet claims.
                   </span>
