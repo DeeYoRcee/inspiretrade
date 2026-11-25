@@ -2502,7 +2502,8 @@ export function PriceChart({
     };
     window.addEventListener("it-shortcut", h);
     return () => window.removeEventListener("it-shortcut", h);
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoDrawings, redoDrawings]);
 
   // ---- P38 §1 — "Stay in Drawing Mode" --------------------------------------
   // Default: after finishing one drawing the tool returns to Select, so a
@@ -2548,10 +2549,14 @@ export function PriceChart({
         const k = e.key.toLowerCase();
         if (k === "z") {
           e.preventDefault();
+          // P78 fix — CONSUME the event (TerminalPage's dispatcher is another
+          // listener on the SAME window node): one keypress used to undo TWO
+          // history steps because both handlers ran.
+          e.stopImmediatePropagation();
           if (e.shiftKey) redoDrawings(); else undoDrawings();
           return;
         }
-        if (k === "y") { e.preventDefault(); redoDrawings(); return; }
+        if (k === "y") { e.preventDefault(); e.stopImmediatePropagation(); redoDrawings(); return; }
       }
       if (e.key === "Escape") {
         // PHASE 63 §3 — the position panel closes on Escape (then the tool resets)
@@ -2607,6 +2612,14 @@ export function PriceChart({
       // stays NATIVE — the plain-letter drawing shortcuts must never swallow
       // browser shortcuts (r used to activate the rect tool on Ctrl+Shift+R).
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // P78 — "/" opens symbol search (the toolbar tooltip advertised this
+      // hotkey but it never existed); bare "/" only, browser find stays native
+      if (e.key === "/") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setOpenDialog("search");
+        return;
+      }
       const map: Record<string, DrawingType> = { t: "trend", h: "hline", v: "vline", r: "rect", f: "fib-retracement", x: "text", p: "channel", e: "fib-extension", i: "extended", m: "measure" };
       const k = map[e.key.toLowerCase()];
       if (k) {
@@ -3055,6 +3068,7 @@ export function PriceChart({
               setSelectedIdsSync([...cur]);
             }}
             onLocate={locateDrawing}
+            lockedAll={locked}
             onRename={(id, name) => patchDrawing(id, { name: name.trim().slice(0, 60) || undefined })}
             onPatch={patchDrawing}
             onPatchMany={patchManyDrawings}

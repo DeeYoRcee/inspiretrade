@@ -23,7 +23,10 @@ export interface ShortcutDef {
 export const SHORTCUT_DEFS: ShortcutDef[] = [
   { action: "buy", label: "Market Buy", hint: "Place a market buy on the ticket's instrument", def: "shift+b" },
   { action: "sell", label: "Market Sell", hint: "Place a market sell on the ticket's instrument", def: "shift+s" },
-  { action: "openTicket", label: "Order ticket", hint: "Open the right-rail order ticket", def: "t" },
+  // P78 — default unbound: "t" is the trend-line tool's chart shortcut, and
+  // the chart handler always won this race (the ticket binding never fired).
+  // Remappable in Settings → Shortcuts if a user prefers the ticket.
+  { action: "openTicket", label: "Order ticket", hint: "Open the right-rail order ticket", def: "" },
   { action: "openWatchlist", label: "Watchlist", hint: "Open the right-rail watchlist", def: "w" },
   { action: "openAlerts", label: "Alerts", hint: "Open the right-rail alerts panel", def: "alt+a" },
   { action: "toggleStayDrawing", label: "Stay in drawing mode", hint: "Toggle whether the drawing tool stays armed", def: "" },

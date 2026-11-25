@@ -31,11 +31,15 @@ const PRESETS: Array<{ name: string; layout: LayoutId; timeframes: (Timeframe | 
 
 export function WorkspaceDialog({
   open, onClose, currentSymbol, currentTimeframe, onApply, activeId,
+  /** P78 — the live multi-chart grid, so "New from current" saves ALL panels
+   *  with their symbols/timeframes instead of a hardcoded 1-chart layout */
+  currentPanels,
 }: {
   open: boolean;
   onClose: () => void;
   currentSymbol: string;
   currentTimeframe: Timeframe;
+  currentPanels?: { symbol: string; timeframe: Timeframe }[];
   /** rebuild the grid from a workspace preset (instruments + timeframes + layout) */
   onApply: (w: WorkspacePreset) => void;
   activeId: string | null;
@@ -47,8 +51,6 @@ export function WorkspaceDialog({
   const [renameVal, setRenameVal] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef(list);
-  listRef.current = list;
 
   const refresh = () => {
     setBusy(true);
@@ -69,11 +71,12 @@ export function WorkspaceDialog({
     if (!name?.trim()) return;
     setBusy(true);
     try {
+      const panels = currentPanels?.length ? currentPanels : [{ symbol: currentSymbol, timeframe: currentTimeframe }];
       await saveWorkspacePreset({
         id: `ws-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
         name: name.trim().slice(0, 60),
-        layout: "1",
-        panels: [{ symbol: currentSymbol, timeframe: currentTimeframe }],
+        layout: String(Math.max(1, panels.length)) as WorkspacePreset["layout"],
+        panels,
         updatedAt: Date.now(),
       });
       toast({ title: "Workspace saved" });

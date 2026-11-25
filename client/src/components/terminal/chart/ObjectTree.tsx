@@ -80,7 +80,7 @@ function TreeMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuI
 }
 
 export function ObjectTree({
-  drawings, selectedDrawingId, selectedIds, groups,
+  drawings, selectedDrawingId, selectedIds, groups, lockedAll,
   onSelect, onToggleSelect, onLocate,
   onRename, onPatch, onPatchMany, onDelete, onDuplicate, onEditProperties, onReorder,
   onGroupsChange, onCreateGroup, onRenameGroup, onDeleteGroup,
@@ -92,6 +92,9 @@ export function ObjectTree({
   selectedDrawingId: string | null;
   selectedIds: string[];
   groups: Record<string, DrawingGroup>;
+  /** P78 — global chart lock: deletions are silently blocked downstream, so
+   *  surface it here instead of a dead button click */
+  lockedAll?: boolean;
   onSelect: (id: string) => void;
   onToggleSelect: (id: string) => void;
   /** select + scroll the chart to the object */
@@ -201,7 +204,7 @@ export function ObjectTree({
     { label: "Move to group", icon: <FolderInput className="h-3.5 w-3.5" />, sub: moveGroupSub([d.id]) },
     { label: "Bring to front", icon: <ArrowUpToLine className="h-3.5 w-3.5" />, onClick: () => onReorder(d.id, "front") },
     { label: "Send to back", icon: <ArrowDownToLine className="h-3.5 w-3.5" />, onClick: () => onReorder(d.id, "back") },
-    { label: "Delete", danger: true, icon: <Trash2 className="h-3.5 w-3.5" />, disabled: d.locked, onClick: () => onDelete([d.id]) },
+    { label: "Delete", danger: true, icon: <Trash2 className="h-3.5 w-3.5" />, disabled: d.locked || lockedAll === true, onClick: () => onDelete([d.id]) },
   ];
   const groupMenuFor = (g: DrawingGroup): MenuItem[] => {
     const memberIds = drawings.filter((d) => d.group === g.id).map((d) => d.id);
@@ -281,6 +284,9 @@ export function ObjectTree({
   const orderedGroups = Object.values(groups).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
   const ungroupedRows = visibleRows.filter((d) => !d.group);
   const selIds = [...new Set([...selectedIds, ...(selectedDrawingId ? [selectedDrawingId] : [])])];
+  // P78 — the deletable subset of the selection: locked drawings are skipped,
+  // and the global chart lock blocks deletion entirely (deleteManyTree no-ops)
+  const deletableSelIds = lockedAll === true ? [] : selIds.filter((id) => !drawings.find((d) => d.id === id)?.locked);
 
   return (
     <div
@@ -371,12 +377,40 @@ export function ObjectTree({
           <EyeOff className="h-4 w-4" />
         </button>
         <button
+          title="Show selected drawings"
+          disabled={!selIds.length}
+          onClick={() => onPatchMany(selIds, { hidden: false })}
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+        >
+          <Eye className="h-4 w-4" />
+        </button>
+        <button
           title="Lock selected drawings"
           disabled={!selIds.length}
           onClick={() => onPatchMany(selIds, { locked: true })}
           className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
         >
           <Lock className="h-4 w-4" />
+        </button>
+        <button
+          title="Unlock selected drawings"
+          disabled={!selIds.length}
+          onClick={() => onPatchMany(selIds, { locked: false })}
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+        >
+          <Unlock className="h-4 w-4" />
+        </button>
+        <button
+          title="Delete selected drawings"
+          disabled={!deletableSelIds.length || lockedAll === true}
+          onClick={() => {
+            if (!deletableSelIds.length || lockedAll === true) return;
+            const n = deletableSelIds.length;
+            if (window.confirm(`Delete ${n} selected drawing${n === 1 ? "" : "s"}? This can be undone with Ctrl+Z.`)) onDelete(deletableSelIds);
+          }}
+          className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-red-500/15 hover:text-red-300 disabled:opacity-30"
+        >
+          <Trash2 className="h-4 w-4" />
         </button>
         <button
           title="Move selected drawings into a group"
@@ -408,9 +442,11 @@ export function ObjectTree({
         {ungroupedRows.map(row)}
 
         {orderedGroups.map((g) => {
-          const members = visibleRows.filter((d) => d.group === g.id);
+          const nameHit = q.trim() !== "" && g.name.toLowerCase().includes(q.trim().toLowerCase());
+          // P78 — a group-name match lists the group's members even when the
+          // member names themselves don't match the query
+          const members = nameHit ? drawings.filter((d) => d.group === g.id) : visibleRows.filter((d) => d.group === g.id);
           const total = drawings.filter((d) => d.group === g.id).length;
-          const nameHit = g.name.toLowerCase().includes(q.trim().toLowerCase());
           if (members.length === 0 && !nameHit) return null;
           const collapsed = g.collapsed === true;
           return (
@@ -452,7 +488,7 @@ export function ObjectTree({
                   onClick={() => onToggleGroupHidden(g.id)}
                   className={cn("text-slate-500 hover:text-slate-200", groupFlag(drawings, g.id, "hidden") && "text-slate-600")}
                 >
-                  <EyeOff className="h-3.5 w-3.5" />
+                  {groupFlag(drawings, g.id, "hidden") ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
                 <button
                   title={groupFlag(drawings, g.id, "locked") ? "Unlock all members" : "Lock all members"}

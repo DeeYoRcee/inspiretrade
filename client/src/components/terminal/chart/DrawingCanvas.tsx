@@ -605,6 +605,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return; // right button → context menu path
+    // P78 — multi-pointer guard: a second finger/pen while a drag or drawing
+    // gesture is live must NOT overwrite dragRef (pinch during a move made
+    // the drawing jump to the new pointer). The gesture owns the pointer.
+    if (dragRef.current) return;
     const conv = converterRef.current;
     const target = attachEl();
     if (!conv || !target) return;
@@ -657,7 +661,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       // chart wrapper (over the toolbar/rail) must still deliver pointerup,
       // otherwise the stroke stayed armed and "kept drawing" on re-entry
       captureSafe(target, e.pointerId);
-      const drag = dragRef.current;
+      // (type assertion defeats the early-guard narrowing — a guard above
+      // bails when a drag is already active, but a second pointer could
+      // theoretically arrive between the guard and this read)
+      const drag = dragRef.current as DragState | null;
       // P46 §1.1 — position tools: ONE gesture (press entry → drag → release)
       // or two clicks. The second point's SIDE decides stop vs target; the
       // opposite level mirrors it at 1:R. All levels snap to the instrument
@@ -686,7 +693,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
         redraw();
         return;
       }
-      const drawing = drag?.mode === "draw" && drag.drawing
+      // P78 — reuse the pending drawing ONLY when it belongs to the still
+      // armed tool: switching tools mid-creation (keyboard shortcut) used to
+      // append the new tool's point to the OLD-type drawing and commit it
+      // under the new tool's rules — a corrupted object.
+      const drawing = drag?.mode === "draw" && drag.drawing && drag.drawing.type === tool
         ? drag.drawing
         : (() => {
             const d = makeDrawing(tool, []);
@@ -1122,6 +1133,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     }
     const conv = converterRef.current;
     if (!conv) return;
+    // P78 — an armed tool owns the double-click: letting it bubble reset the
+    // chart scale (fit-content) in the middle of drawing
+    if (toolRef.current) { e.stopPropagation(); e.preventDefault(); return; }
     if (lockedRef.current || hiddenAllRef.current) return;
     const p = localXY(e);
     const hit = hitTest(p, drawingsRef.current, canvasPts, conv.paneW, conv.paneH);
@@ -1130,6 +1144,16 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       cbRef.current.onSelect(drawingsRef.current[hit.index].id);
       cbRef.current.onEdit(drawingsRef.current[hit.index].id);
     }
+  };
+
+  // P78 — clear the hover highlight + grab cursor when the pointer exits the
+  // pane; the highlight/cursor used to persist until the next pointermove
+  const onPointerLeave = () => {
+    if (!hoverRef.current) return;
+    hoverRef.current = null;
+    const el = canvasRef.current;
+    if (el) el.style.cursor = "default";
+    redraw();
   };
 
   const onContextMenuCapture = (e: MouseEvent) => {
@@ -1216,6 +1240,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
     host.addEventListener("pointercancel", onPointerCancelCapture as EventListener, true);
     host.addEventListener("dblclick", onDoubleClickCapture as EventListener, true);
     host.addEventListener("contextmenu", onContextMenuCapture as EventListener, true);
+    host.addEventListener("pointerleave", onPointerLeave as EventListener, true);
     return () => {
       host.removeEventListener("pointerdown", onPointerDown as EventListener, true);
       host.removeEventListener("pointermove", onPointerMove as EventListener, true);
@@ -1223,6 +1248,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
       host.removeEventListener("pointercancel", onPointerCancelCapture as EventListener, true);
       host.removeEventListener("dblclick", onDoubleClickCapture as EventListener, true);
       host.removeEventListener("contextmenu", onContextMenuCapture as EventListener, true);
+      host.removeEventListener("pointerleave", onPointerLeave as EventListener, true);
     };
     // handlers close over refs only — stable for the lifetime of the mount
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -100,6 +100,10 @@ export interface Drawing {
   tfs?: Timeframe[];
   /** P40 — LWW merge timestamp (ms) stamped on every persisted edit */
   updatedAt?: number;
+  /** P78 — persistent z-order stamp (array index assigned on every reorder;
+   *  RTDB stores a MAP, so without this the user's layering was lost on
+   *  refresh). undefined = never reordered → sorts on top in stored order. */
+  z?: number;
   /** P41 — position tools: risk % of balance for the size calculation */
   riskPct?: number;
 }
@@ -2141,6 +2145,7 @@ export function __sanitizeDrawingList(list: unknown): Drawing[] {
       ...(typeof r.name === "string" && r.name ? { name: r.name.slice(0, 60) } : {}),
       ...(typeof r.group === "string" && r.group ? { group: r.group.slice(0, 40) } : {}),
       ...(Number.isFinite(Number(r.updatedAt)) ? { updatedAt: Number(r.updatedAt) } : {}),
+      ...(Number.isFinite(Number(r.z)) ? { z: Number(r.z) } : {}),
       ...(Number.isFinite(Number(r.riskPct)) && Number(r.riskPct) > 0
         ? { riskPct: Math.min(100, Math.max(0.01, Number(r.riskPct))) } : {}),
       ...(tfs && tfs.length ? { tfs } : {}),
@@ -2162,7 +2167,7 @@ export type ZOrderAction = "front" | "back" | "forward" | "backward";
 /** Phase 27 §4 — bring forward / send backward / to front / to back. Pure:
  * returns a NEW array, the input is untouched; unknown ids return the list
  * unchanged so a stale UI action can never corrupt the stack. */
-export function reorderDrawing<T extends { id: string }>(list: T[], id: string, action: ZOrderAction): T[] {
+export function reorderDrawing<T extends { id: string; z?: number }>(list: T[], id: string, action: ZOrderAction): T[] {
   const idx = list.findIndex((d) => d.id === id);
   if (idx < 0) return list;
   const out = [...list];
@@ -2171,6 +2176,11 @@ export function reorderDrawing<T extends { id: string }>(list: T[], id: string, 
   else if (action === "back") out.unshift(d);
   else if (action === "forward") out.splice(Math.min(idx + 1, out.length), 0, d);
   else out.splice(Math.max(idx - 1, 0), 0, d);
+  // P78 — persist the layering: assign the new index to every member; the
+  // per-drawing diff writer uploads only the entries whose z actually changed
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].z !== i) out[i] = { ...out[i], z: i };
+  }
   return out;
 }
 

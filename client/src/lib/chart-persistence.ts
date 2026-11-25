@@ -90,6 +90,12 @@ export function flushPendingDrawingWrites(): void {
 // Drawings
 // ---------------------------------------------------------------------------
 
+/** P78 — restore the persisted layering (see Drawing.z). Stable sort so
+ *  never-reordered drawings keep their stored order on top. */
+function sortByZ(list: Drawing[]): Drawing[] {
+  return [...list].sort((a, b) => (Number.isFinite(a.z) ? (a.z as number) : Number.MAX_SAFE_INTEGER) - (Number.isFinite(b.z) ? (b.z as number) : Number.MAX_SAFE_INTEGER));
+}
+
 export function subscribeDrawings(
   uid: string,
   symbol: string,
@@ -97,7 +103,7 @@ export function subscribeDrawings(
 ): () => void {
   const key = drawingsKey(uid, symbol);
   const cached = localGet<Record<string, Drawing>>(uid, "drawings", symbol);
-  if (cached) cb(__sanitizeDrawingList(Object.values(cached)));
+  if (cached) cb(sortByZ(__sanitizeDrawingList(Object.values(cached))));
   const off = onValue(
     rtdb(`chart/${uid}/drawings/${symbol}`),
     (snap) => {
@@ -106,7 +112,7 @@ export function subscribeDrawings(
         // Phase 35: sanitize remote snapshots — corrupted entries are dropped
         // and duplicates collapsed. No extra RTDB write here; the healed list
         // is persisted to RTDB with the user's next edit.
-        const list = __sanitizeDrawingList(Object.values(remote));
+        const list = sortByZ(__sanitizeDrawingList(Object.values(remote)));
         // P40 — a stale echo of a locally-deleted drawing must not resurrect
         const tombs: Record<string, number> = Object.fromEntries(drawingTombstones.get(key) ?? []);
         const kept = filterTombstonedDrawings(list, tombs);
@@ -349,7 +355,10 @@ export function clearChartLocalCache(uid: string): void {
     const stale: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith("it_chart_") && k.includes(`_${uid}_`)) stale.push(k);
+      // P78 — also match keys that END with the uid (templates/fib-presets
+      // use it_chart_<kind>_<uid> and used to survive logout, leaking data
+      // across accounts on shared machines)
+      if (k && k.startsWith("it_chart_") && (k.includes(`_${uid}_`) || k.endsWith(`_${uid}`))) stale.push(k);
     }
     for (const k of stale) localStorage.removeItem(k);
   } catch { /* ignore */ }

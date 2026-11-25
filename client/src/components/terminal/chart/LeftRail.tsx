@@ -16,6 +16,7 @@ import {
   Crosshair, Eraser, Eye, EyeOff, Layers, Lock, LockOpen, Magnet, PencilLine, Star, Trash2,
 } from "lucide-react";
 import type { DrawingType } from "@/lib/drawings";
+import { MAX_FAVORITES } from "@/lib/drawing-favorites";
 import { cn } from "@/lib/utils";
 import type { CursorMode } from "./cursor-mode";
 
@@ -262,7 +263,7 @@ function readFavs(): string[] {
   try {
     const raw = localStorage.getItem(FAV_KEY);
     const list = raw ? (JSON.parse(raw) as unknown) : [];
-    return Array.isArray(list) ? (list.filter((x) => typeof x === "string") as string[]).slice(0, 12) : [];
+    return Array.isArray(list) ? (list.filter((x) => typeof x === "string") as string[]).slice(0, MAX_FAVORITES) : [];
   } catch { /* private mode */ }
   return [];
 }
@@ -312,6 +313,15 @@ export function LeftRail({
   onToggleFav?: (id: string) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  // P78 — measure the open flyout's room once per open: flip to the left edge
+  // when the pane is too narrow to fit minWidth 198px + margin on the right
+  const [flyoutFlip, setFlyoutFlip] = useState(false);
+  useEffect(() => {
+    if (!openGroup) { setFlyoutFlip(false); return; }
+    const btn = document.querySelector(`[data-rail-group="${openGroup}"]`);
+    const r = btn?.getBoundingClientRect();
+    setFlyoutFlip(!!r && r.right + 210 > window.innerWidth);
+  }, [openGroup]);
   const [lastTool, setLastTool] = useState<Partial<Record<string, DrawingType>>>(readLastTool);
   const [localFavs, setLocalFavs] = useState<string[]>(readFavs);
   // P41 — the shared per-user store wins when PriceChart provides it
@@ -319,7 +329,7 @@ export function LeftRail({
   const toggleFav = useCallback((id: string) => {
     if (onToggleFav) { onToggleFav(id); return; }
     setLocalFavs((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(0, 12);
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(0, MAX_FAVORITES);
       try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
       return next;
     });
@@ -464,6 +474,7 @@ function cleanName(id: DrawingType): string {
         return (
           <div key={grp.id} className="relative">
             <button
+              data-rail-group={grp.id}
               title={`${grp.title} — ${grp.tools.find((x) => x.id === shown)?.label ?? ""}`}
               aria-label={grp.title}
               onClick={() => setOpenGroup(isOpen ? null : grp.id)}
@@ -479,7 +490,12 @@ function cleanName(id: DrawingType): string {
             </button>
             {isOpen && (
               <div
-                className="absolute left-full top-0 z-40 ml-1 max-h-[70vh] overflow-y-auto rounded-lg border border-slate-700/80 bg-[#0d1526] py-1 shadow-2xl"
+                // P78 — flip the flyout to the LEFT edge when the pane is too
+                // narrow to fit it on the right (no more off-screen clipping)
+                className={cn(
+                  "absolute top-0 z-40 max-h-[70vh] overflow-y-auto rounded-lg border border-slate-700/80 bg-[#0d1526] py-1 shadow-2xl",
+                  flyoutFlip ? "right-full mr-1" : "left-full ml-1",
+                )}
                 role="menu"
                 aria-label={grp.title}
                 style={{ minWidth: 198 }}
@@ -490,7 +506,7 @@ function cleanName(id: DrawingType): string {
                   <button
                     key={`${grp.id}-${t.id}`}
                     role="menuitem"
-                    title={cleanName(t.id)}
+                    title={t.hint ? `${cleanName(t.id)} (${t.hint})` : cleanName(t.id)}
                     aria-label={cleanName(t.id)}
                     onClick={() => pick(grp.id, t.id)}
                     className={cn(

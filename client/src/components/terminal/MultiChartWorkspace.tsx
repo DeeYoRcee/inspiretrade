@@ -365,6 +365,7 @@ export function MultiChartWorkspace({
         onClose={() => setWsOpen(false)}
         currentSymbol={symbol}
         currentTimeframe={timeframe}
+        currentPanels={allPanels.map((p) => ({ symbol: p.symbol, timeframe: p.timeframe }))}
         onApply={applyWorkspace}
         activeId={activeWsId}
       />
