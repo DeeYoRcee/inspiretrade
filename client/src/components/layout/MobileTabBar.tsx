@@ -13,11 +13,16 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { cn } from "@/lib/utils";
 
 /**
- * P43 — dedicated mobile navigation: a fixed bottom tab bar with the five
- * primary destinations plus a "More" bottom sheet holding every secondary
- * page. Touch-sized (h-14 rows, 44px+ targets), safe-area aware, active
- * indicators via wouter location. Desktop keeps the header pill bar — this
- * component renders nothing at md and above.
+ * P43 — dedicated mobile navigation: a fixed bottom tab bar with the primary
+ * destinations plus a "More" bottom sheet holding every secondary page.
+ * Touch-sized (h-14 rows, 44px+ targets), safe-area aware, active indicators
+ * via wouter location. Desktop keeps the header pill bar — this component
+ * renders nothing at md and above.
+ * P63 — per the mobile-first phase spec: SIX of the seven primary sections
+ * now sit in the bar (Dashboard, Terminal, Market, News, Prop Firm, Rewards);
+ * the seventh primary section, Wallet, moved to the upper utility pill
+ * (compact Wallet icon beside Theme/Account in the Navbar) so the bar stays
+ * uncluttered. Secondary pages stay in the "More" sheet.
  */
 
 const TABS: { href: string; icon: typeof Home; key: string | null; label: string | null }[] = [
@@ -25,7 +30,8 @@ const TABS: { href: string; icon: typeof Home; key: string | null; label: string
   { href: "/terminal", icon: ChartCandlestick, key: "terminal", label: null },
   { href: "/market", icon: Store, key: "market", label: null },
   { href: "/news", icon: Newspaper, key: "news", label: null },
-  { href: "/wallet", icon: Wallet, key: "wallet", label: null },
+  { href: "/prop-firm", icon: Activity, key: "propFirm", label: null },
+  { href: "/rewards", icon: Gift, key: "rewards", label: null },
 ];
 
 export function MobileTabBar() {
@@ -41,8 +47,7 @@ export function MobileTabBar() {
   const isActive = (href: string) => (href === "/" ? location === "/" : location.startsWith(href));
 
   const moreItems: { href: string; icon: typeof Activity; label: string; hide?: boolean }[] = [
-    { href: "/prop-firm", icon: Activity, label: t("propFirm") },
-    { href: "/rewards", icon: Gift, label: t("rewards") },
+    // P63 — prop-firm and rewards became primary tabs; secondaries remain here
     { href: "/leaderboard", icon: Trophy, label: t("leaderboard") },
     { href: "/profile", icon: UserRound, label: t("profile") },
     { href: "/inventory", icon: Package, label: t("inventory") },
@@ -56,7 +61,7 @@ export function MobileTabBar() {
       {/* bottom tab bar — phones only (md and above keep the header pill bar) */}
       <nav
         aria-label="Mobile navigation"
-        className="fixed inset-x-0 bottom-0 z-[60] grid grid-cols-6 border-t border-border/60 bg-background/95 backdrop-blur-md md:hidden"
+        className="fixed inset-x-0 bottom-0 z-[60] grid grid-cols-7 border-t border-border/60 bg-background/95 backdrop-blur-md md:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {TABS.map((item) => {

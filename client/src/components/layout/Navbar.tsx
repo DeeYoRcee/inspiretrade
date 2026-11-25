@@ -79,6 +79,13 @@ export function Navbar() {
                 </button>
               </>
             )}
+            {/* P63 — Wallet is no longer a bottom-tab primary section: on
+                phones it lives here, one tap away, beside Theme/Account (the
+                INSP capsule also opens /wallet). Icon-only where space is
+                tight; the label rides on aria-label/title. */}
+            <button onClick={() => navigate("/wallet")} className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden" aria-label={t("wallet")} title={t("wallet")}>
+              <Wallet className="h-4 w-4" />
+            </button>
             {isPremium && <div className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary lg:flex"><Crown className="h-3 w-3" />Premium</div>}
 
             <NotificationBell />

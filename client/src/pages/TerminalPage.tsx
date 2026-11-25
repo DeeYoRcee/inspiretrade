@@ -288,7 +288,7 @@ export default function TerminalPage() {
   // ---- backtest / analytics / calendar / news: full-area workspaces ---------
   if (mode === "calendar" || mode === "news") {
     return (
-      <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-0 flex-col gap-2 p-2 sm:min-h-[640px]">
+      <div data-term="1" className="flex h-[calc(100dvh-4.25rem-3.75rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-2 p-2 md:h-[calc(100dvh-4.25rem)] sm:min-h-[640px]">
         <Toolbar
           mode={mode} onModeChange={setMode}
           symbol={symbol} onSymbolChange={setSymbol}
@@ -321,7 +321,7 @@ export default function TerminalPage() {
     /* P42 — data-term opts the LIVE terminal into the theme remap: panel
        chrome follows the site theme, while the chart canvas keeps its own
        dark background (the [data-chart-dark] subtree is excluded in CSS) */
-    <div data-term="1" className="flex h-[calc(100dvh-4.25rem)] min-h-[640px] flex-col gap-2 p-2">
+    <div data-term="1" className="flex h-[calc(100dvh-4.25rem-3.75rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-2 p-2 md:h-[calc(100dvh-4.25rem)] sm:min-h-[640px]">
       <Toolbar
         mode={mode} onModeChange={setMode}
         symbol={symbol} onSymbolChange={setSymbol}
