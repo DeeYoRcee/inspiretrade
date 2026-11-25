@@ -183,7 +183,14 @@ export function MarketInfoPanel({ symbol, timeframe }: { symbol: string; timefra
   const lastVol = todayBars.at(-1)?.volume;
   const prevVols = todayBars.slice(-13, -1).map((b) => b.volume ?? 0).filter((v) => v > 0);
   const volAvg = prevVols.length ? prevVols.reduce((a: number, b: number) => a + b, 0) / prevVols.length : null;
-  const volumeLabel = inst?.feed === "binance" ? "Exchange volume (Binance)" : "Provider volume (bar basis)";
+  // P77 §4 — honest volume semantics per feed: Binance carries real exchange
+  // volume; metals/spot charts are self-recorded, their "volume" is the count
+  // of observed 1s samples — never presented as exchange volume.
+  const volumeLabel = inst?.feed === "binance"
+    ? "Exchange volume (Binance)"
+    : inst?.spotCode
+      ? "Tick volume — count of observed 1s spot samples (gold-api), not exchange volume"
+      : "Provider volume (bar basis)";
 
   if (!inst) return <p className="p-3 text-[11px] text-slate-500">Unknown instrument</p>;
 

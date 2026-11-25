@@ -2770,7 +2770,10 @@ export function PriceChart({
             className="absolute inset-x-0 border-t border-slate-800"
             style={{ height: SUB_PANE_HEIGHT, bottom: (subList.length - 1 - subList.indexOf(cfg)) * SUB_PANE_HEIGHT }}
           >
-            <div className="pointer-events-none absolute left-2 top-1 z-10 text-[10px] font-semibold text-slate-400">{INDICATOR_CATALOG[cfg.type].label}</div>
+            <div className="pointer-events-none absolute left-2 top-1 z-10 text-[10px] font-semibold text-slate-400">
+              {/* P77 §4 — metals volume is the 1s sample count, label it honestly */}
+              {cfg.type === "volume" && getInstrument(symbol)?.spotCode ? "Tick volume" : INDICATOR_CATALOG[cfg.type].label}
+            </div>
           </div>
         ))}
 
