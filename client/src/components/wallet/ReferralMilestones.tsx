@@ -89,18 +89,20 @@ export function ReferralMilestones() {
                 </div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">referrals</p>
                 <div className="flex flex-wrap items-center justify-center gap-1">
+                  {/* P63R user request: a bare icon + number meant nothing to
+                      users — hovering the chip now explains the reward */}
                   {tier.cases > 0 && (
-                    <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold text-sky-400">
+                    <span title={`${tier.cases} Inspire Case — openable on the Rewards page`} aria-label={`${tier.cases} Inspire Case`} className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold text-sky-400">
                       <Package className="h-2.5 w-2.5" />{tier.cases}
                     </span>
                   )}
                   {tier.goldCases > 0 && (
-                    <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">
+                    <span title={`${tier.goldCases} Gold Case — rarer rewards, openable on the Rewards page`} aria-label={`${tier.goldCases} Gold Case`} className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">
                       <Gem className="h-2.5 w-2.5" />{tier.goldCases}
                     </span>
                   )}
                   {tier.insp > 0 && (
-                    <span className="inline-flex items-center gap-0.5 rounded-full bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-bold text-yellow-500">
+                    <span title={`${tier.insp} INSP — added straight to your Inspire balance`} aria-label={`${tier.insp} INSP`} className="inline-flex items-center gap-0.5 rounded-full bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-bold text-yellow-500">
                       <Coins className="h-2.5 w-2.5" />{tier.insp}
                     </span>
                   )}

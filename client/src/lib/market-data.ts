@@ -1547,9 +1547,18 @@ function snapRead(key: string): Bar[] | null {
     const parsed = JSON.parse(raw) as { at?: number; bars?: Bar[] };
     if (!Array.isArray(parsed.bars) || !parsed.bars.length) return null;
     if (Date.now() - (parsed.at ?? 0) > SNAP_TTL_MS) { localStorage.removeItem(SNAP_PREFIX + key); return null; }
-    const last = parsed.bars[parsed.bars.length - 1] as Bar;
-    if (!last || typeof last.time !== "number" || typeof last.close !== "number") return null;
-    return parsed.bars;
+    // P63R — a snapshot interrupted mid-write (or carrying an older Bar
+    // schema) used to poison EVERY open of this symbol:tf until TTL: only the
+    // LAST bar was spot-checked, earlier entries went straight into
+    // barsRef.current and crashed the feed callback reading 'time' of
+    // undefined. Validate every element before trusting the snapshot.
+    for (const b of parsed.bars) {
+      if (!b || typeof (b as Bar).time !== "number" || typeof (b as Bar).close !== "number") {
+        localStorage.removeItem(SNAP_PREFIX + key);
+        return null;
+      }
+    }
+    return parsed.bars as Bar[];
   } catch { return null; }
 }
 

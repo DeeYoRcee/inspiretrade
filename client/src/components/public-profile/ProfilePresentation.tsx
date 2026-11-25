@@ -1,7 +1,7 @@
 import { Instagram, Send, Twitter, Crown, Activity, Target, TrendingUp, TrendingDown, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/lib/language-context";
-import { formatPublicMoney, type PublicProfileSnapshot } from "@/lib/public-profile";
+import { type PublicProfileSnapshot } from "@/lib/public-profile";
 import { getProfileBackground, BackgroundVideo } from "@/lib/profile-backgrounds";
 import { titlesForProfile, TitleStrip } from "@/pages/TitlesPage";
 import { ProfileFrame } from "@/components/profile/ProfileFrame";
@@ -29,8 +29,8 @@ function StatCell({ label, value, tone, icon: Icon, iconTone, ring, ringTone }: 
           <Icon className={cn("h-3.5 w-3.5", iconTone)} />
         </div>
       )}
-      <p className={cn("font-number text-lg font-bold leading-tight", tone)}>{value}</p>
-      <p className="mt-0.5 truncate text-[10px] font-medium text-muted-foreground">{label}</p>
+      <p className={cn("font-number text-base font-bold leading-tight", tone)}>{value}</p>
+      <p className="mt-0.5 truncate text-[9px] font-medium text-muted-foreground">{label}</p>
       {ring != null && (
         <div className="mx-auto mt-1.5 h-1 w-4/5 overflow-hidden rounded-full bg-muted">
           <div
@@ -183,29 +183,9 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
           </div>
         )}
 
-        {/* single-line stats chips — like "12 posts · 4.5K subscribers" */}
-        {stats && (
-          <div className="relative mt-4 flex flex-wrap items-center justify-center gap-2 text-sm font-semibold">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-              <Activity className="h-3.5 w-3.5 text-sky-300/80" />
-              <span className="font-number">{stats.totalTrades}</span>
-              <span className="text-[11px] font-normal text-white/55">{t("publicProfileTotalTrades")}</span>
-            </span>
-            {profile.winRate && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-emerald-300">
-                <span className="font-number">{profile.winRate && profile.winRate.total > 0 && Number.isFinite(profile.winRate.rate) ? `${profile.winRate.rate.toFixed(0)}%` : "—"}</span>
-                <span className="text-[11px] font-normal text-white/55">{t("winRate")}</span>
-              </span>
-            )}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-              {stats.netPnl >= 0 ? <TrendingUp className="h-3.5 w-3.5 text-emerald-300/80" /> : <TrendingDown className="h-3.5 w-3.5 text-rose-300/80" />}
-              <span className={`font-number ${stats.netPnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                {formatPublicMoney(stats.netPnl)}
-              </span>
-              <span className="text-[11px] font-normal text-white/55">{t("publicProfilePnl")}</span>
-            </span>
-          </div>
-        )}
+        {/* P63R user request: the in-poster stat pills are gone — they
+            duplicated the 4-cell stat grid below the poster. The grid is the
+            single source of stats now. */}
 
         {/* bio = strategy, one short block */}
         {profile.strategy && (
@@ -230,7 +210,7 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
             />
             <StatCell
               label={t("netPnl")}
-              value={formatPublicMoney(stats.netPnl)}
+              value={`${stats.netPnl >= 0 ? "+$" : "-$"}${Math.abs(Math.round(stats.netPnl)).toLocaleString("en-US")}`}
               tone={stats.netPnl >= 0 ? "text-emerald-400" : "text-red-400"}
               icon={stats.netPnl >= 0 ? TrendingUp : TrendingDown}
               iconTone={stats.netPnl >= 0 ? "text-emerald-400" : "text-red-400"}
@@ -246,17 +226,21 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
 
         {/* Telegram-style BIO card — identical to the own-profile info card */}
         <section className="divide-y divide-border/50 rounded-3xl border border-border/50 bg-card/60">
+          {/* P63R user request: rows sit on one shared, slightly tighter left
+              edge so the label and its content read as one block, and the
+              held-username chips got stronger plates so they no longer look
+              like words merged into a sentence. */}
           {(profile.usernames?.length ?? 0) > 0 && (
-            <div className="px-4 py-3">
+            <div className="px-3.5 py-3">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t("profileUsernameRow")}</span>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
                 {profile.usernames!.slice(0, 10).map((u) => (
                   <span
                     key={u.key}
                     className={
                       u.key === profile.usernameKey
-                        ? "inline-flex max-w-[130px] items-center truncate rounded-full border border-[#3390ec]/40 bg-[#3390ec]/15 px-2.5 py-0.5 text-[11px] font-semibold text-[#3390ec]"
-                        : "inline-flex max-w-[130px] items-center truncate rounded-full border border-border/60 bg-black/25 px-2.5 py-0.5 text-[11px] font-semibold text-white/70"
+                        ? "inline-flex max-w-[130px] items-center truncate rounded-full border border-[#3390ec]/50 bg-[#3390ec]/20 px-2.5 py-1 text-[11px] font-semibold text-[#3390ec]"
+                        : "inline-flex max-w-[130px] items-center truncate rounded-full border border-white/20 bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold text-white/80"
                     }
                   >
                     @{u.username}
@@ -265,11 +249,9 @@ export function ProfilePresentation({ profile }: { profile: PublicProfileSnapsho
               </div>
             </div>
           )}
-          <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="px-3.5 py-3">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t("profileBio")}</span>
-          </div>
-          <div className="px-4 py-3">
-            <p className={profile.strategy ? "whitespace-pre-wrap text-[13px] leading-6" : "text-[13px] text-muted-foreground"}>
+            <p className={profile.strategy ? "mt-1.5 whitespace-pre-wrap text-[13px] leading-6" : "mt-1.5 text-[13px] text-muted-foreground"}>
               {profile.strategy || t("profileBioEmpty")}
             </p>
           </div>

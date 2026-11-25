@@ -139,7 +139,7 @@ export async function browserNotify(title: string, body: string): Promise<void> 
   try {
     if (typeof Notification === "undefined") return;
     if (Notification.permission !== "granted") return;
-    const options: NotificationOptions = { body: body.slice(0, 180), tag: title + body, icon: "/favicon.png" };
+    const options: NotificationOptions = { body: body.slice(0, 180), tag: title + body, icon: "/icon-192.png", badge: "/icon-192.png" };
     const reg = await swRegistration();
     if (reg?.active) {
       await reg.showNotification(title, options);

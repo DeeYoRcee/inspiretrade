@@ -405,7 +405,12 @@ class AppErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, info: unknown) {
-    console.error("[InspireTrade] render crash:", error, info);
+    // P63R — the recurring "reading 'time'" crash was impossible to pin down
+    // from the message alone; always keep the full stack + component stack in
+    // the console so the next occurrence names its exact site.
+    console.error("[InspireTrade] render crash:", error);
+    console.error("[InspireTrade] crash stack:", error.stack || "(no stack)");
+    console.error("[InspireTrade] component stack:", info);
   }
 
   render() {

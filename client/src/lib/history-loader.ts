@@ -66,7 +66,12 @@ const DAY = 86400;
 
 function dedupeSort(bars: Bar[]): Bar[] {
   const map = new Map<number, Bar>();
-  for (const b of bars) map.set(b.time, b);
+  // P63R — drop null/malformed elements: a null entry in a period response
+  // crashed exactly like the recurring "reading 'time'" terminal error
+  for (const b of bars) {
+    if (!b || typeof b.time !== "number" || !Number.isFinite(b.time)) continue;
+    map.set(b.time, b);
+  }
   return [...map.values()].sort((a, b) => a.time - b.time);
 }
 

@@ -534,7 +534,19 @@ function Toolbar({
       )}
 
       {liveOnly && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <>
+          {/* P63R — phones: the 6-stat metrics block wrapped into 4+ toolbar
+              rows and ate the chart height; a one-line summary keeps Equity
+              and Floating P/L visible instead. Desktop keeps the full block. */}
+          <div className="flex items-center gap-x-3 text-xs sm:hidden">
+            <Stat label="Equity" value={metrics ? `$${money(metrics.equity)}` : "—"} />
+            <Stat
+              label="Floating P/L"
+              value={metrics ? `${pnl >= 0 ? "+" : "−"}$${money(Math.abs(pnl))}` : "—"}
+              className={pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-red-400" : undefined}
+            />
+          </div>
+          <div className="hidden flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:flex">
           <Stat label="Balance" value={metrics ? `$${money(metrics.balance)}` : "—"} />
           <Stat label="Equity" value={metrics ? `$${money(metrics.equity)}` : "—"} />
           <Stat
@@ -547,7 +559,8 @@ function Toolbar({
           {metrics?.marginLevel != null && (
             <Stat label="Margin level" value={`${metrics.marginLevel.toFixed(0)}%`} />
           )}
-        </div>
+          </div>
+        </>
       )}
 
       {replayLocked && (

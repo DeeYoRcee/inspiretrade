@@ -173,7 +173,7 @@ export default function MarketPage() {
       </div>
 
       <Tabs defaultValue="market">
-        <TabsList className="glass-panel rounded-full border border-border/60">
+        <TabsList className="glass-panel grid w-full grid-cols-3 rounded-full border border-border/60 sm:inline-flex sm:w-auto">
           <TabsTrigger value="market" className="gap-1.5 rounded-full"><Store className="h-4 w-4" />{t("marketTab")}</TabsTrigger>
           <TabsTrigger value="usernames" className="gap-1.5 rounded-full"><AtSign className="h-4 w-4" />{t("usernamesTab")}</TabsTrigger>
           <TabsTrigger value="mine" className="gap-1.5 rounded-full"><ShoppingBag className="h-4 w-4" />{t("myListings")}</TabsTrigger>

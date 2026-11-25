@@ -1614,6 +1614,12 @@ export function PriceChart({
           // must never touch the series: upsertLocal pushed `undefined` into
           // the bars array and toCandle crashed reading 'time' of it.
           if (!lastBar) return;
+          // P63R — element-integrity gate: every historical variant of the
+          // recurring "reading 'time' of undefined" crash came from a bar
+          // array holding a null/undefined element (shared provider arrays
+          // rebuilt/sorted mid-cycle, partial snapshots). One check here
+          // catches them all before any `.time` read below.
+          if (!Array.isArray(bars) || !bars.length || bars.some((b) => !b || typeof b.time !== "number" || typeof b.close !== "number")) return;
           const prev = barsRef.current;
           // PURE APPEND (new minute/tail fills ≤6 bars, nothing prepended or
           // replaced) → cheap series.update() per new bar: the user's zoom,

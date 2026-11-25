@@ -1,4 +1,4 @@
-const CACHE_NAME = "inspiretrade-v6";
+const CACHE_NAME = "inspiretrade-v7";
 const APP_SHELL = ["/", "/index.html", "/favicon.png"];
 // the alert state lives in its own cache so the background sync can diff
 // fresh news/calendar events even when every tab of the site is closed

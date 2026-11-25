@@ -99,6 +99,80 @@ function ImpactChip({ impact }: { impact: Impact }) {
   );
 }
 
+/** P63R — phone-only event card: the 760px-wide desktop table (kept for md+)
+ *  became an inner horizontal scroller on phones; the card list below is the
+ *  mobile layout for the SAME data (terminal Calendar mode AND the /news
+ *  calendar tab — both mount this workspace). */
+function PhoneEventCard({
+  ev, now, onOpen, onBell,
+}: {
+  ev: CalEventFull;
+  now: number;
+  onOpen: () => void;
+  onBell: () => void;
+}) {
+  const future = ev.date > now;
+  const countdown = future ? `in ${fmtCountdown(ev.date - now)}` : "";
+  const surprise =
+    ev.actual && ev.forecast
+      ? (() => {
+          const a = parseFloat(ev.actual.replace(/[^0-9.\-]/g, ""));
+          const f = parseFloat(ev.forecast.replace(/[^0-9.\-]/g, ""));
+          if (Number.isNaN(a) || Number.isNaN(f)) return null;
+          return a > f ? "above" : a < f ? "below" : "inline";
+        })()
+      : null;
+  return (
+    <button
+      onClick={onOpen}
+      className={cn(
+        "block w-full rounded-xl border border-border/60 bg-card/60 px-3 py-2.5 text-left transition-colors active:bg-secondary/40",
+        ev.impact === "High" && "border-red-900/60 bg-red-950/20",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="whitespace-nowrap text-xs font-semibold text-foreground/80">{timeFmt.format(ev.date)}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          {future ? (
+            <span className="whitespace-nowrap text-xs font-semibold tabular-nums text-primary">{countdown}</span>
+          ) : surprise ? (
+            <span className={cn("whitespace-nowrap text-xs font-semibold", surprise === "above" ? "text-emerald-400" : surprise === "below" ? "text-red-400" : "text-muted-foreground")}>
+              {surprise === "above" ? "▲" : surprise === "below" ? "▼" : "="} released
+            </span>
+          ) : (
+            <span className="whitespace-nowrap text-[10px] text-muted-foreground">released</span>
+          )}
+          <ImpactChip impact={ev.impact} />
+          <span
+            role="button" tabIndex={0}
+            title="Set a custom alert for this event"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-amber-300 active:bg-secondary/40"
+            onClick={(e) => { e.stopPropagation(); onBell(); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onBell(); } }}
+          >
+            <Bell className="h-3.5 w-3.5" />
+          </span>
+        </span>
+      </div>
+      <div className="mt-1 flex items-start gap-1.5">
+        <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-foreground/90">{ev.flag} {ev.currency}</span>
+        <span className="min-w-0 text-[13px] leading-tight text-foreground/90">
+          {ev.title}
+          {ev.impact === "High" && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-red-400" />}
+        </span>
+      </div>
+      <div className="mt-1.5 grid grid-cols-3 gap-2 text-[11px]">
+        <div><p className="text-[9px] uppercase tracking-wide text-muted-foreground">Prev</p><p className="tabular-nums text-muted-foreground">{ev.previous || "—"}</p></div>
+        <div><p className="text-[9px] uppercase tracking-wide text-muted-foreground">Forecast</p><p className="tabular-nums text-foreground/80">{ev.forecast || "—"}</p></div>
+        <div>
+          <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Actual</p>
+          <p className={cn("tabular-nums font-semibold", surprise === "above" ? "text-emerald-400" : surprise === "below" ? "text-red-400" : "text-foreground/80")}>{ev.actual || "—"}</p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function EventRow({
   ev, now, onOpen, onBell,
 }: {
@@ -179,14 +253,14 @@ function FilterBar({
     <div className="flex flex-wrap items-center gap-2">
       <div className="relative">
         <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input value={search} onChange={(e) => onSearch(e.target.value)} placeholder="Search events…" className="cal-panel h-8 w-44 border-border bg-background pl-7 text-xs" />
+        <Input value={search} onChange={(e) => onSearch(e.target.value)} placeholder="Search events…" className="cal-panel h-9 w-44 max-w-full border-border bg-background pl-7 text-xs sm:h-8" />
       </div>
       <div className="flex items-center gap-1">
         {IMPACTS.map((i) => (
           <button
             key={i}
             onClick={() => onToggleImpact(i)}
-            className={cn("rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide transition-opacity", IMPACT_STYLE[i], activeImpacts.has(i) ? "opacity-100" : "opacity-35")}
+            className={cn("rounded border px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide transition-opacity sm:px-1.5 sm:py-0.5 sm:text-[10px]", IMPACT_STYLE[i], activeImpacts.has(i) ? "opacity-100" : "opacity-35")}
             title={`Show ${i} impact events`}
           >
             {i}
@@ -199,7 +273,7 @@ function FilterBar({
             key={c}
             onClick={() => onToggleCurrency(c)}
             className={cn(
-              "rounded border px-1.5 py-0.5 text-[10px] font-semibold transition-colors",
+              "rounded border px-2.5 py-1.5 text-[11px] font-semibold transition-colors sm:px-1.5 sm:py-0.5 sm:text-[10px]",
               activeCurrencies.has(c) ? "border-primary/70 bg-primary/20 text-primary" : "border-border/80 text-muted-foreground hover:text-foreground/90",
             )}
           >
@@ -224,7 +298,9 @@ function EventTable({
     return <div className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">{emptyText}</div>;
   }
   return (
-    <div className="cal-panel min-h-0 flex-1 overflow-auto rounded-lg border border-border">
+    <>
+    {/* desktop: the original table (md+ only — phones get the card list) */}
+    <div className="cal-panel hidden min-h-0 overflow-auto rounded-lg border border-border md:block md:flex-1">
       <table className="w-full min-w-[760px] border-collapse text-left text-xs">
         <thead className="sticky top-0 z-10 bg-card/95 backdrop-blur">
           <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -246,6 +322,14 @@ function EventTable({
         </tbody>
       </table>
     </div>
+    {/* phone: compact event cards, one per row, full width — no inner
+        horizontal scrolling */}
+    <div className="cal-panel min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg border border-border p-2 md:hidden">
+      {rows.map((ev) => (
+        <PhoneEventCard key={ev.id} ev={ev} now={now} onOpen={() => onOpen(ev)} onBell={() => onBell(ev)} />
+      ))}
+    </div>
+    </>
   );
 }
 
@@ -352,7 +436,7 @@ function CalendarTabPane({ symbol }: { symbol?: string }) {
               key={r}
               onClick={() => setRange(r)}
               className={cn(
-                "rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors",
+                "rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors sm:px-2 sm:py-1 sm:text-[11px]",
                 range === r ? "border-primary bg-primary/20 text-primary" : "border-border/80 text-muted-foreground hover:text-foreground/90",
               )}
             >
