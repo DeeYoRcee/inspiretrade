@@ -1,0 +1,397 @@
+{
+ "verdict": {
+  "minutesCompared": 10,
+  "minutesTotal": 10,
+  "absDH": {
+   "mean": 0.0,
+   "max": 0.0
+  },
+  "absDL": {
+   "mean": 0.0,
+   "max": 0.0
+  },
+  "absDO": {
+   "mean": 0.0,
+   "max": 0.0
+  },
+  "absDC": {
+   "mean": 0.0,
+   "max": 0.0
+  },
+  "providerHighAboveRecHigh": 4,
+  "providerLowBelowRecLow": 3,
+  "providerCloseEqualsRecClose(\u00b10.01)": 10
+ },
+ "rows": [
+  {
+   "t": 1795707360,
+   "utc": "2026-11-26T15:36:00Z",
+   "rec": {
+    "o": 3573.300049,
+    "h": 3573.300049,
+    "l": 3573.100098,
+    "c": 3573.100098,
+    "s": 60
+   },
+   "prov": {
+    "o": 3573.3,
+    "h": 3573.3,
+    "l": 3573.1001,
+    "c": 3573.1001
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707360,
+    1795707420
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3573.1001,
+    "endTimestamp": 1795707420,
+    "high": 3573.3,
+    "highLowChangePercent": 0.0055945815791746374,
+    "low": 3573.1001,
+    "open": 3573.3,
+    "openCloseChangePercent": -0.005594268603253871,
+    "startTimestamp": 1795707360
+   }
+  },
+  {
+   "t": 1795707420,
+   "utc": "2026-11-26T15:37:00Z",
+   "rec": {
+    "o": 3571.199951,
+    "h": 3573.300049,
+    "l": 3571.199951,
+    "c": 3573.300049,
+    "s": 60
+   },
+   "prov": {
+    "o": 3571.2,
+    "h": 3573.3,
+    "l": 3571.2,
+    "c": 3573.3
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707420,
+    1795707480
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3573.3,
+    "endTimestamp": 1795707480,
+    "high": 3573.3,
+    "highLowChangePercent": 0.05880376344087041,
+    "low": 3571.2,
+    "open": 3571.2,
+    "openCloseChangePercent": 0.05880376344087041,
+    "startTimestamp": 1795707420
+   }
+  },
+  {
+   "t": 1795707480,
+   "utc": "2026-11-26T15:38:00Z",
+   "rec": {
+    "o": 3571.149902,
+    "h": 3573.300049,
+    "l": 3571.149902,
+    "c": 3573.300049,
+    "s": 60
+   },
+   "prov": {
+    "o": 3571.1499,
+    "h": 3573.3,
+    "l": 3571.1499,
+    "c": 3573.3
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707480,
+    1795707540
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3573.3,
+    "endTimestamp": 1795707540,
+    "high": 3573.3,
+    "highLowChangePercent": 0.06020749787065206,
+    "low": 3571.1499,
+    "open": 3571.1499,
+    "openCloseChangePercent": 0.06020749787065206,
+    "startTimestamp": 1795707480
+   }
+  },
+  {
+   "t": 1795707540,
+   "utc": "2026-11-26T15:39:00Z",
+   "rec": {
+    "o": 3570.5,
+    "h": 3572.800049,
+    "l": 3570.5,
+    "c": 3572.800049,
+    "s": 60
+   },
+   "prov": {
+    "o": 3570.5,
+    "h": 3572.8,
+    "l": 3570.5,
+    "c": 3572.8
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707540,
+    1795707600
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3572.8,
+    "endTimestamp": 1795707600,
+    "high": 3572.8,
+    "highLowChangePercent": 0.06441674835457728,
+    "low": 3570.5,
+    "open": 3570.5,
+    "openCloseChangePercent": 0.06441674835457728,
+    "startTimestamp": 1795707540
+   }
+  },
+  {
+   "t": 1795707600,
+   "utc": "2026-11-26T15:40:00Z",
+   "rec": {
+    "o": 3571.5,
+    "h": 3572.399902,
+    "l": 3571.5,
+    "c": 3572.399902,
+    "s": 60
+   },
+   "prov": {
+    "o": 3571.5,
+    "h": 3572.3999,
+    "l": 3571.5,
+    "c": 3572.3999
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707600,
+    1795707660
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3572.3999,
+    "endTimestamp": 1795707660,
+    "high": 3572.3999,
+    "highLowChangePercent": 0.02519669606607556,
+    "low": 3571.5,
+    "open": 3571.5,
+    "openCloseChangePercent": 0.02519669606607556,
+    "startTimestamp": 1795707600
+   }
+  },
+  {
+   "t": 1795707660,
+   "utc": "2026-11-26T15:41:00Z",
+   "rec": {
+    "o": 3572.399902,
+    "h": 3572.399902,
+    "l": 3572.399902,
+    "c": 3572.399902,
+    "s": 60
+   },
+   "prov": {
+    "o": 3572.3999,
+    "h": 3572.3999,
+    "l": 3572.3999,
+    "c": 3572.3999
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707660,
+    1795707720
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3572.3999,
+    "endTimestamp": 1795707720,
+    "high": 3572.3999,
+    "highLowChangePercent": 0.0,
+    "low": 3572.3999,
+    "open": 3572.3999,
+    "openCloseChangePercent": 0.0,
+    "startTimestamp": 1795707660
+   }
+  },
+  {
+   "t": 1795707720,
+   "utc": "2026-11-26T15:42:00Z",
+   "rec": {
+    "o": 3571.100098,
+    "h": 3571.100098,
+    "l": 3569.800049,
+    "c": 3569.800049,
+    "s": 60
+   },
+   "prov": {
+    "o": 3571.1001,
+    "h": 3571.1001,
+    "l": 3569.8,
+    "c": 3569.8
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707720,
+    1795707780
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3569.8,
+    "endTimestamp": 1795707780,
+    "high": 3571.1001,
+    "highLowChangePercent": 0.03641940724970389,
+    "low": 3569.8,
+    "open": 3571.1001,
+    "openCloseChangePercent": -0.03640614834627373,
+    "startTimestamp": 1795707720
+   }
+  },
+  {
+   "t": 1795707780,
+   "utc": "2026-11-26T15:43:00Z",
+   "rec": {
+    "o": 3572.699951,
+    "h": 3572.699951,
+    "l": 3571.0,
+    "c": 3571.0,
+    "s": 60
+   },
+   "prov": {
+    "o": 3572.7,
+    "h": 3572.7,
+    "l": 3571.0,
+    "c": 3571.0
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707780,
+    1795707840
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3571.0,
+    "endTimestamp": 1795707840,
+    "high": 3572.7,
+    "highLowChangePercent": 0.04760571268551717,
+    "low": 3571.0,
+    "open": 3572.7,
+    "openCloseChangePercent": -0.04758306043048166,
+    "startTimestamp": 1795707780
+   }
+  },
+  {
+   "t": 1795707840,
+   "utc": "2026-11-26T15:44:00Z",
+   "rec": {
+    "o": 3571.0,
+    "h": 3572.600098,
+    "l": 3571.0,
+    "c": 3572.600098,
+    "s": 60
+   },
+   "prov": {
+    "o": 3571.0,
+    "h": 3572.6001,
+    "l": 3571.0,
+    "c": 3572.6001
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707840,
+    1795707900
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3572.6001,
+    "endTimestamp": 1795707900,
+    "high": 3572.6001,
+    "highLowChangePercent": 0.044808176981240865,
+    "low": 3571.0,
+    "open": 3571.0,
+    "openCloseChangePercent": 0.044808176981240865,
+    "startTimestamp": 1795707840
+   }
+  },
+  {
+   "t": 1795707900,
+   "utc": "2026-11-26T15:45:00Z",
+   "rec": {
+    "o": 3570.699951,
+    "h": 3573.100098,
+    "l": 3570.699951,
+    "c": 3573.100098,
+    "s": 60
+   },
+   "prov": {
+    "o": 3570.7,
+    "h": 3573.1001,
+    "l": 3570.7,
+    "c": 3573.1001
+   },
+   "absDH": 0.0,
+   "absDL": 0.0,
+   "absDO": 0.0,
+   "absDC": 0.0,
+   "echoInterval": [
+    1795707900,
+    1795707960
+   ],
+   "echoMatchesRequest": true,
+   "invalid": [],
+   "raw": {
+    "close": 3573.1001,
+    "endTimestamp": 1795707960,
+    "high": 3573.1001,
+    "highLowChangePercent": 0.06721651216849059,
+    "low": 3570.7,
+    "open": 3570.7,
+    "openCloseChangePercent": 0.06721651216849059,
+    "startTimestamp": 1795707900
+   }
+  }
+ ]
+}
