@@ -1,0 +1,128 @@
+{
+ "source": "/home/z/my-project/download/p70_ohlc/recorded-session.jsonl",
+ "session": "sandbox-recorded 2026-11-26 (p70-sample.py, EXACT Phase 67 foldSample + providerMinuteBucket semantics, 1s poll of the same gold-api /price/XAU stream the production client uses)",
+ "instrumentBasis": "XAU/USD spot \u2014 recorded from gold-api /price/XAU 1s stream; provider /ohlc computed from the same provider's internal data \u2192 same instrument & price basis (no offset needed)",
+ "count": 10,
+ "minutes": [
+  {
+   "t": 1795707360,
+   "utc": "2026-11-26T15:36:00Z",
+   "recorded": {
+    "o": 3573.300049,
+    "h": 3573.300049,
+    "l": 3573.100098,
+    "c": 3573.100098,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707360&endTimestamp=1795707420"
+  },
+  {
+   "t": 1795707420,
+   "utc": "2026-11-26T15:37:00Z",
+   "recorded": {
+    "o": 3571.199951,
+    "h": 3573.300049,
+    "l": 3571.199951,
+    "c": 3573.300049,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707420&endTimestamp=1795707480"
+  },
+  {
+   "t": 1795707480,
+   "utc": "2026-11-26T15:38:00Z",
+   "recorded": {
+    "o": 3571.149902,
+    "h": 3573.300049,
+    "l": 3571.149902,
+    "c": 3573.300049,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707480&endTimestamp=1795707540"
+  },
+  {
+   "t": 1795707540,
+   "utc": "2026-11-26T15:39:00Z",
+   "recorded": {
+    "o": 3570.5,
+    "h": 3572.800049,
+    "l": 3570.5,
+    "c": 3572.800049,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707540&endTimestamp=1795707600"
+  },
+  {
+   "t": 1795707600,
+   "utc": "2026-11-26T15:40:00Z",
+   "recorded": {
+    "o": 3571.5,
+    "h": 3572.399902,
+    "l": 3571.5,
+    "c": 3572.399902,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707600&endTimestamp=1795707660"
+  },
+  {
+   "t": 1795707660,
+   "utc": "2026-11-26T15:41:00Z",
+   "recorded": {
+    "o": 3572.399902,
+    "h": 3572.399902,
+    "l": 3572.399902,
+    "c": 3572.399902,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707660&endTimestamp=1795707720"
+  },
+  {
+   "t": 1795707720,
+   "utc": "2026-11-26T15:42:00Z",
+   "recorded": {
+    "o": 3571.100098,
+    "h": 3571.100098,
+    "l": 3569.800049,
+    "c": 3569.800049,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707720&endTimestamp=1795707780"
+  },
+  {
+   "t": 1795707780,
+   "utc": "2026-11-26T15:43:00Z",
+   "recorded": {
+    "o": 3572.699951,
+    "h": 3572.699951,
+    "l": 3571.0,
+    "c": 3571.0,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707780&endTimestamp=1795707840"
+  },
+  {
+   "t": 1795707840,
+   "utc": "2026-11-26T15:44:00Z",
+   "recorded": {
+    "o": 3571.0,
+    "h": 3572.600098,
+    "l": 3571.0,
+    "c": 3572.600098,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707840&endTimestamp=1795707900"
+  },
+  {
+   "t": 1795707900,
+   "utc": "2026-11-26T15:45:00Z",
+   "recorded": {
+    "o": 3570.699951,
+    "h": 3573.100098,
+    "l": 3570.699951,
+    "c": 3573.100098,
+    "s": 60
+   },
+   "providerReq": "/ohlc/XAU?startTimestamp=1795707900&endTimestamp=1795707960"
+  }
+ ]
+}
