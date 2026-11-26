@@ -119,6 +119,48 @@ Recorder ikki mustaqil sessiyada 0 xato, honest gaps, provider-stamp bucketing �
 
 ---
 
+## 9. ADDENDUM — KEY YETKAZISH HOLATI (2026-11-26, test kuni 2-urinish)
+
+### 9.1 Holat: kalit Vercelda bor, lekin sandbox'da YO'Q — test hali ham bloklangan
+Foydalanuvchi tasdiqladi: `GOLD_API_KEY` **Vercel Environment Variables**ga qo'shildi va loyiha redeploy qilindi. Bu production serverless funksiyalar uchun to'g'ri qadam. **LEKIN:** Vercel env o'zgaruvchilari faqat deploy qilingan funksiyalarga injeksiya qilinadi — **bu sandbox shell'ga ko'rinmaydi**. Tekshiruv (qiymatlar chop etilmagan, faqat nomlar/sonlar):
+| Manba | Natija |
+|---|---|
+| Sandbox shell env | `GOLD_API_KEY` = **0 ta** (boshqa GOLD* nomlari ham yo'q) |
+| `.env` fayli | **mavjud emas** (recycle tozalagan) |
+| `/upload/` papkasi | **bo'sh** (fayl yuklanmagan) |
+| Vercel CLI / token | yo'q — `vercel env pull` imkoni yo'q |
+| GitHub (kalit commit qilinmaganligi) | ✓ repo tarixida `GOLD_API_KEY` qiymati yo'q |
+
+Shu holatda keyed test **bajarilmadi** (unauthenticated test ham qilinmadi — foydalanuvchi ko'rsatmasiga binoan). Fail-closed himoya yana bir bor isbotlandi: `bash scripts/p70-ohlc-test.sh` (key'siz) → **"BLOCKED: GOLD_API_KEY is not set — ZERO requests made", exit=1**.
+
+### 9.2 Kalitni test muhitiga XAVFSIZ yetkazish (chatga yozmasdan, GitHubga commit qilmasdan)
+`.gitignore`ga `upload/`, `*.env`, `.git-credentials`, `.netrc` qo'shildi — platforma snapshot commitlari ham kalitli faylni GitHubga tushirib qo'ymaydi.
+
+**A-variant (tavsiya etilgan — eng oddiy):** fayl yuklash orqali
+1. Lokal qurilmangizda `goldapi.env` nomli fayl yarating, ichida bitta qator: `GOLD_API_KEY=<kalit>`.
+2. Uni ish muhitiga **fayl yuklash (upload)** orqali bering (chat matniga EMAS).
+3. Men faylni qiymatini chop etmasdan o'qib, shu buyruq bilan testni ishga tushiraman:
+```bash
+GOLD_API_KEY="$(python3 -c "import sys; [print(l.split('=',1)[1].strip()) for l in open(sys.argv[1]) if l.startswith('GOLD_API_KEY=')]" upload/goldapi.env)" bash scripts/p70-ohlc-test.sh
+```
+Kalit faqat bir martalik jarayon env'ida yashaydi; hech qanday log/report/commitga yozilmaydi.
+
+**B-variant:** o'z lokal kloningizda `vercel env pull vercel.env` bajaring (vercel CLI bilan) va shu faylni upload qiling — natija xuddi A-variantday ishlanadi (`vercel.env` ham `*.env` bilan ignore qilingan).
+
+**C-variant:** sandbox'dan o'zim pull qilishim uchun scoped Vercel token faylini upload qilish — mumkin, lekin token kengroq ruxsat beradi; A/B yetarli.
+
+### 9.3 Key yetkazilgach nima bo'ladi (ketma-ketlik, ~90s)
+1. `p70-ohlc-test.sh` so'nggi 10 completed minutni tanlaydi (bugungi recorded session 15:36–15:45 UTC, `selection.json`da).
+2. Aynan **10 ta** `GET /ohlc/XAU?startTimestamp={t}&endTimestamp={t+60}` so'rovi, 7s oralikda, `x-api-key` headerda; raw javoblar `download/p70_ohlc/provider/*.json`ga saqlanadi.
+3. 401/403/429/5xx → **darhol STOP** (kvota yonmaydi); kalit hech qachon chop etilmaydi.
+4. `p70-compare.py` jadval quradi: rec O/H/L/C vs provider O/H/L/C, |ΔH|/|ΔL|/|ΔC|, echo-interval mosligi, missing/invalid bayroqlar — offset/normalizatsiya yo'q, ixtiro qilingan qiymat yo'q.
+5. Natija §4 savollariga yoziladi va tavsiya §4.6 bo'yicha yangilanadi.
+
+### 9.4 Ushbu urinishda production holati
+O'zgarmagan: gold-api feed, recorderlar, RTDB shema, tarix pipeline, chart, konfiguratsiya. **0 ta** deploy, **0 ta** production yozuv. Repo'ga faqat `.gitignore` qatlamlari + bu addendum qo'shildi (commit: key-yetkazish-xavfsizligi).
+
+---
+
 ## 5. STRICT PROTECTION — BAJARILGAN HOLAT
 - Production'ga **0 ta** yozuv: faqat 2 ta GET probe (ikkalasi 401) + cheksiz /price GET (provider qoidalari bo'yicha 1 req/s ≤, P67-measured xatti-harakat).
 - Live feed, client/server recorder, RTDB shema, tarix pipeline, chart, konfiguratsiya — **o'zgarmagan**. Premium **sotib olinmagan**, deploy **yo'q**.

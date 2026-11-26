@@ -15,3 +15,7 @@ vitest.config.cts.timestamp-*.mjs
 dist/
 scripts/phase30-cursor-*.json
 .env.local
+upload/
+*.env
+.git-credentials
+.netrc
