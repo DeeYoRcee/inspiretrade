@@ -271,6 +271,11 @@ export function aggregateBars(bars: Bar[], factorMinutes: number, anchorSec?: nu
   const out: Bar[] = [];
   let cur: Bar | null = null;
   for (const b of bars) {
+    // PHASE 67 hotfix — provider arrays have repeatedly carried null/undefined
+    // ELEMENTS (the recurring "Cannot read properties of undefined (reading
+    // 'time')" crash: this loop was the unguarded `b.time`). A malformed
+    // element is skipped — one bar lost, never the page.
+    if (!b || typeof b !== "object" || !Number.isFinite(b.time)) continue;
     const t = foldBucket(b.time, bucket, anchorSec);
     if (!cur || cur.time !== t) {
       if (cur) out.push(cur);

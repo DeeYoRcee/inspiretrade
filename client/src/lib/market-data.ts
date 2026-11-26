@@ -495,6 +495,12 @@ class QuotesProvider {
   private lastSpotCatchupAt = new Map<string, number>();
   private spotOffs = new Map<string, (() => void)[]>(); // per-key unsubscribes from the shared spot ticker
   private spotProviderBars = new Map<string, number>(); // code → Twelve Data backfill bars
+  // PHASE 67 §8 (MEDIUM-10) — instance-level server-candle cache: full window
+  // read every 5 min, ordered tail reads in between (per-call closures reset
+  // on every resync, which made the tail path inert and kept full reads).
+  private serverSpotCache = new Map<string, SpotCandle[]>();
+  private spotServerFullAt = new Map<string, number>();
+  private SERVER_FULL_TTL_MS = 5 * 60000;
   private identity = new Map<string, string>(); // "spot" | "futures" — what the response actually represented
   // Phase 24 D3: scroll-back extensions kept SEPARATELY and re-merged into
   // every loadNetwork result — the poll replaces this.history from the wire,
@@ -822,30 +828,31 @@ class QuotesProvider {
     // every later resync/catch-up sends `from=<newest−180s>` so the server
     // answers with an ordered TAIL query (~a few keys) instead of streaming
     // the whole ~90k-key store on every 30s poll. The merged view lives in
-    // serverSpotCache — older candles survive the tail reads, the store's
-    // 65-day depth is never lost, and RTDB read volume collapses.
-    const serverSpotCache = new Map<string, SpotCandle[]>();
-    let lastFullServerRead = 0;
-    const SERVER_FULL_TTL_MS = 5 * 60000;
+    // the INSTANCE-level serverSpotCache/spotServerFullAt (a per-call closure
+    // reset on every resync made the tail path inert) — older candles
+    // survive the tail reads, the store's 65-day depth is never lost, and
+    // RTDB read volume collapses.
     const loadServerCandles = async (): Promise<SpotCandle[]> => {
-      const cached = serverSpotCache.get(code);
-      const full = !cached || Date.now() - lastFullServerRead > SERVER_FULL_TTL_MS;
+      const cached = this.serverSpotCache.get(code);
+      const full = !cached || Date.now() - (this.spotServerFullAt.get(code) ?? 0) > this.SERVER_FULL_TTL_MS;
       try {
         const fromQ = full ? "" : `&from=${Math.max(0, (cached && cached.length ? cached[cached.length - 1].t : now) - 180)}`;
         const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}${fromQ}`);
         if (res?.ok && Array.isArray(res.candles)) {
-          const incoming = (res.candles as SpotCandle[]).filter((c: any) => validSpotCandle(c, now, 30 * 86400));
+          const incoming = (res.candles as SpotCandle[])
+            .filter((c: any) => c && Number.isFinite(c.t))
+            .filter((c: SpotCandle) => validSpotCandle(c, now, 30 * 86400));
           const providerBars = incoming.filter((c: SpotCandle) => c.s === 0).length;
           if (providerBars > 0) this.spotProviderBars.set(code, providerBars);
           if (full || !cached) {
-            serverSpotCache.set(code, incoming);
+            this.serverSpotCache.set(code, incoming);
           } else {
             // tail read — merge into the cached full window (server rows are
             // the authority for their own minutes; mergeSpotSeries envelopes)
-            serverSpotCache.set(code, mergeSpotSeries(cached, incoming));
+            this.serverSpotCache.set(code, mergeSpotSeries(cached, incoming));
           }
-          if (full) lastFullServerRead = Date.now();
-          return serverSpotCache.get(code)!;
+          if (full) this.spotServerFullAt.set(code, Date.now());
+          return this.serverSpotCache.get(code)!;
         }
       } catch { /* server unavailable → local records only */ }
       return cached ?? [];

@@ -154,6 +154,7 @@ function aggregateBars(bars, factorMinutes, anchorSec) {
   const out = [];
   let cur = null;
   for (const b of bars) {
+    if (!b || typeof b !== "object" || !Number.isFinite(b.time)) continue;
     const t = foldBucket(b.time, bucket, anchorSec);
     if (!cur || cur.time !== t) {
       if (cur) out.push(cur);
@@ -593,6 +594,7 @@ function parseShardRow(row) {
 }
 var finitePositive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
 function checkBar(b) {
+  if (!b || typeof b !== "object") return { ok: false, repaired: false, reason: "not-an-object" };
   const { open: o, high: h, low: l, close: c } = b;
   if (![o, h, l, c].every(finitePositive)) {
     return { ok: false, repaired: false, reason: "non-finite-price" };

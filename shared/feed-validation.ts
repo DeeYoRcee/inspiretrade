@@ -62,7 +62,8 @@ export type BarProblem =
   | "non-positive-price"
   | "high-low-inverted"
   | "high-below-body"
-  | "low-above-body";
+  | "low-above-body"
+  | "not-an-object";
 
 export interface BarCheck {
   /** false → the bar must be rejected outright */
@@ -77,6 +78,11 @@ const finitePositive = (v: unknown): v is number =>
 
 /** Validate one bar against the OHLC rules. Never mutates the input. */
 export function checkBar(b: RawBar): BarCheck {
+  // PHASE 67 hotfix — provider responses have repeatedly carried null/undefined
+  // ELEMENTS (the recurring "reading 'time'" terminal-crash class: P63R fixed
+  // dedupeSort, but every other raw entry point still destructured blindly).
+  // A malformed ELEMENT is one dropped bar — never a page crash.
+  if (!b || typeof b !== "object") return { ok: false, repaired: false, reason: "not-an-object" };
   const { open: o, high: h, low: l, close: c } = b;
   if (![o, h, l, c].every(finitePositive)) {
     return { ok: false, repaired: false, reason: "non-finite-price" };

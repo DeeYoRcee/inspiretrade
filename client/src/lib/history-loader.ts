@@ -132,7 +132,12 @@ async function loadProxyRange(
     );
     if (!res?.ok) throw new Error(res?.detail || "History unavailable for this window");
     if (res.source) source = res.source;
-    let bars: Bar[] = res.bars || [];
+    // PHASE 67 hotfix — P63R completion: period responses have repeatedly
+    // carried null/undefined ELEMENTS. P63R guarded only the final
+    // dedupeSort, but the aggregateBars call below ran FIRST on the raw
+    // response and crashed the page with "reading 'time'" on M5+ timeframes
+    // (replay/backtest). Filter malformed elements before any processing.
+    let bars: Bar[] = (res.bars || []).filter((b: any) => b && Number.isFinite(b?.time));
     // Phase 59: never re-aggregate bars that are ALREADY at the target
     // granularity — re-folding Yahoo's weekly stamps through the epoch floor
     // re-anchored weeks to Thursday and months to a drifting 30-day grid,

@@ -24,6 +24,7 @@ import {
 import { shouldRetryFetch, isRetryableStatus } from "../shared/fetch-policy.ts";
 import { aggregateBars } from "../shared/terminal.ts";
 import { closedIntervals } from "../shared/market-hours.ts";
+import { checkBar, validateBars } from "../shared/feed-validation.ts";
 
 // ---------------------------------------------------------------------------
 // recorder fold — the shared server/client semantics
@@ -228,6 +229,44 @@ test("aggregation: partial bucket folds without inventing bars (honest gaps stay
   assert.equal(m5.length, 1); // one M5 bucket, NOT fabricated middle minutes
   assert.equal(m5[0].low, 4119);
   assert.equal(m5[0].high, 4125);
+});
+
+// ---------------------------------------------------------------------------
+// PHASE 67 hotfix — the "reading 'time'" crash class: provider arrays with
+// null/undefined ELEMENTS must drop one bar, never crash the terminal.
+// ---------------------------------------------------------------------------
+
+test("checkBar: null/undefined elements are rejected, not destructured", () => {
+  assert.equal(checkBar(null as any).ok, false);
+  assert.equal(checkBar(undefined as any).ok, false);
+  assert.equal(checkBar({} as any).ok, false); // no prices → non-finite
+  assert.equal(checkBar({ time: 1, open: 4120, high: 4121, low: 4119, close: 4120.5 } as any).ok, true);
+});
+
+test("validateBars: an array with null/undefined elements never throws", () => {
+  const good = { time: 1795540800, open: 4120, high: 4121, low: 4119, close: 4120.5, volume: 10 };
+  const r = validateBars([null, undefined, good, { time: 2, open: 1, high: 2, low: 3, close: 1.5 }] as any);
+  assert.equal(r.bars.length, 1); // only the fully valid bar survives
+  assert.equal(r.bars[0].time, 1795540800);
+});
+
+test("aggregateBars: null/undefined elements are skipped, good bars still fold", () => {
+  const base = 1795540680; // aligned to the 3-minute grid (180s buckets)
+  const m1: any[] = [
+    null,
+    undefined,
+    { time: base, open: 4120, high: 4121, low: 4119, close: 4120.5, volume: 10 },
+    { time: base + 60, open: 4121, high: 4122, low: 4120, close: 4121.5, volume: 12 },
+    { time: base + 120, open: 4122, high: 4123, low: 4121, close: 4122.5, volume: 14 },
+    null,
+    { time: NaN, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+  ];
+  const m3 = aggregateBars(m1, 3);
+  assert.equal(m3.length, 1);
+  assert.equal(m3[0].time, base);
+  assert.equal(m3[0].high, 4123);
+  assert.equal(m3[0].low, 4119);
+  assert.equal(m3[0].volume, 36);
 });
 
 // ---------------------------------------------------------------------------

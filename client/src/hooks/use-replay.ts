@@ -63,6 +63,13 @@ export interface ReplayClosedEvent {
 }
 
 function makeForming(bar: Bar, progress: number, tfSec: number): { bar: Bar; price: number; simTime: number } {
+  // PHASE 67 hotfix — a malformed/undefined bar element must degrade to a
+  // neutral placeholder instead of crashing the terminal ("reading 'time'"):
+  // the previous good bar stays on screen until the next valid one arrives.
+  if (!bar || !Number.isFinite(bar.time)) {
+    const t = Math.floor(Date.now() / 1000 / tfSec) * tfSec;
+    return { bar: { time: t, open: 0, high: 0, low: 0, close: 0, volume: 0 }, price: 0, simTime: t * 1000 };
+  }
   const points = barPathPoints(bar);
   const segs = points.length - 1;
   const pos = Math.min(segs, Math.max(0, progress * segs));
@@ -94,7 +101,11 @@ function rebuildWallet(
 ): ReplayWallet {
   let w = newReplayWallet(wallet0.balance);
   w.seq = wallet0.seq;
-  for (let i = 0; i <= lastIdx; i++) w = stepReplayBar(w, spec, cfg, bars[i]).wallet;
+  for (let i = 0; i <= lastIdx; i++) {
+    const bar = bars[i];
+    if (!bar || !Number.isFinite(bar.time)) continue; // malformed element — skip, never crash
+    w = stepReplayBar(w, spec, cfg, bar).wallet;
+  }
   w.seq = Math.max(w.seq, wallet0.seq);
   return w;
 }
@@ -408,7 +419,9 @@ export function useReplay() {
         remaining -= stepSize;
         if (p >= 0.9999) {
           // candle complete — run the broker for this bar
-          const step = stepReplayBar(w, spec, cfgRef.current, list[cur]);
+          const bar = list[cur];
+          if (!bar || !Number.isFinite(bar.time)) { cur += 1; p = 0; continue; } // malformed element — skip, never crash
+          const step = stepReplayBar(w, spec, cfgRef.current, bar);
           w = step.wallet;
           events.push(...step.closed.map((c) => c.trade));
           cur += 1;
@@ -476,7 +489,9 @@ export function useReplay() {
       const specLocal = sessionRef.current ? getInstrument(sessionRef.current.symbol) : null;
       if (specLocal) {
         for (let i = cur; i < clamped; i++) {
-          const step = stepReplayBar(w, specLocal, cfgRef.current, list[i]);
+          const bar = list[i];
+          if (!bar || !Number.isFinite(bar.time)) continue; // malformed element — skip, never crash
+          const step = stepReplayBar(w, specLocal, cfgRef.current, bar);
           w = step.wallet;
           if (step.closed.length) {
             const sid = sessionRef.current?.id ?? "";
