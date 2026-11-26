@@ -17,7 +17,7 @@
  * · Mobile: one panel at a time with a tab bar — never tiny unreadable charts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PriceChart, type PriceMark } from "@/components/terminal/PriceChart";
+import { PriceChart, ChartErrorBoundary, type PriceMark } from "@/components/terminal/PriceChart";
 import type { ServerOrder, ServerPosition } from "@/lib/trading-api";
 import { LAYOUTS, LAYOUT_ORDER, dividers, gridStyle, normWeights, pointerPct, pointerPctY, resizePair, type DividerSeg, type LayoutId } from "@/lib/chart-layouts";
 import { loadLastActive, saveLastActive } from "@/lib/workspace-presets";
@@ -319,35 +319,40 @@ export function MultiChartWorkspace({
           gridRow: `${cell.r + 1} / span ${cell.rs ?? 1}`,
         }}
       >
-        <PriceChart
-          symbol={p.symbol}
-          timeframe={p.timeframe}
-          marks={i === 0 && replayMarks ? replayMarks : marksFor(p.symbol)}
-          accountId={i === 0 && replayBars ? null : accountId}
-          positions={(i === 0 && replayPositions ? replayPositions : positions).filter((pos) => pos.symbol === p.symbol) as ServerPosition[]}
-          orders={orders.filter((o) => o.symbol === p.symbol)}
-          onModifyPosition={onModifyPosition}
-          onModifyOrder={onModifyOrder}
-          onCancelOrder={onCancelOrder}
-          onClosePosition={onClosePosition}
-          onSymbolChange={(s) => setPanelSymbol(i, s)}
-          onTimeframeChange={(tf) => setPanelTimeframe(i, tf)}
-          onOpenAlerts={onOpenAlerts}
-          onOpenReplay={onOpenReplay}
-          accountBalance={accountBalance}
-          panelKey={`mc-${i}`}
-          chartType={i === 0 ? null : p.chartType ?? null}
-          onChartTypeChange={i === 0 ? null : (t) => setPanelType(i, t)}
-          {...(i === 0 ? {
-            replaySelect,
-            onReplaySelect: onReplaySelect ?? undefined,
-            onReplaySelectCancel: onReplaySelectCancel ?? undefined,
-            replayBars,
-            replayCursor,
-            replayForming,
-            replayStatus,
-          } : {})}
-        />
+        {/* P78 — a crashing chart must not take the whole site down through the
+            app-level boundary: this isolates the crash to its own tile and
+            offers a one-click restart that also re-applies the saved theme */}
+        <ChartErrorBoundary className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+          <PriceChart
+            symbol={p.symbol}
+            timeframe={p.timeframe}
+            marks={i === 0 && replayMarks ? replayMarks : marksFor(p.symbol)}
+            accountId={i === 0 && replayBars ? null : accountId}
+            positions={(i === 0 && replayPositions ? replayPositions : positions).filter((pos) => pos.symbol === p.symbol) as ServerPosition[]}
+            orders={orders.filter((o) => o.symbol === p.symbol)}
+            onModifyPosition={onModifyPosition}
+            onModifyOrder={onModifyOrder}
+            onCancelOrder={onCancelOrder}
+            onClosePosition={onClosePosition}
+            onSymbolChange={(s) => setPanelSymbol(i, s)}
+            onTimeframeChange={(tf) => setPanelTimeframe(i, tf)}
+            onOpenAlerts={onOpenAlerts}
+            onOpenReplay={onOpenReplay}
+            accountBalance={accountBalance}
+            panelKey={`mc-${i}`}
+            chartType={i === 0 ? null : p.chartType ?? null}
+            onChartTypeChange={i === 0 ? null : (t) => setPanelType(i, t)}
+            {...(i === 0 ? {
+              replaySelect,
+              onReplaySelect: onReplaySelect ?? undefined,
+              onReplaySelectCancel: onReplaySelectCancel ?? undefined,
+              replayBars,
+              replayCursor,
+              replayForming,
+              replayStatus,
+            } : {})}
+          />
+        </ChartErrorBoundary>
       </div>
     );
   };

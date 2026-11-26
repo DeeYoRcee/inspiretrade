@@ -91,11 +91,19 @@ export function ChartToolbar({
     try { return String(JSON.parse(localStorage.getItem("it_chart_settings") || "{}").bgImage ?? ""); }
     catch { return ""; }
   };
-  const applyBgImage = (id: string) => {
+  // P78 — user-settable background transparency rides the same blob
+  const readBgOpacity = (): number | undefined => {
+    try {
+      const v = JSON.parse(localStorage.getItem("it_chart_settings") || "{}").bgOpacity;
+      return typeof v === "number" ? Math.min(1, Math.max(0, v)) : undefined;
+    } catch { return undefined; }
+  };
+  const applyBgImage = (id: string, opacity?: number) => {
     let next: ChartSettings;
     try {
-      next = { ...JSON.parse(localStorage.getItem("it_chart_settings") || "{}"), bgImage: id };
-    } catch { next = { bgImage: id } as ChartSettings; }
+      const prev = JSON.parse(localStorage.getItem("it_chart_settings") || "{}") as Partial<ChartSettings>;
+      next = { ...prev, bgImage: id, bgOpacity: opacity ?? (typeof prev.bgOpacity === "number" ? prev.bgOpacity : 0.45) } as ChartSettings;
+    } catch { next = { bgImage: id, bgOpacity: opacity ?? 0.45 } as ChartSettings; }
     applyChartSettings(user?.uid, next); // P64R4 — cloud-save included
   };
 
@@ -213,9 +221,11 @@ export function ChartToolbar({
                 Background {!bgIsVip && <Lock className="h-3 w-3" />}
               </p>
               {[
-                { id: "", label: "None" },
-                { id: "/backgrounds/skywalker.jpg", label: "Skywalker" },
-                { id: "/backgrounds/knight.jpg", label: "Knight ✦" },
+                { id: "", label: "None", fx: "" },
+                // P78 user request — static skywalker/knight JPGs retired;
+                // two animated CSS backgrounds (always fit the chart area)
+                { id: "fx:forge", label: "Knight Forge ✦", fx: "it-bgfx-forge" },
+                { id: "fx:aurora", label: "Night Aurora ✦", fx: "it-bgfx-aurora" },
               ].map((o) => {
                 const active = readBgImage() === o.id;
                 return (
@@ -235,14 +245,37 @@ export function ChartToolbar({
                       active ? "bg-slate-800 text-primary" : "text-slate-300",
                     )}
                   >
-                    {o.id
-                      ? <img src={o.id} alt="" className="h-4 w-7 shrink-0 rounded-sm border border-slate-700 object-cover" />
+                    {o.fx
+                      ? (
+                        <span className="relative h-4 w-7 shrink-0 overflow-hidden rounded-sm border border-slate-700">
+                          <span className={cn("it-bgfx", o.fx)} />
+                        </span>
+                      )
                       : <span className="h-4 w-7 shrink-0 rounded-sm border border-slate-700 bg-slate-800" />}
                     {o.label}
                   </button>
                 );
               })}
-              <p className="px-2 pb-1 pt-1 text-[9px] leading-snug text-slate-500">VIP only — image behind the candles</p>
+              {readBgImage() && (
+                <label className="mt-1 block px-2 pb-1 pt-0.5 text-[10px] text-slate-400">
+                  <span className="mb-0.5 flex items-center justify-between">
+                    <span>Transparency</span>
+                    <span className="text-slate-300">{Math.round((readBgOpacity() ?? 0.45) * 100)}%</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round((readBgOpacity() ?? 0.45) * 100)}
+                    onChange={(e) => {
+                      if (!bgIsVip) return;
+                      applyBgImage(readBgImage(), Number(e.target.value) / 100);
+                    }}
+                    className="w-full accent-amber-400"
+                  />
+                </label>
+              )}
+              <p className="px-2 pb-1 pt-1 text-[9px] leading-snug text-slate-500">VIP only — animated layer behind the candles</p>
             </div>
           )}
         </div>

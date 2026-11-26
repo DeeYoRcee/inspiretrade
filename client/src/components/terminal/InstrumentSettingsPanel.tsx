@@ -307,16 +307,18 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
               </div>
               <div className="mt-1.5 grid grid-cols-3 gap-1.5">
                 {[
-                  { id: "", label: "None", src: "" },
-                  { id: "/backgrounds/skywalker.jpg", label: "Skywalker", src: "/backgrounds/skywalker.jpg" },
-                  { id: "/backgrounds/knight.jpg", label: "Knight", src: "/backgrounds/knight.jpg", anim: true },
+                  { id: "", label: "None", fx: "" },
+                  // P78 user request — static skywalker/knight JPGs retired;
+                  // two animated CSS backgrounds (always fit the chart area)
+                  { id: "fx:forge", label: "Knight Forge", fx: "it-bgfx-forge" },
+                  { id: "fx:aurora", label: "Night Aurora", fx: "it-bgfx-aurora" },
                 ].map((o) => {
                   const active = (global.bgImage ?? "") === o.id;
                   return (
                     <button
                       key={o.label}
                       disabled={!isVip}
-                      title={isVip ? `${o.label}${o.anim ? " (animated)" : ""}` : "VIP only — unlock on the Premium page"}
+                      title={isVip ? `${o.label}${o.fx ? " (animated)" : ""}` : "VIP only — unlock on the Premium page"}
                       onClick={() => {
                         if (!isVip) {
                           toast({ title: "VIP background", description: "Chart backgrounds are part of Premium — unlock on the Premium page." });
@@ -331,19 +333,39 @@ export function InstrumentSettingsPanel({ symbol, open, onClose }: { symbol: str
                         !isVip && "opacity-50",
                       )}
                     >
-                      {o.src ? (
-                        <img src={o.src} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                      {o.fx ? (
+                        <span className={cn("it-bgfx", o.fx)} />
                       ) : (
                         <span className="absolute inset-0 flex items-center justify-center bg-slate-900 text-[10px] font-semibold text-slate-400">None</span>
                       )}
                       <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-[9px] font-semibold text-white">
-                        {o.label}{o.anim && isVip ? " ✦" : ""}
+                        {o.label}{o.fx && isVip ? " ✦" : ""}
                       </span>
                     </button>
                   );
                 })}
               </div>
-              <p className="mt-1 text-[10px] text-muted-foreground">The image sits behind the candles (chart colors go transparent). VIP only.</p>
+              {(global.bgImage ?? "") !== "" && (
+                <label className="mt-2 block text-[10px] text-muted-foreground">
+                  <span className="mb-0.5 flex items-center justify-between">
+                    <span>Background transparency</span>
+                    <span className="text-foreground">{Math.round((global.bgOpacity ?? 0.45) * 100)}%</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    disabled={!isVip}
+                    value={Math.round((global.bgOpacity ?? 0.45) * 100)}
+                    onChange={(e) => {
+                      if (!isVip) return;
+                      setGlobalCfg({ bgOpacity: Number(e.target.value) / 100 });
+                    }}
+                    className="w-full accent-amber-400"
+                  />
+                </label>
+              )}
+              <p className="mt-1 text-[10px] text-muted-foreground">The animated layer sits behind the candles (chart colors go transparent). VIP only.</p>
             </div>
             <Row label="Grid" hint="Background grid lines">
               <Toggle on={per.grid ?? global.grid} onChange={(v) => setPer({ grid: v })} />

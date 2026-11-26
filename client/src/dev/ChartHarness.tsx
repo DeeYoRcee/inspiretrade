@@ -6,6 +6,7 @@
  */
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PriceChart } from "@/components/terminal/PriceChart";
 import type { Timeframe } from "@shared/terminal";
 import "../index.css";
@@ -44,4 +45,10 @@ function ChartHarness() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<ChartHarness />);
+// P78 — react-query provider required by PriceChart's VIP-gated toolbar
+const harnessQc = new QueryClient();
+createRoot(document.getElementById("root")!).render(
+  <QueryClientProvider client={harnessQc}>
+    <ChartHarness />
+  </QueryClientProvider>,
+);

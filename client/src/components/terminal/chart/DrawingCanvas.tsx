@@ -1271,9 +1271,12 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, {
 
   return (
     // fully transparent to pointer events — the wrapper (attachRef) feeds us
-    // capture-phase events; this layer only renders. z-5 keeps the overlay
-    // above the lightweight-charts layers but below the legend/status chips.
-    <div ref={hostRef} className="pointer-events-none absolute inset-0 z-[5]">
+    // capture-phase events; this layer only renders. P78 FIX: z-15 — since
+    // P64R2 the main chart host is z-10 with an OPAQUE canvas (bgColor), so
+    // the old z-5 left every drawing UNDER the candles (invisible: users drew
+    // and nothing appeared). z-15 sits above all chart panes but below the
+    // replay hint (z-30) and dialogs (z-40+).
+    <div ref={hostRef} className="pointer-events-none absolute inset-0 z-[15]">
       <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
       {textDraft && (
         <div

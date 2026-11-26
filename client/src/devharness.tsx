@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PriceChart } from "@/components/terminal/PriceChart";
 import type { Timeframe } from "@shared/terminal";
 import "./index.css";
@@ -34,4 +35,11 @@ function Harness() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<Harness />);
+// P78 — ChartToolbar's VIP gating (usePremiumStatus) needs react-query:
+// wrap the harness so the real PriceChart mounts without the auth gate
+const harnessQc = new QueryClient();
+createRoot(document.getElementById("root")!).render(
+  <QueryClientProvider client={harnessQc}>
+    <Harness />
+  </QueryClientProvider>,
+);

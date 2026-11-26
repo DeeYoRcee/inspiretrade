@@ -14,7 +14,7 @@
  * heartbeat and every live tick cause ZERO React re-renders here.
  * Real feeds only: on failure an error state with retry is shown, never fake data.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   createChart, ColorType, CrosshairMode, LineStyle, PriceScaleMode,
   type IChartApi, type IPriceLine, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
@@ -164,7 +164,81 @@ function hexAlpha(hex: string, a: number): string {
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
+  // P78 crash guard — a malformed stored color produced rgba(NaN,…) which
+  // lightweight-charts rejects and the settings effect threw from inside the
+  // render pipeline (page fell to the error boundary, "theme went weird")
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return `rgba(0,0,0,${a})`;
   return `rgba(${r},${g},${b},${a})`;
+}
+
+// P78 crash guard — sanitize ANY user-stored/persisted color before it reaches
+// lightweight-charts applyOptions. A tampered or stale blob value (empty
+// string, "undefined", truncated hex) used to throw inside the settings
+// effect and crash the whole chart/page. Unrecognized values fall back.
+const COLOR_RE = /^(#[0-9a-fA-F]{3,8}|rgba?\(\s*[\d.%\s,/-]+\s*\)|[a-zA-Z]+)$/;
+function safeColor(v: string | undefined | null, fallback: string): string {
+  if (typeof v === "string" && v.length > 0 && v.length <= 64 && COLOR_RE.test(v.trim())) return v.trim();
+  return fallback;
+}
+
+// P78 — chart background picks: the static "/backgrounds/{skywalker,knight}.jpg"
+// entries are retired. Old persisted ids remap onto the animated CSS
+// replacements so no user sees a broken-image layer; arbitrary URLs still work.
+function normalizeChartBg(id: string | undefined | null): string {
+  if (!id) return "";
+  if (id.includes("skywalker")) return "fx:aurora";
+  if (id.includes("knight")) return "fx:forge";
+  return id;
+}
+
+/**
+ * P78 user request — the chart used to crash THROUGH to the app-level error
+ * boundary, which replaced the whole site with "Something broke" (and the
+ * half-updated chart canvas looked like the "theme went weird"). This boundary
+ * isolates a crashing chart to its own tile: the rest of the site (panels,
+ * trading, watchlist) keeps working, and "Restart chart" remounts the chart
+ * fresh — which also re-applies the saved theme from scratch, fixing the
+ * "weird theme after crash" state.
+ */
+export class ChartErrorBoundary extends Component<
+  { children: ReactNode; className?: string },
+  { error: Error | null; epoch: number }
+> {
+  state = { error: null as Error | null, epoch: 0 };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: unknown) {
+    // keep the real stack in the console — the boundary is a recovery path,
+    // not a mute wrapper (same contract as AppErrorBoundary, P63R)
+    console.error("[InspireTrade] chart crash:", error);
+    console.error("[InspireTrade] chart crash stack:", error.stack || "(no stack)");
+    console.error("[InspireTrade] chart component stack:", info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className={this.props.className || "flex h-full min-h-[160px] flex-col items-center justify-center gap-2 p-4 text-center"}>
+          <div className="text-sm font-semibold text-red-400">Chart crashed</div>
+          <div className="max-w-md text-[11px] leading-relaxed text-slate-400">
+            {this.state.error.message || String(this.state.error)}
+          </div>
+          <button
+            onClick={() => this.setState((s) => ({ error: null, epoch: s.epoch + 1 }))}
+            className="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+          >
+            Restart chart
+          </button>
+        </div>
+      );
+    }
+    // key on the remount epoch: Restart re-creates the chart subtree fresh
+    // (new createChart effect run) while the surrounding page state survives
+    return <Fragment key={this.state.epoch}>{this.props.children}</Fragment>;
+  }
 }
 
 function createMainSeries(chart: IChartApi, type: ChartType, s: { upColor: string; downColor: string }): { series: MainSeriesApi; kind: MainKind } {
@@ -523,6 +597,9 @@ export function PriceChart({
   const mergedSettingsRef = useRef<ChartSettings>({ ...DEFAULT_SETTINGS });
   const mergedSettings: ChartSettings = useMemo(() => ({
     ...settings,
+    // P78 — retired skywalker/knight ids remap to the animated fx picks; the
+    // transparency slider (bgOpacity) rides the global settings blob
+    bgImage: normalizeChartBg(settings.bgImage),
     grid: perInstrument.grid ?? settings.grid,
     bidAsk: perInstrument.bidAsk ?? settings.bidAsk,
     upColor: perInstrument.upColor ?? settings.upColor,
@@ -830,34 +907,42 @@ export function PriceChart({
     const chart = chartRef.current;
     const candle = candleRef.current;
     if (!chart || !candle) return;
-    chart.applyOptions({
-      // Phase 34: appearance (background / grid / crosshair) now user-settable
-      // P64R2 — with a VIP background image the chart canvas must be transparent
-      layout: { background: { type: ColorType.Solid, color: mergedSettings.bgImage ? "rgba(0,0,0,0)" : (mergedSettings.bgColor ?? COLORS.bg) }, textColor: mergedSettings.textColor ?? COLORS.text, fontSize: 11 },
-      grid: mergedSettings.grid
-        ? { vertLines: { color: mergedSettings.gridColor ?? COLORS.grid }, horzLines: { color: mergedSettings.gridColor ?? COLORS.grid } }
-        : { vertLines: { visible: false }, horzLines: { visible: false } },
-      crosshair: {
-        // LC's built-in Magnet mode snaps the horizontal line to the CLOSE
-        // price only (library contract) — the user saw it "stick only to the
-        // candle body". The crosshair mode stays Normal and the full-OHLC
-        // magnet below (magnetCrosshair effect) does the real snapping.
-        mode: CrosshairMode.Normal,
-        vertLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
-        horzLine: { visible: true, labelVisible: true, color: mergedSettings.crosshairColor ?? "rgba(224,229,237,0.35)", labelBackgroundColor: "#2a2e39" },
-      },
-    });
-    candle.applyOptions({
-      upColor: mergedSettings.upColor, downColor: mergedSettings.downColor,
-      borderUpColor: mergedSettings.borderUpColor ?? mergedSettings.borderColor ?? mergedSettings.upColor,
-      borderDownColor: mergedSettings.borderDownColor ?? mergedSettings.borderColor ?? mergedSettings.downColor,
-      wickUpColor: mergedSettings.wickUpColor ?? mergedSettings.wickColor ?? mergedSettings.upColor,
-      wickDownColor: mergedSettings.wickDownColor ?? mergedSettings.wickColor ?? mergedSettings.downColor,
-    } as any);
-    // every main-series kind gets its theme + last-price visibility override
-    applyMainTheme(candle, mainKindRef.current, mergedSettings);
-    const lp = mergedSettings.lastPrice ?? true;
-    (candle as unknown as { applyOptions: (o: Record<string, unknown>) => void }).applyOptions({ priceLineVisible: lp, lastValueVisible: lp });
+    // P78 crash guard — the whole theme/applyOptions pass runs inside try/catch:
+    // a bad persisted color or a torn-down chart must never take the page down
+    // (the "chart crashed and the theme went weird" report) — it just logs.
+    try {
+      chart.applyOptions({
+        // Phase 34: appearance (background / grid / crosshair) now user-settable
+        // P64R2 — with a VIP background image (or animated fx layer) the chart
+        // canvas must be transparent
+        layout: { background: { type: ColorType.Solid, color: mergedSettings.bgImage ? "rgba(0,0,0,0)" : safeColor(mergedSettings.bgColor, COLORS.bg) }, textColor: safeColor(mergedSettings.textColor, COLORS.text), fontSize: 11 },
+        grid: mergedSettings.grid
+          ? { vertLines: { color: safeColor(mergedSettings.gridColor, COLORS.grid) }, horzLines: { color: safeColor(mergedSettings.gridColor, COLORS.grid) } }
+          : { vertLines: { visible: false }, horzLines: { visible: false } },
+        crosshair: {
+          // LC's built-in Magnet mode snaps the horizontal line to the CLOSE
+          // price only (library contract) — the user saw it "stick only to the
+          // candle body". The crosshair mode stays Normal and the full-OHLC
+          // magnet below (magnetCrosshair effect) does the real snapping.
+          mode: CrosshairMode.Normal,
+          vertLine: { visible: true, labelVisible: true, color: safeColor(mergedSettings.crosshairColor, "rgba(224,229,237,0.35)"), labelBackgroundColor: "#2a2e39" },
+          horzLine: { visible: true, labelVisible: true, color: safeColor(mergedSettings.crosshairColor, "rgba(224,229,237,0.35)"), labelBackgroundColor: "#2a2e39" },
+        },
+      });
+      candle.applyOptions({
+        upColor: safeColor(mergedSettings.upColor, COLORS.up), downColor: safeColor(mergedSettings.downColor, COLORS.down),
+        borderUpColor: safeColor(mergedSettings.borderUpColor ?? mergedSettings.borderColor ?? mergedSettings.upColor, mergedSettings.upColor),
+        borderDownColor: safeColor(mergedSettings.borderDownColor ?? mergedSettings.borderColor ?? mergedSettings.downColor, mergedSettings.downColor),
+        wickUpColor: safeColor(mergedSettings.wickUpColor ?? mergedSettings.wickColor ?? mergedSettings.upColor, mergedSettings.upColor),
+        wickDownColor: safeColor(mergedSettings.wickDownColor ?? mergedSettings.wickColor ?? mergedSettings.downColor, mergedSettings.downColor),
+      } as any);
+      // every main-series kind gets its theme + last-price visibility override
+      applyMainTheme(candle, mainKindRef.current, mergedSettings);
+      const lp = mergedSettings.lastPrice ?? true;
+      (candle as unknown as { applyOptions: (o: Record<string, unknown>) => void }).applyOptions({ priceLineVisible: lp, lastValueVisible: lp });
+    } catch (err) {
+      console.warn("[PriceChart] theme apply skipped (bad option or torn-down chart):", err);
+    }
     canvasRef.current?.redraw();
   }, [settings, mergedSettings]);
 
@@ -1001,10 +1086,12 @@ export function PriceChart({
     const s0 = mergedSettingsRef.current;
     const chart = createChart(el, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: s0.bgImage ? "rgba(0,0,0,0)" : (s0.bgColor ?? COLORS.bg) }, textColor: s0.textColor ?? COLORS.text, fontSize: 11, attributionLogo: false },
+      // P78 — persisted colors sanitized before they reach lightweight-charts
+      // (a stale/tampered blob used to throw right here, on first paint)
+      layout: { background: { type: ColorType.Solid, color: s0.bgImage ? "rgba(0,0,0,0)" : safeColor(s0.bgColor, COLORS.bg) }, textColor: safeColor(s0.textColor, COLORS.text), fontSize: 11, attributionLogo: false },
       grid: s0.grid === false
         ? { vertLines: { visible: false }, horzLines: { visible: false } }
-        : { vertLines: { color: s0.gridColor ?? COLORS.grid }, horzLines: { color: s0.gridColor ?? COLORS.grid } },
+        : { vertLines: { color: safeColor(s0.gridColor, COLORS.grid) }, horzLines: { color: safeColor(s0.gridColor, COLORS.grid) } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
       // Phase 16: the time axis and crosshair labels render in the VIEWER'S
       // timezone (TradingView behavior) — bar timestamps stay UNIX UTC under
@@ -1025,8 +1112,8 @@ export function PriceChart({
       // candle, axis labels match the dark theme
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: s0.crosshairColor ?? "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
-        horzLine: { color: s0.crosshairColor ?? "rgba(224,229,237,0.35)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
+        vertLine: { color: safeColor(s0.crosshairColor, "rgba(224,229,237,0.35)"), width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
+        horzLine: { color: safeColor(s0.crosshairColor, "rgba(224,229,237,0.35)"), width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#2a2e39", labelVisible: true, visible: true },
       },
     });
     chartRef.current = chart;
@@ -1336,6 +1423,10 @@ export function PriceChart({
     return out;
   }, []);
 
+  // P78 — last bar time actually painted on the series; lets the update path
+  // reject out-of-order ticks BEFORE they reach lightweight-charts
+  const lastPaintedTimeRef = useRef<number>(0);
+
   const applyBarsToSeries = useCallback((mode: "set" | "update") => {
     const candle = candleRef.current;
     const volume = volumeRef.current;
@@ -1344,17 +1435,36 @@ export function PriceChart({
     if (mode === "set") {
       (candle as ISeriesApi<"Candlestick">).applyOptions({ priceFormat: priceFormatRef.current } as any);
       applyMainTheme(candle, mainKindRef.current, settingsRef.current);
-      setMainData(candle, mainKindRef.current, data, haStateRef);
-      // volume histogram = the visible "volume" indicator only (Phase 20)
-      volume.setData(volumeVisibleRef.current ? data.map(toVolume) : []);
+      // P78 crash guard — setData with duplicate/unsorted times throws inside
+      // the feed callback; bounded so a bad merge can never kill the page
+      try {
+        setMainData(candle, mainKindRef.current, data, haStateRef);
+        // volume histogram = the visible "volume" indicator only (Phase 20)
+        volume.setData(volumeVisibleRef.current ? data.map(toVolume) : []);
+        const lastT = data[data.length - 1]?.time;
+        if (typeof lastT === "number") lastPaintedTimeRef.current = lastT;
+      } catch (err) {
+        console.warn("[PriceChart] full repaint deferred (bad data batch):", err);
+      }
       // rebuild the time→index map (indicators + crosshair lookups)
       const idx = new Map<number, number>();
       for (let i = 0; i < data.length; i++) idx.set(data[i].time, i);
       timeIdxRef.current = idx;
     } else {
       const last = data[data.length - 1];
-      updateMain(candle, mainKindRef.current, last, haStateRef);
-      if (volumeVisibleRef.current) volume.update(toVolume(last));
+      // P78 crash guard — a live tick for a bucket OLDER than the series' last
+      // painted bar (a resync swap, replay exit, symbol trim racing the feed
+      // tick) made lightweight-charts throw "Cannot update oldest data" inside
+      // the 1s feed callback: the chart froze half-painted and every later
+      // tick kept throwing (the "chart crashed / theme went weird" report).
+      // Out-of-order updates are skipped; the next full pass (set) heals.
+      if (!(typeof last.time === "number" && last.time < lastPaintedTimeRef.current)) {
+        try {
+          updateMain(candle, mainKindRef.current, last, haStateRef);
+          if (volumeVisibleRef.current) volume.update(toVolume(last));
+          if (typeof last.time === "number") lastPaintedTimeRef.current = last.time;
+        } catch { /* ordering/disposed race — the next full repaint heals */ }
+      }
     }
 
     // indicators: overlays on the main series + sub-pane series.
@@ -2783,21 +2893,38 @@ export function PriceChart({
             </button>
           </div>
         )}
-        {/* P64R2 user request — VIP chart background image behind the panes:
-            skywalker is a still; knight gets a slow Ken-Burns zoom (CSS) so the
-            "animated" feel works without any canvas repaint loop. */}
-        {mergedSettings.bgImage ? (
-          <img
-            src={mergedSettings.bgImage}
-            alt=""
-            aria-hidden
-            draggable={false}
-            className={cn(
-              "pointer-events-none absolute inset-0 z-0 h-full w-full select-none object-cover",
-              mergedSettings.bgImage.includes("knight") && "it-bg-anim",
-            )}
-          />
-        ) : null}
+        {/* P78 user request — VIP chart background behind the panes: the static
+            skywalker/knight JPGs are retired in favor of pure-CSS animated
+            layers ("fx:forge" Knight Forge, "fx:aurora" Night Aurora). The fx
+            layer is `absolute inset-0` with %-based art, so it always exactly
+            fits the chart area — never too large or cropped-small on any pane
+            size. Transparency is user-settable via settings.bgOpacity. */}
+        {(() => {
+          const bg = mergedSettings.bgImage;
+          if (!bg) return null;
+          const opacity = Math.min(1, Math.max(0, mergedSettings.bgOpacity ?? 0.45));
+          if (bg.startsWith("fx:")) {
+            const fx = bg === "fx:forge" ? "it-bgfx-forge" : bg === "fx:aurora" ? "it-bgfx-aurora" : "";
+            if (!fx) return null;
+            return (
+              <div
+                aria-hidden
+                className={cn("it-bgfx pointer-events-none z-0 select-none", fx)}
+                style={{ opacity }}
+              />
+            );
+          }
+          return (
+            <img
+              src={bg}
+              alt=""
+              aria-hidden
+              draggable={false}
+              style={{ opacity }}
+              className="pointer-events-none absolute inset-0 z-0 h-full w-full select-none object-cover"
+            />
+          );
+        })()}
         {/* main pane */}
         <div ref={mainHostRef} className="absolute inset-x-0 top-0 z-10" style={{ bottom: subList.length * SUB_PANE_HEIGHT }} />
         {/* sub-panes */}

@@ -48,9 +48,13 @@ export interface ChartSettings {
   wickUpColor?: string;
   wickDownColor?: string;
   // ---- P64R2 user request: VIP background image behind the chart
-  // ("" = none; "/backgrounds/skywalker.jpg" static, "/backgrounds/knight.jpg"
-  // slow Ken-Burns animation)
+  // P78 — skywalker/knight static JPGs removed; the picks are now animated
+  // CSS backgrounds ("fx:forge" Knight Forge, "fx:aurora" Night Aurora) plus
+  // any legacy/custom image URL (rendered with object-cover as before)
   bgImage?: string;
+  // P78 user request — background transparency is user-settable (0..1);
+  // undefined = the 0.45 default. Applies to fx backgrounds AND images.
+  bgOpacity?: number;
   // Phase 34: per-instrument override shadows merged from instrument settings
   precision?: number;
   lastPrice?: boolean;
@@ -81,6 +85,7 @@ export const DEFAULT_SETTINGS: ChartSettings = {
   bgColor: "#ffffff", gridColor: "#e5e7eb", crosshairColor: "rgba(120,123,134,0.5)",
   drawColor: "#2962ff", drawWidth: 2, drawDash: "solid", drawFontSize: 12,
   bgImage: "",
+  bgOpacity: 0.45,
 };
 
 const GRID_OFF_MIGRATION_KEY = "it_grid_default_off";
