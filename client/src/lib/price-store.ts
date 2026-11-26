@@ -7,7 +7,7 @@
  * most one render per FLUSH_MS. Non-reactive readers (the alerts evaluator,
  * which runs on its own 30s interval) use getAllPrices().
  */
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 const FLUSH_MS = 250;
 
@@ -79,4 +79,37 @@ export function usePrice(symbol: string): number | null {
 /** Subscribe to the whole price map (panels showing many instruments). */
 export function usePriceMap(): Record<string, number> {
   return useSyncExternalStore(subscribeMap, () => mapSnapshot, () => mapSnapshot);
+}
+
+// PHASE 67 §8 (MEDIUM-5) — narrow per-symbol subscription for components that
+// only need a handful of prices. PriceChart used usePriceMap() for its P/L
+// chips: the chart then re-rendered on EVERY flush of ANY instrument (every
+// crypto chart tick of every other open panel), not just its own position
+// symbols. usePrices subscribes per symbol and keeps a per-key snapshot so
+// useSyncExternalStore sees a stable identity between actual changes.
+const narrowCache = new Map<string, { sig: string; obj: Record<string, number> }>();
+
+export function usePrices(symbols: string[]): Record<string, number> {
+  const key = symbols.slice().sort().join(",");
+  const getSnapshot = useCallback(() => {
+    const sig = symbols.map((s) => `${s}:${prices.get(s) ?? ""}`).join("|");
+    const hit = narrowCache.get(key);
+    if (hit && hit.sig === sig) return hit.obj;
+    const obj: Record<string, number> = {};
+    for (const s of symbols) { const v = prices.get(s); if (v != null) obj[s] = v; }
+    narrowCache.set(key, { sig, obj });
+    return obj;
+  }, [key, symbols]);
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      const unsubs = symbols.map((s) => subscribeSymbol(s, cb));
+      return () => { for (const u of unsubs) u(); };
+    },
+    [key, symbols],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, () => {
+    const obj: Record<string, number> = {};
+    for (const s of symbols) { const v = prices.get(s); if (v != null) obj[s] = v; }
+    return obj;
+  });
 }

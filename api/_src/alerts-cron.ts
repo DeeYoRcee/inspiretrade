@@ -243,6 +243,17 @@ export default handle(async (req, res) => {
     tradingCron = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 
+  // PHASE 67 — the spot recorder rides the same floor: one gold-api sample
+  // per code per day at minimum, so a fully idle deployment (no browser, no
+  // trading activity) still proves the recorder path and refreshes the
+  // diagnostics doc. The transaction claim makes this a no-op when the
+  // trading chain already sampled within the gap.
+  let recorder: unknown = null;
+  try {
+    const { recorderStep } = await import("./lib/spot-recorder");
+    recorder = await recorderStep();
+  } catch { /* best-effort floor — diag carries the failure */ }
+
   const pushOn = pushConfigured();
   if (pushOn) {
     try { webpush.setVapidDetails(VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!); } catch { /* push disabled this run */ }
@@ -458,5 +469,5 @@ export default handle(async (req, res) => {
     } catch { /* news push unavailable this run — price alerts already delivered */ }
   }
 
-  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn, tradingCron });
+  return res.status(200).json({ ok: true, evaluated: jobs.length, fired, pushed, newsPushed, calPushed, pushConfigured: pushOn, tradingCron, recorder });
 });

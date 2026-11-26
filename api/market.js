@@ -282,6 +282,15 @@ var list_default = handle(async (req, res) => {
   res.status(200).json({ ok: true, listing });
 });
 
+// api/_src/lib/vip.ts
+function isVipActive(p) {
+  if (!p) return false;
+  if (p.ceo === true) return true;
+  if (p.isPremium !== true) return false;
+  const until = typeof p.premiumUntil === "number" ? p.premiumUntil : 0;
+  return until === 0 || until > Date.now();
+}
+
 // api/_src/market/buy.ts
 var CASE_ID_RE2 = /^[a-z0-9][a-z0-9-]{2,23}$/;
 var buy_default = handle(async (req, res) => {
@@ -413,7 +422,7 @@ async function deliverUsername(db, buyerUid, listing, revertListing, sellerRecei
     db.ref(`admins/${buyerUid}`).once("value")
   ]);
   const buyerProfile = buyerProfileSnap.val() || {};
-  const buyerVip = buyerProfile.isPremium === true || !!buyerProfile.premiumPlan || buyerProfile.ceo === true || buyerAdminSnap.val() === true;
+  const buyerVip = isVipActive(buyerProfile) || buyerAdminSnap.val() === true;
   const USERNAME_CAP = buyerVip ? 5 : 1;
   const heldBefore = { ...buyerProfile.usernames || {} };
   const primaryBefore = typeof buyerProfile.username === "string" ? buyerProfile.username.toLowerCase() : "";

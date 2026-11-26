@@ -27,16 +27,26 @@ export interface SpotTailBar {
   volume?: number;
 }
 
+/**
+ * Merge the live spot price into the tail of `bars`. PHASE 67 §6: the CURRENT
+ * bucket comes from `nowSec` when given — call sites pass the PROVIDER stamp
+ * (gold-api updatedAt) so the live bucket stays on the provider's minute grid
+ * (a user clock minutes off can no longer misalign the tail); the default
+ * keeps the local clock for callers without a stamp. Out-of-order stamps
+ * (bucket ≤ last.time with a same-bucket spot) still fold into the last bar
+ * in place; an OLDER bucket than the last bar can never rewrite history.
+ */
 export function mergeSpotTail(
   bars: SpotTailBar[],
   spot: number,
   sec: number,
   maxFill = 90,
+  nowSec?: number,
 ): SpotTailBar[] | null {
   const last = bars[bars.length - 1];
   if (!last) return null;
   if (last.close > 0 && Math.abs(spot / last.close - 1) > 0.02) return null; // outlier
-  const now = Math.floor(Date.now() / 1000);
+  const now = typeof nowSec === "number" && Number.isFinite(nowSec) && nowSec > 0 ? nowSec : Math.floor(Date.now() / 1000);
   const bucket = Math.floor(now / sec) * sec;
   if (bucket <= last.time) {
     // same bucket — paint the live spot onto the current bar (clone, never
@@ -85,6 +95,26 @@ export function recordSpotTick(minute: SpotCandle | null, price: number, nowSec:
   // minute rolled over (or first tick): open a fresh candle at the real price
   return { t: bucket, o: price, h: price, l: price, c: price, s: 1 };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 67 — provider-stamped buckets, the recorder fold, feed-health
+// classification and the measured BID↔spot offset live in the shared pure
+// core (shared/spot-recorder-core.ts) so the SERVER recorder folds with the
+// exact same semantics as this client recorder. Re-exported here so the
+// existing client call sites and tests keep their import paths.
+// ---------------------------------------------------------------------------
+export {
+  MAX_STAMP_SKEW_SEC,
+  providerMinuteBucket,
+  foldSample,
+  type SpotHealth,
+  SPOT_LIVE_MAX_DELAY_SEC,
+  SPOT_STALE_MIN_DELAY_SEC,
+  healthFromDelay,
+  type OffsetSample,
+  MIN_OVERLAP_SAMPLES,
+  computeBidSpotOffset,
+} from "../../../shared/spot-recorder-core.ts";
 
 /**
  * Deterministic merge of two observations of the same minute (multi-device /

@@ -224,6 +224,7 @@ import {
 import { aggregateBars, SPOT_PRICE_BANDS, normalizeDailyAnchors, mergeFxStoreDaily } from "../../shared/terminal";
 import { marketHours, filterClosedCandles, closedIntervals } from "../../shared/market-hours";
 import { DUKA_MAP, DUKA_METALS, fetchDukaDay, decodeDukaDay } from "./lib/duka";
+import { computeBidSpotOffset, MIN_OVERLAP_SAMPLES } from "../../shared/spot-recorder-core";
 import { runBackfillStep, foldBackfillStep, readRange, coverageReport, writeShards, fetchStooqBars, HIST_STOOQ, HIST_MONTHS_CAP } from "./lib/hist";
 import type { BackfillResult, RangeResult, CoverageRow } from "./lib/hist";
 
@@ -417,9 +418,18 @@ export default handle(async (req, res) => {
   const action = (url.searchParams.get("action") || "").trim();
   if (action === "spot-history") {
     const code = (url.searchParams.get("code") || "XAU").toUpperCase() === "XAG" ? "XAG" : "XAU";
-    const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
-    const obj: Record<string, any> = snap.val() || {};
     const now = Math.floor(Date.now() / 1000);
+    // PHASE 67 §8 (MEDIUM-10) — tail reads: the resync path only needs the
+    // newest minutes, but the old code read the ENTIRE store (up to ~90k
+    // keys / 65 days) on every 30s poll. `from=<epoch sec>` serves only the
+    // rows at/after that minute via an ordered RTDB query — the caller
+    // merges them into its cached full window (client serverSpotCache).
+    // Omitted → full store (first load / deep refresh, unchanged contract).
+    const fromParam = toSec(url.searchParams.get("from"));
+    const snap = fromParam != null
+      ? await rtdb().ref(`spotTicks/${code}`).orderByKey().startAt(String(fromParam)).once("value")
+      : await rtdb().ref(`spotTicks/${code}`).once("value");
+    const obj: Record<string, any> = snap.val() || {};
     // Phase 23: the old 8-day floor hid even the deep TwelveData bars. The
     // 30-day floor that replaced it became the NEW "history starts Oct 22"
     // wall (Phase 28): now−30d landed exactly on the recording start and the
@@ -444,11 +454,125 @@ export default handle(async (req, res) => {
     if (tfSec > 60) {
       const agg = aggregateBars(checked.bars as any[], tfSec / 60) as any[];
       const bars = repairOutlierExtremes(agg.slice(-4000) as RawBar[]).bars;
-      return res.json({ ok: true, code, tf: tfSec, bars, count: bars.length });
+      return res.json({ ok: true, code, tf: tfSec, bars, count: bars.length, tail: fromParam != null });
     }
     const candles = checked.bars
       .map((b: any) => ({ t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, s: Number((b as any).volume || 0) }));
-    return res.json({ ok: true, code, tf: tfSec, candles });
+    return res.json({ ok: true, code, tf: tfSec, candles, tail: fromParam != null });
+  }
+
+  // ---- PHASE 67 §7 — provider diagnostics / feed-status --------------------
+  // One authed action that answers "how trustworthy is the XAUUSD pipeline
+  // right now": recorder freshness (server-side chain), the newest store
+  // minutes vs the OPEN-session expectation (honest missing-candle count),
+  // the MEASURED Duka-BID↔gold-api-spot boundary offset (real overlapping
+  // minutes only — never a guessed constant), and the Twelve Data budget
+  // state. No secrets are ever included. The frontend maps this onto the
+  // LIVE / DELAYED / STALE / PROVIDER-ERROR / HISTORICAL badge states.
+  if (action === "feed-status") {
+    const codes = ["XAU", "XAG"];
+    const now = Math.floor(Date.now() / 1000);
+    const out: Record<string, any> = {};
+    const { recorderDiag } = await import("./lib/spot-recorder");
+    const rec = await recorderDiag(codes);
+    for (const code of codes) {
+      const symbol = code === "XAU" ? "XAUUSD" : "XAGUSD";
+      // newest minutes — an ORDERED tail read (≤120 keys), never the full store
+      const tailSnap = await rtdb().ref(`spotTicks/${code}`)
+        .orderByKey().limitToLast(120).once("value");
+      const obj: Record<string, any> = tailSnap.val() || {};
+      const minutes = Object.entries(obj)
+        .map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) }))
+        .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o))
+        .sort((a, b) => a.t - b.t);
+      const newestMin = minutes.length ? minutes[minutes.length - 1].t : 0;
+      // missing OPEN-SESSION minutes in the last 2h (closed sessions are
+      // honest gaps and are excluded by the DST-aware engine — the old
+      // fixed-UTC estimate miscounted across DST boundaries)
+      let missing = 0;
+      const windowFrom = now - 2 * 3600;
+      if (minutes.length) {
+        const ivs = closedIntervals(symbol, windowFrom - 86400, now);
+        const closedAt = (t: number): boolean => {
+          for (const iv of ivs) { if (t >= iv.from && t < iv.to) return true; if (iv.from > t) break; }
+          return false;
+        };
+        const have = new Set(minutes.map((m) => m.t));
+        for (let t = Math.floor(windowFrom / 60) * 60; t <= now - 60; t += 60) {
+          if (!closedAt(t) && !have.has(t)) missing++;
+        }
+      }
+      out[code] = {
+        symbol,
+        recorder: rec[code] ? {
+          lastOkAt: Number(rec[code]?.lastOkAt || 0),
+          price: Number(rec[code]?.price || 0) || null,
+          providerDelaySec: rec[code]?.providerDelaySec != null ? Number(rec[code].providerDelaySec) : null,
+          fails: Number(rec[code]?.fails || 0),
+          lastError: rec[code]?.lastError || null,
+        } : null,
+        store: {
+          newestMinute: newestMin,
+          ageSec: newestMin ? Math.max(0, now - newestMin - 60) : null,
+          minutesInTail: minutes.length,
+          missingOpenSessionMinutes2h: missing,
+        },
+      };
+    }
+    // ---- measured BID↔spot boundary offset (PHASE 67 §2) -----------------
+    // Where the deep Dukascopy BID shard window and the recorded spot store
+    // OVERLAP in time, the mean close difference is the honest boundary
+    // number. Read cost is bounded: only the newest shard day(s) that touch
+    // the store's first day are opened (≤2 blob reads per code), and the
+    // result is cached in RTDB for 6h (the measurement is recomputed on a
+    // schedule, not per chart poll).
+    const offsets: Record<string, any> = {};
+    for (const symbol of ["XAUUSD", "XAGUSD"]) {
+      const code = symbol === "XAUUSD" ? "XAU" : "XAG";
+      try {
+        const cacheRef = rtdb().ref(`diag/spotOffset/${symbol}`);
+        const cached = (await cacheRef.once("value")).val();
+        if (cached && now - Number(cached.at || 0) < 6 * 3600) { offsets[symbol] = cached; continue; }
+        const firstMinSnap = await rtdb().ref(`spotTicks/${code}`)
+          .orderByKey().limitToFirst(1).once("value");
+        const firstKey = Object.keys(firstMinSnap.val() || {})[0];
+        if (!firstKey) { offsets[symbol] = null; continue; }
+        // the store's earliest day ± the shard publication boundary
+        const dayStart = Math.floor(Number(firstKey) / 86400) * 86400;
+        const dayIso = new Date(dayStart * 1000).toISOString().slice(0, 10);
+        const blob = (await rtdb().ref(`hist/${symbol}/1m/${dayIso}`).once("value")).val();
+        if (typeof blob !== "string" || !blob) { offsets[symbol] = null; continue; }
+        const rows = blob.split("|").map((r) => parseShardRow(r)).filter((a): a is [number, number, number, number, number, number] => !!a);
+        const byT = new Map<number, number>();
+        for (const a of rows) byT.set(a[0], a[4]); // a[0]=time, a[4]=close
+        const firstT = Number(firstKey);
+        const overlap = Object.entries(((await rtdb().ref(`spotTicks/${code}`)
+          .orderByKey().startAt(String(firstT)).endAt(String(firstT + 86400)).once("value")).val() as Record<string, any>) || {})
+          .map(([t, c]) => ({ t: Number(t), c: Number(c?.c) }));
+        const samples = overlap
+          .filter((r) => byT.has(r.t) && r.c > 0)
+          .map((r) => ({ spotClose: r.c, bidClose: byT.get(r.t)! }));
+        const off = computeBidSpotOffset(samples);
+        const payload = off
+          ? { ...off, day: dayIso, at: now, note: "mean(spotClose − dukaBidClose) over genuine overlapping minutes — boundary disclosure, never applied to prices" }
+          : { n: samples.length, day: dayIso, at: now, note: `insufficient overlap (${samples.length} < ${MIN_OVERLAP_SAMPLES}) — no offset number is reported` };
+        await cacheRef.set(payload);
+        offsets[symbol] = payload;
+      } catch { offsets[symbol] = null; }
+    }
+    const tdUsed = Number((await tdDayRef().once("value")).val() || 0);
+    return res.json({
+      ok: true,
+      at: now,
+      metals: out,
+      offset: offsets,
+      twelvedata: { used: tdUsed, budget: TD_DAILY_BUDGET },
+      providers: {
+        spot: "gold-api.com (keyless, spot, provider-stamped)",
+        deepHistory: "Dukascopy BID 1m shards + stooq spot daily + TwelveData (budgeted)",
+        note: "sources are disclosed, never welded silently — see offset/delay fields",
+      },
+    });
   }
   if (action === "spot-record" && req.method === "POST") {
     const raw = typeof (req as any).body === "string" ? JSON.parse((req as any).body || "{}") : ((req as any).body || {});

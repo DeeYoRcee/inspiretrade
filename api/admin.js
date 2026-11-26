@@ -190,7 +190,10 @@ var grant_vip_default = handle(async (req, res) => {
   const admin2 = await requireAdmin(req);
   const body = typeof req.body === "string" ? safeParse2(req.body) : req.body || {};
   const vip = body.vip === true || body.vip === "true";
+  const PLAN_DAYS = { monthly: 30, yearly: 365 };
   const plan = String(body.plan || "").trim().slice(0, 40) || (vip ? "owner-grant" : "");
+  const grantDays = PLAN_DAYS[plan] ?? 0;
+  const premiumUntil = vip && grantDays > 0 ? Date.now() + grantDays * 864e5 : null;
   let targetUid = String(body.uid || "").trim();
   let targetEmail = "";
   if (!targetUid) {
@@ -209,7 +212,10 @@ var grant_vip_default = handle(async (req, res) => {
   await rtdb().ref(`users/${targetUid}/profile`).update({
     isPremium: vip,
     premiumPlan: vip ? plan : null,
-    vip
+    vip,
+    premiumSince: vip ? Date.now() : null,
+    // null clears a previous duration on revoke or on a permanent grant
+    premiumUntil
   });
   await logLedger({
     type: "admin_grant_vip",
@@ -217,9 +223,11 @@ var grant_vip_default = handle(async (req, res) => {
     email: targetEmail,
     vip,
     plan,
+    grantDays,
+    premiumUntil,
     by: admin2.email || admin2.uid
   });
-  res.status(200).json({ ok: true, targetUid, vip, plan });
+  res.status(200).json({ ok: true, targetUid, vip, plan, grantDays, premiumUntil });
 });
 function safeParse2(raw) {
   try {
@@ -517,6 +525,17 @@ function safeParse8(raw) {
 
 // api/_src/admin/media.ts
 import { createHash } from "crypto";
+
+// api/_src/lib/vip.ts
+function isVipActive(p) {
+  if (!p) return false;
+  if (p.ceo === true) return true;
+  if (p.isPremium !== true) return false;
+  const until = typeof p.premiumUntil === "number" ? p.premiumUntil : 0;
+  return until === 0 || until > Date.now();
+}
+
+// api/_src/admin/media.ts
 var MAX_BYTES = 6 * 1024 * 1024;
 var MIME_ALLOWED = /* @__PURE__ */ new Set(["video/mp4", "image/png", "image/jpeg", "image/webp", "image/gif"]);
 var DATAURL_RE = /^data:([a-z0-9/+.-]+);base64,([A-Za-z0-9+/=\s]+)$/i;
@@ -540,7 +559,7 @@ async function mediaUpload(req, res) {
       rtdb().ref(`admins/${user.uid}`).get()
     ]);
     const p = profile.val() || {};
-    const isVip = p.isPremium === true || !!p.premiumPlan || p.ceo === true || adminFlag.val() === true;
+    const isVip = isVipActive(p) || adminFlag.val() === true;
     if (!isVip) throw new HttpError(403, "VIP_ONLY", "Profile media upload is a VIP feature");
     uploader = user.uid;
   }

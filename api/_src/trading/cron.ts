@@ -236,6 +236,15 @@ export async function runTradingCron(budgetMs = CHAIN_BUDGET_MS, chain?: { baseU
   }
 
   // ---- §3 chain continuation: re-invoke ourselves after the release --------
+  // PHASE 67 — the spot recorder rides this chain: one gold-api sample per
+  // hop (transaction-throttled to ≥15s per code) keeps the shared spotTicks
+  // store accumulating server-side, independent of any open browser. The
+  // step is fire-and-forget: its own claim transaction collapses concurrent
+  // hops, a failure is diagnosed in diag/spotRecorder and NEVER breaks the
+  // trading chain. The fire-and-forget lambda is held alive briefly by the
+  // module-level timer inside recorderStep's fetch — a dropped sample is
+  // simply retried on the next hop seconds later.
+  void import("../lib/spot-recorder").then((m) => m.recorderStep()).catch(() => { /* diagnosed in RTDB */ });
   const runMs = Date.now() - started;
   if (chain?.baseUrl) {
     await fireChainHop(chain.baseUrl, process.env.CRON_SECRET);

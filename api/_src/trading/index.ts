@@ -335,6 +335,31 @@ export default handle(async (req, res) => {
     }
   }
 
+  // PHASE 67 — manual/ops lever for the server-side spot recorder: one
+  // gold-api sample per code folded into the shared spotTicks store (the
+  // transaction claim inside recorderStep makes concurrent calls idempotent).
+  // Same CRON_SECRET Bearer guard as cron-evaluate — this writes SHARED
+  // market data and must never be anonymously callable. The normal driver is
+  // the trading-cron chain itself; this action exists for backfills after an
+  // outage and for external health checks.
+  if (action === "recorder-step") {
+    const secret = process.env.CRON_SECRET;
+    if (!secret && process.env.VERCEL === "1") {
+      return json(res, 401, { ok: false, error: "CRON_SECRET_NOT_CONFIGURED" });
+    }
+    if (secret) {
+      const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      if (got !== secret) return json(res, 401, { ok: false, error: "UNAUTHORIZED" });
+    }
+    try {
+      const { recorderStep } = await import("../lib/spot-recorder");
+      const diag = await recorderStep();
+      return json(res, 200, diag);
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
   // admin surface — role matrix enforced server-side (never frontend checks)
   if (action.startsWith("admin-")) {
     const route = adminRoutes[action];

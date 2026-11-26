@@ -7954,6 +7954,11 @@ async function handler2(req, res) {
       await db.ref(`whopMemberships/${uid}`).update({ valid: false, status: "missing", lastEvent: "verify_sync_revoked", updatedAt: Date.now() });
       await logLedger({ type: "whop_auto_revoke", uid, reason: "verify_no_valid_membership", at: Date.now() });
     }
+    const ownerUntil = typeof profile.premiumUntil === "number" ? profile.premiumUntil : 0;
+    if (!whopOwned && profile.isPremium === true && ownerUntil > 0 && Date.now() > ownerUntil) {
+      await db.ref(`users/${uid}/profile`).update({ isPremium: false, vip: false });
+      await logLedger({ type: "owner_grant_expired", uid, at: Date.now() });
+    }
     return res.status(200).json({
       isPremium: profile.isPremium === true,
       plan: typeof profile.premiumPlan === "string" ? profile.premiumPlan : null,

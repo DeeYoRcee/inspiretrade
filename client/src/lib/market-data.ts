@@ -64,7 +64,7 @@ function upsert(bars: Bar[], bar: Bar, maxBars = 6000): Bar[] {
 // Binance (crypto — real live)
 // ---------------------------------------------------------------------------
 
-import { validateBars, dedupeBars, checkBar, minuteIslandFilter, staleRunFilter, flatShare, repairOutlierExtremes, bucketStart, validateDukaTailBars, type RawBar } from "@shared/feed-validation";
+import { validateBars, dedupeBars, checkBar, minuteIslandFilter, staleRunFilter, flatShare, repairOutlierExtremes, bucketStart, type RawBar } from "@shared/feed-validation";
 import { upsertBar, wsBackoffDelay, nextEndpointIndex } from "@shared/candle-core";
 
 // Endpoints are tried in order and rotate on failure. The last WS entry and
@@ -389,16 +389,32 @@ async function fetchHistRange(symbol: string, tf: Timeframe, fromSec: number, to
   const cacheKey = `${symbol}:${tf}`;
   if (TF_SECONDS[tf] < 60) return { bars: [], note: "" }; // sub-minute: no stored history exists (live-built only)
   if (Date.now() - (histEmptyAt.get(cacheKey) || 0) < 600000) return { bars: [], note: "" };
-  try {
-    const res = await authedFetch<any>(`/api/quotes?action=hist-range&symbol=${encodeURIComponent(symbol)}&tf=${tf}&from=${Math.floor(fromSec)}&to=${Math.floor(toSec)}`);
-    if (res?.ok && Array.isArray(res.bars) && res.bars.length) {
-      // client-side defense-in-depth: never trust the wire (§8)
-      const checked = validateBars(res.bars as RawBar[]);
-      const note = Object.keys(res.providers || {})[0] || "provider";
-      lastHistNote.set(cacheKey, note);
-      return { bars: checked.bars as Bar[], note };
+  // PHASE 67 §8 — bounded retry with partial-result support: a transient
+  // network failure (cold start, tab waking, authedFetch abort) used to be
+  // treated the same as "window genuinely empty", so the emptiness CACHE hid
+  // the whole window for 10 minutes. Now: one retry on network failure; only
+  // an explicit EMPTY response from a working engine marks the window empty.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await authedFetch<any>(`/api/quotes?action=hist-range&symbol=${encodeURIComponent(symbol)}&tf=${tf}&from=${Math.floor(fromSec)}&to=${Math.floor(toSec)}`);
+      if (res?.ok && Array.isArray(res.bars) && res.bars.length) {
+        // client-side defense-in-depth: never trust the wire (§8)
+        const checked = validateBars(res.bars as RawBar[]);
+        const note = Object.keys(res.providers || {})[0] || "provider";
+        lastHistNote.set(cacheKey, note);
+        return { bars: checked.bars as Bar[], note };
+      }
+      break; // engine answered, window is (still) empty — honest emptiness
+    } catch {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 500)); // bounded — never overload the API
+        continue;
+      }
+      // BOTH attempts failed: serve nothing but do NOT mark the window empty
+      // — the next caller retries instead of finding a 10-minute lie.
+      return { bars: [], note: "" };
     }
-  } catch { /* engine not deployed yet / RTDB hiccup — the recorded path stands */ }
+  }
   histEmptyAt.set(cacheKey, Date.now());
   return { bars: [], note: "" };
 }
@@ -662,7 +678,7 @@ class QuotesProvider {
     let spotResync: ReturnType<typeof setInterval> | null = null;
     if (spotCode) {
       ensureSpotFlusher();
-      setSpotState({ state: "connecting", lastTickAt: 0, providerDelaySec: null });
+      setSpotState({ state: "connecting", lastTickAt: 0, providerDelaySec: null, health: "live" });
       // Phase 18 tick-feed investigation: gold-api serves REST only — there is
       // NO WebSocket/tick stream, and its price stamp (updatedAt) advances
       // roughly every 5–15s (verified live). Phase 22: ONE shared 1s poll per
@@ -673,7 +689,7 @@ class QuotesProvider {
       // quotes (first observed price = open, running high/low, latest close,
       // sample-count volume) — nothing fabricated, empty seconds stay empty.
       const sec = TF_SECONDS[tf];
-      const offSpot = spotTickerOn(spotCode, key, (price) => {
+      const offSpot = spotTickerOn(spotCode, key, (price, providerAt) => {
         // Phase 28 §1/§3: THIS handler was the exact source of the weekend
         // candles — it merged the frozen gold-api price into the tail
         // (mergeSpotTail fill-forward) and minted seconds candles from
@@ -696,8 +712,11 @@ class QuotesProvider {
         }
         if (tf !== "1d") {
           // bridging fill-forward is capped at 5 buckets for recorded data:
-          // beyond that the missing minutes stay an honest gap on the axis
-          const merged = mergeSpotTail(bars, price, sec, 5);
+          // beyond that the missing minutes stay an honest gap on the axis.
+          // PHASE 67 §6: the live bucket aligns to the PROVIDER stamp (gold-api
+          // updatedAt) — a user clock minutes off can no longer misalign the
+          // tail grid; no stamp → the local clock (unchanged behavior).
+          const merged = mergeSpotTail(bars, price, sec, 5, providerAt ? providerAt / 1000 : undefined);
           if (merged) {
             this.history.set(key, merged);
             statsState.delaySec = getSpotState().providerDelaySec;
@@ -798,48 +817,53 @@ class QuotesProvider {
       return this.history.get(keyS)!;
     }
     const now = Math.floor(Date.now() / 1000);
+    // PHASE 67 §8 (MEDIUM-10) — the server read is now two-tier. The FIRST
+    // load (and any read older than 5 min) fetches the FULL store window;
+    // every later resync/catch-up sends `from=<newest−180s>` so the server
+    // answers with an ordered TAIL query (~a few keys) instead of streaming
+    // the whole ~90k-key store on every 30s poll. The merged view lives in
+    // serverSpotCache — older candles survive the tail reads, the store's
+    // 65-day depth is never lost, and RTDB read volume collapses.
+    const serverSpotCache = new Map<string, SpotCandle[]>();
+    let lastFullServerRead = 0;
+    const SERVER_FULL_TTL_MS = 5 * 60000;
     const loadServerCandles = async (): Promise<SpotCandle[]> => {
+      const cached = serverSpotCache.get(code);
+      const full = !cached || Date.now() - lastFullServerRead > SERVER_FULL_TTL_MS;
       try {
-        const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}`);
+        const fromQ = full ? "" : `&from=${Math.max(0, (cached && cached.length ? cached[cached.length - 1].t : now) - 180)}`;
+        const res = await authedFetch<any>(`/api/quotes?action=spot-history&code=${code}${fromQ}`);
         if (res?.ok && Array.isArray(res.candles)) {
-          const out = (res.candles as SpotCandle[]).filter((c: any) => validSpotCandle(c, now, 30 * 86400));
-          const providerBars = out.filter((c: SpotCandle) => c.s === 0).length;
+          const incoming = (res.candles as SpotCandle[]).filter((c: any) => validSpotCandle(c, now, 30 * 86400));
+          const providerBars = incoming.filter((c: SpotCandle) => c.s === 0).length;
           if (providerBars > 0) this.spotProviderBars.set(code, providerBars);
-          return out;
+          if (full || !cached) {
+            serverSpotCache.set(code, incoming);
+          } else {
+            // tail read — merge into the cached full window (server rows are
+            // the authority for their own minutes; mergeSpotSeries envelopes)
+            serverSpotCache.set(code, mergeSpotSeries(cached, incoming));
+          }
+          if (full) lastFullServerRead = Date.now();
+          return serverSpotCache.get(code)!;
         }
       } catch { /* server unavailable → local records only */ }
-      return [];
+      return cached ?? [];
     };
     /**
-     * P77 — pull the Dukascopy genuine 1m BID tail through the server (25s
-     * server cache + 25s client TTL). These are REAL tick-derived candles
-     * (every Duka tick of the minute folded into OHLC by the provider), so
-     * union-merging them into the recorded set turns the recorder's 2-sample
-     * minutes into properly wicked candles WITHOUT inventing anything: the
-     * union keeps the recorder's open and samples, and only the high/low/
-     * close envelope gains the provider's real extremes. Provider-origin
-     * bars carry s=0 (the Twelve Data backfill convention).
+     * PHASE 67 §3 — the Dukascopy "live tail" request REMOVED. The client
+     * called /api/quotes?action=spot-duka-tail, but the deployed bundle has
+     * NO such handler (verified: 0 references in api/quotes.js) — the fetch
+     * always failed and the merge silently no-opped. Implementing the
+     * handler would not help either: Dukascopy's datafeed publishes each
+     * UTC day file with a 1–2 day lag (api/_src/lib/duka.ts), so a genuine
+     * Duka "live tail" cannot exist. Removing the dead request simplifies
+     * the pipeline honestly instead of pretending a source works.
      */
-    const loadDukaTail = async (): Promise<SpotCandle[]> => {
-      try {
-        const cachedBars = spotDukaCache.get(code);
-        if (cachedBars && Date.now() - (spotDukaAt.get(code) ?? 0) < 25000) return cachedBars;
-        spotDukaAt.set(code, Date.now());
-        const res = await authedFetch<any>(`/api/quotes?action=spot-duka-tail&code=${code}`).catch(() => null);
-        if (!res?.ok || !Array.isArray(res.bars)) return cachedBars ?? [];
-        const band = (inst.priceBand ?? null) as [number, number] | null;
-        const { bars: clean } = validateDukaTailBars(res.bars, now, band);
-        const out: SpotCandle[] = clean.map((b) => ({ t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, s: 0 }));
-        spotDukaCache.set(code, out);
-        return out;
-      } catch { return spotDukaCache.get(code) ?? []; }
-    };
-
     const assemble = async (serverCandles: SpotCandle[]) => {
-      const dukaTail = await loadDukaTail();
-      // order: server ∪ duka ∪ local — the union keeps the earliest open and
-      // the latest close of all genuine observations of each minute
-      let cs = mergeSpotSeries(mergeSpotSeries(serverCandles, dukaTail), loadLocalSpot(code));
+      // order: server ∪ local — the union keeps the earliest open and the
+      // latest close of all genuine observations of each minute
+      let cs = mergeSpotSeries(serverCandles, loadLocalSpot(code));
       // include the in-progress minute + unflushed completions
       const st = spotRec.get(code);
       if (st) cs = mergeSpotSeries(cs, [...st.unflushed, ...(st.minute ? [st.minute] : [])].filter((c) => validSpotCandle(c, now)));
@@ -870,21 +894,21 @@ class QuotesProvider {
     // continuous. Twelve Data carries today's real XAU/USD minutes; the
     // server merges with recorded-wins semantics and replaces >2%-conflicting
     // stuck bars. The key lives server-side, never in the repo.
-    const inMarketHours = (t: number): boolean => {
-      // metals session: Sun 22:00 UTC → Fri 21:00 UTC (the Fri-evening→Sunday
-      // window is closed — missing minutes there are honest, not holes)
-      const d = new Date(t * 1000);
-      const dow = d.getUTCDay();
-      const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
-      if (dow === 6) return false; // Saturday
-      if (dow === 5) return mins < 21 * 60; // Friday before 21:00
-      if (dow === 0) return mins >= 22 * 60; // Sunday after 22:00
-      return true;
-    };
+    // PHASE 67 §9 — the open-session expectation uses the DST-aware
+    // shared engine (closedIntervals, NY wall clock) instead of the old
+    // fixed-UTC minute arithmetic: 17:00/18:00 New York is 21:00/22:00 UTC
+    // in summer (EDT) but 22:00/23:00 UTC in winter (EST) — the fixed-UTC
+    // version miscounted expected minutes across the DST boundary and made
+    // the coverage trigger fire spuriously (or miss real holes).
     const nowMin = Math.floor(now / 60) * 60;
+    const ivs = closedIntervals(symbol, nowMin - 8 * 3600 - 86400, nowMin + 60);
+    const closedAt = (t: number): boolean => {
+      for (const iv of ivs) { if (t >= iv.from && t < iv.to) return true; if (iv.from > t) break; }
+      return false;
+    };
     const back6h = m1.filter((b) => b.time >= nowMin - 6 * 3600 && b.time <= nowMin);
     let expected6h = 0;
-    for (let t = nowMin - 6 * 3600; t <= nowMin; t += 60) if (inMarketHours(t)) expected6h++;
+    for (let t = nowMin - 6 * 3600; t <= nowMin; t += 60) if (!closedAt(t)) expected6h++;
     const coverage = expected6h > 0 ? back6h.length / expected6h : 1;
     const recent = m1.filter((b) => b.time >= now - 86400);
     let recentGap = 0;
@@ -1066,8 +1090,8 @@ class QuotesProvider {
 // ---------------------------------------------------------------------------
 // Live spot tail — see client/src/lib/spot-tail.ts (pure, unit-tested module).
 // ---------------------------------------------------------------------------
-import { mergeSpotTail, recordSpotTick, mergeSpotSeries, validSpotCandle, type SpotCandle } from "@/lib/spot-tail";
-import { marketHours, filterClosedCandles } from "@shared/market-hours";
+import { mergeSpotTail, recordSpotTick, mergeSpotSeries, validSpotCandle, providerMinuteBucket, healthFromDelay, type SpotCandle } from "@/lib/spot-tail";
+import { marketHours, filterClosedCandles, closedIntervals } from "@shared/market-hours";
 export { mergeSpotTail };
 
 // ---- Phase 22: shared spot ticker (one 1s poll per code, N subscribers) ----
@@ -1201,7 +1225,7 @@ async function spotPoll(code: string): Promise<void> {
       // keep lastTickAt UNCHANGED: the price did not update — the badge must
       // keep displaying the last genuine observation ("Upd HH:MM:SS · Ns ago"
       // honestly grows) instead of re-stamping a frozen quote every second
-      setSpotState({ state: "live", lastTickAt: getSpotState().lastTickAt, providerDelaySec });
+      setSpotState({ state: "live", lastTickAt: getSpotState().lastTickAt, providerDelaySec, health: healthFromDelay(providerDelaySec, e.fails) });
       return;
     }
     const now = Date.now();
@@ -1212,14 +1236,16 @@ async function spotPoll(code: string): Promise<void> {
     if (price !== e.lastPrice) { e.lastPrice = price; e.lastChangeAt = now; }
     // record the observed price into the self-built candle set (every
     // timeframe benefits — the recorder is timeframe-independent)
-    recordSpot(code, price);
+    // PHASE 67 §6: the PROVIDER stamp rides along — the minute bucket comes
+    // from gold-api's own clock, not the user's (see recordSpot).
+    recordSpot(code, price, providerAt ? Math.floor(providerAt / 1000) : null);
     e.fails = 0;
-    setSpotState({ state: "live", lastTickAt: now, providerDelaySec });
+    setSpotState({ state: "live", lastTickAt: now, providerDelaySec, health: healthFromDelay(providerDelaySec, 0) });
     for (const h of e.handlers.values()) h(price, providerAt);
   } catch {
     e.fails += 1;
     e.lastFailAt = Date.now(); // Phase 59: backoff clock starts at the failure
-    if (e.fails >= 5) setSpotState({ state: "disconnected", lastTickAt: getSpotState().lastTickAt, providerDelaySec: null });
+    if (e.fails >= 5) setSpotState({ state: "disconnected", lastTickAt: getSpotState().lastTickAt, providerDelaySec: null, health: "error" });
   } finally {
     e.inflight = false;
   }
@@ -1247,11 +1273,9 @@ const spotRec = new Map<string, { minute: SpotCandle | null; unflushed: SpotCand
  *  lets a still-sparse store re-trigger on later resyncs while the server's
  *  2-minute gate protects TD's 8 req/min budget */
 const spotBackfillAt = new Map<string, number>();
-// P77 — Dukascopy genuine 1m tail (server-cached 25s): the client merges the
-// provider-origin bars into the recorded set on every recorded-spot load so
-// finalized minutes carry the real tick-derived H/L/C envelope
-const spotDukaCache = new Map<string, SpotCandle[]>();
-const spotDukaAt = new Map<string, number>();
+// PHASE 67 §3 — spotDukaCache/spotDukaAt removed with the dead
+// spot-duka-tail request (no deployed handler; Duka publishes day files with
+// a 1–2 day lag, so no genuine live tail exists to cache).
 const SPOT_BACKFILL_TTL_MS = 45 * 60000;
 const fxBackfillTried = new Set<string>();
 const fxSelfHealAt = new Map<string, number>(); // per-pair self-heal cooldown
@@ -1295,7 +1319,11 @@ function saveLocalSpot(code: string, candles: SpotCandle[]) {
  *  island that rendered as disconnected candle groups. A recorded tick must
  *  sit within 2% of the last accepted close: metals cannot move 2% between
  *  1-second observations (the same bound the live-tail outlier guard uses).
- *  The anchor follows every accepted tick, so genuine trends record fine. */
+ *  The anchor follows every accepted tick, so genuine trends record fine.
+ *  PHASE 67 §6: the minute bucket comes from the PROVIDER stamp
+ *  (providerMinuteBucket, 120s skew guard) — a user clock that is minutes
+ *  off can no longer misalign the M1 grid; a late sample for a finished
+ *  minute is dropped (counted), never rewritten retroactively. */
 const spotAnchor = new Map<string, { close: number; at: number }>();
 const SPOT_GLITCH_REJECT_MS = 30 * 60000; // a stale anchor never blocks fresh truth
 
@@ -1304,7 +1332,7 @@ const SPOT_GLITCH_REJECT_MS = 30 * 60000; // a stale anchor never blocks fresh t
 // pauses FX/metals during closed sessions.
 const SPOT_SYMBOL_OF: Record<string, string> = { XAU: "XAUUSD", XAG: "XAGUSD" };
 
-function recordSpot(code: string, price: number) {
+function recordSpot(code: string, price: number, providerAtSec?: number | null) {
   if (!(price > 0)) return;
   {
     const sym = SPOT_SYMBOL_OF[code];
@@ -1318,7 +1346,12 @@ function recordSpot(code: string, price: number) {
   }
   const state = spotRec.get(code) ?? { minute: null as SpotCandle | null, unflushed: [] as SpotCandle[] };
   const prev = state.minute;
-  const next = recordSpotTick(prev, price, Math.floor(Date.now() / 1000));
+  const bucket = providerMinuteBucket(prev, Math.floor(Date.now() / 1000), providerAtSec);
+  if (bucket == null) {
+    statsState.outOfOrderTicks++; // a late sample for a finished minute — honest drop
+    return;
+  }
+  const next = recordSpotTick(prev, price, bucket);
   if (prev && next.t !== prev.t) {
     // minute completed → persist locally + queue for the server merge
     saveLocalSpot(code, mergeSpotSeries(loadLocalSpot(code), [prev]));
@@ -1366,8 +1399,12 @@ export interface SpotState {
   lastTickAt: number;
   /** the provider's own freshness (updatedAt stamp age) in seconds */
   providerDelaySec: number | null;
+  /** PHASE 67 §7 — honest health classification from the provider stamp:
+   *  live (≤15s) / delayed (≤90s) / stale (>90s) / error (poller failing).
+   *  The badge must never label delayed data as real-time. */
+  health: "live" | "delayed" | "stale" | "error";
 }
-let spotState: SpotState = { state: "connecting", lastTickAt: 0, providerDelaySec: null };
+let spotState: SpotState = { state: "connecting", lastTickAt: 0, providerDelaySec: null, health: "live" };
 let spotSnapshot: SpotState = { ...spotState };
 const spotListeners = new Set<() => void>();
 function setSpotState(next: SpotState) {

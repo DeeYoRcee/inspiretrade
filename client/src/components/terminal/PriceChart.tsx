@@ -30,7 +30,7 @@ import { loadChartType, saveChartType, type ChartType } from "@/lib/chart-types"
 import { useInstrumentSettings, getInstrumentSettings } from "@/lib/instrument-settings";
 import { quotesHistOlder, quotesPrependHistory, quotesWhenDeep, quotesSnapshotBars } from "@/lib/market-data";
 import { authedFetch } from "@/lib/api";
-import { priceBusUpdate, usePriceMap } from "@/lib/price-store";
+import { priceBusUpdate, usePrices } from "@/lib/price-store";
 import { useTrading } from "@/hooks/use-trading";
 import { useToast } from "@/hooks/use-toast";
 import { quoteFromMid, exitPriceFor, positionPnlUsd } from "@shared/trading-engine";
@@ -798,7 +798,24 @@ export function PriceChart({
 
   // ---- PHASE 63 — live position chips -----------------------------------------
   const { account: tradingAccount } = useTrading();
-  const priceMap = usePriceMap();
+  // PHASE 67 (MEDIUM-5) — narrow per-symbol price subscription. The chart used
+  // usePriceMap() (the WHOLE bus): every tick of every other open instrument
+  // re-rendered the entire chart. It only needs its own symbol, its
+  // positions'/orders' symbols and the USD conversion pairs of their quote
+  // currencies (positionPnlUsd → convQuoteToUsd).
+  const priceWatchSymbols = useMemo(() => {
+    const set = new Set<string>([symbol]);
+    const addConv = (sym?: string) => {
+      const q = sym && sym.length >= 6 ? sym.slice(3, 6) : "";
+      if (!q || q === "USD") return;
+      if (q === "JPY" || q === "CHF" || q === "CAD") set.add(`USD${q}`);
+      else set.add(`${q}USD`);
+    };
+    for (const p of safePositions) { if (p?.symbol) set.add(p.symbol); addConv(p.symbol); }
+    for (const o of Array.isArray(orders) ? orders : []) { if (o?.symbol) set.add(o.symbol); addConv(o.symbol); }
+    return [...set];
+  }, [symbol, safePositions, orders]);
+  const priceMap = usePrices(priceWatchSymbols);
   const { toast } = useToast();
   // conversion prices (quote-currency → USD), the same merge the blotter uses
   const convPrices = useMemo(() => {
@@ -2586,6 +2603,17 @@ export function PriceChart({
         const at = inst?.spotCode ? s.lastTickAt : getConnectionState().lastTickAt;
         const age = at ? Math.max(0, Math.round((Date.now() - at) / 1000)) : null;
         const stale = age != null && age > 120; // no update for 2 min → stale
+        // PHASE 67 §7 — honest health classification from the PROVIDER's own
+        // stamp (healthFromDelay in market-data): LIVE ≤15s · DELAYED ≤90s ·
+        // STALE beyond · PROVIDER ERROR when the poller is failing. The badge
+        // must never present a delayed/stale price as real-time.
+        const health = inst?.spotCode
+          ? s.health
+          : stale ? "stale" : "live";
+        const healthTag = health === "error" ? " · PROVIDER ERROR"
+          : health === "stale" ? " · STALE"
+          : health === "delayed" ? " · DELAYED"
+          : "";
         // P49 §6 diagnostics: provider name + provider-stamp lag + MEASURED
         // provider cadence (mean interval between distinct prices). Binance
         // streams over WS (stamp = receipt); metals poll gold-api 1s and the
@@ -2597,9 +2625,9 @@ export function PriceChart({
             (inst?.spotCode && s.providerDelaySec != null && s.providerDelaySec > 15 ? ` · feed +${s.providerDelaySec}s` : "") +
             (cadence != null ? ` · Δ${cadence}s` : "") +
             ` · ${provName}` +
-            (stale ? " · STALE" : "")
+            healthTag
           : "";
-        tickEl.style.color = stale ? "#f87171" : "";
+        tickEl.style.color = health === "error" ? "#f87171" : health === "stale" ? "#f87171" : health === "delayed" ? "#fbbf24" : "";
       }
     }, 500);
     return () => clearInterval(timer);

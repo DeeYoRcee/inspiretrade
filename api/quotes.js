@@ -1,17 +1,17 @@
 import { createRequire as __cR } from 'module';
 const require = __cR(import.meta.url);
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 
 // api/_src/lib/firebase.ts
 import * as adminNamespace from "firebase-admin";
-var admin = adminNamespace.default ?? adminNamespace;
-var HttpError = class extends Error {
-  constructor(status, code, message) {
-    super(message || code);
-    this.status = status;
-    this.code = code;
-  }
-};
-var app = null;
 function getServiceAccount() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (raw) {
@@ -105,6 +105,470 @@ function handle(fn) {
     }
   };
 }
+var admin, HttpError, app;
+var init_firebase = __esm({
+  "api/_src/lib/firebase.ts"() {
+    "use strict";
+    admin = adminNamespace.default ?? adminNamespace;
+    HttpError = class extends Error {
+      constructor(status, code, message) {
+        super(message || code);
+        this.status = status;
+        this.code = code;
+      }
+    };
+    app = null;
+  }
+});
+
+// shared/terminal.ts
+function getInstrument(symbol) {
+  return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
+}
+function normalizeDailyAnchors(bars) {
+  return bars.map((b) => {
+    if (b.time % 86400 === 0) return b;
+    return { ...b, time: Math.floor((b.time + 12 * 3600) / 86400) * 86400 };
+  });
+}
+function mergeFxStoreDaily(deep, recent) {
+  const byTime = /* @__PURE__ */ new Map();
+  for (const b of deep) byTime.set(b.time, b);
+  for (const b of recent) byTime.set(b.time, b);
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+function foldBucket(time, bucket, anchorSec) {
+  if (bucket === 604800) {
+    const MONDAY_ANCHOR = 345600;
+    return Math.floor((time - MONDAY_ANCHOR) / bucket) * bucket + MONDAY_ANCHOR;
+  }
+  if (bucket === 2592e3) {
+    const d = new Date(time * 1e3);
+    return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1e3);
+  }
+  if (anchorSec != null) return Math.floor((time - anchorSec) / bucket) * bucket + anchorSec;
+  return Math.floor(time / bucket) * bucket;
+}
+function aggregateBars(bars, factorMinutes, anchorSec) {
+  const bucket = factorMinutes * 60;
+  const out = [];
+  let cur = null;
+  for (const b of bars) {
+    const t = foldBucket(b.time, bucket, anchorSec);
+    if (!cur || cur.time !== t) {
+      if (cur) out.push(cur);
+      cur = { time: t, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume ?? 0 };
+    } else {
+      cur.high = Math.max(cur.high, b.high);
+      cur.low = Math.min(cur.low, b.low);
+      cur.close = b.close;
+      cur.volume = (cur.volume ?? 0) + (b.volume ?? 0);
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+var INSTRUMENTS, SPOT_PRICE_BANDS;
+var init_terminal = __esm({
+  "shared/terminal.ts"() {
+    "use strict";
+    INSTRUMENTS = [
+      // ---- Metals — SPOT prices only. Yahoo has no spot gold/silver symbol
+      // (XAUUSD=X 404s), so history comes from stooq's spot CSV (primary) with
+      // Yahoo's COMEX contract as a LAST-RESORT fallback that the badge labels
+      // explicitly as futures. The live tail is gold-api's keyless spot feed.
+      // PAXGUSDT / XAUTUSDT are tokenized assets (~0.4% below spot) and are
+      // deliberately NOT used — they are different financial instruments.
+      { symbol: "XAUUSD", name: "Gold Spot / U.S. Dollar", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F", spotCode: "XAU", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 0.01, priceBand: [1e3, 2e4], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
+      { symbol: "XAGUSD", name: "Silver Spot / U.S. Dollar", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5e3, quote: "USD", feed: "quotes", yahoo: "SI=F", spotCode: "XAG", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [5, 200], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
+      // ---- Forex majors — TrueFX prices the 10 majors LIVE (genuine bid/ask:
+      // the chart paints BID to match Dukascopy's BID-side history, execution
+      // quotes take the mid). Yahoo's FX identifiers are the genuine interbank
+      // spot market but delayed by Yahoo's distribution — they supply history
+      // and the execution fallback for pairs TrueFX does not carry (NZDUSD).
+      { symbol: "EURUSD", name: "Euro / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "EURUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.5, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+      { symbol: "GBPUSD", name: "British Pound / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2.2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+      { symbol: "USDJPY", name: "U.S. Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 1e5, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [80, 250], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+      { symbol: "AUDUSD", name: "Australian Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.3], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+      { symbol: "NZDUSD", name: "New Zealand Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "NZDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.2], feedLabel: "Yahoo FX spot (delayed)" },
+      { symbol: "USDCAD", name: "U.S. Dollar / Canadian Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CAD", feed: "quotes", yahoo: "USDCAD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+      { symbol: "USDCHF", name: "U.S. Dollar / Swiss Franc", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CHF", feed: "quotes", yahoo: "USDCHF=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.6, 1.6], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
+      // ---- Crypto — Binance is the industry-standard price venue. Binance
+      // quotes USDT pairs (BTC/USDT), the badge discloses that basis (USDT ≈ USD).
+      { symbol: "BTCUSD", name: "Bitcoin / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "BTCUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5e3, 5e5], feedLabel: "Binance \xB7 BTC/USDT (USDT \u2248 USD)" },
+      { symbol: "ETHUSD", name: "Ethereum / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "ETHUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [100, 2e4], feedLabel: "Binance \xB7 ETH/USDT (USDT \u2248 USD)" },
+      { symbol: "SOLUSD", name: "Solana / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "SOLUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5, 2e3], feedLabel: "Binance \xB7 SOL/USDT (USDT \u2248 USD)" },
+      { symbol: "XRPUSD", name: "XRP / U.S. Dollar", assetClass: "crypto", digits: 4, pipSize: 1e-4, contractSize: 1, quote: "USD", feed: "binance", binance: "XRPUSDT", underlier: "spot", session: "24/7", tickSize: 1e-4, priceBand: [0.05, 20], feedLabel: "Binance \xB7 XRP/USDT (USDT \u2248 USD)" },
+      // ---- Indices — CFD reference levels tracked from the underlying index.
+      { symbol: "NAS100", name: "US Tech 100 (NDX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^NDX", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 0.25, priceBand: [3e3, 4e4], feedLabel: "Yahoo index (delayed)" },
+      { symbol: "US30", name: "Wall Street 30 (DJI)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^DJI", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 1, priceBand: [1e4, 8e4], feedLabel: "Yahoo index (delayed)" },
+      { symbol: "SPX500", name: "US 500 (S&P 500)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^GSPC", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 0.25, priceBand: [1500, 15e3], feedLabel: "Yahoo index (delayed)" },
+      { symbol: "GER40", name: "Germany 40 (DAX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "EUR", feed: "quotes", yahoo: "^GDAXI", underlier: "index", session: "Mon\u2013Fri 08:00\u201321:00 UTC (Xetra)", tickSize: 1, priceBand: [5e3, 5e4], feedLabel: "Yahoo index (delayed)" },
+      { symbol: "UK100", name: "UK 100 (FTSE 100)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "GBP", feed: "quotes", yahoo: "^FTSE", underlier: "index", session: "Mon\u2013Fri 08:00\u201316:30 UTC (LSE)", tickSize: 0.5, priceBand: [3e3, 2e4], feedLabel: "Yahoo index (delayed)" }
+    ];
+    SPOT_PRICE_BANDS = {
+      XAU: getInstrument("XAUUSD")?.priceBand ?? [1e3, 2e4],
+      XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
+    };
+  }
+});
+
+// shared/sessions.ts
+function tzWallClock(tz, instant) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short"
+  });
+  const parts = dtf.formatToParts(new Date(instant));
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? "";
+  const h = Number(get("hour")) % 24;
+  return {
+    y: Number(get("year")),
+    mo: Number(get("month")),
+    d: Number(get("day")),
+    h,
+    mi: Number(get("minute")),
+    s: Number(get("second")),
+    weekday: Math.max(0, WEEKDAYS.indexOf(get("weekday")))
+  };
+}
+function tzOffsetMs(tz, instant) {
+  const w = tzWallClock(tz, instant);
+  return Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi, w.s) - instant;
+}
+var SESSIONS, WEEKDAYS;
+var init_sessions = __esm({
+  "shared/sessions.ts"() {
+    "use strict";
+    SESSIONS = [
+      { id: "sydney", city: "Sydney", tz: "Australia/Sydney", flag: "\u{1F1E6}\u{1F1FA}", openMin: 7 * 60, closeMin: 16 * 60 },
+      { id: "tokyo", city: "Tokyo", tz: "Asia/Tokyo", flag: "\u{1F1EF}\u{1F1F5}", openMin: 9 * 60, closeMin: 18 * 60 },
+      { id: "london", city: "London", tz: "Europe/London", flag: "\u{1F1EC}\u{1F1E7}", openMin: 8 * 60, closeMin: 17 * 60 },
+      { id: "newyork", city: "New York", tz: "America/New_York", flag: "\u{1F1FA}\u{1F1F8}", openMin: 8 * 60, closeMin: 17 * 60 }
+    ];
+    WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  }
+});
+
+// shared/market-hours.ts
+function isHoliday(symbol, at) {
+  const days = HOLIDAYS[symbol];
+  if (!days || !days.length) return false;
+  const d = tzWallClock("UTC", at);
+  const iso = `${String(d.y).padStart(4, "0")}-${String(d.mo).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+  return days.includes(iso);
+}
+function fxWindow(inst, at) {
+  const w = tzWallClock(NY, at);
+  const mins = w.h * 60 + w.mi;
+  const metal = inst.assetClass === "metal";
+  if (w.weekday === 6) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_CLOSE_DOW && mins >= FX_CLOSE_MIN) return { open: false, reason: "weekend" };
+  if (w.weekday === FX_OPEN_DOW && mins < (metal ? METAL_OPEN_MIN : FX_OPEN_MIN)) {
+    return { open: false, reason: "weekend" };
+  }
+  if (metal && w.weekday >= 1 && w.weekday <= 4 && mins >= METAL_BREAK_FROM && mins < METAL_BREAK_TO) {
+    return { open: false, reason: "daily-break" };
+  }
+  return { open: true, reason: "open" };
+}
+function windowAt(symbol, inst, at) {
+  if (!inst) return { open: false, reason: "unknown" };
+  if (inst.assetClass === "crypto") return { open: true, reason: "open" };
+  if (isHoliday(symbol, at)) return { open: false, reason: "holiday" };
+  if (inst.assetClass === "index") {
+    const s = INDEX_SESSIONS[symbol];
+    if (!s) return { open: true, reason: "open" };
+    const w = tzWallClock(s.tz, at);
+    const mins = w.h * 60 + w.mi;
+    const open = w.weekday >= 1 && w.weekday <= 5 && mins >= s.fromMin && mins < s.toMin;
+    return { open, reason: open ? "open" : "weekend" };
+  }
+  if (inst.assetClass === "forex" || inst.assetClass === "metal") return fxWindow(inst, at);
+  return { open: true, reason: "open" };
+}
+function marketHours(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  const w = windowAt(symbol, inst, at);
+  return { ...w, nextOpenMs: w.open ? null : nextOpen(symbol, at) };
+}
+function nextOpen(symbol, at = Date.now()) {
+  const inst = getInstrument(symbol);
+  if (windowAt(symbol, inst, at).open) return null;
+  const step = 15 * 6e4;
+  for (let t = Math.ceil(at / step) * step, n = 0; n < 9 * 96; n++, t += step) {
+    if (windowAt(symbol, inst, t).open) return t;
+  }
+  return null;
+}
+function wallInstantSec(daySec, minutes, tz) {
+  const dayMs = daySec * 1e3;
+  const guessMs = dayMs + minutes * 6e4;
+  const off = tzOffsetMs(tz, guessMs);
+  let t = guessMs - off;
+  const off2 = tzOffsetMs(tz, t);
+  if (off2 !== off) t = guessMs - off2;
+  return Math.floor(t / 1e3);
+}
+function closedIntervals(symbol, fromSec, toSec) {
+  const inst = getInstrument(symbol);
+  if (!inst) return [];
+  const cls = inst.assetClass;
+  if (cls === "crypto" || cls !== "forex" && cls !== "metal" && cls !== "index") return [];
+  const out = [];
+  const fromDay = Math.floor(fromSec / 86400);
+  const toDay = Math.floor(toSec / 86400);
+  const metal = cls === "metal";
+  for (let day = fromDay; day <= toDay; day++) {
+    const dayStart = day * 86400;
+    const dayEnd = dayStart + 86400;
+    const noonMs = dayStart * 1e3 + 12 * 3600 * 1e3;
+    if (isHoliday(symbol, noonMs)) {
+      out.push({ from: dayStart, to: dayEnd });
+      continue;
+    }
+    if (cls === "index") {
+      const s = INDEX_SESSIONS[symbol];
+      if (!s) continue;
+      const w2 = tzWallClock(s.tz, noonMs);
+      if (w2.weekday === 0 || w2.weekday === 6) {
+        out.push({ from: dayStart, to: dayEnd });
+        continue;
+      }
+      out.push({ from: dayStart, to: wallInstantSec(dayStart, s.fromMin, s.tz) });
+      out.push({ from: wallInstantSec(dayStart, s.toMin, s.tz), to: dayEnd });
+      continue;
+    }
+    const w = tzWallClock(NY, noonMs);
+    const openMin = metal && w.weekday === 0 ? METAL_OPEN_MIN : FX_OPEN_MIN;
+    if (w.weekday === 6) {
+      out.push({ from: dayStart, to: dayEnd });
+      continue;
+    }
+    if (w.weekday === 0) out.push({ from: dayStart, to: wallInstantSec(dayStart, openMin, NY) });
+    if (w.weekday === 5) out.push({ from: wallInstantSec(dayStart, FX_CLOSE_MIN, NY), to: dayEnd });
+    if (metal && w.weekday >= 1 && w.weekday <= 4) {
+      out.push({ from: wallInstantSec(dayStart, METAL_BREAK_FROM, NY), to: wallInstantSec(dayStart, METAL_BREAK_TO, NY) });
+    }
+  }
+  return out.sort((a, b) => a.from - b.from);
+}
+function filterClosedCandles(symbol, candles) {
+  if (!candles.length) return candles;
+  const times = candles.map((c) => c.time);
+  const intervals = closedIntervals(symbol, Math.min(...times) - 60, Math.max(...times) + 60);
+  if (!intervals.length) return candles;
+  const sorted = [...candles].sort((a, b) => a.time - b.time);
+  const out = [];
+  let k = 0;
+  for (const c of sorted) {
+    while (k < intervals.length && intervals[k].to <= c.time) k++;
+    if (k < intervals.length && c.time >= intervals[k].from && c.time < intervals[k].to) continue;
+    out.push(c);
+  }
+  return out;
+}
+var HOLIDAYS, NY, FX_OPEN_DOW, FX_OPEN_MIN, FX_CLOSE_DOW, FX_CLOSE_MIN, METAL_OPEN_MIN, METAL_BREAK_FROM, METAL_BREAK_TO, INDEX_SESSIONS;
+var init_market_hours = __esm({
+  "shared/market-hours.ts"() {
+    "use strict";
+    init_sessions();
+    init_terminal();
+    HOLIDAYS = {};
+    NY = "America/New_York";
+    FX_OPEN_DOW = 0;
+    FX_OPEN_MIN = 17 * 60;
+    FX_CLOSE_DOW = 5;
+    FX_CLOSE_MIN = 17 * 60;
+    METAL_OPEN_MIN = 18 * 60;
+    METAL_BREAK_FROM = 17 * 60;
+    METAL_BREAK_TO = 18 * 60;
+    INDEX_SESSIONS = {
+      NAS100: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+      US30: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+      SPX500: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
+      GER40: { tz: "Europe/Berlin", fromMin: 9 * 60, toMin: 17 * 60 + 30 },
+      UK100: { tz: "Europe/London", fromMin: 8 * 60, toMin: 16 * 60 + 30 }
+    };
+  }
+});
+
+// shared/spot-recorder-core.ts
+function providerMinuteBucket(minute, nowSec, providerAtSec) {
+  const localBucket = Math.floor(nowSec / 60) * 60;
+  let bucket = localBucket;
+  if (providerAtSec && Number.isFinite(providerAtSec) && providerAtSec > 0) {
+    const skewed = Math.abs(nowSec - providerAtSec) <= MAX_STAMP_SKEW_SEC;
+    bucket = skewed ? Math.floor(Math.min(providerAtSec, nowSec + 5) / 60) * 60 : localBucket;
+  }
+  if (minute && bucket < minute.t) return null;
+  return bucket;
+}
+function foldSample(cur, price, bucket, samples = 1) {
+  const p = price;
+  if (cur && Number.isFinite(cur.t) && cur.t === bucket) {
+    return {
+      t: bucket,
+      o: cur.o,
+      c: p,
+      h: Math.max(cur.h, p),
+      l: Math.min(cur.l, p),
+      s: Math.min(60, (cur.s || 0) + Math.max(1, samples))
+    };
+  }
+  return { t: bucket, o: p, h: p, l: p, c: p, s: Math.min(60, Math.max(1, samples)) };
+}
+function computeBidSpotOffset(samples) {
+  const deltas = samples.map((s) => s.spotClose - s.bidClose).filter((d) => Number.isFinite(d) && Math.abs(d) < 500);
+  if (deltas.length < MIN_OVERLAP_SAMPLES) return null;
+  const sorted = [...deltas].sort((a, b) => a - b);
+  const mean = deltas.reduce((s, x) => s + x, 0) / deltas.length;
+  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const variance = deltas.reduce((s, x) => s + (x - mean) * (x - mean), 0) / deltas.length;
+  return { mean, median, stdev: Math.sqrt(variance), n: deltas.length };
+}
+var MAX_STAMP_SKEW_SEC, MIN_OVERLAP_SAMPLES;
+var init_spot_recorder_core = __esm({
+  "shared/spot-recorder-core.ts"() {
+    "use strict";
+    MAX_STAMP_SKEW_SEC = 120;
+    MIN_OVERLAP_SAMPLES = 8;
+  }
+});
+
+// api/_src/lib/spot-recorder.ts
+var spot_recorder_exports = {};
+__export(spot_recorder_exports, {
+  recorderDiag: () => recorderDiag,
+  recorderStep: () => recorderStep
+});
+async function fetchSpotSample(code) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`https://api.gold-api.com/price/${code}`, { signal: controller.signal });
+    if (!res.ok) throw new Error(`gold-api ${res.status}`);
+    const data = await res.json();
+    const price = Number(data?.price);
+    if (!Number.isFinite(price) || price <= 0) throw new Error("BAD_SPOT");
+    const providerAt = Date.parse(String(data?.updatedAt || "")) || 0;
+    return { price, providerAtSec: providerAt ? Math.floor(providerAt / 1e3) : null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function recorderStep(codes = RECORDER_CODES) {
+  const started = Date.now();
+  const out = {};
+  for (const code of codes) {
+    const diagRef = rtdb().ref(`diag/spotRecorder/${code}`);
+    try {
+      const nowMs = Date.now();
+      const claimed = await diagRef.child("lastSampleAt").transaction((cur) => {
+        const at = Number(cur || 0);
+        if (nowMs - at < SAMPLE_GAP_MS) return;
+        return nowMs;
+      });
+      if (!claimed.committed) {
+        out[code] = { folded: false, reason: "throttled" };
+        continue;
+      }
+      const sym = SYMBOL_OF[code] ?? code;
+      const band = SPOT_PRICE_BANDS[code] ?? [0, 1e9];
+      if (!marketHours(sym).open) {
+        out[code] = { folded: false, reason: "closed" };
+        continue;
+      }
+      let price, providerAtSec;
+      let fails = 0;
+      try {
+        ({ price, providerAtSec } = await fetchSpotSample(code));
+      } catch (e) {
+        const snap = (await diagRef.once("value")).val() || {};
+        fails = Number(snap.fails || 0) + 1;
+        await diagRef.update({ fails, lastError: String(e?.message || e).slice(0, 80), lastFailAt: Date.now() });
+        out[code] = { folded: false, reason: "fetch-failed", fails };
+        continue;
+      }
+      if (price < band[0] || price > band[1]) {
+        out[code] = { folded: false, reason: "out-of-band", price };
+        continue;
+      }
+      const tailSnap = await rtdb().ref(`spotTicks/${code}`).orderByKey().limitToLast(1).once("value");
+      const tailObj = tailSnap.val() || {};
+      const tailKeys = Object.keys(tailObj);
+      const last = tailKeys.length ? { t: Number(tailKeys[0]), o: Number(tailObj[tailKeys[0]]?.o), h: Number(tailObj[tailKeys[0]]?.h), l: Number(tailObj[tailKeys[0]]?.l), c: Number(tailObj[tailKeys[0]]?.c), s: Number(tailObj[tailKeys[0]]?.s || 1) } : null;
+      const nowSec = Math.floor(Date.now() / 1e3);
+      if (last && last.c > 0 && nowSec * 1e3 - last.t * 1e3 < GLITCH_ANCHOR_MAX_AGE_MS && Math.abs(price / last.c - 1) > 0.02) {
+        out[code] = { folded: false, reason: "glitch", price };
+        await diagRef.update({ lastError: `glitch: ${price} vs ${last.c}`, lastGlitchAt: Date.now() });
+        continue;
+      }
+      const bucket = providerMinuteBucket(last, nowSec, providerAtSec);
+      if (bucket == null) {
+        out[code] = { folded: false, reason: "late" };
+        continue;
+      }
+      const foldRef = rtdb().ref(`spotTicks/${code}/${bucket}`);
+      const tx = await foldRef.transaction((cur) => {
+        const candle = cur && Number.isFinite(Number(cur?.o)) ? { t: bucket, o: Number(cur.o), h: Number(cur.h), l: Number(cur.l), c: Number(cur.c), s: Number(cur.s || 0) } : null;
+        return foldSample(candle, price, bucket);
+      });
+      const folded = !!tx.committed;
+      const providerDelaySec = providerAtSec ? Math.max(0, nowSec - providerAtSec) : null;
+      await diagRef.update({
+        lastOkAt: Date.now(),
+        price,
+        providerAt: providerAtSec,
+        providerDelaySec,
+        minute: bucket,
+        folded,
+        fails: 0,
+        lastError: null
+      });
+      out[code] = { folded, price, minute: bucket, providerDelaySec };
+    } catch (e) {
+      out[code] = { folded: false, reason: `error: ${String(e?.message || e).slice(0, 60)}` };
+    }
+  }
+  return { ok: Object.values(out).some((d) => d.folded), codes: out, ranMs: Date.now() - started, at: Date.now() };
+}
+async function recorderDiag(codes = RECORDER_CODES) {
+  const out = {};
+  for (const code of codes) {
+    try {
+      out[code] = (await rtdb().ref(`diag/spotRecorder/${code}`).once("value")).val() || null;
+    } catch {
+      out[code] = null;
+    }
+  }
+  return out;
+}
+var RECORDER_CODES, SYMBOL_OF, SAMPLE_GAP_MS, GLITCH_ANCHOR_MAX_AGE_MS, FETCH_TIMEOUT_MS;
+var init_spot_recorder = __esm({
+  "api/_src/lib/spot-recorder.ts"() {
+    "use strict";
+    init_firebase();
+    init_market_hours();
+    init_terminal();
+    init_spot_recorder_core();
+    RECORDER_CODES = ["XAU", "XAG"];
+    SYMBOL_OF = { XAU: "XAUUSD", XAG: "XAGUSD" };
+    SAMPLE_GAP_MS = 15e3;
+    GLITCH_ANCHOR_MAX_AGE_MS = 30 * 6e4;
+    FETCH_TIMEOUT_MS = 6e3;
+  }
+});
+
+// api/_src/quotes.ts
+init_firebase();
 
 // shared/feed-validation.ts
 function parseShardRow(row) {
@@ -355,264 +819,9 @@ function staleRunFilter(bars, opts) {
   return { bars: sorted.filter((_, k) => !drop.has(k)), rejected, ranges };
 }
 
-// shared/terminal.ts
-var INSTRUMENTS = [
-  // ---- Metals — SPOT prices only. Yahoo has no spot gold/silver symbol
-  // (XAUUSD=X 404s), so history comes from stooq's spot CSV (primary) with
-  // Yahoo's COMEX contract as a LAST-RESORT fallback that the badge labels
-  // explicitly as futures. The live tail is gold-api's keyless spot feed.
-  // PAXGUSDT / XAUTUSDT are tokenized assets (~0.4% below spot) and are
-  // deliberately NOT used — they are different financial instruments.
-  { symbol: "XAUUSD", name: "Gold Spot / U.S. Dollar", assetClass: "metal", digits: 2, pipSize: 0.1, contractSize: 100, quote: "USD", feed: "quotes", yahoo: "GC=F", spotCode: "XAU", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 0.01, priceBand: [1e3, 2e4], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
-  { symbol: "XAGUSD", name: "Silver Spot / U.S. Dollar", assetClass: "metal", digits: 3, pipSize: 0.01, contractSize: 5e3, quote: "USD", feed: "quotes", yahoo: "SI=F", spotCode: "XAG", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [5, 200], feedLabel: "gold-api spot (chart + execution) \xB7 history stooq (spot)" },
-  // ---- Forex majors — TrueFX prices the 10 majors LIVE (genuine bid/ask:
-  // the chart paints BID to match Dukascopy's BID-side history, execution
-  // quotes take the mid). Yahoo's FX identifiers are the genuine interbank
-  // spot market but delayed by Yahoo's distribution — they supply history
-  // and the execution fallback for pairs TrueFX does not carry (NZDUSD).
-  { symbol: "EURUSD", name: "Euro / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "EURUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.5, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
-  { symbol: "GBPUSD", name: "British Pound / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "GBPUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2.2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
-  { symbol: "USDJPY", name: "U.S. Dollar / Japanese Yen", assetClass: "forex", digits: 3, pipSize: 0.01, contractSize: 1e5, quote: "JPY", feed: "quotes", yahoo: "USDJPY=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-3, priceBand: [80, 250], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
-  { symbol: "AUDUSD", name: "Australian Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "AUDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.3], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
-  { symbol: "NZDUSD", name: "New Zealand Dollar / U.S. Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "USD", feed: "quotes", yahoo: "NZDUSD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.4, 1.2], feedLabel: "Yahoo FX spot (delayed)" },
-  { symbol: "USDCAD", name: "U.S. Dollar / Canadian Dollar", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CAD", feed: "quotes", yahoo: "USDCAD=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.9, 2], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
-  { symbol: "USDCHF", name: "U.S. Dollar / Swiss Franc", assetClass: "forex", digits: 5, pipSize: 1e-4, contractSize: 1e5, quote: "CHF", feed: "quotes", yahoo: "USDCHF=X", underlier: "spot", session: "Sun 22:00 \u2013 Fri 21:00 UTC (24/5)", tickSize: 1e-5, priceBand: [0.6, 1.6], feedLabel: "TrueFX live \xB7 Yahoo history (delayed)" },
-  // ---- Crypto — Binance is the industry-standard price venue. Binance
-  // quotes USDT pairs (BTC/USDT), the badge discloses that basis (USDT ≈ USD).
-  { symbol: "BTCUSD", name: "Bitcoin / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "BTCUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5e3, 5e5], feedLabel: "Binance \xB7 BTC/USDT (USDT \u2248 USD)" },
-  { symbol: "ETHUSD", name: "Ethereum / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "ETHUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [100, 2e4], feedLabel: "Binance \xB7 ETH/USDT (USDT \u2248 USD)" },
-  { symbol: "SOLUSD", name: "Solana / U.S. Dollar", assetClass: "crypto", digits: 2, pipSize: 0.01, contractSize: 1, quote: "USD", feed: "binance", binance: "SOLUSDT", underlier: "spot", session: "24/7", tickSize: 0.01, priceBand: [5, 2e3], feedLabel: "Binance \xB7 SOL/USDT (USDT \u2248 USD)" },
-  { symbol: "XRPUSD", name: "XRP / U.S. Dollar", assetClass: "crypto", digits: 4, pipSize: 1e-4, contractSize: 1, quote: "USD", feed: "binance", binance: "XRPUSDT", underlier: "spot", session: "24/7", tickSize: 1e-4, priceBand: [0.05, 20], feedLabel: "Binance \xB7 XRP/USDT (USDT \u2248 USD)" },
-  // ---- Indices — CFD reference levels tracked from the underlying index.
-  { symbol: "NAS100", name: "US Tech 100 (NDX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^NDX", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 0.25, priceBand: [3e3, 4e4], feedLabel: "Yahoo index (delayed)" },
-  { symbol: "US30", name: "Wall Street 30 (DJI)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^DJI", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 1, priceBand: [1e4, 8e4], feedLabel: "Yahoo index (delayed)" },
-  { symbol: "SPX500", name: "US 500 (S&P 500)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "USD", feed: "quotes", yahoo: "^GSPC", underlier: "index", session: "Mon\u2013Fri 13:30\u201320:00 UTC (US cash)", tickSize: 0.25, priceBand: [1500, 15e3], feedLabel: "Yahoo index (delayed)" },
-  { symbol: "GER40", name: "Germany 40 (DAX)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "EUR", feed: "quotes", yahoo: "^GDAXI", underlier: "index", session: "Mon\u2013Fri 08:00\u201321:00 UTC (Xetra)", tickSize: 1, priceBand: [5e3, 5e4], feedLabel: "Yahoo index (delayed)" },
-  { symbol: "UK100", name: "UK 100 (FTSE 100)", assetClass: "index", digits: 1, pipSize: 1, contractSize: 1, quote: "GBP", feed: "quotes", yahoo: "^FTSE", underlier: "index", session: "Mon\u2013Fri 08:00\u201316:30 UTC (LSE)", tickSize: 0.5, priceBand: [3e3, 2e4], feedLabel: "Yahoo index (delayed)" }
-];
-function getInstrument(symbol) {
-  return INSTRUMENTS.find((i) => i.symbol === symbol.toUpperCase());
-}
-function normalizeDailyAnchors(bars) {
-  return bars.map((b) => {
-    if (b.time % 86400 === 0) return b;
-    return { ...b, time: Math.floor((b.time + 12 * 3600) / 86400) * 86400 };
-  });
-}
-function mergeFxStoreDaily(deep, recent) {
-  const byTime = /* @__PURE__ */ new Map();
-  for (const b of deep) byTime.set(b.time, b);
-  for (const b of recent) byTime.set(b.time, b);
-  return [...byTime.values()].sort((a, b) => a.time - b.time);
-}
-function foldBucket(time, bucket, anchorSec) {
-  if (bucket === 604800) {
-    const MONDAY_ANCHOR = 345600;
-    return Math.floor((time - MONDAY_ANCHOR) / bucket) * bucket + MONDAY_ANCHOR;
-  }
-  if (bucket === 2592e3) {
-    const d = new Date(time * 1e3);
-    return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1e3);
-  }
-  if (anchorSec != null) return Math.floor((time - anchorSec) / bucket) * bucket + anchorSec;
-  return Math.floor(time / bucket) * bucket;
-}
-function aggregateBars(bars, factorMinutes, anchorSec) {
-  const bucket = factorMinutes * 60;
-  const out = [];
-  let cur = null;
-  for (const b of bars) {
-    const t = foldBucket(b.time, bucket, anchorSec);
-    if (!cur || cur.time !== t) {
-      if (cur) out.push(cur);
-      cur = { time: t, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume ?? 0 };
-    } else {
-      cur.high = Math.max(cur.high, b.high);
-      cur.low = Math.min(cur.low, b.low);
-      cur.close = b.close;
-      cur.volume = (cur.volume ?? 0) + (b.volume ?? 0);
-    }
-  }
-  if (cur) out.push(cur);
-  return out;
-}
-var SPOT_PRICE_BANDS = {
-  XAU: getInstrument("XAUUSD")?.priceBand ?? [1e3, 2e4],
-  XAG: getInstrument("XAGUSD")?.priceBand ?? [5, 200]
-};
-
-// shared/sessions.ts
-var SESSIONS = [
-  { id: "sydney", city: "Sydney", tz: "Australia/Sydney", flag: "\u{1F1E6}\u{1F1FA}", openMin: 7 * 60, closeMin: 16 * 60 },
-  { id: "tokyo", city: "Tokyo", tz: "Asia/Tokyo", flag: "\u{1F1EF}\u{1F1F5}", openMin: 9 * 60, closeMin: 18 * 60 },
-  { id: "london", city: "London", tz: "Europe/London", flag: "\u{1F1EC}\u{1F1E7}", openMin: 8 * 60, closeMin: 17 * 60 },
-  { id: "newyork", city: "New York", tz: "America/New_York", flag: "\u{1F1FA}\u{1F1F8}", openMin: 8 * 60, closeMin: 17 * 60 }
-];
-var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-function tzWallClock(tz, instant) {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-    weekday: "short"
-  });
-  const parts = dtf.formatToParts(new Date(instant));
-  const get = (t) => parts.find((p) => p.type === t)?.value ?? "";
-  const h = Number(get("hour")) % 24;
-  return {
-    y: Number(get("year")),
-    mo: Number(get("month")),
-    d: Number(get("day")),
-    h,
-    mi: Number(get("minute")),
-    s: Number(get("second")),
-    weekday: Math.max(0, WEEKDAYS.indexOf(get("weekday")))
-  };
-}
-function tzOffsetMs(tz, instant) {
-  const w = tzWallClock(tz, instant);
-  return Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi, w.s) - instant;
-}
-
-// shared/market-hours.ts
-var HOLIDAYS = {};
-var NY = "America/New_York";
-var FX_OPEN_DOW = 0;
-var FX_OPEN_MIN = 17 * 60;
-var FX_CLOSE_DOW = 5;
-var FX_CLOSE_MIN = 17 * 60;
-var METAL_OPEN_MIN = 18 * 60;
-var METAL_BREAK_FROM = 17 * 60;
-var METAL_BREAK_TO = 18 * 60;
-var INDEX_SESSIONS = {
-  NAS100: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
-  US30: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
-  SPX500: { tz: "America/New_York", fromMin: 9 * 60 + 30, toMin: 16 * 60 },
-  GER40: { tz: "Europe/Berlin", fromMin: 9 * 60, toMin: 17 * 60 + 30 },
-  UK100: { tz: "Europe/London", fromMin: 8 * 60, toMin: 16 * 60 + 30 }
-};
-function isHoliday(symbol, at) {
-  const days = HOLIDAYS[symbol];
-  if (!days || !days.length) return false;
-  const d = tzWallClock("UTC", at);
-  const iso = `${String(d.y).padStart(4, "0")}-${String(d.mo).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
-  return days.includes(iso);
-}
-function fxWindow(inst, at) {
-  const w = tzWallClock(NY, at);
-  const mins = w.h * 60 + w.mi;
-  const metal = inst.assetClass === "metal";
-  if (w.weekday === 6) return { open: false, reason: "weekend" };
-  if (w.weekday === FX_CLOSE_DOW && mins >= FX_CLOSE_MIN) return { open: false, reason: "weekend" };
-  if (w.weekday === FX_OPEN_DOW && mins < (metal ? METAL_OPEN_MIN : FX_OPEN_MIN)) {
-    return { open: false, reason: "weekend" };
-  }
-  if (metal && w.weekday >= 1 && w.weekday <= 4 && mins >= METAL_BREAK_FROM && mins < METAL_BREAK_TO) {
-    return { open: false, reason: "daily-break" };
-  }
-  return { open: true, reason: "open" };
-}
-function windowAt(symbol, inst, at) {
-  if (!inst) return { open: false, reason: "unknown" };
-  if (inst.assetClass === "crypto") return { open: true, reason: "open" };
-  if (isHoliday(symbol, at)) return { open: false, reason: "holiday" };
-  if (inst.assetClass === "index") {
-    const s = INDEX_SESSIONS[symbol];
-    if (!s) return { open: true, reason: "open" };
-    const w = tzWallClock(s.tz, at);
-    const mins = w.h * 60 + w.mi;
-    const open = w.weekday >= 1 && w.weekday <= 5 && mins >= s.fromMin && mins < s.toMin;
-    return { open, reason: open ? "open" : "weekend" };
-  }
-  if (inst.assetClass === "forex" || inst.assetClass === "metal") return fxWindow(inst, at);
-  return { open: true, reason: "open" };
-}
-function marketHours(symbol, at = Date.now()) {
-  const inst = getInstrument(symbol);
-  const w = windowAt(symbol, inst, at);
-  return { ...w, nextOpenMs: w.open ? null : nextOpen(symbol, at) };
-}
-function nextOpen(symbol, at = Date.now()) {
-  const inst = getInstrument(symbol);
-  if (windowAt(symbol, inst, at).open) return null;
-  const step = 15 * 6e4;
-  for (let t = Math.ceil(at / step) * step, n = 0; n < 9 * 96; n++, t += step) {
-    if (windowAt(symbol, inst, t).open) return t;
-  }
-  return null;
-}
-function wallInstantSec(daySec, minutes, tz) {
-  const dayMs = daySec * 1e3;
-  const guessMs = dayMs + minutes * 6e4;
-  const off = tzOffsetMs(tz, guessMs);
-  let t = guessMs - off;
-  const off2 = tzOffsetMs(tz, t);
-  if (off2 !== off) t = guessMs - off2;
-  return Math.floor(t / 1e3);
-}
-function closedIntervals(symbol, fromSec, toSec) {
-  const inst = getInstrument(symbol);
-  if (!inst) return [];
-  const cls = inst.assetClass;
-  if (cls === "crypto" || cls !== "forex" && cls !== "metal" && cls !== "index") return [];
-  const out = [];
-  const fromDay = Math.floor(fromSec / 86400);
-  const toDay = Math.floor(toSec / 86400);
-  const metal = cls === "metal";
-  for (let day = fromDay; day <= toDay; day++) {
-    const dayStart = day * 86400;
-    const dayEnd = dayStart + 86400;
-    const noonMs = dayStart * 1e3 + 12 * 3600 * 1e3;
-    if (isHoliday(symbol, noonMs)) {
-      out.push({ from: dayStart, to: dayEnd });
-      continue;
-    }
-    if (cls === "index") {
-      const s = INDEX_SESSIONS[symbol];
-      if (!s) continue;
-      const w2 = tzWallClock(s.tz, noonMs);
-      if (w2.weekday === 0 || w2.weekday === 6) {
-        out.push({ from: dayStart, to: dayEnd });
-        continue;
-      }
-      out.push({ from: dayStart, to: wallInstantSec(dayStart, s.fromMin, s.tz) });
-      out.push({ from: wallInstantSec(dayStart, s.toMin, s.tz), to: dayEnd });
-      continue;
-    }
-    const w = tzWallClock(NY, noonMs);
-    const openMin = metal && w.weekday === 0 ? METAL_OPEN_MIN : FX_OPEN_MIN;
-    if (w.weekday === 6) {
-      out.push({ from: dayStart, to: dayEnd });
-      continue;
-    }
-    if (w.weekday === 0) out.push({ from: dayStart, to: wallInstantSec(dayStart, openMin, NY) });
-    if (w.weekday === 5) out.push({ from: wallInstantSec(dayStart, FX_CLOSE_MIN, NY), to: dayEnd });
-    if (metal && w.weekday >= 1 && w.weekday <= 4) {
-      out.push({ from: wallInstantSec(dayStart, METAL_BREAK_FROM, NY), to: wallInstantSec(dayStart, METAL_BREAK_TO, NY) });
-    }
-  }
-  return out.sort((a, b) => a.from - b.from);
-}
-function filterClosedCandles(symbol, candles) {
-  if (!candles.length) return candles;
-  const times = candles.map((c) => c.time);
-  const intervals = closedIntervals(symbol, Math.min(...times) - 60, Math.max(...times) + 60);
-  if (!intervals.length) return candles;
-  const sorted = [...candles].sort((a, b) => a.time - b.time);
-  const out = [];
-  let k = 0;
-  for (const c of sorted) {
-    while (k < intervals.length && intervals[k].to <= c.time) k++;
-    if (k < intervals.length && c.time >= intervals[k].from && c.time < intervals[k].to) continue;
-    out.push(c);
-  }
-  return out;
-}
+// api/_src/quotes.ts
+init_terminal();
+init_market_hours();
 
 // api/_src/lib/duka.ts
 import { decompress } from "lzma-native";
@@ -712,6 +921,13 @@ async function decodeDukaDay(buf, code, day) {
   }
   return out;
 }
+
+// api/_src/quotes.ts
+init_spot_recorder_core();
+
+// api/_src/lib/hist.ts
+init_firebase();
+init_terminal();
 
 // api/_src/lib/hist-sessions.ts
 function inMarketHours(tSec, assetClass) {
@@ -845,6 +1061,8 @@ function assetClassOf(symbol) {
 }
 
 // api/_src/lib/hist.ts
+init_terminal();
+init_market_hours();
 var HIST_STOOQ = {
   XAUUSD: "xauusd",
   XAGUSD: "xagusd",
@@ -1808,9 +2026,10 @@ var quotes_default = handle(async (req, res) => {
   const action = (url.searchParams.get("action") || "").trim();
   if (action === "spot-history") {
     const code = (url.searchParams.get("code") || "XAU").toUpperCase() === "XAG" ? "XAG" : "XAU";
-    const snap = await rtdb().ref(`spotTicks/${code}`).once("value");
-    const obj = snap.val() || {};
     const now = Math.floor(Date.now() / 1e3);
+    const fromParam = toSec(url.searchParams.get("from"));
+    const snap = fromParam != null ? await rtdb().ref(`spotTicks/${code}`).orderByKey().startAt(String(fromParam)).once("value") : await rtdb().ref(`spotTicks/${code}`).once("value");
+    const obj = snap.val() || {};
     const tfSec = Math.max(60, Math.min(2592e3, Math.floor(Number(url.searchParams.get("tf")) || 60)));
     const minT = tfSec > 60 ? 0 : now - 65 * 86400;
     let rawCandles = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0), time: Number(t) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o) && c.t >= minT && c.t <= now).sort((a, b) => a.t - b.t);
@@ -1819,10 +2038,106 @@ var quotes_default = handle(async (req, res) => {
     if (tfSec > 60) {
       const agg = aggregateBars(checked.bars, tfSec / 60);
       const bars = repairOutlierExtremes(agg.slice(-4e3)).bars;
-      return res.json({ ok: true, code, tf: tfSec, bars, count: bars.length });
+      return res.json({ ok: true, code, tf: tfSec, bars, count: bars.length, tail: fromParam != null });
     }
     const candles = checked.bars.map((b) => ({ t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, s: Number(b.volume || 0) }));
-    return res.json({ ok: true, code, tf: tfSec, candles });
+    return res.json({ ok: true, code, tf: tfSec, candles, tail: fromParam != null });
+  }
+  if (action === "feed-status") {
+    const codes = ["XAU", "XAG"];
+    const now = Math.floor(Date.now() / 1e3);
+    const out = {};
+    const { recorderDiag: recorderDiag2 } = await Promise.resolve().then(() => (init_spot_recorder(), spot_recorder_exports));
+    const rec = await recorderDiag2(codes);
+    for (const code of codes) {
+      const symbol = code === "XAU" ? "XAUUSD" : "XAGUSD";
+      const tailSnap = await rtdb().ref(`spotTicks/${code}`).orderByKey().limitToLast(120).once("value");
+      const obj = tailSnap.val() || {};
+      const minutes = Object.entries(obj).map(([t, c]) => ({ t: Number(t), o: Number(c?.o), h: Number(c?.h), l: Number(c?.l), c: Number(c?.c), s: Number(c?.s || 0) })).filter((c) => Number.isFinite(c.t) && Number.isFinite(c.o)).sort((a, b) => a.t - b.t);
+      const newestMin = minutes.length ? minutes[minutes.length - 1].t : 0;
+      let missing = 0;
+      const windowFrom = now - 2 * 3600;
+      if (minutes.length) {
+        const ivs = closedIntervals(symbol, windowFrom - 86400, now);
+        const closedAt = (t) => {
+          for (const iv of ivs) {
+            if (t >= iv.from && t < iv.to) return true;
+            if (iv.from > t) break;
+          }
+          return false;
+        };
+        const have = new Set(minutes.map((m) => m.t));
+        for (let t = Math.floor(windowFrom / 60) * 60; t <= now - 60; t += 60) {
+          if (!closedAt(t) && !have.has(t)) missing++;
+        }
+      }
+      out[code] = {
+        symbol,
+        recorder: rec[code] ? {
+          lastOkAt: Number(rec[code]?.lastOkAt || 0),
+          price: Number(rec[code]?.price || 0) || null,
+          providerDelaySec: rec[code]?.providerDelaySec != null ? Number(rec[code].providerDelaySec) : null,
+          fails: Number(rec[code]?.fails || 0),
+          lastError: rec[code]?.lastError || null
+        } : null,
+        store: {
+          newestMinute: newestMin,
+          ageSec: newestMin ? Math.max(0, now - newestMin - 60) : null,
+          minutesInTail: minutes.length,
+          missingOpenSessionMinutes2h: missing
+        }
+      };
+    }
+    const offsets = {};
+    for (const symbol of ["XAUUSD", "XAGUSD"]) {
+      const code = symbol === "XAUUSD" ? "XAU" : "XAG";
+      try {
+        const cacheRef = rtdb().ref(`diag/spotOffset/${symbol}`);
+        const cached = (await cacheRef.once("value")).val();
+        if (cached && now - Number(cached.at || 0) < 6 * 3600) {
+          offsets[symbol] = cached;
+          continue;
+        }
+        const firstMinSnap = await rtdb().ref(`spotTicks/${code}`).orderByKey().limitToFirst(1).once("value");
+        const firstKey = Object.keys(firstMinSnap.val() || {})[0];
+        if (!firstKey) {
+          offsets[symbol] = null;
+          continue;
+        }
+        const dayStart = Math.floor(Number(firstKey) / 86400) * 86400;
+        const dayIso = new Date(dayStart * 1e3).toISOString().slice(0, 10);
+        const blob = (await rtdb().ref(`hist/${symbol}/1m/${dayIso}`).once("value")).val();
+        if (typeof blob !== "string" || !blob) {
+          offsets[symbol] = null;
+          continue;
+        }
+        const rows = blob.split("|").map((r) => parseShardRow(r)).filter((a) => !!a);
+        const byT = /* @__PURE__ */ new Map();
+        for (const a of rows) byT.set(a[0], a[4]);
+        const firstT = Number(firstKey);
+        const overlap = Object.entries((await rtdb().ref(`spotTicks/${code}`).orderByKey().startAt(String(firstT)).endAt(String(firstT + 86400)).once("value")).val() || {}).map(([t, c]) => ({ t: Number(t), c: Number(c?.c) }));
+        const samples = overlap.filter((r) => byT.has(r.t) && r.c > 0).map((r) => ({ spotClose: r.c, bidClose: byT.get(r.t) }));
+        const off = computeBidSpotOffset(samples);
+        const payload = off ? { ...off, day: dayIso, at: now, note: "mean(spotClose \u2212 dukaBidClose) over genuine overlapping minutes \u2014 boundary disclosure, never applied to prices" } : { n: samples.length, day: dayIso, at: now, note: `insufficient overlap (${samples.length} < ${MIN_OVERLAP_SAMPLES}) \u2014 no offset number is reported` };
+        await cacheRef.set(payload);
+        offsets[symbol] = payload;
+      } catch {
+        offsets[symbol] = null;
+      }
+    }
+    const tdUsed = Number((await tdDayRef().once("value")).val() || 0);
+    return res.json({
+      ok: true,
+      at: now,
+      metals: out,
+      offset: offsets,
+      twelvedata: { used: tdUsed, budget: TD_DAILY_BUDGET },
+      providers: {
+        spot: "gold-api.com (keyless, spot, provider-stamped)",
+        deepHistory: "Dukascopy BID 1m shards + stooq spot daily + TwelveData (budgeted)",
+        note: "sources are disclosed, never welded silently \u2014 see offset/delay fields"
+      }
+    });
   }
   if (action === "spot-record" && req.method === "POST") {
     const raw = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};

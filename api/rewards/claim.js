@@ -182,6 +182,15 @@ function caseTypeForCycleDay(day) {
   return day >= GOLD_CASE_DAY ? "gold" : "inspire";
 }
 
+// api/_src/lib/vip.ts
+function isVipActive(p) {
+  if (!p) return false;
+  if (p.ceo === true) return true;
+  if (p.isPremium !== true) return false;
+  const until = typeof p.premiumUntil === "number" ? p.premiumUntil : 0;
+  return until === 0 || until > Date.now();
+}
+
 // api/_src/rewards/claim.ts
 var claim_default = handle(async (req, res) => {
   assertPost(req);
@@ -193,7 +202,7 @@ var claim_default = handle(async (req, res) => {
     rtdb().ref(`admins/${user.uid}`).get()
   ]);
   const p = profile.val() || {};
-  const isVip = p.isPremium === true || !!p.premiumPlan || p.ceo === true || adminFlag.val() === true;
+  const isVip = isVipActive(p) || adminFlag.val() === true;
   const result = await rtdb().ref(`economy/${user.uid}`).transaction((current) => {
     let eco = current || { coins: 0, cases: 0, goldCases: 0, streak: 0, totalClaimed: 0 };
     if (eco.lastClaimDate === today) return void 0;
